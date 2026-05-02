@@ -30,7 +30,7 @@ export default async function AdminPage({
     .select(`
       id, tech_id, work_date, job_name, notes, total_pay,
       job_work_items (
-        id, quantity, calculated_pay,
+        id, quantity, calculated_pay, custom_description,
         job_types ( name, base_rate, additional_rate, requires_quantity )
       )
     `)

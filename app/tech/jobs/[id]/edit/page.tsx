@@ -17,7 +17,7 @@ export default async function EditJobPage({
     .from('jobs')
     .select(`
       id, work_date, job_name, notes, total_pay, week_start_date,
-      job_work_items ( id, job_type_id, quantity, calculated_pay )
+      job_work_items ( id, job_type_id, quantity, calculated_pay, custom_description )
     `)
     .eq('id', id)
     .eq('tech_id', user.id)

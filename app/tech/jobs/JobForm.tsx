@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { getWeekEnd, calculateItemPay, formatMoney, formatDate, parseDate } from '@/lib/week'
+import { getWeekEnd, calculateItemPay, formatMoney, formatDate } from '@/lib/week'
 
 interface JobType {
   id: string
@@ -18,6 +18,8 @@ interface WorkItemRow {
   job_type_id: string
   quantity: number
   calculated_pay: number
+  custom_description: string
+  custom_amount: string  // string so the input is controlled cleanly
 }
 
 interface ExistingWorkItem {
@@ -25,6 +27,7 @@ interface ExistingWorkItem {
   job_type_id: string
   quantity: number
   calculated_pay: number
+  custom_description: string | null
 }
 
 interface ExistingJob {
@@ -54,12 +57,23 @@ function makeWorkItemRow(jobType: JobType): WorkItemRow {
     job_type_id: jobType.id,
     quantity: 1,
     calculated_pay: calculateItemPay(jobType.base_rate, jobType.additional_rate, jobType.requires_quantity, 1),
+    custom_description: '',
+    custom_amount: '',
   }
 }
 
 export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob }: Props) {
   const router = useRouter()
   const weekEnd = getWeekEnd(weekStart)
+
+  // Sort job types: "Other" always last
+  const sortedJobTypes = [...jobTypes].sort((a, b) => {
+    if (a.name === 'Other') return 1
+    if (b.name === 'Other') return -1
+    return a.name.localeCompare(b.name)
+  })
+
+  const otherTypeId = jobTypes.find(jt => jt.name === 'Other')?.id ?? ''
 
   const [workDate, setWorkDate] = useState(existingJob?.work_date ?? formatDate(new Date()))
   const [jobName, setJobName] = useState(existingJob?.job_name ?? '')
@@ -69,16 +83,20 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
 
   const [workItems, setWorkItems] = useState<WorkItemRow[]>(() => {
     if (existingJob && existingJob.job_work_items.length > 0) {
-      return existingJob.job_work_items.map(item => ({
-        tempId: newTempId(),
-        job_type_id: item.job_type_id,
-        quantity: item.quantity,
-        calculated_pay: item.calculated_pay,
-      }))
+      return existingJob.job_work_items.map(item => {
+        const isOther = item.job_type_id === otherTypeId
+        return {
+          tempId: newTempId(),
+          job_type_id: item.job_type_id,
+          quantity: item.quantity,
+          calculated_pay: item.calculated_pay,
+          custom_description: item.custom_description ?? '',
+          custom_amount: isOther ? String(item.calculated_pay) : '',
+        }
+      })
     }
-    // Default: one empty work item row using first job type
-    if (jobTypes.length > 0) {
-      return [makeWorkItemRow(jobTypes[0])]
+    if (sortedJobTypes.length > 0) {
+      return [makeWorkItemRow(sortedJobTypes[0])]
     }
     return []
   })
@@ -87,27 +105,47 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
     return jobTypes.find(jt => jt.id === id)
   }
 
-  function recalcItem(item: WorkItemRow, jobTypeId: string, quantity: number): WorkItemRow {
-    const jt = getJobType(jobTypeId)
-    if (!jt) return item
-    return {
-      ...item,
-      job_type_id: jobTypeId,
-      quantity,
-      calculated_pay: calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, quantity),
-    }
+  function isOtherType(jobTypeId: string) {
+    return jobTypeId === otherTypeId
   }
 
   function updateItemType(tempId: string, jobTypeId: string) {
-    setWorkItems(items =>
-      items.map(item => item.tempId === tempId ? recalcItem(item, jobTypeId, item.quantity) : item)
-    )
+    setWorkItems(items => items.map(item => {
+      if (item.tempId !== tempId) return item
+      if (isOtherType(jobTypeId)) {
+        return { ...item, job_type_id: jobTypeId, calculated_pay: 0, custom_amount: '', custom_description: '' }
+      }
+      const jt = getJobType(jobTypeId)!
+      return {
+        ...item,
+        job_type_id: jobTypeId,
+        quantity: 1,
+        calculated_pay: calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, 1),
+        custom_description: '',
+        custom_amount: '',
+      }
+    }))
   }
 
   function updateItemQty(tempId: string, quantity: number) {
-    setWorkItems(items =>
-      items.map(item => item.tempId === tempId ? recalcItem(item, item.job_type_id, quantity) : item)
-    )
+    setWorkItems(items => items.map(item => {
+      if (item.tempId !== tempId) return item
+      const jt = getJobType(item.job_type_id)!
+      return { ...item, quantity, calculated_pay: calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, quantity) }
+    }))
+  }
+
+  function updateCustomDescription(tempId: string, value: string) {
+    setWorkItems(items => items.map(item =>
+      item.tempId === tempId ? { ...item, custom_description: value } : item
+    ))
+  }
+
+  function updateCustomAmount(tempId: string, value: string) {
+    const amount = parseFloat(value) || 0
+    setWorkItems(items => items.map(item =>
+      item.tempId === tempId ? { ...item, custom_amount: value, calculated_pay: amount } : item
+    ))
   }
 
   function removeItem(tempId: string) {
@@ -115,15 +153,11 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
   }
 
   function addItem() {
-    if (jobTypes.length === 0) return
-    setWorkItems(items => [...items, makeWorkItemRow(jobTypes[0])])
+    if (sortedJobTypes.length === 0) return
+    setWorkItems(items => [...items, makeWorkItemRow(sortedJobTypes[0])])
   }
 
   const totalPay = workItems.reduce((s, i) => s + i.calculated_pay, 0)
-
-  // Clamp date to within workweek
-  const minDate = weekStart
-  const maxDate = weekEnd
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -137,13 +171,31 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
       setError('Job name / PO is required.')
       return
     }
+    for (const item of workItems) {
+      if (isOtherType(item.job_type_id)) {
+        if (!item.custom_description.trim()) {
+          setError('Please enter a description for the "Other" work item.')
+          return
+        }
+        if (!item.custom_amount || parseFloat(item.custom_amount) <= 0) {
+          setError('Please enter a valid amount for the "Other" work item.')
+          return
+        }
+      }
+    }
 
     setSaving(true)
     const supabase = createClient()
 
     try {
+      const itemsPayload = workItems.map(i => ({
+        job_type_id: i.job_type_id,
+        quantity: i.quantity,
+        calculated_pay: i.calculated_pay,
+        custom_description: isOtherType(i.job_type_id) ? i.custom_description.trim() : null,
+      }))
+
       if (mode === 'new') {
-        // Insert job
         const { data: job, error: jobErr } = await supabase
           .from('jobs')
           .insert({
@@ -160,17 +212,11 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
         if (jobErr || !job) throw new Error(jobErr?.message ?? 'Failed to save job')
 
         const { error: itemErr } = await supabase.from('job_work_items').insert(
-          workItems.map(i => ({
-            job_id: job.id,
-            job_type_id: i.job_type_id,
-            quantity: i.quantity,
-            calculated_pay: i.calculated_pay,
-          }))
+          itemsPayload.map(i => ({ ...i, job_id: job.id }))
         )
         if (itemErr) throw new Error(itemErr.message)
 
       } else if (mode === 'edit' && existingJob) {
-        // Update job
         const { error: jobErr } = await supabase
           .from('jobs')
           .update({
@@ -183,16 +229,10 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
 
         if (jobErr) throw new Error(jobErr.message)
 
-        // Replace all work items
         await supabase.from('job_work_items').delete().eq('job_id', existingJob.id)
 
         const { error: itemErr } = await supabase.from('job_work_items').insert(
-          workItems.map(i => ({
-            job_id: existingJob.id,
-            job_type_id: i.job_type_id,
-            quantity: i.quantity,
-            calculated_pay: i.calculated_pay,
-          }))
+          itemsPayload.map(i => ({ ...i, job_id: existingJob.id }))
         )
         if (itemErr) throw new Error(itemErr.message)
       }
@@ -226,8 +266,8 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
           <input
             type="date"
             required
-            min={minDate}
-            max={maxDate}
+            min={weekStart}
+            max={weekEnd}
             value={workDate}
             onChange={e => setWorkDate(e.target.value)}
             className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -252,8 +292,9 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Work Items</label>
           <div className="space-y-3">
-            {workItems.map((item, idx) => {
+            {workItems.map(item => {
               const jt = getJobType(item.job_type_id)
+              const isOther = isOtherType(item.job_type_id)
               return (
                 <div key={item.tempId} className="flex gap-2 items-start">
                   <div className="flex-1 space-y-2">
@@ -262,11 +303,36 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                       onChange={e => updateItemType(item.tempId, e.target.value)}
                       className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      {jobTypes.map(jt => (
+                      {sortedJobTypes.map(jt => (
                         <option key={jt.id} value={jt.id}>{jt.name}</option>
                       ))}
                     </select>
-                    {jt?.requires_quantity && (
+
+                    {isOther && (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          placeholder="Description of work"
+                          value={item.custom_description}
+                          onChange={e => updateCustomDescription(item.tempId, e.target.value)}
+                          className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-500">$</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            placeholder="0.00"
+                            value={item.custom_amount}
+                            onChange={e => updateCustomAmount(item.tempId, e.target.value)}
+                            className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {!isOther && jt?.requires_quantity && (
                       <div className="flex items-center gap-2">
                         <label className="text-xs text-gray-500 whitespace-nowrap">Qty:</label>
                         <input
@@ -279,9 +345,13 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                       </div>
                     )}
                   </div>
-                  <div className="text-right shrink-0 pt-2">
-                    <span className="text-sm font-semibold text-gray-800">{formatMoney(item.calculated_pay)}</span>
-                  </div>
+
+                  {!isOther && (
+                    <div className="text-right shrink-0 pt-2">
+                      <span className="text-sm font-semibold text-gray-800">{formatMoney(item.calculated_pay)}</span>
+                    </div>
+                  )}
+
                   {workItems.length > 1 && (
                     <button
                       type="button"

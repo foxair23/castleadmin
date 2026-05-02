@@ -10,6 +10,7 @@ interface WorkItem {
   id: string
   quantity: number
   calculated_pay: number
+  custom_description: string | null
   job_types: {
     id: string
     name: string
@@ -196,8 +197,10 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
                           {job.job_work_items.map(item => (
                             <li key={item.id} className="flex justify-between text-xs text-gray-600">
                               <span>
-                                {item.job_types?.name ?? 'Unknown'}
-                                {item.job_types?.requires_quantity ? ` × ${item.quantity}` : ''}
+                                {item.custom_description
+                                  ? `Other: ${item.custom_description}`
+                                  : (item.job_types?.name ?? 'Unknown')}
+                                {!item.custom_description && item.job_types?.requires_quantity ? ` × ${item.quantity}` : ''}
                               </span>
                               <span className="font-medium ml-2">{formatMoney(item.calculated_pay)}</span>
                             </li>

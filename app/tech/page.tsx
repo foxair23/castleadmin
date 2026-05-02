@@ -22,7 +22,7 @@ export default async function TechPage({
     .select(`
       id, work_date, job_name, notes, total_pay, week_start_date,
       job_work_items (
-        id, quantity, calculated_pay,
+        id, quantity, calculated_pay, custom_description,
         job_types ( id, name, base_rate, additional_rate, requires_quantity )
       )
     `)
