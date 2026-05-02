@@ -144,7 +144,7 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
         <h1 className="text-xl font-bold text-gray-900">Pay Rates</h1>
         <button
           onClick={startNew}
-          className="bg-red-700 hover:bg-red-800 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
+          className="bg-red-600 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
         >
           + Add Job Type
         </button>
@@ -200,7 +200,7 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
                       <div className="flex justify-end gap-3">
                         <button
                           onClick={() => startEdit(jt)}
-                          className="text-red-700 hover:underline text-xs"
+                          className="text-red-600 hover:underline text-xs"
                         >
                           Edit
                         </button>
@@ -254,7 +254,7 @@ function RateForm({
             type="text"
             value={form.name}
             onChange={e => setForm({ ...form, name: e.target.value })}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
           />
         </div>
         <div>
@@ -265,7 +265,7 @@ function RateForm({
             step={0.01}
             value={form.base_rate}
             onChange={e => setForm({ ...form, base_rate: e.target.value })}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
           />
         </div>
       </div>
@@ -290,7 +290,7 @@ function RateForm({
               step={0.01}
               value={form.additional_rate}
               onChange={e => setForm({ ...form, additional_rate: e.target.value })}
-              className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-24 focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-24 focus:outline-none focus:ring-2 focus:ring-red-400"
             />
           </div>
         )}
@@ -322,7 +322,7 @@ function RateForm({
         <button
           onClick={onSave}
           disabled={saving}
-          className="bg-red-700 text-white rounded px-3 py-1.5 text-sm hover:bg-red-800 disabled:opacity-60"
+          className="bg-red-600 text-white rounded px-3 py-1.5 text-sm hover:bg-red-600 disabled:opacity-60"
         >
           {saving ? 'Saving…' : 'Save'}
         </button>

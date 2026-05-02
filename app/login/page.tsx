@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
 export default function LoginPage() {
@@ -27,16 +28,23 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-950 px-4">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Castle Garage Doors & Gates</h1>
-          <p className="text-gray-500 mt-1 text-sm">Piecework Payroll</p>
+        <div className="flex flex-col items-center mb-8">
+          <Image
+            src="/logo.png"
+            alt="Castle Garage Doors & Gates"
+            width={280}
+            height={100}
+            className="object-contain"
+            priority
+          />
+          <p className="text-gray-400 mt-3 text-sm tracking-wide uppercase">Piecework Payroll</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-white shadow rounded-lg p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="email">
+            <label className="block text-sm font-medium text-gray-300 mb-1" htmlFor="email">
               Email
             </label>
             <input
@@ -46,12 +54,12 @@ export default function LoginPage() {
               autoComplete="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="password">
+            <label className="block text-sm font-medium text-gray-300 mb-1" htmlFor="password">
               Password
             </label>
             <input
@@ -61,12 +69,12 @@ export default function LoginPage() {
               autoComplete="current-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
 
           {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+            <p className="text-sm text-red-400 bg-red-950 border border-red-800 rounded px-3 py-2">
               {error}
             </p>
           )}
@@ -74,7 +82,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-red-700 hover:bg-red-800 disabled:opacity-60 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
+            className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
           >
             {loading ? 'Signing in…' : 'Sign in'}
           </button>

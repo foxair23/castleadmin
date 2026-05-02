@@ -73,7 +73,7 @@ export default function AdminSummaryClient({
   function techStatus(techId: string) {
     const sub = submissionMap.get(techId)
     if (sub) return { label: 'Submitted', color: 'text-green-700 bg-green-50' }
-    if (deadlinePassed) return { label: 'Late / Not submitted', color: 'text-red-700 bg-red-50' }
+    if (deadlinePassed) return { label: 'Late / Not submitted', color: 'text-red-600 bg-red-50' }
     return { label: 'Not submitted', color: 'text-yellow-700 bg-yellow-50' }
   }
 
@@ -93,7 +93,7 @@ export default function AdminSummaryClient({
         <select
           value={selectedWeek}
           onChange={e => router.push(`/admin?week=${e.target.value}`)}
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
         >
           {weeks.map(w => (
             <option key={w} value={w}>

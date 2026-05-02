@@ -134,7 +134,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
         <select
           value={selectedWeek}
           onChange={e => router.push(`/tech?week=${e.target.value}`)}
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
         >
           {weeks.map(w => (
             <option key={w} value={w}>
@@ -215,7 +215,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
                               <>
                                 <button
                                   onClick={() => openUnsubmitConfirm(`/tech/jobs/${job.id}/edit`)}
-                                  className="text-xs text-red-700 hover:underline"
+                                  className="text-xs text-red-600 hover:underline"
                                 >
                                   Edit
                                 </button>
@@ -230,7 +230,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
                               <>
                                 <Link
                                   href={`/tech/jobs/${job.id}/edit`}
-                                  className="text-xs text-red-700 hover:underline"
+                                  className="text-xs text-red-600 hover:underline"
                                 >
                                   Edit
                                 </Link>
@@ -273,7 +273,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
             <button
               onClick={() => setShowConfirm(true)}
               disabled={jobs.length === 0}
-              className="flex-1 bg-red-700 hover:bg-red-800 disabled:opacity-40 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
+              className="flex-1 bg-red-600 hover:bg-red-600 disabled:opacity-40 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
             >
               Submit Week
             </button>
@@ -290,7 +290,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
             <button
               onClick={() => setShowConfirm(true)}
               disabled={jobs.length === 0}
-              className="flex-1 bg-red-700 hover:bg-red-800 disabled:opacity-40 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
+              className="flex-1 bg-red-600 hover:bg-red-600 disabled:opacity-40 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
             >
               Re-submit Week
             </button>
@@ -347,7 +347,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
               <button
                 onClick={handleSubmitWeek}
                 disabled={submitting}
-                className="flex-1 bg-red-700 text-white rounded-md py-2 text-sm hover:bg-red-800 disabled:opacity-60"
+                className="flex-1 bg-red-600 text-white rounded-md py-2 text-sm hover:bg-red-600 disabled:opacity-60"
               >
                 {submitting ? 'Submitting…' : 'Yes, Submit'}
               </button>
