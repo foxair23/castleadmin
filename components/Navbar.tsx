@@ -27,8 +27,9 @@ export default function Navbar({ role, fullName }: NavbarProps) {
     <nav className="bg-gray-950 text-white border-b border-gray-800">
       <div className="max-w-5xl mx-auto px-4">
         <div className="flex flex-wrap items-center gap-x-6">
-          {/* Logo — always on the first line */}
-          <Link href={isAdmin ? '/admin' : '/tech'} className="flex items-center shrink-0 py-3">
+
+          {/* Logo — always order-1, stays on row 1 */}
+          <Link href={isAdmin ? '/admin' : '/tech'} className="flex items-center shrink-0 py-3 order-1">
             <Image
               src="/logo.png"
               alt="Castle Garage Doors & Gates"
@@ -39,8 +40,8 @@ export default function Navbar({ role, fullName }: NavbarProps) {
             />
           </Link>
 
-          {/* Nav links — inline after logo when there's room, wraps below when not */}
-          <div className="flex items-center gap-6 py-3 overflow-x-auto">
+          {/* Nav links — order-3 (row 2) on narrow, order-2 (inline) on wide */}
+          <div className="order-3 sm:order-2 flex items-center gap-6 w-full sm:w-auto pb-2 sm:py-3 overflow-x-auto">
             {isAdmin ? (
               <>
                 <NavLink href="/admin" current={pathname === '/admin'}>Summary</NavLink>
@@ -55,8 +56,8 @@ export default function Navbar({ role, fullName }: NavbarProps) {
             )}
           </div>
 
-          {/* Name + sign out — pushed to the far right on the first line */}
-          <div className="flex items-center gap-4 text-sm ml-auto py-3 shrink-0">
+          {/* Name + sign out — order-2 (row 1 with logo) on narrow, order-3 on wide */}
+          <div className="order-2 sm:order-3 ml-auto flex items-center gap-4 text-sm py-3 shrink-0">
             <span className="text-gray-400 truncate max-w-[160px]">{fullName}</span>
             <button
               onClick={handleSignOut}
@@ -65,6 +66,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
               Sign out
             </button>
           </div>
+
         </div>
       </div>
     </nav>
