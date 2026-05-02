@@ -25,41 +25,44 @@ export default function Navbar({ role, fullName }: NavbarProps) {
 
   return (
     <nav className="bg-gray-950 text-white border-b border-gray-800">
-      <div className="max-w-5xl mx-auto px-4 flex items-center justify-between h-14">
-        <div className="flex items-center gap-6">
+      <div className="max-w-5xl mx-auto px-4">
+        {/* Top row: logo + name + sign out */}
+        <div className="flex items-center justify-between h-14">
           <Link href={isAdmin ? '/admin' : '/tech'} className="flex items-center shrink-0">
             <Image
               src="/logo.png"
               alt="Castle Garage Doors & Gates"
               height={36}
-              width={140}
+              width={130}
               className="object-contain"
               priority
             />
           </Link>
-          <div className="flex items-center gap-5">
-            {isAdmin ? (
-              <>
-                <NavLink href="/admin" current={pathname === '/admin'}>Summary</NavLink>
-                <NavLink href="/admin/rates" current={pathname.startsWith('/admin/rates')}>Pay Rates</NavLink>
-                <NavLink href="/admin/techs" current={pathname.startsWith('/admin/techs')}>Technicians</NavLink>
-              </>
-            ) : (
-              <>
-                <NavLink href="/tech" current={pathname === '/tech' || (pathname.startsWith('/tech/jobs'))}>My Week</NavLink>
-                <NavLink href="/tech/history" current={pathname.startsWith('/tech/history')}>History</NavLink>
-              </>
-            )}
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-gray-400 hidden sm:inline truncate max-w-[160px]">{fullName}</span>
+            <button
+              onClick={handleSignOut}
+              className="text-gray-400 hover:text-white transition-colors whitespace-nowrap"
+            >
+              Sign out
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="text-gray-400 hidden sm:inline">{fullName}</span>
-          <button
-            onClick={handleSignOut}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            Sign out
-          </button>
+
+        {/* Bottom row: nav links */}
+        <div className="flex items-center gap-6 pb-2 overflow-x-auto">
+          {isAdmin ? (
+            <>
+              <NavLink href="/admin" current={pathname === '/admin'}>Summary</NavLink>
+              <NavLink href="/admin/rates" current={pathname.startsWith('/admin/rates')}>Pay Rates</NavLink>
+              <NavLink href="/admin/techs" current={pathname.startsWith('/admin/techs')}>Technicians</NavLink>
+            </>
+          ) : (
+            <>
+              <NavLink href="/tech" current={pathname === '/tech' || pathname.startsWith('/tech/jobs')}>My Week</NavLink>
+              <NavLink href="/tech/history" current={pathname.startsWith('/tech/history')}>History</NavLink>
+            </>
+          )}
         </div>
       </div>
     </nav>
@@ -70,8 +73,10 @@ function NavLink({ href, current, children }: { href: string; current: boolean; 
   return (
     <Link
       href={href}
-      className={`text-sm font-medium transition-colors ${
-        current ? 'text-white underline underline-offset-4' : 'text-gray-400 hover:text-white'
+      className={`text-sm font-medium whitespace-nowrap pb-1 border-b-2 transition-colors ${
+        current
+          ? 'text-white border-red-500'
+          : 'text-gray-400 hover:text-white border-transparent'
       }`}
     >
       {children}
