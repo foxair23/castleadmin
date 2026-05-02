@@ -230,7 +230,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             max={maxDate}
             value={workDate}
             onChange={e => setWorkDate(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <p className="text-xs text-gray-400 mt-1">Must be within {weekStart} – {weekEnd}</p>
         </div>
@@ -244,7 +244,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             placeholder="e.g. Smith — 1234 Main St or PO 56789"
             value={jobName}
             onChange={e => setJobName(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
@@ -260,7 +260,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                     <select
                       value={item.job_type_id}
                       onChange={e => updateItemType(item.tempId, e.target.value)}
-                      className="border border-gray-300 rounded-md px-2 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       {jobTypes.map(jt => (
                         <option key={jt.id} value={jt.id}>{jt.name}</option>
@@ -274,7 +274,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                           min={1}
                           value={item.quantity}
                           onChange={e => updateItemQty(item.tempId, Math.max(1, parseInt(e.target.value) || 1))}
-                          className="border border-gray-300 rounded-md px-2 py-1 text-sm w-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="border border-gray-300 rounded-md px-2 py-1 text-sm text-gray-900 w-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
                     )}
@@ -314,7 +314,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             value={notes}
             onChange={e => setNotes(e.target.value)}
             placeholder="Any additional notes…"
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 

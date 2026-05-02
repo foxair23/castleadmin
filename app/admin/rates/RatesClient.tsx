@@ -236,7 +236,7 @@ function RateForm({
             type="text"
             value={form.name}
             onChange={e => setForm({ ...form, name: e.target.value })}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
         <div>
@@ -247,7 +247,7 @@ function RateForm({
             step={0.01}
             value={form.base_rate}
             onChange={e => setForm({ ...form, base_rate: e.target.value })}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
       </div>
@@ -272,7 +272,7 @@ function RateForm({
               step={0.01}
               value={form.additional_rate}
               onChange={e => setForm({ ...form, additional_rate: e.target.value })}
-              className="border border-gray-300 rounded px-2 py-1.5 text-sm w-24 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-24 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
         )}

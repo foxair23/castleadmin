@@ -140,7 +140,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                 required
                 value={form.full_name}
                 onChange={e => setForm({ ...form, full_name: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div>
@@ -150,7 +150,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                 required
                 value={form.email}
                 onChange={e => setForm({ ...form, email: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div>
@@ -161,7 +161,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                 minLength={6}
                 value={form.password}
                 onChange={e => setForm({ ...form, password: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
           </div>
@@ -245,7 +245,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                             minLength={6}
                             value={resetForm[tech.id] ?? ''}
                             onChange={e => setResetForm(f => ({ ...f, [tech.id]: e.target.value }))}
-                            className="border border-gray-300 rounded px-2 py-1.5 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                           <button
                             onClick={() => handleResetPassword(tech.id)}
