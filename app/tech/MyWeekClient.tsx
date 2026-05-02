@@ -36,9 +36,10 @@ interface Props {
   currentWeek: string
   jobs: Job[]
   submittedAt: string | null
+  adminUnlocked: boolean
 }
 
-export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt }: Props) {
+export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [unsubmitting, setUnsubmitting] = useState(false)
@@ -49,7 +50,8 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
 
   const isSubmitted = !!submittedAt
   const deadlinePassed = isDeadlinePassed(selectedWeek)
-  const isLocked = isSubmitted && deadlinePassed
+  // Locked if deadline passed AND not admin-unlocked AND already submitted (or never submitted)
+  const isLocked = deadlinePassed && !adminUnlocked
   const weekEnd = getWeekEnd(selectedWeek)
   const deadline = getDeadlineForWeek(selectedWeek)
 
@@ -102,10 +104,11 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
   async function handleSubmitWeek() {
     setSubmitting(true)
     const supabase = createClient()
-    const { error } = await supabase.from('week_submissions').insert({
-      tech_id: userId,
-      week_start_date: selectedWeek,
-    })
+    // Use upsert in case an admin_unlocked record already exists for this week
+    const { error } = await supabase.from('week_submissions').upsert(
+      { tech_id: userId, week_start_date: selectedWeek, submitted_at: new Date().toISOString(), admin_unlocked: false },
+      { onConflict: 'tech_id,week_start_date' }
+    )
     if (error) {
       alert('Failed to submit week: ' + error.message)
       setSubmitting(false)
@@ -149,14 +152,19 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
           </button>
         </div>
       )}
-      {isSubmitted && deadlinePassed && (
+      {isSubmitted && deadlinePassed && !adminUnlocked && (
         <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
           Week submitted on {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}. Deadline has passed — this week is locked.
         </div>
       )}
-      {!isSubmitted && deadlinePassed && (
+      {!isSubmitted && deadlinePassed && !adminUnlocked && (
         <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
           Submission deadline passed ({deadline.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} 11:59 PM). This week is locked.
+        </div>
+      )}
+      {adminUnlocked && !isSubmitted && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
+          This week has been unlocked by your admin. Add or edit your jobs, then re-submit.
         </div>
       )}
       {!isSubmitted && !deadlinePassed && (
@@ -268,7 +276,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
               disabled={jobs.length === 0}
               className="flex-1 bg-red-600 hover:bg-red-600 disabled:opacity-40 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
             >
-              Submit Week
+              {adminUnlocked ? 'Re-submit Week' : 'Submit Week'}
             </button>
           </div>
         )}

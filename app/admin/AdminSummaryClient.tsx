@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { weekLabel, getWeekEnd, getDeadlineForWeek, formatMoney, parseDate, isDeadlinePassed } from '@/lib/week'
+import { weekLabel, getDeadlineForWeek, formatMoney, parseDate, isDeadlinePassed } from '@/lib/week'
 
 interface WorkItem {
   id: string
@@ -35,7 +35,8 @@ interface Tech {
 
 interface Submission {
   tech_id: string
-  submitted_at: string
+  submitted_at: string | null
+  admin_unlocked: boolean
 }
 
 interface Props {
@@ -57,10 +58,22 @@ export default function AdminSummaryClient({
 }: Props) {
   const router = useRouter()
   const [expandedTech, setExpandedTech] = useState<string | null>(null)
+  const [unlocking, setUnlocking] = useState<string | null>(null)
 
-  const submissionMap = new Map(submissions.map(s => [s.tech_id, s.submitted_at]))
+  const submissionMap = new Map(submissions.map(s => [s.tech_id, s]))
   const deadlinePassed = isDeadlinePassed(selectedWeek)
   const deadline = getDeadlineForWeek(selectedWeek)
+
+  async function handleToggleUnlock(techId: string, currentlyUnlocked: boolean) {
+    setUnlocking(techId)
+    await fetch('/api/admin/weeks/unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tech_id: techId, week_start_date: selectedWeek, lock: currentlyUnlocked }),
+    })
+    setUnlocking(null)
+    router.refresh()
+  }
 
   const jobsByTech = new Map<string, Job[]>()
   for (const job of jobs) {
@@ -72,7 +85,8 @@ export default function AdminSummaryClient({
 
   function techStatus(techId: string) {
     const sub = submissionMap.get(techId)
-    if (sub) return { label: 'Submitted', color: 'text-green-700 bg-green-50' }
+    if (sub?.submitted_at) return { label: 'Submitted', color: 'text-green-700 bg-green-50' }
+    if (sub?.admin_unlocked) return { label: 'Unlocked for editing', color: 'text-blue-700 bg-blue-50' }
     if (deadlinePassed) return { label: 'Late / Not submitted', color: 'text-red-600 bg-red-50' }
     return { label: 'Not submitted', color: 'text-yellow-700 bg-yellow-50' }
   }
@@ -120,6 +134,7 @@ export default function AdminSummaryClient({
                 <th className="text-left px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">Submitted</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-600">Jobs</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-600">Total Pay</th>
+                <th className="text-center px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">Unlock</th>
                 <th className="w-8 px-2"></th>
               </tr>
             </thead>
@@ -128,6 +143,7 @@ export default function AdminSummaryClient({
                 const techJobs = jobsByTech.get(tech.id) ?? []
                 const techTotal = techJobs.reduce((s, j) => s + j.total_pay, 0)
                 const sub = submissionMap.get(tech.id)
+                const isUnlocked = sub?.admin_unlocked === true && !sub?.submitted_at
                 const status = techStatus(tech.id)
                 const isExpanded = expandedTech === tech.id
 
@@ -148,8 +164,8 @@ export default function AdminSummaryClient({
                         </span>
                       </td>
                       <td className="px-4 py-3 text-gray-500 hidden sm:table-cell">
-                        {sub
-                          ? new Date(sub).toLocaleString('en-US', {
+                        {sub?.submitted_at
+                          ? new Date(sub.submitted_at).toLocaleString('en-US', {
                               timeZone: 'America/Los_Angeles',
                               month: 'short', day: 'numeric',
                               hour: 'numeric', minute: '2-digit',
@@ -160,6 +176,21 @@ export default function AdminSummaryClient({
                       <td className="px-4 py-3 text-right font-semibold text-gray-900">
                         {formatMoney(techTotal)}
                       </td>
+                      <td className="px-4 py-3 text-center hidden sm:table-cell" onClick={e => e.stopPropagation()}>
+                        {deadlinePassed && (
+                          <button
+                            onClick={() => handleToggleUnlock(tech.id, isUnlocked)}
+                            disabled={unlocking === tech.id}
+                            className={`text-xs px-2 py-0.5 rounded font-medium disabled:opacity-50 ${
+                              isUnlocked
+                                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                          >
+                            {unlocking === tech.id ? '…' : isUnlocked ? 'Unlocked' : 'Unlock'}
+                          </button>
+                        )}
+                      </td>
                       <td className="px-2 py-3 text-gray-400 text-xs">
                         {techJobs.length > 0 ? (isExpanded ? '▲' : '▼') : ''}
                       </td>
@@ -167,7 +198,7 @@ export default function AdminSummaryClient({
 
                     {isExpanded && techJobs.length > 0 && (
                       <tr key={`${tech.id}-detail`}>
-                        <td colSpan={6} className="bg-gray-50 px-4 py-3">
+                        <td colSpan={7} className="bg-gray-50 px-4 py-3">
                           <div className="space-y-4 ml-2">
                             {techJobs.map(job => (
                               <div key={job.id} className="border-l-2 border-red-200 pl-3">
@@ -208,6 +239,7 @@ export default function AdminSummaryClient({
               <tr className="bg-gray-50 border-t-2 border-gray-200">
                 <td colSpan={4} className="px-4 py-3 font-bold text-gray-900">Grand Total</td>
                 <td className="px-4 py-3 text-right font-bold text-gray-900 text-base">{formatMoney(grandTotal)}</td>
+                <td></td>
                 <td></td>
               </tr>
             </tfoot>

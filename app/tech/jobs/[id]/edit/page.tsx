@@ -25,15 +25,14 @@ export default async function EditJobPage({
 
   if (!job) redirect('/tech')
 
-  // Check submission status
   const { data: submission } = await supabase
     .from('week_submissions')
-    .select('id')
+    .select('id, admin_unlocked')
     .eq('tech_id', user.id)
     .eq('week_start_date', job.week_start_date)
     .maybeSingle()
 
-  if (isDeadlinePassed(job.week_start_date)) {
+  if (isDeadlinePassed(job.week_start_date) && !submission?.admin_unlocked) {
     redirect(`/tech?week=${job.week_start_date}`)
   }
 

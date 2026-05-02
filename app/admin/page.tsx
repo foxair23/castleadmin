@@ -40,7 +40,7 @@ export default async function AdminPage({
   // Load all submissions for this week
   const { data: submissions } = await supabase
     .from('week_submissions')
-    .select('tech_id, submitted_at')
+    .select('tech_id, submitted_at, admin_unlocked')
     .eq('week_start_date', selectedWeek)
 
   return (

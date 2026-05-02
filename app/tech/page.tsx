@@ -32,7 +32,7 @@ export default async function TechPage({
 
   const { data: submission } = await supabase
     .from('week_submissions')
-    .select('submitted_at')
+    .select('submitted_at, admin_unlocked')
     .eq('tech_id', user.id)
     .eq('week_start_date', selectedWeek)
     .maybeSingle()
@@ -45,6 +45,7 @@ export default async function TechPage({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       jobs={(jobs ?? []) as any[]}
       submittedAt={submission?.submitted_at ?? null}
+      adminUnlocked={submission?.admin_unlocked ?? false}
     />
   )
 
