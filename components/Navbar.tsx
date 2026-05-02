@@ -75,10 +75,10 @@ function NavLink({ href, current, children }: { href: string; current: boolean; 
   return (
     <Link
       href={href}
-      className={`text-sm font-medium whitespace-nowrap pb-1 border-b-2 transition-colors ${
+      className={`text-sm font-medium whitespace-nowrap transition-colors ${
         current
-          ? 'text-white border-red-500'
-          : 'text-gray-400 hover:text-white border-transparent'
+          ? 'text-white [box-shadow:0_2px_0_0_#ef4444]'
+          : 'text-gray-400 hover:text-white'
       }`}
     >
       {children}
