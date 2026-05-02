@@ -41,12 +41,14 @@ interface Props {
 export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks, jobs, submittedAt }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
+  const [unsubmitting, setUnsubmitting] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [showUnsubmitConfirm, setShowUnsubmitConfirm] = useState(false)
 
   const isSubmitted = !!submittedAt
   const deadlinePassed = isDeadlinePassed(selectedWeek)
-  const isLocked = isSubmitted || deadlinePassed
+  const isLocked = isSubmitted && deadlinePassed
   const weekEnd = getWeekEnd(selectedWeek)
   const deadline = getDeadlineForWeek(selectedWeek)
 
@@ -68,6 +70,23 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
     await supabase.from('jobs').delete().eq('id', jobId)
     router.refresh()
     setDeleting(null)
+  }
+
+  async function handleUnsubmitWeek() {
+    setUnsubmitting(true)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('week_submissions')
+      .delete()
+      .eq('tech_id', userId)
+      .eq('week_start_date', selectedWeek)
+    if (error) {
+      alert('Failed to reopen week: ' + error.message)
+      setUnsubmitting(false)
+    } else {
+      setShowUnsubmitConfirm(false)
+      router.refresh()
+    }
   }
 
   async function handleSubmitWeek() {
@@ -115,9 +134,20 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
       </div>
 
       {/* Status banner */}
-      {isSubmitted && (
+      {isSubmitted && !deadlinePassed && (
+        <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 flex items-center justify-between gap-3">
+          <span>Submitted on {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}.</span>
+          <button
+            onClick={() => setShowUnsubmitConfirm(true)}
+            className="shrink-0 text-xs font-medium text-green-700 underline hover:text-green-900"
+          >
+            Edit Submission
+          </button>
+        </div>
+      )}
+      {isSubmitted && deadlinePassed && (
         <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
-          Week submitted on {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}. This week is locked.
+          Week submitted on {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}. Deadline has passed — this week is locked.
         </div>
       )}
       {!isSubmitted && deadlinePassed && (
@@ -125,7 +155,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
           Submission deadline passed ({deadline.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} 11:59 PM). This week is locked.
         </div>
       )}
-      {!isLocked && (
+      {!isSubmitted && !deadlinePassed && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
           Deadline: {deadline.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} at 11:59 PM PT
         </div>
@@ -200,7 +230,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
           <span className="text-lg font-bold text-gray-900">{formatMoney(totalPay)}</span>
         </div>
 
-        {!isLocked && (
+        {!isLocked && !isSubmitted && (
           <div className="flex gap-3">
             <Link
               href={`/tech/jobs/new?week=${selectedWeek}`}
@@ -217,7 +247,51 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
             </button>
           </div>
         )}
+        {isSubmitted && !deadlinePassed && (
+          <div className="flex gap-3">
+            <Link
+              href={`/tech/jobs/new?week=${selectedWeek}`}
+              className="flex-1 text-center bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-md text-sm transition-colors"
+            >
+              + Add Job
+            </Link>
+            <button
+              onClick={() => setShowConfirm(true)}
+              disabled={jobs.length === 0}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
+            >
+              Re-submit Week
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Unsubmit confirmation modal */}
+      {showUnsubmitConfirm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Edit your submission?</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              This will reopen your week so you can make changes. You&apos;ll need to re-submit before the deadline.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowUnsubmitConfirm(false)}
+                className="flex-1 border border-gray-300 text-gray-700 rounded-md py-2 text-sm hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUnsubmitWeek}
+                disabled={unsubmitting}
+                className="flex-1 bg-yellow-500 text-white rounded-md py-2 text-sm hover:bg-yellow-600 disabled:opacity-60"
+              >
+                {unsubmitting ? 'Reopening…' : 'Yes, Edit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Submit confirmation modal */}
       {showConfirm && (
