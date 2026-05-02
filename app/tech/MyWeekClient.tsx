@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { weekLabel, getWeekEnd, getDeadlineForWeek, isDeadlinePassed, formatMoney, parseDate, formatDate } from '@/lib/week'
+import { weekLabel, getWeekEnd, getDeadlineForWeek, isDeadlinePassed, formatMoney, parseDate } from '@/lib/week'
 
 interface WorkItem {
   id: string
@@ -34,12 +34,11 @@ interface Props {
   userId: string
   selectedWeek: string
   currentWeek: string
-  weeks: string[]
   jobs: Job[]
   submittedAt: string | null
 }
 
-export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks, jobs, submittedAt }: Props) {
+export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [unsubmitting, setUnsubmitting] = useState(false)
@@ -121,27 +120,21 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
     return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
   }
 
+  const isPastWeek = selectedWeek < currentWeek
+
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">My Week</h1>
-          <p className="text-sm text-gray-500">{weekLabel(selectedWeek)}</p>
-        </div>
-
-        {/* Week selector */}
-        <select
-          value={selectedWeek}
-          onChange={e => router.push(`/tech?week=${e.target.value}`)}
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
-        >
-          {weeks.map(w => (
-            <option key={w} value={w}>
-              {w === currentWeek ? `This week (${w})` : w}
-            </option>
-          ))}
-        </select>
+      <div>
+        {isPastWeek && (
+          <Link href="/tech/history" className="text-sm text-red-600 hover:underline">
+            ← Back to History
+          </Link>
+        )}
+        <h1 className="text-xl font-bold text-gray-900 mt-1">
+          {isPastWeek ? weekLabel(selectedWeek) : 'My Week'}
+        </h1>
+        {!isPastWeek && <p className="text-sm text-gray-500">{weekLabel(selectedWeek)}</p>}
       </div>
 
       {/* Status banner */}

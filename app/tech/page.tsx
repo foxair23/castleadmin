@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { getWeekStart, recentWeeks } from '@/lib/week'
+import { getWeekStart } from '@/lib/week'
 import MyWeekClient from './MyWeekClient'
 
 export default async function TechPage({
@@ -14,9 +14,9 @@ export default async function TechPage({
   if (!user) redirect('/login')
 
   const currentWeek = getWeekStart()
+  // Allow ?week= param for when arriving from History, otherwise always current week
   const selectedWeek = params.week ?? currentWeek
 
-  // Load jobs for selected week
   const { data: jobs } = await supabase
     .from('jobs')
     .select(`
@@ -30,7 +30,6 @@ export default async function TechPage({
     .eq('week_start_date', selectedWeek)
     .order('work_date', { ascending: true })
 
-  // Check submission status
   const { data: submission } = await supabase
     .from('week_submissions')
     .select('submitted_at')
@@ -38,17 +37,15 @@ export default async function TechPage({
     .eq('week_start_date', selectedWeek)
     .maybeSingle()
 
-  const weeks = recentWeeks(10)
-
   return (
     <MyWeekClient
       userId={user.id}
       selectedWeek={selectedWeek}
       currentWeek={currentWeek}
-      weeks={weeks}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       jobs={(jobs ?? []) as any[]}
       submittedAt={submission?.submitted_at ?? null}
     />
   )
+
 }
