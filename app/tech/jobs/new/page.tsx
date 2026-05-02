@@ -23,7 +23,7 @@ export default async function NewJobPage({
     .eq('week_start_date', weekStart)
     .maybeSingle()
 
-  if (submission || isDeadlinePassed(weekStart)) {
+  if (isDeadlinePassed(weekStart)) {
     redirect(`/tech?week=${weekStart}`)
   }
 

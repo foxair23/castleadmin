@@ -33,7 +33,7 @@ export default async function EditJobPage({
     .eq('week_start_date', job.week_start_date)
     .maybeSingle()
 
-  if (submission || isDeadlinePassed(job.week_start_date)) {
+  if (isDeadlinePassed(job.week_start_date)) {
     redirect(`/tech?week=${job.week_start_date}`)
   }
 
