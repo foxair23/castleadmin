@@ -45,6 +45,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
   const [deleting, setDeleting] = useState<string | null>(null)
   const [showConfirm, setShowConfirm] = useState(false)
   const [showUnsubmitConfirm, setShowUnsubmitConfirm] = useState(false)
+  const [unsubmitRedirect, setUnsubmitRedirect] = useState<string | null>(null)
 
   const isSubmitted = !!submittedAt
   const deadlinePassed = isDeadlinePassed(selectedWeek)
@@ -72,6 +73,11 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
     setDeleting(null)
   }
 
+  function openUnsubmitConfirm(redirectTo?: string) {
+    setUnsubmitRedirect(redirectTo ?? null)
+    setShowUnsubmitConfirm(true)
+  }
+
   async function handleUnsubmitWeek() {
     setUnsubmitting(true)
     const supabase = createClient()
@@ -85,7 +91,11 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
       setUnsubmitting(false)
     } else {
       setShowUnsubmitConfirm(false)
-      router.refresh()
+      if (unsubmitRedirect) {
+        router.push(unsubmitRedirect)
+      } else {
+        router.refresh()
+      }
     }
   }
 
@@ -138,7 +148,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
         <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 flex items-center justify-between gap-3">
           <span>Submitted on {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}.</span>
           <button
-            onClick={() => setShowUnsubmitConfirm(true)}
+            onClick={() => openUnsubmitConfirm()}
             className="shrink-0 text-xs font-medium text-green-700 underline hover:text-green-900"
           >
             Edit Submission
@@ -196,21 +206,40 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-bold text-gray-900 text-sm">{formatMoney(job.total_pay)}</p>
-                        {!isLocked && (
+                        {(!isLocked || (isSubmitted && !deadlinePassed)) && (
                           <div className="flex gap-2 mt-1 justify-end">
-                            <Link
-                              href={`/tech/jobs/${job.id}/edit`}
-                              className="text-xs text-blue-600 hover:underline"
-                            >
-                              Edit
-                            </Link>
-                            <button
-                              onClick={() => handleDelete(job.id)}
-                              disabled={deleting === job.id}
-                              className="text-xs text-red-500 hover:underline disabled:opacity-50"
-                            >
-                              {deleting === job.id ? 'Deleting…' : 'Delete'}
-                            </button>
+                            {isSubmitted && !deadlinePassed ? (
+                              <>
+                                <button
+                                  onClick={() => openUnsubmitConfirm(`/tech/jobs/${job.id}/edit`)}
+                                  className="text-xs text-blue-600 hover:underline"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => openUnsubmitConfirm()}
+                                  className="text-xs text-red-500 hover:underline"
+                                >
+                                  Delete
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <Link
+                                  href={`/tech/jobs/${job.id}/edit`}
+                                  className="text-xs text-blue-600 hover:underline"
+                                >
+                                  Edit
+                                </Link>
+                                <button
+                                  onClick={() => handleDelete(job.id)}
+                                  disabled={deleting === job.id}
+                                  className="text-xs text-red-500 hover:underline disabled:opacity-50"
+                                >
+                                  {deleting === job.id ? 'Deleting…' : 'Delete'}
+                                </button>
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
@@ -249,12 +278,12 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, weeks,
         )}
         {isSubmitted && !deadlinePassed && (
           <div className="flex gap-3">
-            <Link
-              href={`/tech/jobs/new?week=${selectedWeek}`}
+            <button
+              onClick={() => openUnsubmitConfirm(`/tech/jobs/new?week=${selectedWeek}`)}
               className="flex-1 text-center bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-md text-sm transition-colors"
             >
               + Add Job
-            </Link>
+            </button>
             <button
               onClick={() => setShowConfirm(true)}
               disabled={jobs.length === 0}
