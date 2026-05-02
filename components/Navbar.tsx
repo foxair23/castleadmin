@@ -23,7 +23,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
   const isAdmin = role === 'admin'
 
   return (
-    <nav className="bg-blue-700 text-white">
+    <nav className="bg-red-800 text-white">
       <div className="max-w-5xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
           <span className="font-bold text-sm tracking-wide">Castle Payroll</span>
@@ -38,10 +38,10 @@ export default function Navbar({ role, fullName }: NavbarProps) {
           )}
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span className="text-blue-200 hidden sm:inline">{fullName}</span>
+          <span className="text-red-200 hidden sm:inline">{fullName}</span>
           <button
             onClick={handleSignOut}
-            className="text-blue-200 hover:text-white transition-colors"
+            className="text-red-200 hover:text-white transition-colors"
           >
             Sign out
           </button>
@@ -56,7 +56,7 @@ function NavLink({ href, current, children }: { href: string; current: boolean; 
     <Link
       href={href}
       className={`text-sm font-medium transition-colors ${
-        current ? 'text-white underline underline-offset-4' : 'text-blue-200 hover:text-white'
+        current ? 'text-white underline underline-offset-4' : 'text-red-200 hover:text-white'
       }`}
     >
       {children}

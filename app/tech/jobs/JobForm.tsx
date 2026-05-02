@@ -250,7 +250,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
       <div className="flex items-center gap-3">
         <button
           onClick={() => router.push(`/tech?week=${weekStart}`)}
-          className="text-sm text-blue-600 hover:underline"
+          className="text-sm text-red-700 hover:underline"
         >
           ← Back
         </button>
@@ -270,7 +270,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             max={weekEnd}
             value={workDate}
             onChange={e => setWorkDate(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
           />
           <p className="text-xs text-gray-400 mt-1">Must be within {weekStart} – {weekEnd}</p>
         </div>
@@ -284,7 +284,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             placeholder="e.g. Smith — 1234 Main St or PO 56789"
             value={jobName}
             onChange={e => setJobName(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
           />
         </div>
 
@@ -301,7 +301,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                     <select
                       value={item.job_type_id}
                       onChange={e => updateItemType(item.tempId, e.target.value)}
-                      className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
                     >
                       {sortedJobTypes.map(jt => (
                         <option key={jt.id} value={jt.id}>{jt.name}</option>
@@ -315,7 +315,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                           placeholder="Description of work"
                           value={item.custom_description}
                           onChange={e => updateCustomDescription(item.tempId, e.target.value)}
-                          className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
                         />
                         <div className="flex items-center gap-2">
                           <span className="text-sm text-gray-500">$</span>
@@ -326,7 +326,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                             placeholder="0.00"
                             value={item.custom_amount}
                             onChange={e => updateCustomAmount(item.tempId, e.target.value)}
-                            className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 w-32 focus:outline-none focus:ring-2 focus:ring-red-500"
                           />
                         </div>
                       </div>
@@ -340,7 +340,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                           min={1}
                           value={item.quantity}
                           onChange={e => updateItemQty(item.tempId, Math.max(1, parseInt(e.target.value) || 1))}
-                          className="border border-gray-300 rounded-md px-2 py-1 text-sm text-gray-900 w-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="border border-gray-300 rounded-md px-2 py-1 text-sm text-gray-900 w-20 focus:outline-none focus:ring-2 focus:ring-red-500"
                         />
                       </div>
                     )}
@@ -370,7 +370,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
           <button
             type="button"
             onClick={addItem}
-            className="mt-3 text-sm text-blue-600 hover:underline"
+            className="mt-3 text-sm text-red-700 hover:underline"
           >
             + Add another work item
           </button>
@@ -384,7 +384,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             value={notes}
             onChange={e => setNotes(e.target.value)}
             placeholder="Any additional notes…"
-            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
           />
         </div>
 
@@ -411,7 +411,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
           <button
             type="submit"
             disabled={saving}
-            className="flex-1 bg-blue-600 text-white rounded-md py-2 text-sm hover:bg-blue-700 disabled:opacity-60"
+            className="flex-1 bg-red-700 text-white rounded-md py-2 text-sm hover:bg-red-800 disabled:opacity-60"
           >
             {saving ? 'Saving…' : 'Save Job'}
           </button>

@@ -115,6 +115,16 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
     }
   }
 
+  async function handleDelete(jt: JobType) {
+    if (!confirm(`Delete "${jt.name}"? This cannot be undone.`)) return
+    const supabase = createClient()
+    const { error: err } = await supabase.from('job_types').delete().eq('id', jt.id)
+    if (!err) {
+      setJobTypes(jts => jts.filter(j => j.id !== jt.id))
+      if (editingId === jt.id) setEditingId(null)
+    }
+  }
+
   async function handleToggleActive(jt: JobType) {
     const supabase = createClient()
     const { data, error: err } = await supabase
@@ -134,7 +144,7 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
         <h1 className="text-xl font-bold text-gray-900">Pay Rates</h1>
         <button
           onClick={startNew}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
+          className="bg-red-700 hover:bg-red-800 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
         >
           + Add Job Type
         </button>
@@ -142,7 +152,7 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
 
       {/* New job type form */}
       {showNewForm && (
-        <div className="bg-white border border-blue-200 rounded-lg p-4">
+        <div className="bg-white border border-red-200 rounded-lg p-4">
           <h2 className="text-sm font-semibold text-gray-800 mb-3">New Job Type</h2>
           <RateForm form={form} setForm={setForm} error={error} saving={saving} onSave={handleSave} onCancel={cancelEdit} />
         </div>
@@ -187,17 +197,25 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
                       </button>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => startEdit(jt)}
-                        className="text-blue-600 hover:underline text-xs"
-                      >
-                        Edit
-                      </button>
+                      <div className="flex justify-end gap-3">
+                        <button
+                          onClick={() => startEdit(jt)}
+                          className="text-red-700 hover:underline text-xs"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(jt)}
+                          className="text-red-500 hover:underline text-xs"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {editingId === jt.id && (
                     <tr key={`${jt.id}-edit`}>
-                      <td colSpan={6} className="bg-blue-50 px-4 py-4">
+                      <td colSpan={6} className="bg-red-50 px-4 py-4">
                         <RateForm form={form} setForm={setForm} error={error} saving={saving} onSave={handleSave} onCancel={cancelEdit} />
                       </td>
                     </tr>
@@ -236,7 +254,7 @@ function RateForm({
             type="text"
             value={form.name}
             onChange={e => setForm({ ...form, name: e.target.value })}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
           />
         </div>
         <div>
@@ -247,7 +265,7 @@ function RateForm({
             step={0.01}
             value={form.base_rate}
             onChange={e => setForm({ ...form, base_rate: e.target.value })}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
           />
         </div>
       </div>
@@ -272,7 +290,7 @@ function RateForm({
               step={0.01}
               value={form.additional_rate}
               onChange={e => setForm({ ...form, additional_rate: e.target.value })}
-              className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-24 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-24 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
         )}
@@ -304,7 +322,7 @@ function RateForm({
         <button
           onClick={onSave}
           disabled={saving}
-          className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-60"
+          className="bg-red-700 text-white rounded px-3 py-1.5 text-sm hover:bg-red-800 disabled:opacity-60"
         >
           {saving ? 'Saving…' : 'Save'}
         </button>

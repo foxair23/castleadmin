@@ -108,7 +108,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
         <h1 className="text-xl font-bold text-gray-900">Technicians</h1>
         <button
           onClick={() => { setShowNewForm(true); setError(''); setSuccess('') }}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
+          className="bg-red-700 hover:bg-red-800 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
         >
           + Add Technician
         </button>
@@ -129,7 +129,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
       {showNewForm && (
         <form
           onSubmit={handleCreateTech}
-          className="bg-white border border-blue-200 rounded-lg p-4 space-y-3"
+          className="bg-white border border-red-200 rounded-lg p-4 space-y-3"
         >
           <h2 className="text-sm font-semibold text-gray-800">New Technician</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -140,7 +140,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                 required
                 value={form.full_name}
                 onChange={e => setForm({ ...form, full_name: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
               />
             </div>
             <div>
@@ -150,7 +150,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                 required
                 value={form.email}
                 onChange={e => setForm({ ...form, email: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
               />
             </div>
             <div>
@@ -161,7 +161,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                 minLength={6}
                 value={form.password}
                 onChange={e => setForm({ ...form, password: e.target.value })}
-                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-500"
               />
             </div>
           </div>
@@ -176,7 +176,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
             <button
               type="submit"
               disabled={saving}
-              className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-60"
+              className="bg-red-700 text-white rounded px-3 py-1.5 text-sm hover:bg-red-800 disabled:opacity-60"
             >
               {saving ? 'Creating…' : 'Create Technician'}
             </button>
@@ -221,7 +221,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                             setResetingId(resetingId === tech.id ? null : tech.id)
                             setError('')
                           }}
-                          className="text-blue-600 hover:underline"
+                          className="text-red-700 hover:underline"
                         >
                           Reset Password
                         </button>
@@ -245,7 +245,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                             minLength={6}
                             value={resetForm[tech.id] ?? ''}
                             onChange={e => setResetForm(f => ({ ...f, [tech.id]: e.target.value }))}
-                            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-40 focus:outline-none focus:ring-2 focus:ring-red-500"
                           />
                           <button
                             onClick={() => handleResetPassword(tech.id)}

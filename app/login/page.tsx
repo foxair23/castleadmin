@@ -46,7 +46,7 @@ export default function LoginPage() {
               autoComplete="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
 
@@ -61,7 +61,7 @@ export default function LoginPage() {
               autoComplete="current-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
 
@@ -74,7 +74,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
+            className="w-full bg-red-700 hover:bg-red-800 disabled:opacity-60 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
           >
             {loading ? 'Signing in…' : 'Sign in'}
           </button>

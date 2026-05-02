@@ -93,7 +93,7 @@ export default function AdminSummaryClient({
         <select
           value={selectedWeek}
           onChange={e => router.push(`/admin?week=${e.target.value}`)}
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
         >
           {weeks.map(w => (
             <option key={w} value={w}>
@@ -170,7 +170,7 @@ export default function AdminSummaryClient({
                         <td colSpan={6} className="bg-gray-50 px-4 py-3">
                           <div className="space-y-4 ml-2">
                             {techJobs.map(job => (
-                              <div key={job.id} className="border-l-2 border-blue-200 pl-3">
+                              <div key={job.id} className="border-l-2 border-red-200 pl-3">
                                 <div className="flex justify-between items-start">
                                   <div>
                                     <p className="font-medium text-gray-800 text-sm">{job.job_name}</p>
