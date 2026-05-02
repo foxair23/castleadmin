@@ -40,7 +40,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
           </Link>
 
           {/* Nav links — inline after logo when there's room, wraps below when not */}
-          <div className="flex items-center gap-6 pb-2 pt-1 overflow-x-auto">
+          <div className="flex items-center gap-6 py-3 overflow-x-auto">
             {isAdmin ? (
               <>
                 <NavLink href="/admin" current={pathname === '/admin'}>Summary</NavLink>
