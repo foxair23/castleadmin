@@ -3,8 +3,8 @@ import type { CrmProvider, CrmTechnician, CrmJob } from './types'
 
 // NOTE: Verify these URLs against live SF docs at docs.servicefusion.com
 // once API credentials are available.
-const SF_TOKEN_URL = 'https://admin.servicefusion.com/oauth/token'
-const SF_BASE_URL = 'https://admin.servicefusion.com/api/v1'
+const SF_TOKEN_URL = 'https://api.servicefusion.com/oauth/access_token'
+const SF_BASE_URL = 'https://api.servicefusion.com/api/v1'
 
 // SF status category strings — verify by fetching a sample job and
 // inspecting response.status.category on first live connection.
@@ -46,12 +46,12 @@ async function fetchNewToken(): Promise<string> {
 
   const resp = await fetch(SF_TOKEN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       grant_type: 'client_credentials',
       client_id: clientId,
       client_secret: clientSecret,
-    }).toString(),
+    }),
   })
 
   if (!resp.ok) {
