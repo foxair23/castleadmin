@@ -4,7 +4,7 @@ import type { CrmProvider, CrmTechnician, CrmJob } from './types'
 // NOTE: Verify these URLs against live SF docs at docs.servicefusion.com
 // once API credentials are available.
 const SF_TOKEN_URL = 'https://api.servicefusion.com/oauth/access_token'
-const SF_BASE_URL = 'https://api.servicefusion.com/api/v1'
+const SF_BASE_URL = 'https://api.servicefusion.com'
 
 // SF status category strings — verify by fetching a sample job and
 // inspecting response.status.category on first live connection.
@@ -104,23 +104,18 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
 
 export class ServiceFusionProvider implements CrmProvider {
   async testConnection(): Promise<void> {
-    // NOTE: Verify /technicians path and per_page param against live SF docs
-    await sfGet('/technicians', { per_page: '1' })
+    await sfGet('/techs', { perPage: '1' })
   }
 
   async listTechnicians(): Promise<CrmTechnician[]> {
-    // NOTE: Verify response envelope shape against live SF API.
-    // SF may return { data: [...] } or a bare array. Add pagination if > 100 techs.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const json = (await sfGet('/technicians', { per_page: '100' })) as any
-    const items: unknown[] = Array.isArray(json) ? json : (json?.data ?? [])
+    const json = (await sfGet('/techs', { perPage: '100' })) as any
+    const items: unknown[] = json?.items ?? []
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return items.map((t: any) => ({
       id: String(t.id),
-      // NOTE: Adjust field name after inspecting live response —
-      // SF may use full_name, or first_name + last_name separately.
-      name: (t.full_name ?? `${t.first_name ?? ''} ${t.last_name ?? ''}`).trim(),
+      name: `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim(),
     }))
   }
 
