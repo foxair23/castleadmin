@@ -46,8 +46,12 @@ interface Props {
   userId: string
   jobTypes: JobType[]
   existingJob?: ExistingJob
-  source?: string  // 'service_fusion' locks job_name and work_date
+  source?: string      // 'service_fusion' locks job_name and work_date
+  sfJobId?: string     // SF internal ID, used to build the link
+  sfJobNumber?: string // SF display number e.g. "10042"
 }
+
+const SF_APP_BASE = 'https://app.servicefusion.com'
 
 let tempIdCounter = 0
 function newTempId() { return `tmp-${++tempIdCounter}` }
@@ -63,7 +67,7 @@ function makeWorkItemRow(jobType: JobType): WorkItemRow {
   }
 }
 
-export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob, source }: Props) {
+export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob, source, sfJobId, sfJobNumber }: Props) {
   const fromSF = source === 'service_fusion'
   const router = useRouter()
   const weekEnd = getWeekEnd(weekStart)
@@ -302,8 +306,26 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
               className="border border-gray-300 rounded-md px-3 py-2 text-base text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
             />
           )}
-          {fromSF && <p className="text-xs text-gray-400 mt-1">Pulled from Service Fusion — edit the job there to change this.</p>}
+          {fromSF && (
+            <p className="text-xs text-gray-400 mt-1">Pulled from Service Fusion — edit the job there to change this.</p>
+          )}
         </div>
+
+        {/* SF job link */}
+        {fromSF && sfJobId && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Service Fusion Job</label>
+            <a
+              href={`${SF_APP_BASE}/jobs/${sfJobId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-sm text-red-600 hover:underline"
+            >
+              #{sfJobNumber ?? sfJobId} ↗
+            </a>
+            <p className="text-xs text-gray-400 mt-0.5">Opens in Service Fusion</p>
+          </div>
+        )}
 
         {/* Work items */}
         <div>

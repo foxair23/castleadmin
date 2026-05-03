@@ -154,6 +154,7 @@ export class ServiceFusionProvider implements CrmProvider {
 
         results.push({
           id: String(job.id),
+          jobNumber: job.number ?? String(job.id),
           customerName: job.customer_name ?? `SF Job #${job.id}`,
           scheduledDate: (job.start_date ?? fmt(weekStart)).slice(0, 10),
           status,

@@ -70,10 +70,10 @@ export async function POST(req: NextRequest) {
         .maybeSingle()
 
       if (existing) {
-        // Update SF status only — never overwrite work items or notes the tech entered
+        // Update SF status + number only — never overwrite work items or notes the tech entered
         await service
           .from('jobs')
-          .update({ sf_status: sfJob.status, sf_last_synced_at: now })
+          .update({ sf_status: sfJob.status, sf_job_number: sfJob.jobNumber, sf_last_synced_at: now })
           .eq('id', existing.id)
         updated++
       } else {
@@ -86,6 +86,7 @@ export async function POST(req: NextRequest) {
           week_start_date: week_start,
           source: 'service_fusion',
           sf_job_id: sfJob.id,
+          sf_job_number: sfJob.jobNumber,
           sf_status: sfJob.status,
           sf_last_synced_at: now,
         })

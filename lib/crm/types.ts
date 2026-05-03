@@ -5,6 +5,7 @@ export interface CrmTechnician {
 
 export interface CrmJob {
   id: string
+  jobNumber: string      // human-readable job number e.g. "10042"
   customerName: string
   scheduledDate: string  // YYYY-MM-DD
   status: 'assigned' | 'completed'

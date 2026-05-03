@@ -17,6 +17,7 @@ export default async function EditJobPage({
     .from('jobs')
     .select(`
       id, work_date, job_name, notes, total_pay, week_start_date, source,
+      sf_job_id, sf_job_number,
       job_work_items ( id, job_type_id, quantity, calculated_pay, custom_description )
     `)
     .eq('id', id)
@@ -52,6 +53,8 @@ export default async function EditJobPage({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       existingJob={job as any}
       source={job.source}
+      sfJobId={job.sf_job_id ?? undefined}
+      sfJobNumber={job.sf_job_number ?? undefined}
     />
   )
 }
