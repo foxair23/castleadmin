@@ -253,6 +253,16 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
         </div>
       ) : (
         <div className="space-y-4">
+          {!isLocked && !isSubmitted && (
+            <div className="flex justify-end">
+              <Link
+                href={`/tech/bulk-update?week=${selectedWeek}`}
+                className="text-sm font-medium px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                ⚡ Bulk Update
+              </Link>
+            </div>
+          )}
           {sortedDates.map(date => (
             <div key={date}>
               <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
