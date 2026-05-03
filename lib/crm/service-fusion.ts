@@ -3,8 +3,8 @@ import type { CrmProvider, CrmTechnician, CrmJob } from './types'
 
 // NOTE: Verify these URLs against live SF docs at docs.servicefusion.com
 // once API credentials are available.
-const SF_TOKEN_URL = 'https://app.servicefusion.com/oauth/token'
-const SF_BASE_URL = 'https://app.servicefusion.com/api/v1'
+const SF_TOKEN_URL = 'https://admin.servicefusion.com/oauth/token'
+const SF_BASE_URL = 'https://admin.servicefusion.com/api/v1'
 
 // SF status category strings — verify by fetching a sample job and
 // inspecting response.status.category on first live connection.
