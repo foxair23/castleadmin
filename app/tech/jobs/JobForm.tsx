@@ -46,6 +46,7 @@ interface Props {
   userId: string
   jobTypes: JobType[]
   existingJob?: ExistingJob
+  source?: string  // 'service_fusion' locks job_name and work_date
 }
 
 let tempIdCounter = 0
@@ -62,7 +63,8 @@ function makeWorkItemRow(jobType: JobType): WorkItemRow {
   }
 }
 
-export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob }: Props) {
+export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob, source }: Props) {
+  const fromSF = source === 'service_fusion'
   const router = useRouter()
   const weekEnd = getWeekEnd(weekStart)
 
@@ -263,29 +265,44 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
         {/* Date */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-          <input
-            type="date"
-            required
-            min={weekStart}
-            max={weekEnd}
-            value={workDate}
-            onChange={e => setWorkDate(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 text-base text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
-          />
-          <p className="text-xs text-gray-400 mt-1">Must be within {weekStart} – {weekEnd}</p>
+          {fromSF ? (
+            <p className="border border-gray-200 rounded-md px-3 py-2 text-base text-gray-500 bg-gray-50">
+              {workDate}
+            </p>
+          ) : (
+            <input
+              type="date"
+              required
+              min={weekStart}
+              max={weekEnd}
+              value={workDate}
+              onChange={e => setWorkDate(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-2 text-base text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+          )}
+          {!fromSF && <p className="text-xs text-gray-400 mt-1">Must be within {weekStart} – {weekEnd}</p>}
         </div>
 
-        {/* Job name / PO */}
+        {/* Job name / Customer */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Job Name / PO</label>
-          <input
-            type="text"
-            required
-            placeholder="e.g. Smith — 1234 Main St or PO 56789"
-            value={jobName}
-            onChange={e => setJobName(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 text-base text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
-          />
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {fromSF ? 'Customer (from Service Fusion)' : 'Job Name / PO'}
+          </label>
+          {fromSF ? (
+            <p className="border border-gray-200 rounded-md px-3 py-2 text-base text-gray-500 bg-gray-50">
+              {jobName}
+            </p>
+          ) : (
+            <input
+              type="text"
+              required
+              placeholder="e.g. Smith — 1234 Main St or PO 56789"
+              value={jobName}
+              onChange={e => setJobName(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-2 text-base text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+          )}
+          {fromSF && <p className="text-xs text-gray-400 mt-1">Pulled from Service Fusion — edit the job there to change this.</p>}
         </div>
 
         {/* Work items */}

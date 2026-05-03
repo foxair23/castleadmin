@@ -27,6 +27,8 @@ interface Job {
   notes: string | null
   total_pay: number
   week_start_date: string
+  source: string
+  sf_status: string | null
   job_work_items: WorkItem[]
 }
 
@@ -37,12 +39,16 @@ interface Props {
   jobs: Job[]
   submittedAt: string | null
   adminUnlocked: boolean
+  sfMapped: boolean
 }
 
-export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked }: Props) {
+export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked, sfMapped }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [unsubmitting, setUnsubmitting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ added: number; updated: number } | null>(null)
+  const [syncError, setSyncError] = useState('')
   const [deleting, setDeleting] = useState<string | null>(null)
   const [showConfirm, setShowConfirm] = useState(false)
   const [showUnsubmitConfirm, setShowUnsubmitConfirm] = useState(false)
@@ -99,6 +105,26 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
         router.refresh()
       }
     }
+  }
+
+  async function handleSyncFromSF() {
+    setSyncing(true)
+    setSyncResult(null)
+    setSyncError('')
+    try {
+      const res = await fetch('/api/tech/sf-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ week_start: selectedWeek }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Sync failed')
+      setSyncResult({ added: data.added, updated: data.updated })
+      router.refresh()
+    } catch (err: unknown) {
+      setSyncError(err instanceof Error ? err.message : 'Sync failed')
+    }
+    setSyncing(false)
   }
 
   async function handleSubmitWeek() {
@@ -173,6 +199,33 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
         </div>
       )}
 
+      {/* Service Fusion sync */}
+      <div className="flex flex-wrap items-center gap-3">
+        {sfMapped ? (
+          <button
+            onClick={handleSyncFromSF}
+            disabled={syncing || !!submittedAt}
+            className="text-sm font-medium px-4 py-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            {syncing ? 'Syncing…' : '↓ Sync from Service Fusion'}
+          </button>
+        ) : (
+          <p className="text-xs text-gray-500">
+            Service Fusion sync isn&apos;t set up for your account yet — please ask the admin.
+          </p>
+        )}
+        {syncResult && (
+          <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
+            Synced: {syncResult.added} new, {syncResult.updated} updated
+          </span>
+        )}
+        {syncError && (
+          <span className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+            {syncError}
+          </span>
+        )}
+      </div>
+
       {/* Jobs list */}
       {jobs.length === 0 ? (
         <div className="text-center py-12 text-gray-400 text-sm">
@@ -190,7 +243,10 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
                   <div key={job.id} className="bg-white border border-gray-200 rounded-lg p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-gray-900 text-sm truncate">{job.job_name}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium text-gray-900 text-sm truncate">{job.job_name}</p>
+                          <SFBadge source={job.source} sfStatus={job.sf_status} />
+                        </div>
                         {job.notes && (
                           <p className="text-xs text-gray-500 mt-0.5">{job.notes}</p>
                         )}
@@ -357,5 +413,27 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
         </div>
       )}
     </div>
+  )
+}
+
+function SFBadge({ source, sfStatus }: { source: string; sfStatus: string | null }) {
+  if (source !== 'service_fusion') {
+    return (
+      <span className="inline-block text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium shrink-0">
+        Manual
+      </span>
+    )
+  }
+  if (sfStatus === 'completed') {
+    return (
+      <span className="inline-block text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium shrink-0">
+        SF: Completed
+      </span>
+    )
+  }
+  return (
+    <span className="inline-block text-xs px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-medium shrink-0">
+      SF: Assigned
+    </span>
   )
 }

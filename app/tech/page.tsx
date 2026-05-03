@@ -14,28 +14,34 @@ export default async function TechPage({
   if (!user) redirect('/login')
 
   const currentWeek = getWeekStart()
-  // Allow ?week= param for when arriving from History, otherwise always current week
   const selectedWeek = params.week ?? currentWeek
 
-  const { data: jobs } = await supabase
-    .from('jobs')
-    .select(`
-      id, work_date, job_name, notes, total_pay, week_start_date,
-      job_work_items (
-        id, quantity, calculated_pay, custom_description,
-        job_types ( id, name, base_rate, additional_rate, requires_quantity )
-      )
-    `)
-    .eq('tech_id', user.id)
-    .eq('week_start_date', selectedWeek)
-    .order('work_date', { ascending: true })
-
-  const { data: submission } = await supabase
-    .from('week_submissions')
-    .select('submitted_at, admin_unlocked')
-    .eq('tech_id', user.id)
-    .eq('week_start_date', selectedWeek)
-    .maybeSingle()
+  const [{ data: profile }, { data: jobs }, { data: submission }] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('sf_technician_id')
+      .eq('id', user.id)
+      .single(),
+    supabase
+      .from('jobs')
+      .select(`
+        id, work_date, job_name, notes, total_pay, week_start_date,
+        source, sf_status,
+        job_work_items (
+          id, quantity, calculated_pay, custom_description,
+          job_types ( id, name, base_rate, additional_rate, requires_quantity )
+        )
+      `)
+      .eq('tech_id', user.id)
+      .eq('week_start_date', selectedWeek)
+      .order('work_date', { ascending: true }),
+    supabase
+      .from('week_submissions')
+      .select('submitted_at, admin_unlocked')
+      .eq('tech_id', user.id)
+      .eq('week_start_date', selectedWeek)
+      .maybeSingle(),
+  ])
 
   return (
     <MyWeekClient
@@ -46,6 +52,7 @@ export default async function TechPage({
       jobs={(jobs ?? []) as any[]}
       submittedAt={submission?.submitted_at ?? null}
       adminUnlocked={submission?.admin_unlocked ?? false}
+      sfMapped={!!profile?.sf_technician_id}
     />
   )
 
