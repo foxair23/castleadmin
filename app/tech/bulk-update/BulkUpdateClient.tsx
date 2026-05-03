@@ -34,9 +34,6 @@ interface Job {
 
 interface RowDraft {
   jobTypeId: string
-  quantity: number
-  customDescription: string
-  customAmount: string
   isDirty: boolean
 }
 
@@ -45,30 +42,6 @@ interface Props {
   jobs: Job[]
   jobTypes: JobType[]
   isLocked: boolean
-}
-
-function initDraft(job: Job, jobTypes: JobType[], otherTypeId: string): RowDraft {
-  const items = job.job_work_items
-  if (items.length === 1) {
-    const item = items[0]
-    const isOther = item.job_type_id === otherTypeId
-    return {
-      jobTypeId: item.job_type_id,
-      quantity: item.quantity,
-      customDescription: item.custom_description ?? '',
-      customAmount: isOther ? String(item.calculated_pay) : '',
-      isDirty: false,
-    }
-  }
-  // No items or multiple items: default to first job type
-  const first = jobTypes[0]
-  return {
-    jobTypeId: first?.id ?? '',
-    quantity: 1,
-    customDescription: '',
-    customAmount: '',
-    isDirty: false,
-  }
 }
 
 function formatWorkDate(dateStr: string) {
@@ -81,50 +54,43 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
   const [saveError, setSaveError] = useState('')
   const [savedCount, setSavedCount] = useState<number | null>(null)
 
-  const sortedJobTypes = useMemo(() => [...jobTypes].sort((a, b) => {
-    if (a.name === 'Other') return 1
-    if (b.name === 'Other') return -1
-    return a.name.localeCompare(b.name)
-  }), [jobTypes])
-
   const otherTypeId = useMemo(() => jobTypes.find(jt => jt.name === 'Other')?.id ?? '', [jobTypes])
 
-  // Only single-item (or empty) jobs are editable inline; multi-item jobs show a link
-  const editableJobs = jobs.filter(j => j.job_work_items.length <= 1)
-  const complexJobs = jobs.filter(j => j.job_work_items.length > 1)
+  const inlineJobTypes = useMemo(() =>
+    [...jobTypes]
+      .filter(jt => jt.name !== 'Other')
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [jobTypes]
+  )
+
+  // Jobs with 0 or 1 non-Other work item are editable inline
+  // Jobs with Other, or 2+ items, go to the "edit individually" section
+  const editableJobs = jobs.filter(j => {
+    if (j.job_work_items.length > 1) return false
+    if (j.job_work_items.length === 1 && j.job_work_items[0].job_type_id === otherTypeId) return false
+    return true
+  })
+  const manualJobs = jobs.filter(j =>
+    j.job_work_items.length > 1 ||
+    (j.job_work_items.length === 1 && j.job_work_items[0].job_type_id === otherTypeId)
+  )
 
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>(() =>
-    Object.fromEntries(editableJobs.map(j => [j.id, initDraft(j, sortedJobTypes, otherTypeId)]))
+    Object.fromEntries(editableJobs.map(j => {
+      const existing = j.job_work_items[0]
+      return [j.id, {
+        jobTypeId: existing?.job_type_id ?? inlineJobTypes[0]?.id ?? '',
+        isDirty: false,
+      }]
+    }))
   )
 
   function getJobType(id: string) { return jobTypes.find(jt => jt.id === id) }
 
-  function updateDraft(jobId: string, patch: Partial<RowDraft>) {
-    setDrafts(prev => ({ ...prev, [jobId]: { ...prev[jobId], ...patch, isDirty: true } }))
-  }
-
-  function handleTypeChange(jobId: string, jobTypeId: string) {
-    if (jobTypeId === otherTypeId) {
-      updateDraft(jobId, { jobTypeId, customDescription: '', customAmount: '' })
-    } else {
-      const jt = getJobType(jobTypeId)!
-      const calculated_pay = calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, 1)
-      updateDraft(jobId, { jobTypeId, quantity: 1, customDescription: '', customAmount: '', isDirty: true })
-      // recalculate quietly
-      setDrafts(prev => ({ ...prev, [jobId]: { ...prev[jobId], jobTypeId, quantity: 1, customDescription: '', customAmount: '', isDirty: true } }))
-      void calculated_pay // suppress unused warning
-    }
-  }
-
-  function handleQtyChange(jobId: string, quantity: number) {
-    updateDraft(jobId, { quantity })
-  }
-
-  function calcPay(draft: RowDraft): number {
-    if (draft.jobTypeId === otherTypeId) return parseFloat(draft.customAmount) || 0
-    const jt = getJobType(draft.jobTypeId)
+  function calcPay(jobTypeId: string): number {
+    const jt = getJobType(jobTypeId)
     if (!jt) return 0
-    return calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, draft.quantity)
+    return calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, 1)
   }
 
   const dirtyCount = Object.values(drafts).filter(d => d.isDirty).length
@@ -140,27 +106,20 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
 
     try {
       for (const job of dirtyJobs) {
-        const draft = drafts[job.id]
-        const isOther = draft.jobTypeId === otherTypeId
+        const { jobTypeId } = drafts[job.id]
+        const jt = getJobType(jobTypeId)
+        if (!jt) continue
 
-        if (isOther) {
-          if (!draft.customDescription.trim() || !draft.customAmount || parseFloat(draft.customAmount) <= 0) continue
-        }
+        const calculated_pay = calcPay(jobTypeId)
 
-        const jt = getJobType(draft.jobTypeId)
-        if (!jt && !isOther) continue
-
-        const calculated_pay = calcPay(draft)
-
-        // Delete existing work items then insert new one
         await supabase.from('job_work_items').delete().eq('job_id', job.id)
 
         const { error: itemErr } = await supabase.from('job_work_items').insert({
           job_id: job.id,
-          job_type_id: draft.jobTypeId,
-          quantity: isOther ? 1 : draft.quantity,
+          job_type_id: jobTypeId,
+          quantity: 1,
           calculated_pay,
-          custom_description: isOther ? draft.customDescription.trim() : null,
+          custom_description: null,
         })
         if (itemErr) throw new Error(itemErr.message)
 
@@ -173,7 +132,6 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
         saved++
       }
 
-      // Mark all as clean
       setDrafts(prev => Object.fromEntries(
         Object.entries(prev).map(([id, d]) => [id, { ...d, isDirty: false }])
       ))
@@ -212,11 +170,10 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
       ) : (
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
           {/* Table header */}
-          <div className="hidden sm:grid sm:grid-cols-[120px_1fr_200px_80px_80px] gap-3 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <div className="hidden sm:grid sm:grid-cols-[130px_1fr_220px_80px] gap-3 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
             <span>Date</span>
             <span>Job</span>
             <span>Work Type</span>
-            <span>Qty / $</span>
             <span className="text-right">Pay</span>
           </div>
 
@@ -224,83 +181,33 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
           {editableJobs.map((job, idx) => {
             const draft = drafts[job.id]
             if (!draft) return null
-            const isOther = draft.jobTypeId === otherTypeId
-            const jt = getJobType(draft.jobTypeId)
-            const needsQty = !isOther && !!jt?.requires_quantity
-            const pay = calcPay(draft)
+            const pay = calcPay(draft.jobTypeId)
 
             return (
               <div
                 key={job.id}
-                className={`px-4 py-3 sm:grid sm:grid-cols-[120px_1fr_200px_80px_80px] sm:gap-3 sm:items-start flex flex-col gap-2 ${idx % 2 === 0 ? '' : 'bg-gray-50'} ${draft.isDirty ? 'border-l-2 border-l-red-400' : ''} ${idx > 0 ? 'border-t border-gray-100' : ''}`}
+                className={`px-4 py-3 sm:grid sm:grid-cols-[130px_1fr_220px_80px] sm:gap-3 sm:items-center flex flex-col gap-2 ${idx > 0 ? 'border-t border-gray-100' : ''} ${idx % 2 !== 0 ? 'bg-gray-50' : ''} ${draft.isDirty ? 'border-l-2 border-l-red-400' : ''}`}
               >
-                {/* Date */}
-                <div className="text-xs text-gray-500 pt-1 sm:pt-0.5 shrink-0">
+                <div className="text-xs text-gray-500 shrink-0">
                   {formatWorkDate(job.work_date)}
                 </div>
 
-                {/* Job name + badge */}
-                <div className="flex items-start gap-2 min-w-0">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{job.job_name}</p>
-                    <SFBadge source={job.source} sfStatus={job.sf_status} />
-                  </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{job.job_name}</p>
+                  <SFBadge source={job.source} sfStatus={job.sf_status} />
                 </div>
 
-                {/* Work type dropdown + extra fields */}
-                <div className="space-y-1.5">
-                  <select
-                    disabled={isLocked}
-                    value={draft.jobTypeId}
-                    onChange={e => handleTypeChange(job.id, e.target.value)}
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50 disabled:bg-gray-100"
-                  >
-                    {sortedJobTypes.map(jt => (
-                      <option key={jt.id} value={jt.id}>{jt.name}</option>
-                    ))}
-                  </select>
-                  {isOther && (
-                    <input
-                      type="text"
-                      disabled={isLocked}
-                      placeholder="Description of work"
-                      value={draft.customDescription}
-                      onChange={e => updateDraft(job.id, { customDescription: e.target.value })}
-                      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50"
-                    />
-                  )}
-                </div>
+                <select
+                  disabled={isLocked}
+                  value={draft.jobTypeId}
+                  onChange={e => setDrafts(prev => ({ ...prev, [job.id]: { jobTypeId: e.target.value, isDirty: true } }))}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50 disabled:bg-gray-100"
+                >
+                  {inlineJobTypes.map(jt => (
+                    <option key={jt.id} value={jt.id}>{jt.name}</option>
+                  ))}
+                </select>
 
-                {/* Qty or custom amount */}
-                <div>
-                  {needsQty && (
-                    <input
-                      type="number"
-                      min={1}
-                      disabled={isLocked}
-                      value={draft.quantity}
-                      onChange={e => handleQtyChange(job.id, Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50"
-                    />
-                  )}
-                  {isOther && (
-                    <div className="flex items-center gap-1">
-                      <span className="text-sm text-gray-500">$</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        disabled={isLocked}
-                        placeholder="0.00"
-                        value={draft.customAmount}
-                        onChange={e => updateDraft(job.id, { customAmount: e.target.value })}
-                        className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Pay */}
                 <div className="text-right">
                   <span className={`text-sm font-semibold ${pay > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
                     {formatMoney(pay)}
@@ -310,24 +217,25 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
             )
           })}
 
-          {/* Complex jobs (multiple work items) */}
-          {complexJobs.length > 0 && (
+          {/* Jobs that need the full edit page */}
+          {manualJobs.length > 0 && (
             <>
               <div className="px-4 py-2 bg-gray-100 border-t border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Multiple work items — edit individually
+                Edit individually
               </div>
-              {complexJobs.map((job, idx) => (
+              {manualJobs.map((job, idx) => (
                 <div
                   key={job.id}
-                  className={`px-4 py-3 sm:grid sm:grid-cols-[120px_1fr_200px_80px_80px] sm:gap-3 sm:items-center flex flex-col gap-1 border-t border-gray-100 ${idx % 2 === 0 ? '' : 'bg-gray-50'}`}
+                  className={`px-4 py-3 sm:grid sm:grid-cols-[130px_1fr_220px_80px] sm:gap-3 sm:items-center flex flex-col gap-1 border-t border-gray-100 ${idx % 2 !== 0 ? 'bg-gray-50' : ''}`}
                 >
                   <div className="text-xs text-gray-500">{formatWorkDate(job.work_date)}</div>
                   <div>
                     <p className="text-sm font-medium text-gray-900">{job.job_name}</p>
-                    <p className="text-xs text-gray-400">{job.job_work_items.length} work items</p>
+                    <p className="text-xs text-gray-400">
+                      {job.job_work_items.length > 1 ? `${job.job_work_items.length} work items` : 'Other type'}
+                    </p>
                   </div>
-                  <div className="text-xs text-gray-400 italic">Use Edit for multiple items</div>
-                  <div />
+                  <div className="text-xs text-gray-400 italic sm:block hidden">Requires full edit</div>
                   <div className="sm:text-right flex sm:flex-col gap-3 sm:gap-1 items-center sm:items-end">
                     <span className="text-sm font-semibold text-gray-900">{formatMoney(job.total_pay)}</span>
                     <Link href={`/tech/jobs/${job.id}/edit`} className="text-xs text-red-600 hover:underline">
