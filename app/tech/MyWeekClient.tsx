@@ -47,6 +47,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
   const [submitting, setSubmitting] = useState(false)
   const [unsubmitting, setUnsubmitting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState('')
   const [syncResult, setSyncResult] = useState<{ added: number; updated: number } | null>(null)
   const [syncError, setSyncError] = useState('')
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -111,20 +112,34 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
     setSyncing(true)
     setSyncResult(null)
     setSyncError('')
+    setSyncStatus('Connecting to Service Fusion…')
+
+    const controller = new AbortController()
+    const slowTimer = setTimeout(() => setSyncStatus('Still syncing — this can take up to 30 seconds…'), 8_000)
+    const hardTimer = setTimeout(() => controller.abort(), 45_000)
+
     try {
       const res = await fetch('/api/tech/sf-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ week_start: selectedWeek }),
+        signal: controller.signal,
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Sync failed')
       setSyncResult({ added: data.added, updated: data.updated })
       router.refresh()
     } catch (err: unknown) {
-      setSyncError(err instanceof Error ? err.message : 'Sync failed')
+      const msg = err instanceof Error
+        ? (err.name === 'AbortError' ? 'Sync timed out — Service Fusion may be slow. Please try again.' : err.message)
+        : 'Sync failed'
+      setSyncError(msg)
+    } finally {
+      clearTimeout(slowTimer)
+      clearTimeout(hardTimer)
+      setSyncing(false)
+      setSyncStatus('')
     }
-    setSyncing(false)
   }
 
   async function handleSubmitWeek() {
@@ -202,13 +217,18 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
       {/* Service Fusion sync */}
       <div className="flex flex-wrap items-center gap-3">
         {sfMapped ? (
-          <button
-            onClick={handleSyncFromSF}
-            disabled={syncing || !!submittedAt}
-            className="text-sm font-medium px-4 py-2 rounded-md bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-50 transition-colors"
-          >
-            {syncing ? 'Syncing…' : '↓ Sync from Service Fusion'}
-          </button>
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={handleSyncFromSF}
+              disabled={syncing || !!submittedAt}
+              className="text-sm font-medium px-4 py-2 rounded-md bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-50 transition-colors"
+            >
+              {syncing ? 'Syncing…' : '↓ Sync from Service Fusion'}
+            </button>
+            {syncStatus && (
+              <p className="text-xs text-gray-500">{syncStatus}</p>
+            )}
+          </div>
         ) : (
           <p className="text-xs text-gray-500">
             Service Fusion sync isn&apos;t set up for your account yet — please ask the admin.

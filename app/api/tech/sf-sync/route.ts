@@ -4,6 +4,8 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { getProvider } from '@/lib/crm'
 import { getWeekEnd, parseDate } from '@/lib/week'
 
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
