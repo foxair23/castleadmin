@@ -51,7 +51,7 @@ interface Props {
   sfJobNumber?: string // SF display number e.g. "10042"
 }
 
-const SF_APP_BASE = 'https://app.servicefusion.com'
+const SF_JOBS_URL = 'https://admin.servicefusion.com/jobs'
 
 let tempIdCounter = 0
 function newTempId() { return `tmp-${++tempIdCounter}` }
@@ -312,18 +312,18 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
         </div>
 
         {/* SF job link */}
-        {fromSF && sfJobId && (
+        {fromSF && sfJobNumber && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Service Fusion Job</label>
             <a
-              href={`${SF_APP_BASE}/jobs/${sfJobId}`}
+              href={SF_JOBS_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-sm text-red-600 hover:underline"
             >
-              #{sfJobNumber ?? sfJobId} ↗
+              #{sfJobNumber} ↗
             </a>
-            <p className="text-xs text-gray-400 mt-0.5">Opens in Service Fusion</p>
+            <p className="text-xs text-gray-400 mt-0.5">Opens Service Fusion jobs — search for #{sfJobNumber}</p>
           </div>
         )}
 
