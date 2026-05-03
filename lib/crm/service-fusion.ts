@@ -1,18 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 import type { CrmProvider, CrmTechnician, CrmJob } from './types'
 
-// NOTE: Verify these URLs against live SF docs at docs.servicefusion.com
-// once API credentials are available.
 const SF_TOKEN_URL = 'https://api.servicefusion.com/oauth/access_token'
 const SF_BASE_URL = 'https://api.servicefusion.com/v1'
-
-// SF status category strings — verify by fetching a sample job and
-// inspecting response.status.category on first live connection.
-const ASSIGNED_CATEGORIES = new Set([
-  'Open Jobs',
-  'Open Jobs That Are In Progress',
-])
-const COMPLETED_CATEGORIES = new Set(['Closed Jobs'])
 
 function adminDb() {
   return createClient(
@@ -129,51 +119,51 @@ export class ServiceFusionProvider implements CrmProvider {
     weekEnd: Date
   ): Promise<CrmJob[]> {
     const fmt = (d: Date) => d.toISOString().slice(0, 10)
-
-    // NOTE: Verify query param names against live SF docs.
-    // SF may use tech_id, assigned_tech_id, or a different param.
-    // Date params may be schedule_start/end, start_date/end_date, etc.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const json = (await sfGet('/jobs', {
-      assigned_tech_id: sfTechId,
-      schedule_start: fmt(weekStart),
-      schedule_end: fmt(weekEnd),
-      perPage: '100',
-    })) as any
-
-    const items: unknown[] = Array.isArray(json) ? json : (json?.data ?? [])
     const results: CrmJob[] = []
+    let page = 1
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const job of items as any[]) {
-      // NOTE: Verify status field path — may be job.status.category,
-      // job.job_status.category, or a different path.
-      const category: string =
-        job.status?.category ?? job.job_status?.category ?? ''
+    while (true) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const json = (await sfGet('/jobs', {
+        'filters[start_date][gte]': fmt(weekStart),
+        'filters[start_date][lte]': fmt(weekEnd),
+        expand: 'techs_assigned',
+        'per-page': '50',
+        page: String(page),
+      })) as any
 
-      let status: 'assigned' | 'completed' | null = null
-      if (ASSIGNED_CATEGORIES.has(category)) status = 'assigned'
-      else if (COMPLETED_CATEGORIES.has(category)) status = 'completed'
-      if (!status) continue  // skip Cancelled, Estimate, etc.
+      const items: unknown[] = json?.items ?? []
 
-      // NOTE: Verify date field — may be scheduled_start_date, schedule_start, work_date, etc.
-      const scheduledDate: string =
-        (job.scheduled_start_date ?? job.schedule_start ?? job.work_date ?? fmt(weekStart)).slice(0, 10)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const job of items as any[]) {
+        // Filter to only jobs assigned to this tech
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const techs: any[] = job.techs_assigned ?? []
+        if (!techs.some(t => String(t.id) === sfTechId)) continue
 
-      // NOTE: Verify customer name path — may be customer.full_name, customer_name, etc.
-      const customerName: string =
-        job.customer?.full_name ??
-        job.customer?.name ??
-        job.customer_name ??
-        `SF Job #${job.id}`
+        // status is a plain string e.g. "Open Job", "Open Job In Progress", "Job Closed", "Cancelled"
+        const statusStr: string = job.status ?? ''
+        const lower = statusStr.toLowerCase()
 
-      results.push({
-        id: String(job.id),
-        customerName,
-        scheduledDate,
-        status,
-        statusLabel: job.status?.name ?? job.job_status?.name ?? category,
-      })
+        let status: 'assigned' | 'completed' | null = null
+        if (lower.includes('closed')) status = 'completed'
+        else if (lower.includes('cancel') || lower.includes('estimate')) status = null
+        else status = 'assigned'
+
+        if (!status) continue
+
+        results.push({
+          id: String(job.id),
+          customerName: job.customer_name ?? `SF Job #${job.id}`,
+          scheduledDate: (job.start_date ?? fmt(weekStart)).slice(0, 10),
+          status,
+          statusLabel: statusStr,
+        })
+      }
+
+      const meta = json?._meta
+      if (!meta || page >= (meta.pageCount ?? 1)) break
+      page++
     }
 
     return results
