@@ -181,59 +181,58 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
         {!isPastWeek && <p className="text-sm text-gray-500">{weekLabel(selectedWeek)}</p>}
       </div>
 
-      {/* Status banner */}
+      {/* Status banner — only for special states */}
       {isSubmitted && !deadlinePassed && (
-        <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 flex items-center justify-between gap-3">
-          <span>Submitted on {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}.</span>
-          <button
-            onClick={() => openUnsubmitConfirm()}
-            className="shrink-0 text-xs font-medium text-green-700 underline hover:text-green-900"
-          >
+        <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs text-green-800 flex items-center justify-between gap-3">
+          <span>Submitted {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.</span>
+          <button onClick={() => openUnsubmitConfirm()} className="shrink-0 font-medium text-green-700 underline hover:text-green-900">
             Edit Submission
           </button>
         </div>
       )}
       {isSubmitted && deadlinePassed && !adminUnlocked && (
-        <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
-          Week submitted on {new Date(submittedAt!).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}. Deadline has passed — this week is locked.
+        <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs text-green-800">
+          Submitted — deadline passed, week is locked.
         </div>
       )}
       {!isSubmitted && deadlinePassed && !adminUnlocked && (
-        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
-          Submission deadline passed ({deadline.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} 11:59 PM). This week is locked.
+        <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-800">
+          Deadline passed — this week is locked.
         </div>
       )}
       {adminUnlocked && !isSubmitted && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
-          This week has been unlocked by your admin. Add or edit your jobs, then re-submit.
-        </div>
-      )}
-      {!isSubmitted && !deadlinePassed && (
-        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
-          Deadline: {deadline.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} at 11:59 PM PT
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
+          Unlocked by admin — add or edit your jobs, then re-submit.
         </div>
       )}
 
-      {/* Service Fusion sync */}
-      <div className="flex flex-wrap items-center gap-3">
-        {sfMapped ? (
-          <div className="flex flex-col gap-1">
-            <button
-              onClick={handleSyncFromSF}
-              disabled={syncing || !!submittedAt}
-              className="text-sm font-medium px-4 py-2 rounded-md bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-50 transition-colors"
-            >
-              {syncing ? 'Syncing…' : '↓ Sync from Service Fusion'}
-            </button>
-            {syncStatus && (
-              <p className="text-xs text-gray-500">{syncStatus}</p>
-            )}
-          </div>
-        ) : (
-          <p className="text-xs text-gray-500">
-            Service Fusion sync isn&apos;t set up for your account yet — please ask the admin.
-          </p>
+      {/* Action row: deadline pill + sync + bulk update */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {!isSubmitted && !deadlinePassed && (
+          <span className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-full px-3 py-1 shrink-0">
+            Due {deadline.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} 11:59 PM
+          </span>
         )}
+
+        {sfMapped && (
+          <button
+            onClick={handleSyncFromSF}
+            disabled={syncing || !!submittedAt}
+            className="text-sm font-medium px-3 py-1.5 rounded-md bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-50 transition-colors shrink-0"
+          >
+            {syncing ? 'Syncing…' : '↓ Sync from SF'}
+          </button>
+        )}
+
+        {!isLocked && !isSubmitted && jobs.length > 0 && (
+          <Link
+            href={`/tech/bulk-update?week=${selectedWeek}`}
+            className="text-sm font-medium px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors shrink-0"
+          >
+            ⚡ Bulk Update
+          </Link>
+        )}
+
         {syncResult && (
           <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
             Synced: {syncResult.added} new, {syncResult.updated} updated
@@ -244,6 +243,9 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
             {syncError}
           </span>
         )}
+        {syncStatus && (
+          <span className="text-xs text-gray-500">{syncStatus}</span>
+        )}
       </div>
 
       {/* Jobs list */}
@@ -253,16 +255,6 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
         </div>
       ) : (
         <div className="space-y-4">
-          {!isLocked && !isSubmitted && (
-            <div className="flex justify-end">
-              <Link
-                href={`/tech/bulk-update?week=${selectedWeek}`}
-                className="text-sm font-medium px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                ⚡ Bulk Update
-              </Link>
-            </div>
-          )}
           {sortedDates.map(date => (
             <div key={date}>
               <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
