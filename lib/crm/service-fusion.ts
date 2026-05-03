@@ -84,11 +84,15 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
 
   let lastError: Error = new Error('Request failed')
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500))
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 500))
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
 
     const resp = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    })
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout))
 
     if (resp.status === 429) {
       lastError = new Error('Service Fusion is busy — please try again in a moment.')
@@ -134,7 +138,7 @@ export class ServiceFusionProvider implements CrmProvider {
       assigned_tech_id: sfTechId,
       schedule_start: fmt(weekStart),
       schedule_end: fmt(weekEnd),
-      per_page: '100',
+      perPage: '100',
     })) as any
 
     const items: unknown[] = Array.isArray(json) ? json : (json?.data ?? [])
