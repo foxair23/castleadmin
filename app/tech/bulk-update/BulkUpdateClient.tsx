@@ -79,7 +79,7 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
     Object.fromEntries(editableJobs.map(j => {
       const existing = j.job_work_items[0]
       return [j.id, {
-        jobTypeId: existing?.job_type_id ?? inlineJobTypes[0]?.id ?? '',
+        jobTypeId: existing?.job_type_id ?? '',  // '' = nothing selected
         isDirty: false,
       }]
     }))
@@ -107,6 +107,7 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
     try {
       for (const job of dirtyJobs) {
         const { jobTypeId } = drafts[job.id]
+        if (!jobTypeId) continue  // skipped — no type selected
         const jt = getJobType(jobTypeId)
         if (!jt) continue
 
@@ -201,8 +202,9 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
                   disabled={isLocked}
                   value={draft.jobTypeId}
                   onChange={e => setDrafts(prev => ({ ...prev, [job.id]: { jobTypeId: e.target.value, isDirty: true } }))}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50 disabled:bg-gray-100"
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50 disabled:bg-gray-100 text-gray-900"
                 >
+                  <option value="" className="text-gray-400">— Select work type —</option>
                   {inlineJobTypes.map(jt => (
                     <option key={jt.id} value={jt.id}>{jt.name}</option>
                   ))}
