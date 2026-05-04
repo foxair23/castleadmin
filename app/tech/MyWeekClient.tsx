@@ -229,7 +229,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
             href={`/tech/bulk-update?week=${selectedWeek}`}
             className="text-sm font-medium px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors shrink-0"
           >
-            ⚡ Bulk Update
+            ⚡ Bulk Edit
           </Link>
         )}
 

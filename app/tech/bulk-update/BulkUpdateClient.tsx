@@ -152,7 +152,7 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
           ← Back
         </Link>
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Bulk Update</h1>
+          <h1 className="text-xl font-bold text-gray-900">Bulk Edit</h1>
           <p className="text-sm text-gray-500">{weekLabel(selectedWeek)}</p>
         </div>
       </div>
