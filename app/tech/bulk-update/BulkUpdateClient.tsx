@@ -107,7 +107,13 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
     try {
       for (const job of dirtyJobs) {
         const { jobTypeId } = drafts[job.id]
-        if (!jobTypeId) continue  // skipped — no type selected
+        if (!jobTypeId) {
+          // Cleared back to unset — remove any existing work item
+          await supabase.from('job_work_items').delete().eq('job_id', job.id)
+          await supabase.from('jobs').update({ total_pay: 0 }).eq('id', job.id)
+          saved++
+          continue
+        }
         const jt = getJobType(jobTypeId)
         if (!jt) continue
 

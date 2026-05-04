@@ -169,10 +169,6 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
     e.preventDefault()
     setError('')
 
-    if (workItems.length === 0) {
-      setError('Add at least one work item.')
-      return
-    }
     if (!jobName.trim()) {
       setError('Job name / PO is required.')
       return
@@ -391,8 +387,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                     </div>
                   )}
 
-                  {workItems.length > 1 && (
-                    <button
+                  <button
                       type="button"
                       onClick={() => removeItem(item.tempId)}
                       className="text-red-400 hover:text-red-600 pt-2 text-lg leading-none"
@@ -400,7 +395,6 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                     >
                       ×
                     </button>
-                  )}
                 </div>
               )
             })}
