@@ -40,9 +40,11 @@ interface Props {
   submittedAt: string | null
   adminUnlocked: boolean
   sfMapped: boolean
+  lastWeek: string
+  showLastWeekNudge: boolean
 }
 
-export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked, sfMapped }: Props) {
+export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked, sfMapped, lastWeek, showLastWeekNudge }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [unsubmitting, setUnsubmitting] = useState(false)
@@ -180,6 +182,17 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
         </h1>
         {!isPastWeek && <p className="text-sm text-gray-500">{weekLabel(selectedWeek)}</p>}
       </div>
+
+      {/* Last week unsubmitted nudge */}
+      {showLastWeekNudge && (
+        <Link
+          href={`/tech?week=${lastWeek}`}
+          className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 text-sm text-amber-900 hover:bg-amber-100 transition-colors"
+        >
+          <span>⚠️ Last week was not submitted — tap to review and submit.</span>
+          <span className="shrink-0 font-medium underline">View →</span>
+        </Link>
+      )}
 
       {/* Status banner — only for special states */}
       {isSubmitted && !deadlinePassed && (

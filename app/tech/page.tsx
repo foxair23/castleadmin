@@ -16,7 +16,12 @@ export default async function TechPage({
   const currentWeek = getWeekStart()
   const selectedWeek = params.week ?? currentWeek
 
-  const [{ data: profile }, { data: jobs }, { data: submission }] = await Promise.all([
+  // Last week = 7 days before current week
+  const lastWeekDate = new Date(currentWeek)
+  lastWeekDate.setDate(lastWeekDate.getDate() - 7)
+  const lastWeek = lastWeekDate.toISOString().slice(0, 10)
+
+  const [{ data: profile }, { data: jobs }, { data: submission }, { data: lastWeekSubmission }] = await Promise.all([
     supabase
       .from('profiles')
       .select('sf_technician_id')
@@ -41,7 +46,17 @@ export default async function TechPage({
       .eq('tech_id', user.id)
       .eq('week_start_date', selectedWeek)
       .maybeSingle(),
+    supabase
+      .from('week_submissions')
+      .select('submitted_at')
+      .eq('tech_id', user.id)
+      .eq('week_start_date', lastWeek)
+      .maybeSingle(),
   ])
+
+  // Show nudge only when viewing current week and last week isn't submitted
+  const showLastWeekNudge =
+    selectedWeek === currentWeek && !lastWeekSubmission?.submitted_at
 
   return (
     <MyWeekClient
@@ -53,7 +68,8 @@ export default async function TechPage({
       submittedAt={submission?.submitted_at ?? null}
       adminUnlocked={submission?.admin_unlocked ?? false}
       sfMapped={!!profile?.sf_technician_id}
+      lastWeek={lastWeek}
+      showLastWeekNudge={showLastWeekNudge}
     />
   )
-
 }
