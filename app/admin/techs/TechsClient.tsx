@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 interface Tech {
   id: string
   full_name: string
+  email: string
   role: string
   is_active: boolean
   created_at: string
@@ -26,6 +27,8 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
   const [success, setSuccess] = useState('')
   const [resetingId, setResetingId] = useState<string | null>(null)
   const [resetForm, setResetForm] = useState<Record<string, string>>({})
+  const [emailingId, setEmailingId] = useState<string | null>(null)
+  const [emailForm, setEmailForm] = useState<Record<string, string>>({})
   const [togglingId, setTogglingId] = useState<string | null>(null)
 
   async function handleCreateTech(e: React.FormEvent) {
@@ -77,6 +80,30 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
       setTechs(ts => ts.map(t => t.id === tech.id ? data.profile : t))
     }
     setTogglingId(null)
+  }
+
+  async function handleChangeEmail(techId: string) {
+    const newEmail = emailForm[techId]?.trim()
+    if (!newEmail || !newEmail.includes('@')) {
+      setError('Please enter a valid email address.')
+      return
+    }
+    setError('')
+    setSuccess('')
+    const res = await fetch(`/api/admin/techs/${techId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_email: newEmail }),
+    })
+    if (res.ok) {
+      setTechs(ts => ts.map(t => t.id === techId ? { ...t, email: newEmail.toLowerCase() } : t))
+      setSuccess('Email updated successfully.')
+      setEmailingId(null)
+      setEmailForm({})
+    } else {
+      const data = await res.json()
+      setError(data.error ?? 'Failed to update email')
+    }
   }
 
   async function handleResetPassword(techId: string) {
@@ -191,6 +218,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Email</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-600">Status</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -198,7 +226,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
             <tbody className="divide-y divide-gray-100">
               {techs.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="text-center py-8 text-gray-400 text-sm">
+                  <td colSpan={4} className="text-center py-8 text-gray-400 text-sm">
                     No technicians yet. Add one above.
                   </td>
                 </tr>
@@ -207,6 +235,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                 <>
                   <tr key={tech.id} className={tech.is_active ? '' : 'opacity-50'}>
                     <td className="px-4 py-3 font-medium text-gray-900">{tech.full_name}</td>
+                    <td className="px-4 py-3 text-gray-500 text-sm">{tech.email}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
                         tech.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
@@ -218,7 +247,18 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                       <div className="flex justify-end gap-3 text-xs">
                         <button
                           onClick={() => {
+                            setEmailingId(emailingId === tech.id ? null : tech.id)
+                            setResetingId(null)
+                            setError('')
+                          }}
+                          className="text-red-600 hover:underline"
+                        >
+                          Change Email
+                        </button>
+                        <button
+                          onClick={() => {
                             setResetingId(resetingId === tech.id ? null : tech.id)
+                            setEmailingId(null)
                             setError('')
                           }}
                           className="text-red-600 hover:underline"
@@ -235,9 +275,37 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                       </div>
                     </td>
                   </tr>
+                  {emailingId === tech.id && (
+                    <tr key={`${tech.id}-email`}>
+                      <td colSpan={4} className="bg-blue-50 px-4 py-3">
+                        <div className="flex gap-2 items-center">
+                          <label className="text-xs text-gray-600 whitespace-nowrap">New email:</label>
+                          <input
+                            type="email"
+                            value={emailForm[tech.id] ?? ''}
+                            onChange={e => setEmailForm(f => ({ ...f, [tech.id]: e.target.value }))}
+                            placeholder={tech.email}
+                            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-56 focus:outline-none focus:ring-2 focus:ring-red-400"
+                          />
+                          <button
+                            onClick={() => handleChangeEmail(tech.id)}
+                            className="bg-blue-600 text-white rounded px-3 py-1.5 text-xs hover:bg-blue-700"
+                          >
+                            Save Email
+                          </button>
+                          <button
+                            onClick={() => { setEmailingId(null); setEmailForm({}) }}
+                            className="text-gray-500 hover:underline text-xs"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {resetingId === tech.id && (
                     <tr key={`${tech.id}-reset`}>
-                      <td colSpan={3} className="bg-yellow-50 px-4 py-3">
+                      <td colSpan={4} className="bg-yellow-50 px-4 py-3">
                         <div className="flex gap-2 items-center">
                           <label className="text-xs text-gray-600 whitespace-nowrap">New password:</label>
                           <input

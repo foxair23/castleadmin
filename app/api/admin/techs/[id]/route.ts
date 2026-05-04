@@ -32,6 +32,17 @@ export async function PATCH(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
+  // Handle email change
+  if (body.new_email) {
+    const email = body.new_email.trim().toLowerCase()
+    if (!email.includes('@')) {
+      return NextResponse.json({ error: 'Invalid email address' }, { status: 400 })
+    }
+    const { error } = await adminClient.auth.admin.updateUserById(id, { email })
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ ok: true, email })
+  }
+
   // Handle password reset
   if (body.new_password) {
     if (body.new_password.length < 6) {
