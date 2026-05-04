@@ -67,6 +67,16 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
 
   const totalPay = jobs.reduce((sum, j) => sum + j.total_pay, 0)
 
+  function isItemIncomplete(item: WorkItem): boolean {
+    if (!item.job_types) return false
+    if (item.job_types.name === 'Other' || item.job_types.requires_sale_amount) {
+      return !item.custom_description || item.calculated_pay === 0
+    }
+    return false
+  }
+
+  const incompleteJobCount = jobs.filter(j => j.job_work_items.some(isItemIncomplete)).length
+
   // Group jobs by date
   const byDate = jobs.reduce<Record<string, Job[]>>((acc, job) => {
     const d = job.work_date
@@ -276,12 +286,17 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
               </h2>
               <div className="space-y-2">
                 {byDate[date].map(job => (
-                  <div key={job.id} className="bg-white border border-gray-200 rounded-lg p-4">
+                  <div key={job.id} className={`bg-white border rounded-lg p-4 ${job.job_work_items.some(isItemIncomplete) ? 'border-amber-300' : 'border-gray-200'}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium text-gray-900 text-sm truncate">{job.job_name}</p>
                           <SFBadge source={job.source} sfStatus={job.sf_status} />
+                          {job.job_work_items.some(isItemIncomplete) && (
+                            <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium shrink-0">
+                              Needs details
+                            </span>
+                          )}
                         </div>
                         {job.notes && (
                           <p className="text-xs text-gray-500 mt-0.5">{job.notes}</p>
@@ -356,6 +371,12 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
           <span className="text-sm font-medium text-gray-700">Week Total</span>
           <span className="text-lg font-bold text-gray-900">{formatMoney(totalPay)}</span>
         </div>
+
+        {!isLocked && !isSubmitted && incompleteJobCount > 0 && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 text-xs text-amber-800">
+            {incompleteJobCount} job{incompleteJobCount !== 1 ? 's need' : ' needs'} details before submitting — tap Edit on each highlighted job.
+          </div>
+        )}
 
         {!isLocked && !isSubmitted && (
           <div className="flex gap-3">

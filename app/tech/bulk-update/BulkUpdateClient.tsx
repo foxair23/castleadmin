@@ -55,30 +55,25 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
   const [saveError, setSaveError] = useState('')
   const [savedCount, setSavedCount] = useState<number | null>(null)
 
-  const otherTypeId = useMemo(() => jobTypes.find(jt => jt.name === 'Other')?.id ?? '', [jobTypes])
   const customTypeIds = useMemo(() =>
     new Set(jobTypes.filter(jt => jt.name === 'Other' || jt.requires_sale_amount).map(jt => jt.id)),
     [jobTypes]
   )
 
   const inlineJobTypes = useMemo(() =>
-    [...jobTypes]
-      .filter(jt => jt.name !== 'Other' && !jt.requires_sale_amount)
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    [...jobTypes].sort((a, b) => {
+      const aCustom = a.name === 'Other' || a.requires_sale_amount
+      const bCustom = b.name === 'Other' || b.requires_sale_amount
+      if (aCustom && !bCustom) return 1
+      if (!aCustom && bCustom) return -1
+      return a.name.localeCompare(b.name)
+    }),
     [jobTypes]
   )
 
-  // Jobs with 0 or 1 standard work item are editable inline
-  // Jobs with custom types (Other, Sale Commission) or 2+ items go to "edit individually"
-  const editableJobs = jobs.filter(j => {
-    if (j.job_work_items.length > 1) return false
-    if (j.job_work_items.length === 1 && customTypeIds.has(j.job_work_items[0].job_type_id)) return false
-    return true
-  })
-  const manualJobs = jobs.filter(j =>
-    j.job_work_items.length > 1 ||
-    (j.job_work_items.length === 1 && customTypeIds.has(j.job_work_items[0].job_type_id))
-  )
+  // Only jobs with 2+ work items need the full edit page
+  const editableJobs = jobs.filter(j => j.job_work_items.length <= 1)
+  const manualJobs = jobs.filter(j => j.job_work_items.length > 1)
 
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>(() =>
     Object.fromEntries(editableJobs.map(j => {
@@ -122,7 +117,9 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
         const jt = getJobType(jobTypeId)
         if (!jt) continue
 
-        const calculated_pay = calcPay(jobTypeId)
+        // Custom types (Other, New Sale Commission) need details filled in on the edit page
+        const isCustomType = customTypeIds.has(jobTypeId)
+        const calculated_pay = isCustomType ? 0 : calcPay(jobTypeId)
 
         await supabase.from('job_work_items').delete().eq('job_id', job.id)
 
@@ -209,17 +206,22 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
                   <SFBadge source={job.source} sfStatus={job.sf_status} />
                 </div>
 
-                <select
-                  disabled={isLocked}
-                  value={draft.jobTypeId}
-                  onChange={e => setDrafts(prev => ({ ...prev, [job.id]: { jobTypeId: e.target.value, isDirty: true } }))}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50 disabled:bg-gray-100 text-gray-900"
-                >
-                  <option value="" className="text-gray-400">— Select work type —</option>
-                  {inlineJobTypes.map(jt => (
-                    <option key={jt.id} value={jt.id}>{jt.name}</option>
-                  ))}
-                </select>
+                <div>
+                  <select
+                    disabled={isLocked}
+                    value={draft.jobTypeId}
+                    onChange={e => setDrafts(prev => ({ ...prev, [job.id]: { jobTypeId: e.target.value, isDirty: true } }))}
+                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 disabled:opacity-50 disabled:bg-gray-100 text-gray-900"
+                  >
+                    <option value="" className="text-gray-400">— Select work type —</option>
+                    {inlineJobTypes.map(jt => (
+                      <option key={jt.id} value={jt.id}>{jt.name}</option>
+                    ))}
+                  </select>
+                  {customTypeIds.has(draft.jobTypeId) && (
+                    <p className="text-xs text-amber-600 mt-1">Edit job to add required details</p>
+                  )}
+                </div>
 
                 <div className="text-right">
                   <span className={`text-sm font-semibold ${pay > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
@@ -230,11 +232,11 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
             )
           })}
 
-          {/* Jobs that need the full edit page */}
+          {/* Jobs that need the full edit page (2+ work items) */}
           {manualJobs.length > 0 && (
             <>
               <div className="px-4 py-2 bg-gray-100 border-t border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Edit individually
+                Multiple work items — edit individually
               </div>
               {manualJobs.map((job, idx) => (
                 <div
@@ -244,11 +246,7 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
                   <div className="text-xs text-gray-500">{formatWorkDate(job.work_date)}</div>
                   <div>
                     <p className="text-sm font-medium text-gray-900">{job.job_name}</p>
-                    <p className="text-xs text-gray-400">
-                      {job.job_work_items.length > 1
-                        ? `${job.job_work_items.length} work items`
-                        : 'Custom work type'}
-                    </p>
+                    <p className="text-xs text-gray-400">{job.job_work_items.length} work items</p>
                   </div>
                   <div className="text-xs text-gray-400 italic sm:block hidden">Requires full edit</div>
                   <div className="sm:text-right flex sm:flex-col gap-3 sm:gap-1 items-center sm:items-end">
