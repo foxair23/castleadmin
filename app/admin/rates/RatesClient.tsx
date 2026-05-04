@@ -11,6 +11,7 @@ interface JobType {
   base_rate: number
   additional_rate: number | null
   requires_quantity: boolean
+  requires_sale_amount: boolean
   is_active: boolean
 }
 

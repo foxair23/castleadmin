@@ -40,7 +40,7 @@ export default async function EditJobPage({
   // Load active job types
   const { data: jobTypes } = await supabase
     .from('job_types')
-    .select('id, name, base_rate, additional_rate, requires_quantity')
+    .select('id, name, base_rate, additional_rate, requires_quantity, requires_sale_amount')
     .eq('is_active', true)
     .order('name')
 

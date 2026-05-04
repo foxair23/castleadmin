@@ -34,7 +34,7 @@ export default async function TechPage({
         source, sf_status,
         job_work_items (
           id, quantity, calculated_pay, custom_description,
-          job_types ( id, name, base_rate, additional_rate, requires_quantity )
+          job_types ( id, name, base_rate, additional_rate, requires_quantity, requires_sale_amount )
         )
       `)
       .eq('tech_id', user.id)

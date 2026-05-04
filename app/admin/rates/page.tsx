@@ -6,7 +6,7 @@ export default async function RatesPage() {
 
   const { data: jobTypes } = await supabase
     .from('job_types')
-    .select('id, name, base_rate, additional_rate, requires_quantity, is_active')
+    .select('id, name, base_rate, additional_rate, requires_quantity, requires_sale_amount, is_active')
     .order('name')
 
   return <RatesClient initialJobTypes={jobTypes ?? []} />

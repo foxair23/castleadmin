@@ -11,6 +11,7 @@ interface JobType {
   base_rate: number
   additional_rate: number | null
   requires_quantity: boolean
+  requires_sale_amount: boolean
 }
 
 interface WorkItemRow {
@@ -72,10 +73,12 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
   const router = useRouter()
   const weekEnd = getWeekEnd(weekStart)
 
-  // Sort job types: "Other" always last
+  // Sort job types: custom-input types (Other, Sale Commission) always last
   const sortedJobTypes = [...jobTypes].sort((a, b) => {
-    if (a.name === 'Other') return 1
-    if (b.name === 'Other') return -1
+    const aLast = a.name === 'Other' || a.requires_sale_amount
+    const bLast = b.name === 'Other' || b.requires_sale_amount
+    if (aLast && !bLast) return 1
+    if (!aLast && bLast) return -1
     return a.name.localeCompare(b.name)
   })
 
@@ -91,13 +94,14 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
     if (existingJob && existingJob.job_work_items.length > 0) {
       return existingJob.job_work_items.map(item => {
         const isOther = item.job_type_id === otherTypeId
+        const isSaleCommission = jobTypes.find(jt => jt.id === item.job_type_id)?.requires_sale_amount ?? false
         return {
           tempId: newTempId(),
           job_type_id: item.job_type_id,
           quantity: item.quantity,
           calculated_pay: item.calculated_pay,
           custom_description: item.custom_description ?? '',
-          custom_amount: isOther ? String(item.calculated_pay) : '',
+          custom_amount: (isOther || isSaleCommission) ? String(item.calculated_pay) : '',
         }
       })
     }
@@ -115,10 +119,14 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
     return jobTypeId === otherTypeId
   }
 
+  function isSaleCommissionType(jobTypeId: string) {
+    return !!getJobType(jobTypeId)?.requires_sale_amount
+  }
+
   function updateItemType(tempId: string, jobTypeId: string) {
     setWorkItems(items => items.map(item => {
       if (item.tempId !== tempId) return item
-      if (isOtherType(jobTypeId)) {
+      if (isOtherType(jobTypeId) || isSaleCommissionType(jobTypeId)) {
         return { ...item, job_type_id: jobTypeId, calculated_pay: 0, custom_amount: '', custom_description: '' }
       }
       const jt = getJobType(jobTypeId)!
@@ -184,6 +192,16 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
           return
         }
       }
+      if (isSaleCommissionType(item.job_type_id)) {
+        if (!item.custom_description.trim() || parseFloat(item.custom_description) <= 0) {
+          setError('Please enter the sale amount for the "New Sale Commission" item.')
+          return
+        }
+        if (!item.custom_amount || parseFloat(item.custom_amount) <= 0) {
+          setError('Please enter the commission amount for the "New Sale Commission" item.')
+          return
+        }
+      }
     }
 
     setSaving(true)
@@ -194,7 +212,9 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
         job_type_id: i.job_type_id,
         quantity: i.quantity,
         calculated_pay: i.calculated_pay,
-        custom_description: isOtherType(i.job_type_id) ? i.custom_description.trim() : null,
+        custom_description: (isOtherType(i.job_type_id) || isSaleCommissionType(i.job_type_id))
+          ? i.custom_description.trim()
+          : null,
       }))
 
       if (mode === 'new') {
@@ -330,6 +350,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             {workItems.map(item => {
               const jt = getJobType(item.job_type_id)
               const isOther = isOtherType(item.job_type_id)
+              const isSaleCommission = isSaleCommissionType(item.job_type_id)
               return (
                 <div key={item.tempId} className="flex gap-2 items-start">
                   <div className="flex-1 space-y-2">
@@ -367,7 +388,36 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                       </div>
                     )}
 
-                    {!isOther && jt?.requires_quantity && (
+                    {isSaleCommission && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-gray-500 whitespace-nowrap w-28">Sale Amount ($)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            placeholder="0.00"
+                            value={item.custom_description}
+                            onChange={e => updateCustomDescription(item.tempId, e.target.value)}
+                            className="border border-gray-300 rounded-md px-2 py-2 text-base text-gray-900 w-36 focus:outline-none focus:ring-2 focus:ring-red-400"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-gray-500 whitespace-nowrap w-28">Commission Pay ($)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            placeholder="0.00"
+                            value={item.custom_amount}
+                            onChange={e => updateCustomAmount(item.tempId, e.target.value)}
+                            className="border border-gray-300 rounded-md px-2 py-2 text-base text-gray-900 w-36 focus:outline-none focus:ring-2 focus:ring-red-400"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {!isOther && !isSaleCommission && jt?.requires_quantity && (
                       <div className="flex items-center gap-2">
                         <label className="text-xs text-gray-500 whitespace-nowrap">Qty:</label>
                         <input
@@ -381,7 +431,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
                     )}
                   </div>
 
-                  {!isOther && (
+                  {!isOther && !isSaleCommission && (
                     <div className="text-right shrink-0 pt-2">
                       <span className="text-sm font-semibold text-gray-800">{formatMoney(item.calculated_pay)}</span>
                     </div>

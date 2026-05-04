@@ -12,6 +12,7 @@ interface JobType {
   base_rate: number
   additional_rate: number | null
   requires_quantity: boolean
+  requires_sale_amount: boolean
 }
 
 interface WorkItem {
@@ -55,24 +56,28 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
   const [savedCount, setSavedCount] = useState<number | null>(null)
 
   const otherTypeId = useMemo(() => jobTypes.find(jt => jt.name === 'Other')?.id ?? '', [jobTypes])
+  const customTypeIds = useMemo(() =>
+    new Set(jobTypes.filter(jt => jt.name === 'Other' || jt.requires_sale_amount).map(jt => jt.id)),
+    [jobTypes]
+  )
 
   const inlineJobTypes = useMemo(() =>
     [...jobTypes]
-      .filter(jt => jt.name !== 'Other')
+      .filter(jt => jt.name !== 'Other' && !jt.requires_sale_amount)
       .sort((a, b) => a.name.localeCompare(b.name)),
     [jobTypes]
   )
 
-  // Jobs with 0 or 1 non-Other work item are editable inline
-  // Jobs with Other, or 2+ items, go to the "edit individually" section
+  // Jobs with 0 or 1 standard work item are editable inline
+  // Jobs with custom types (Other, Sale Commission) or 2+ items go to "edit individually"
   const editableJobs = jobs.filter(j => {
     if (j.job_work_items.length > 1) return false
-    if (j.job_work_items.length === 1 && j.job_work_items[0].job_type_id === otherTypeId) return false
+    if (j.job_work_items.length === 1 && customTypeIds.has(j.job_work_items[0].job_type_id)) return false
     return true
   })
   const manualJobs = jobs.filter(j =>
     j.job_work_items.length > 1 ||
-    (j.job_work_items.length === 1 && j.job_work_items[0].job_type_id === otherTypeId)
+    (j.job_work_items.length === 1 && customTypeIds.has(j.job_work_items[0].job_type_id))
   )
 
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>(() =>
@@ -240,7 +245,9 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
                   <div>
                     <p className="text-sm font-medium text-gray-900">{job.job_name}</p>
                     <p className="text-xs text-gray-400">
-                      {job.job_work_items.length > 1 ? `${job.job_work_items.length} work items` : 'Other type'}
+                      {job.job_work_items.length > 1
+                        ? `${job.job_work_items.length} work items`
+                        : 'Custom work type'}
                     </p>
                   </div>
                   <div className="text-xs text-gray-400 italic sm:block hidden">Requires full edit</div>
