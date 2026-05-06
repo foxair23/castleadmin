@@ -24,6 +24,7 @@ interface Job {
   job_name: string
   notes: string | null
   total_pay: number
+  source: string
   job_work_items: WorkItem[]
 }
 
@@ -201,7 +202,7 @@ export default function AdminSummaryClient({
                         <td colSpan={7} className="bg-gray-50 px-4 py-3">
                           <div className="space-y-4 ml-2">
                             {techJobs.map(job => (
-                              <div key={job.id} className="border-l-2 border-red-200 pl-3">
+                              <div key={job.id} className={`border-l-2 pl-3 ${job.source === 'service_fusion' ? 'border-red-300' : 'border-blue-300'}`}>
                                 <div className="flex justify-between items-start">
                                   <div>
                                     <p className="font-medium text-gray-800 text-sm">{job.job_name}</p>
