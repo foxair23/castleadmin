@@ -25,7 +25,7 @@ export default async function DashboardPage() {
 
   const [
     { data: recentInvoices },
-    { data: openJobs },
+    { count: openJobsCount },
     { data: openEstimates },
     { data: arData },
     { data: revenueDays },
@@ -33,7 +33,7 @@ export default async function DashboardPage() {
     { data: capacityJobs },
     { data: schedHistory },
     { data: annotations },
-    { data: backlogJobs },
+    { count: backlogCount },
     { data: lastSyncLog },
   ] = await Promise.all([
     db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)),
@@ -158,7 +158,7 @@ export default async function DashboardPage() {
         revenueTodayDelta: avgDailyRevenue > 0 ? ((revenueToday - avgDailyRevenue) / avgDailyRevenue) * 100 : 0,
         revenueWeek,
         avgDailyRevenue,
-        openJobsCount: openJobs ?? 0,
+        openJobsCount: openJobsCount ?? 0,
         openEstimatesCount: openEstimates?.length ?? 0,
         openEstimatesValue,
         outstandingAR,
@@ -170,7 +170,7 @@ export default async function DashboardPage() {
       techScoreboard={[]}
       pipeline={{ totalOpen: openEstimates?.length ?? 0, totalValue: openEstimatesValue, buckets }}
       annotations={(annotations ?? []) as { id: string; occurred_on: string; title: string; note: string | null }[]}
-      backlog={{ count: (backlogJobs as unknown as number) ?? 0 }}
+      backlog={{ count: backlogCount ?? 0 }}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
     />
   )

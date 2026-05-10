@@ -54,8 +54,6 @@ interface Props {
 const fmt$ = (n: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 
-const fmtPct = (n: number) => `${n.toFixed(1)}%`
-
 function timeAgo(isoStr: string): string {
   const diff = Date.now() - new Date(isoStr).getTime()
   const h = Math.floor(diff / 3_600_000)
@@ -74,16 +72,6 @@ function formatWeekLabel(w: string): string {
 function formatDateLabel(d: string): string {
   const dt = new Date(d + 'T00:00:00')
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-// Capacity health calculation
-function capacityHealth(capacityWeeks: Props['capacityWeeks']): { color: string; text: string } {
-  const last4 = capacityWeeks.slice(-4).filter(w => w.sameDayRate !== null)
-  if (last4.length < 2) return { color: 'text-gray-500', text: '– Not enough data yet' }
-  const avg = last4.reduce((s, w) => s + (w.sameDayRate ?? 0), 0) / last4.length
-  if (avg > 0.7) return { color: 'text-green-700', text: '✓ Capacity looks healthy' }
-  if (avg >= 0.5) return { color: 'text-yellow-700', text: '⚠ Watch capacity — same-day rate trending down' }
-  return { color: 'text-gray-500', text: '– Not enough data yet' }
 }
 
 // Delta badge component
@@ -436,12 +424,14 @@ export default function DashboardClient({
                         width={40}
                       />
                       <Tooltip
-                        formatter={(value: number, name: string) => [
-                          fmt$(value),
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        formatter={(value: any, name: any) => [
+                          typeof value === 'number' ? fmt$(value) : value,
                           name === 'revenue' ? 'Revenue' : '28d Avg',
                         ]}
-                        labelFormatter={(_: unknown, payload: { payload?: { rawDate?: string } }[]) =>
-                          payload?.[0]?.payload?.rawDate ?? ''
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        labelFormatter={(_: any, payload: readonly any[]) =>
+                          (payload as any[])?.[0]?.payload?.rawDate ?? ''
                         }
                       />
                       {annotationDates.map(d => (
@@ -486,12 +476,14 @@ export default function DashboardClient({
                       <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} />
                       <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
                       <Tooltip
-                        formatter={(value: number, name: string) => [
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        formatter={(value: any, name: any) => [
                           typeof value === 'number' ? value.toFixed(1) : value,
                           name === 'jobs' ? 'Jobs' : '28d Avg',
                         ]}
-                        labelFormatter={(_: unknown, payload: { payload?: { rawDate?: string } }[]) =>
-                          payload?.[0]?.payload?.rawDate ?? ''
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        labelFormatter={(_: any, payload: readonly any[]) =>
+                          (payload as any[])?.[0]?.payload?.rawDate ?? ''
                         }
                       />
                       {annotationDates.map(d => (
@@ -545,7 +537,7 @@ export default function DashboardClient({
                         domain={[0, 100]}
                         width={36}
                       />
-                      <Tooltip formatter={(v: number) => [`${v}%`, 'Same-day rate']} />
+                      <Tooltip formatter={(v: any) => [`${v}%`, 'Same-day rate']} />
                       <Line
                         type="monotone"
                         dataKey="sameDayRate"
@@ -573,7 +565,7 @@ export default function DashboardClient({
                         tickFormatter={v => `${v}d`}
                         width={36}
                       />
-                      <Tooltip formatter={(v: number) => [`${v} days`, 'Median lead time']} />
+                      <Tooltip formatter={(v: any) => [`${v} days`, 'Median lead time']} />
                       <Line
                         type="monotone"
                         dataKey="medianLeadDays"
@@ -600,7 +592,7 @@ export default function DashboardClient({
                         tickFormatter={v => `${v}%`}
                         width={36}
                       />
-                      <Tooltip formatter={(v: number, name: string) => [
+                      <Tooltip formatter={(v: any, name: any) => [
                         `${v}%`,
                         name === 'rescheduleRate' ? 'Total reschedule rate' : 'Parts/incomplete rate',
                       ]} />

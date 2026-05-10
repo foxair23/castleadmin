@@ -45,6 +45,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
             {isAdmin ? (
               <>
                 <NavLink href="/admin" current={pathname === '/admin'}>Summary</NavLink>
+                <NavLink href="/admin/dashboard" current={pathname.startsWith('/admin/dashboard')}>Dashboard</NavLink>
                 <NavLink href="/admin/rates" current={pathname.startsWith('/admin/rates')}>Pay Rates</NavLink>
                 <NavLink href="/admin/techs" current={pathname.startsWith('/admin/techs')}>Technicians</NavLink>
                 <NavLink href="/admin/sf" current={pathname.startsWith('/admin/sf')}>Integrations</NavLink>
