@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import type { CrmProvider, CrmTechnician, CrmJob } from './types'
+import type { CrmProvider, CrmTechnician, CrmJob, AnalyticsCrmProvider, SfRawStatus, SfRawCategory, SfRawJob, SfRawInvoice, SfRawEstimate, SfRawCustomer, SfPagedResponse } from './types'
 
 const SF_TOKEN_URL = 'https://api.servicefusion.com/oauth/access_token'
 const SF_BASE_URL = 'https://api.servicefusion.com/v1'
@@ -96,7 +96,7 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
   throw lastError
 }
 
-export class ServiceFusionProvider implements CrmProvider {
+export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider {
   async testConnection(): Promise<void> {
     await sfGet('/techs', { perPage: '1' })
   }
@@ -168,5 +168,70 @@ export class ServiceFusionProvider implements CrmProvider {
     }
 
     return results
+  }
+
+  async listJobStatuses(): Promise<SfRawStatus[]> {
+    const json = (await sfGet('/job-statuses', { 'per-page': '200' })) as any
+    return (json?.items ?? []).map((s: any) => ({
+      id: String(s.id),
+      name: s.name ?? '',
+      category: s.category ?? null,
+    }))
+  }
+
+  async listJobCategories(): Promise<SfRawCategory[]> {
+    const json = (await sfGet('/job-categories', { 'per-page': '200' })) as any
+    return (json?.items ?? []).map((c: any) => ({
+      id: String(c.id),
+      name: c.name ?? '',
+    }))
+  }
+
+  async listJobsPaged(page: number, perPage: number, filters: Record<string, string> = {}): Promise<SfPagedResponse<SfRawJob>> {
+    const json = (await sfGet('/jobs', {
+      ...filters,
+      expand: 'techs_assigned',
+      'per-page': String(perPage),
+      page: String(page),
+    })) as any
+    return {
+      items: json?.items ?? [],
+      _meta: json?._meta ?? { totalCount: 0, pageCount: 1, currentPage: page, perPage },
+    }
+  }
+
+  async listInvoicesPaged(page: number, perPage: number, filters: Record<string, string> = {}): Promise<SfPagedResponse<SfRawInvoice>> {
+    const json = (await sfGet('/invoices', {
+      ...filters,
+      'per-page': String(perPage),
+      page: String(page),
+    })) as any
+    return {
+      items: json?.items ?? [],
+      _meta: json?._meta ?? { totalCount: 0, pageCount: 1, currentPage: page, perPage },
+    }
+  }
+
+  async listEstimatesPaged(page: number, perPage: number, filters: Record<string, string> = {}): Promise<SfPagedResponse<SfRawEstimate>> {
+    const json = (await sfGet('/estimates', {
+      ...filters,
+      'per-page': String(perPage),
+      page: String(page),
+    })) as any
+    return {
+      items: json?.items ?? [],
+      _meta: json?._meta ?? { totalCount: 0, pageCount: 1, currentPage: page, perPage },
+    }
+  }
+
+  async listCustomersPaged(page: number, perPage: number): Promise<SfPagedResponse<SfRawCustomer>> {
+    const json = (await sfGet('/customers', {
+      'per-page': String(perPage),
+      page: String(page),
+    })) as any
+    return {
+      items: json?.items ?? [],
+      _meta: json?._meta ?? { totalCount: 0, pageCount: 1, currentPage: page, perPage },
+    }
   }
 }

@@ -17,3 +17,86 @@ export interface CrmProvider {
   listTechnicians(): Promise<CrmTechnician[]>
   listJobsForTech(sfTechId: string, weekStart: Date, weekEnd: Date): Promise<CrmJob[]>
 }
+
+// ── Analytics entity shapes returned from SF API ──────────────────────────
+
+export interface SfRawJob {
+  id: number | string
+  number?: string
+  customer_id?: number | string
+  customer_name?: string
+  category_id?: number | string
+  category?: string
+  status?: string
+  status_id?: number | string
+  created?: string          // SF created_at field
+  start_date?: string       // scheduled date
+  end_date?: string
+  completed_date?: string
+  total?: number | string
+  lead_source?: string
+  address?: string
+  zip?: string
+  techs_assigned?: Array<{ id: number | string; name?: string }>
+}
+
+export interface SfRawInvoice {
+  id: number | string
+  job_id?: number | string
+  customer_id?: number | string
+  created?: string
+  due_date?: string
+  total?: number | string
+  balance?: number | string
+  paid_date?: string
+}
+
+export interface SfRawEstimate {
+  id: number | string
+  customer_id?: number | string
+  tech_id?: number | string
+  status?: string
+  created?: string
+  accepted_date?: string
+  declined_date?: string
+  total?: number | string
+}
+
+export interface SfRawCustomer {
+  id: number | string
+  created?: string
+  lead_source?: string
+  zip?: string
+}
+
+export interface SfRawStatus {
+  id: number | string
+  name: string
+  category?: string
+}
+
+export interface SfRawCategory {
+  id: number | string
+  name: string
+}
+
+export interface SfPagedResponse<T> {
+  items: T[]
+  _meta: {
+    totalCount: number
+    pageCount: number
+    currentPage: number
+    perPage: number
+  }
+}
+
+// ── Extended CRM provider interface for analytics ─────────────────────────
+
+export interface AnalyticsCrmProvider extends CrmProvider {
+  listJobStatuses(): Promise<SfRawStatus[]>
+  listJobCategories(): Promise<SfRawCategory[]>
+  listJobsPaged(page: number, perPage: number, filters?: Record<string, string>): Promise<SfPagedResponse<SfRawJob>>
+  listInvoicesPaged(page: number, perPage: number, filters?: Record<string, string>): Promise<SfPagedResponse<SfRawInvoice>>
+  listEstimatesPaged(page: number, perPage: number, filters?: Record<string, string>): Promise<SfPagedResponse<SfRawEstimate>>
+  listCustomersPaged(page: number, perPage: number): Promise<SfPagedResponse<SfRawCustomer>>
+}
