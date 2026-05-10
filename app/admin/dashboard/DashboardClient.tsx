@@ -228,7 +228,7 @@ export default function DashboardClient({
     const res = await fetch('/api/admin/analytics/annotations')
     if (res.ok) {
       const data = await res.json()
-      setAnnotationList(data)
+      setAnnotationList(data.annotations ?? [])
     }
   }
 
@@ -252,7 +252,7 @@ export default function DashboardClient({
   }
 
   async function handleDeleteAnnotation(id: string) {
-    await fetch(`/api/admin/analytics/annotations/${id}`, { method: 'DELETE' })
+    await fetch(`/api/admin/analytics/annotations?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
     await fetchAnnotations()
   }
 
@@ -264,10 +264,10 @@ export default function DashboardClient({
   }
 
   async function handleSaveEdit(id: string) {
-    await fetch(`/api/admin/analytics/annotations/${id}`, {
+    await fetch('/api/admin/analytics/annotations', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ occurred_on: editDate, title: editTitle, note: editNote || null }),
+      body: JSON.stringify({ id, occurred_on: editDate, title: editTitle, note: editNote || null }),
     })
     setEditingId(null)
     await fetchAnnotations()
