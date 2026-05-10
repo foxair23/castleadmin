@@ -107,55 +107,157 @@ function ChartLegend() {
   )
 }
 
-// Backfill modal
+// Backfill modal — processes one page per request, loops until done
 function BackfillModal({ onClose }: { onClose: () => void }) {
-  const [entities, setEntities] = useState<string[]>(['jobs', 'invoices', 'estimates', 'customers'])
-  const [loading, setLoading] = useState(false)
+  const ALL_ENTITIES = ['jobs', 'invoices', 'estimates', 'customers']
+  const [selected, setSelected] = useState<string[]>(ALL_ENTITIES)
+  const [running, setRunning] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [progress, setProgress] = useState<{
+    entity: string
+    page: number
+    pagesTotal: number
+    records: number
+    recordsTotal: number
+    entityIndex: number
+    entityCount: number
+  } | null>(null)
+  const cancelRef = useState({ cancelled: false })[0]
 
   function toggleEntity(e: string) {
-    setEntities(prev => prev.includes(e) ? prev.filter(x => x !== e) : [...prev, e])
+    setSelected(prev => prev.includes(e) ? prev.filter(x => x !== e) : [...prev, e])
   }
 
   async function handleBackfill() {
-    setLoading(true)
+    cancelRef.cancelled = false
+    setRunning(true)
     setError(null)
+    setDone(false)
+    setProgress(null)
+
+    const entitiesToRun = ALL_ENTITIES.filter(e => selected.includes(e))
+
     try {
-      const res = await fetch('/api/admin/analytics/backfill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entities }),
-      })
-      if (!res.ok) throw new Error(`Error ${res.status}`)
+      for (let ei = 0; ei < entitiesToRun.length; ei++) {
+        const entity = entitiesToRun[ei]
+        let resumeId: string | null = null
+
+        while (true) {
+          if (cancelRef.cancelled) return
+
+          const payload: Record<string, string> = resumeId
+            ? { resume_id: resumeId }
+            : { entity }
+
+          const res: Response = await fetch('/api/admin/analytics/backfill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+
+          if (!res.ok) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const json: any = await res.json().catch(() => ({}))
+            throw new Error(json.error ?? `HTTP ${res.status}`)
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const data: any = await res.json()
+
+          setProgress({
+            entity,
+            page: data.page,
+            pagesTotal: data.pages_total,
+            records: data.records_synced,
+            recordsTotal: data.records_total,
+            entityIndex: ei + 1,
+            entityCount: entitiesToRun.length,
+          })
+
+          if (data.done) break
+          resumeId = data.resume_id
+
+          // Small pause between requests to stay well within rate limits
+          await new Promise(r => setTimeout(r, 400))
+        }
+      }
+
       setDone(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Backfill failed')
     } finally {
-      setLoading(false)
+      setRunning(false)
     }
   }
+
+  function handleCancel() {
+    if (running) {
+      cancelRef.cancelled = true
+      setRunning(false)
+      setError('Cancelled.')
+    } else {
+      onClose()
+    }
+  }
+
+  const pct = progress && progress.pagesTotal > 0
+    ? Math.round((progress.page / progress.pagesTotal) * 100)
+    : 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-lg border border-gray-200 shadow-lg p-6 w-full max-w-sm mx-4">
         <h2 className="text-base font-bold text-gray-900 mb-3">Backfill Historical Data</h2>
+
         {done ? (
           <div className="space-y-3">
-            <p className="text-sm text-green-700">Backfill started. This may take a few minutes.</p>
+            <p className="text-sm text-green-700 font-medium">Backfill complete.</p>
+            {progress && (
+              <p className="text-xs text-gray-500">{progress.records.toLocaleString()} records synced.</p>
+            )}
             <button onClick={onClose} className="w-full text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md">
               Close
+            </button>
+          </div>
+        ) : running ? (
+          <div className="space-y-3">
+            {progress && (
+              <>
+                <p className="text-sm text-gray-700 font-medium capitalize">
+                  {progress.entity} — page {progress.page} of {progress.pagesTotal}
+                  {progress.entityCount > 1 && (
+                    <span className="text-gray-400 font-normal"> (entity {progress.entityIndex}/{progress.entityCount})</span>
+                  )}
+                </p>
+                <div className="w-full bg-gray-100 rounded-full h-2">
+                  <div
+                    className="bg-red-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  {progress.records.toLocaleString()} / {progress.recordsTotal.toLocaleString()} records
+                </p>
+              </>
+            )}
+            {!progress && <p className="text-sm text-gray-500">Starting…</p>}
+            <button
+              onClick={handleCancel}
+              className="w-full text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md"
+            >
+              Cancel
             </button>
           </div>
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">Select entities to backfill:</p>
             <div className="space-y-2">
-              {['jobs', 'invoices', 'estimates', 'customers'].map(e => (
+              {ALL_ENTITIES.map(e => (
                 <label key={e} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={entities.includes(e)}
+                    checked={selected.includes(e)}
                     onChange={() => toggleEntity(e)}
                     className="accent-red-600"
                   />
@@ -167,10 +269,10 @@ function BackfillModal({ onClose }: { onClose: () => void }) {
             <div className="flex gap-2 pt-1">
               <button
                 onClick={handleBackfill}
-                disabled={loading || entities.length === 0}
+                disabled={selected.length === 0}
                 className="flex-1 text-sm bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md disabled:opacity-50 font-medium"
               >
-                {loading ? 'Starting…' : 'Start backfill'}
+                Start backfill
               </button>
               <button
                 onClick={onClose}

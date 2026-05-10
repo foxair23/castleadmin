@@ -6,6 +6,9 @@ import { syncRefTables, processJob, processInvoices, processEstimates, processCu
 
 export const maxDuration = 60
 
+// Each POST processes exactly ONE page and returns immediately.
+// The client loops, passing resume_id until done: true.
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -24,21 +27,32 @@ export async function POST(req: NextRequest) {
 
   const provider = new ServiceFusionProvider()
 
-  // Resume or start
   let logId: string
-  let entity: string = body.entity ?? 'jobs'
-  let startPage = 1
+  let entity: string
+  let nextPage: number
+  let recordsSyncedSoFar: number
 
   if (resumeId) {
-    const { data: existing } = await db.from('analytics_sync_log').select('*').eq('id', resumeId).single()
+    const { data: existing } = await db
+      .from('analytics_sync_log')
+      .select('*')
+      .eq('id', resumeId)
+      .single()
     if (!existing) return NextResponse.json({ error: 'Log not found' }, { status: 404 })
     logId = resumeId
     entity = existing.entity
-    startPage = (existing.last_page ?? 0) + 1
+    nextPage = (existing.last_page ?? 0) + 1
+    recordsSyncedSoFar = existing.records_synced ?? 0
     await db.from('analytics_sync_log').update({ status: 'running' }).eq('id', logId)
   } else {
-    // Sync ref tables on fresh start
-    await syncRefTables(db, provider as any)
+    entity = body.entity ?? 'jobs'
+    nextPage = 1
+    recordsSyncedSoFar = 0
+
+    // Sync ref tables only on the very first call (page 1 of jobs)
+    if (entity === 'jobs') {
+      await syncRefTables(db, provider as any)
+    }
 
     const { data: log } = await db.from('analytics_sync_log').insert({
       sync_type: 'backfill',
@@ -46,99 +60,70 @@ export async function POST(req: NextRequest) {
       status: 'running',
       started_at: new Date().toISOString(),
       last_page: 0,
+      records_synced: 0,
     }).select('id').single()
     logId = log!.id
   }
 
-  const PER_PAGE = 50
-  let recordsSynced = 0
-  let lastPage = startPage - 1
-  const jobIdsThisBatch: string[] = []
-
   try {
-    if (entity === 'jobs') {
-      let page = startPage
-      while (true) {
-        const resp = await (provider as any).listJobsPaged(page, PER_PAGE)
-        for (const raw of resp.items) {
-          await processJob(db, raw, { isBackfill: true })
-          jobIdsThisBatch.push(String(raw.id))
-          recordsSynced++
-        }
-        lastPage = page
-        await db.from('analytics_sync_log').update({
-          last_page: lastPage,
-          records_synced: recordsSynced,
-          records_total: resp._meta.totalCount,
-          status: 'partial',
-        }).eq('id', logId)
+    let pageCount = 1
+    let totalCount = 0
+    let recordsThisPage = 0
 
-        if (page >= resp._meta.pageCount) {
-          await detectCallbacks(db, jobIdsThisBatch)
-          await db.from('analytics_sync_log').update({ status: 'complete', completed_at: new Date().toISOString() }).eq('id', logId)
-          break
-        }
-        page++
-        // Rate limit buffer
-        await new Promise(r => setTimeout(r, 300))
+    if (entity === 'jobs') {
+      const resp = await (provider as any).listJobsPaged(nextPage, 50)
+      pageCount = resp._meta.pageCount
+      totalCount = resp._meta.totalCount
+      const jobIds: string[] = []
+      for (const raw of resp.items) {
+        await processJob(db, raw, { isBackfill: true })
+        jobIds.push(String(raw.id))
+        recordsThisPage++
       }
+      await detectCallbacks(db, jobIds)
     } else if (entity === 'invoices') {
-      let page = startPage
-      while (true) {
-        const resp = await (provider as any).listInvoicesPaged(page, 100)
-        recordsSynced += await processInvoices(db, resp.items)
-        lastPage = page
-        await db.from('analytics_sync_log').update({
-          last_page: lastPage, records_synced: recordsSynced, records_total: resp._meta.totalCount, status: 'partial',
-        }).eq('id', logId)
-        if (page >= resp._meta.pageCount) {
-          await db.from('analytics_sync_log').update({ status: 'complete', completed_at: new Date().toISOString() }).eq('id', logId)
-          break
-        }
-        page++
-        await new Promise(r => setTimeout(r, 300))
-      }
+      const resp = await (provider as any).listInvoicesPaged(nextPage, 100)
+      pageCount = resp._meta.pageCount
+      totalCount = resp._meta.totalCount
+      recordsThisPage = await processInvoices(db, resp.items)
     } else if (entity === 'estimates') {
-      let page = startPage
-      while (true) {
-        const resp = await (provider as any).listEstimatesPaged(page, 100)
-        recordsSynced += await processEstimates(db, resp.items)
-        lastPage = page
-        await db.from('analytics_sync_log').update({
-          last_page: lastPage, records_synced: recordsSynced, records_total: resp._meta.totalCount, status: 'partial',
-        }).eq('id', logId)
-        if (page >= resp._meta.pageCount) {
-          await db.from('analytics_sync_log').update({ status: 'complete', completed_at: new Date().toISOString() }).eq('id', logId)
-          break
-        }
-        page++
-        await new Promise(r => setTimeout(r, 300))
-      }
+      const resp = await (provider as any).listEstimatesPaged(nextPage, 100)
+      pageCount = resp._meta.pageCount
+      totalCount = resp._meta.totalCount
+      recordsThisPage = await processEstimates(db, resp.items)
     } else if (entity === 'customers') {
-      let page = startPage
-      while (true) {
-        const resp = await (provider as any).listCustomersPaged(page, 100)
-        recordsSynced += await processCustomers(db, resp.items)
-        lastPage = page
-        await db.from('analytics_sync_log').update({
-          last_page: lastPage, records_synced: recordsSynced, records_total: resp._meta.totalCount, status: 'partial',
-        }).eq('id', logId)
-        if (page >= resp._meta.pageCount) {
-          await db.from('analytics_sync_log').update({ status: 'complete', completed_at: new Date().toISOString() }).eq('id', logId)
-          break
-        }
-        page++
-        await new Promise(r => setTimeout(r, 300))
-      }
+      const resp = await (provider as any).listCustomersPaged(nextPage, 100)
+      pageCount = resp._meta.pageCount
+      totalCount = resp._meta.totalCount
+      recordsThisPage = await processCustomers(db, resp.items)
     }
 
-    return NextResponse.json({ ok: true, log_id: logId, records_synced: recordsSynced, entity })
+    const newTotal = recordsSyncedSoFar + recordsThisPage
+    const done = nextPage >= pageCount
+
+    await db.from('analytics_sync_log').update({
+      last_page: nextPage,
+      records_synced: newTotal,
+      records_total: totalCount,
+      status: done ? 'complete' : 'partial',
+      ...(done ? { completed_at: new Date().toISOString() } : {}),
+    }).eq('id', logId)
+
+    return NextResponse.json({
+      done,
+      log_id: logId,
+      resume_id: done ? null : logId,
+      entity,
+      page: nextPage,
+      pages_total: pageCount,
+      records_synced: newTotal,
+      records_total: totalCount,
+    })
   } catch (err: unknown) {
     await db.from('analytics_sync_log').update({
       status: 'error',
       completed_at: new Date().toISOString(),
       error_message: err instanceof Error ? err.message : 'Unknown error',
-      last_page: lastPage,
     }).eq('id', logId)
     return NextResponse.json({
       error: err instanceof Error ? err.message : 'Backfill failed',
@@ -149,7 +134,6 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  // Return status of most recent backfill runs
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
