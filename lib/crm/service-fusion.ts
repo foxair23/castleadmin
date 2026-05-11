@@ -72,28 +72,20 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
   }
 
-  let lastError: Error = new Error('Request failed')
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 500))
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 7_000)
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 8_000)
-
+  try {
     const resp = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: controller.signal,
-    }).finally(() => clearTimeout(timeout))
-
-    if (resp.status === 429) {
-      lastError = new Error('Service Fusion is busy — please try again in a moment.')
-      continue
-    }
-    if (!resp.ok) {
-      throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
-    }
+    })
+    if (resp.status === 429) throw new Error('Service Fusion is busy — please try again in a moment.')
+    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
     return resp.json()
+  } finally {
+    clearTimeout(timeout)
   }
-  throw lastError
 }
 
 export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider {
