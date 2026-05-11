@@ -20,7 +20,8 @@ for (const k of required) {
   if (!process.env[k]) { console.error(`Missing env var: ${k}`); process.exit(1) }
 }
 
-const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL.trim().replace(/\/$/, '')
+const db = createClient(supabaseUrl, process.env.SUPABASE_SERVICE_ROLE_KEY.trim())
 
 // ── SF auth ───────────────────────────────────────────────────────────────
 let sfToken = null
@@ -230,7 +231,9 @@ async function runEntity(name, sfPath, perPage, writeFn, extraParams = {}) {
 
   while (true) {
     process.stdout.write(`  Page ${page}${pagesTotal ? `/${pagesTotal}` : ''} fetching...`)
-    const json = await sfGet(sfPath, { 'per-page': String(perPage), page: String(page), expand: name === 'Jobs' ? 'techs_assigned' : undefined, ...extraParams })
+    const params = { 'per-page': String(perPage), page: String(page), ...extraParams }
+    if (name === 'Jobs') params.expand = 'techs_assigned'
+    const json = await sfGet(sfPath, params)
     const items = json?.items ?? []
     const meta  = json?._meta ?? {}
     pagesTotal  = meta.pageCount ?? 1
