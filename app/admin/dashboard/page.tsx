@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import DashboardClient from './DashboardClient'
+import { getTechScoreboard } from '@/lib/analytics/metrics'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -19,9 +20,6 @@ export default async function DashboardPage() {
   // Check if any data exists
   const { count } = await db.from('sf_jobs_cache').select('id', { count: 'exact', head: true })
   const hasData = (count ?? 0) > 0
-
-  // TODO: replace with imports from @/lib/analytics/metrics once that file is available
-  // For now fetch raw data inline and pass to client
 
   const [
     { data: recentInvoices },
@@ -139,6 +137,10 @@ export default async function DashboardPage() {
     })),
   }
 
+  // Tech scoreboard
+  const currentWeekStart = weekStartStr(new Date())
+  const techScoreboard = await getTechScoreboard(db, currentWeekStart)
+
   // Pipeline buckets
   const now = Date.now()
   const buckets = { fresh: 0, aging: 0, old: 0, freshValue: 0, agingValue: 0, oldValue: 0 }
@@ -167,7 +169,7 @@ export default async function DashboardPage() {
       jobsTrend={jobsTrend}
       capacityWeeks={capacityWeeks}
       rescheduleTrend={rescheduleTrend}
-      techScoreboard={[]}
+      techScoreboard={techScoreboard}
       pipeline={{ totalOpen: openEstimates?.length ?? 0, totalValue: openEstimatesValue, buckets }}
       annotations={(annotations ?? []) as { id: string; occurred_on: string; title: string; note: string | null }[]}
       backlog={{ count: backlogCount ?? 0 }}

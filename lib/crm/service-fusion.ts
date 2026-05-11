@@ -34,15 +34,24 @@ async function fetchNewToken(): Promise<string> {
     )
   }
 
-  const resp = await fetch(SF_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'client_credentials',
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 7_000)
+
+  let resp: Response
+  try {
+    resp = await fetch(SF_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
 
   if (!resp.ok) {
     throw new Error(`Service Fusion auth failed (${resp.status}): ${await resp.text()}`)
@@ -72,28 +81,20 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
   }
 
-  let lastError: Error = new Error('Request failed')
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 500))
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 7_000)
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15_000)
-
+  try {
     const resp = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: controller.signal,
-    }).finally(() => clearTimeout(timeout))
-
-    if (resp.status === 429) {
-      lastError = new Error('Service Fusion is busy — please try again in a moment.')
-      continue
-    }
-    if (!resp.ok) {
-      throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
-    }
+    })
+    if (resp.status === 429) throw new Error('Service Fusion is busy — please try again in a moment.')
+    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
     return resp.json()
+  } finally {
+    clearTimeout(timeout)
   }
-  throw lastError
 }
 
 export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider {
