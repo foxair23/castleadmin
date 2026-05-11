@@ -55,8 +55,8 @@ export async function processJob(
   const jobId = String(raw.id)
 
   const scheduledAt = raw.start_date ? new Date(raw.start_date).toISOString() : null
-  const completedAt = raw.completed_date ? new Date(raw.completed_date).toISOString() : null
-  const createdAtSf = raw.created ? new Date(raw.created).toISOString() : null
+  const completedAt = raw.closed_at ? new Date(raw.closed_at).toISOString() : null
+  const createdAtSf = raw.created_at ? new Date(raw.created_at).toISOString() : null
   const statusName = raw.status ?? ''
   const isClosed = statusName.toLowerCase().includes('closed') ||
     statusName.toLowerCase().includes('completed') ||
@@ -147,9 +147,7 @@ export async function processJob(
   await db.from('sf_jobs_cache').upsert({
     id: jobId,
     customer_id: raw.customer_id ? String(raw.customer_id) : null,
-    category_id: raw.category_id ? String(raw.category_id) : null,
     category_name: raw.category ?? null,
-    status_id: raw.status_id ? String(raw.status_id) : null,
     status_name: statusName,
     status_category: isClosed ? 'Closed Jobs' : 'Open Jobs',
     is_closed: isClosed,
@@ -157,13 +155,12 @@ export async function processJob(
     scheduled_at: scheduledAt,
     original_scheduled_at: originalScheduledAt,
     completed_at: completedAt,
-    total_amount: raw.total ? parseFloat(String(raw.total)) : null,
-    lead_source: raw.lead_source ?? null,
-    zip: raw.zip ?? null,
+    total_amount: raw.total != null ? parseFloat(String(raw.total)) : null,
+    lead_source: raw.source ?? null,
+    zip: raw.postal_code ?? null,
     reschedule_count: rescheduleCount,
     parts_reschedule_count: partsRescheduleCount,
     schedule_history_truncated: scheduleHistoryTruncated,
-    // multi_visit and visit_count managed separately via status changes
     synced_at: now,
   }, { onConflict: 'id' })
 
@@ -215,8 +212,8 @@ export async function processJobsBatch(
   for (const raw of raws) {
     const jobId = String(raw.id)
     const scheduledAt = raw.start_date ? new Date(raw.start_date).toISOString() : null
-    const completedAt = raw.completed_date ? new Date(raw.completed_date).toISOString() : null
-    const createdAtSf = raw.created ? new Date(raw.created).toISOString() : null
+    const completedAt = raw.closed_at ? new Date(raw.closed_at).toISOString() : null
+    const createdAtSf = raw.created_at ? new Date(raw.created_at).toISOString() : null
     const statusName = raw.status ?? ''
     const isClosed = statusName.toLowerCase().includes('closed') ||
       statusName.toLowerCase().includes('completed') ||
@@ -285,9 +282,7 @@ export async function processJobsBatch(
     jobRows.push({
       id: jobId,
       customer_id: raw.customer_id ? String(raw.customer_id) : null,
-      category_id: raw.category_id ? String(raw.category_id) : null,
       category_name: raw.category ?? null,
-      status_id: raw.status_id ? String(raw.status_id) : null,
       status_name: statusName,
       status_category: isClosed ? 'Closed Jobs' : 'Open Jobs',
       is_closed: isClosed,
@@ -296,8 +291,8 @@ export async function processJobsBatch(
       original_scheduled_at: originalScheduledAt,
       completed_at: completedAt,
       total_amount: raw.total != null ? parseFloat(String(raw.total)) : null,
-      lead_source: raw.lead_source ?? null,
-      zip: raw.zip ?? null,
+      lead_source: raw.source ?? null,
+      zip: raw.postal_code ?? null,
       reschedule_count: rescheduleCount,
       parts_reschedule_count: partsRescheduleCount,
       schedule_history_truncated: scheduleHistoryTruncated,

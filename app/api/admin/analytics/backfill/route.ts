@@ -75,16 +75,34 @@ export async function POST(req: NextRequest) {
         items = resp.items
         pagesTotal = resp._meta.pageCount
         totalCount = resp._meta.totalCount
+        if (page === 1 && resp.items.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const first = resp.items[0] as any
+          console.log('SF invoice keys:', Object.keys(first).join(', '))
+          console.log('SF invoice sample:', JSON.stringify({ id: first.id, created_at: first.created_at, created: first.created, issued_at: first.issued_at, due_date: first.due_date, total: first.total, balance: first.balance, balance_due: first.balance_due, paid_date: first.paid_date, status: first.status }))
+        }
       } else if (entity === 'estimates') {
         const resp = await (provider as any).listEstimatesPaged(page, 100)
         items = resp.items
         pagesTotal = resp._meta.pageCount
         totalCount = resp._meta.totalCount
+        if (page === 1 && resp.items.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const first = resp.items[0] as any
+          console.log('SF estimate keys:', Object.keys(first).join(', '))
+          console.log('SF estimate sample:', JSON.stringify({ id: first.id, created_at: first.created_at, created: first.created, status: first.status, total: first.total, accepted_date: first.accepted_date, declined_date: first.declined_date }))
+        }
       } else if (entity === 'customers') {
         const resp = await (provider as any).listCustomersPaged(page, 100)
         items = resp.items
         pagesTotal = resp._meta.pageCount
         totalCount = resp._meta.totalCount
+        if (page === 1 && resp.items.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const first = resp.items[0] as any
+          console.log('SF customer keys:', Object.keys(first).join(', '))
+          console.log('SF customer sample:', JSON.stringify({ id: first.id, created_at: first.created_at, created: first.created, lead_source: first.lead_source, source: first.source, zip: first.zip, postal_code: first.postal_code }))
+        }
       }
 
       return NextResponse.json({ ok: true, entity, page, pages_total: pagesTotal, total_count: totalCount, items })
