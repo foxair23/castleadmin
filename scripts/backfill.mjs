@@ -22,8 +22,10 @@ for (const k of required) {
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL.trim().replace(/\/$/, '')
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY.trim()
-console.log(`Supabase URL: ${supabaseUrl.slice(0, 40)}...`)
-console.log(`Service key prefix: ${supabaseKey.slice(0, 20)}...`)
+const parsedUrl = new URL(supabaseUrl)
+console.log(`Supabase host: ${parsedUrl.host}`)
+console.log(`Supabase pathname: "${parsedUrl.pathname}"`)
+console.log(`Service key length: ${supabaseKey.length}, starts with eyJ: ${supabaseKey.startsWith('eyJ')}`)
 const db = createClient(supabaseUrl, supabaseKey)
 
 async function testDb() {
