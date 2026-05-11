@@ -34,15 +34,24 @@ async function fetchNewToken(): Promise<string> {
     )
   }
 
-  const resp = await fetch(SF_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'client_credentials',
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 7_000)
+
+  let resp: Response
+  try {
+    resp = await fetch(SF_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
 
   if (!resp.ok) {
     throw new Error(`Service Fusion auth failed (${resp.status}): ${await resp.text()}`)
