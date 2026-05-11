@@ -55,6 +55,21 @@ export async function POST(req: NextRequest) {
         items = resp.items
         pagesTotal = resp._meta.pageCount
         totalCount = resp._meta.totalCount
+        // Temporary: log raw field names on page 1 so we can verify SF API shape
+        if (page === 1 && resp.items.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const first = resp.items[0] as any
+          console.log('SF job keys:', Object.keys(first).join(', '))
+          console.log('SF job sample (no PII):', JSON.stringify({
+            id: first.id, number: first.number, status: first.status,
+            status_id: first.status_id, category: first.category,
+            category_id: first.category_id, start_date: first.start_date,
+            end_date: first.end_date, completed_date: first.completed_date,
+            created: first.created, total: first.total,
+            lead_source: first.lead_source, zip: first.zip,
+            _meta_keys: Object.keys(resp._meta).join(', '),
+          }))
+        }
       } else if (entity === 'invoices') {
         const resp = await (provider as any).listInvoicesPaged(page, 100)
         items = resp.items
