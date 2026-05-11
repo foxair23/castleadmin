@@ -35,6 +35,7 @@ interface Props {
   }
   techScoreboard: {
     techId: string
+    techName: string | null
     jobsThisWeek: number
     revenueThisWeek: number
     avgTicketThisWeek: number
@@ -764,7 +765,7 @@ export default function DashboardClient({
             <h2 className="text-sm font-semibold text-gray-700 mb-2">Tech Scoreboard (This Week)</h2>
             <Card>
               {techScoreboard.length === 0 ? (
-                <p className="text-sm text-gray-400 py-4 text-center">Tech names load after backfill.</p>
+                <p className="text-sm text-gray-400 py-4 text-center">No tech data for this week yet.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -786,7 +787,7 @@ export default function DashboardClient({
 
                         return (
                           <tr key={row.techId}>
-                            <td className="py-2 px-3 font-medium text-gray-700 text-xs">{row.techId}</td>
+                            <td className="py-2 px-3 font-medium text-gray-700 text-xs">{row.techName ?? row.techId}</td>
                             <td className="py-2 px-3 text-right text-gray-700">{row.jobsThisWeek}</td>
                             <td className="py-2 px-3 text-right text-gray-700">{fmt$(row.revenueThisWeek)}</td>
                             <td className="py-2 px-3 text-right text-gray-700">{fmt$(row.avgTicketThisWeek)}</td>
@@ -806,7 +807,6 @@ export default function DashboardClient({
                   </table>
                 </div>
               )}
-              <p className="text-xs text-gray-400 mt-3">Note: Tech IDs show as SF IDs until a mapping table is added.</p>
             </Card>
           </div>
 

@@ -274,6 +274,16 @@ export async function getTechScoreboard(db: SupabaseClient, weekStart: string) {
 
   const allTechIds = new Set([...Object.keys(weekByTech), ...Object.keys(baselineByTech)])
 
+  // Load name mapping from profiles (sf_technician_id → full_name)
+  const { data: profiles } = await db
+    .from('profiles')
+    .select('sf_technician_id, full_name')
+    .not('sf_technician_id', 'is', null)
+  const nameMap = new Map<string, string>()
+  for (const p of profiles ?? []) {
+    if (p.sf_technician_id) nameMap.set(String(p.sf_technician_id), p.full_name)
+  }
+
   return Array.from(allTechIds).map(techId => {
     const week = weekByTech[techId] ?? { jobs: 0, revenue: 0 }
     const baseline = baselineByTech[techId] ?? { jobs: 0, revenue: 0, weeks: 12 }
@@ -285,6 +295,7 @@ export async function getTechScoreboard(db: SupabaseClient, weekStart: string) {
 
     return {
       techId,
+      techName: nameMap.get(techId) ?? null,
       jobsThisWeek: week.jobs,
       revenueThisWeek: week.revenue,
       avgTicketThisWeek: week.jobs > 0 ? week.revenue / week.jobs : 0,
