@@ -73,11 +73,11 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
   }
 
   let lastError: Error = new Error('Request failed')
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 500))
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 500))
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15_000)
+    const timeout = setTimeout(() => controller.abort(), 8_000)
 
     const resp = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },

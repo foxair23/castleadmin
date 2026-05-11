@@ -326,16 +326,16 @@ export async function processJobsBatch(
 }
 
 
-// check if there was a prior closed job at the same zip within 30 days.
-// This is a zip-level heuristic (SF doesn't give us parsed address).
-
+// Batched callback detection — 3 DB round-trips regardless of batch size.
+// Heuristic: a job is a callback if another closed job at the same zip
+// completed within the 30 days before it.
 export async function detectCallbacks(db: SupabaseClient, jobIds: string[]): Promise<void> {
   if (jobIds.length === 0) return
 
-  // Fetch the jobs we just synced that are closed and have a zip
+  // 1. Fetch the batch jobs that are closed and have a zip + completed_at
   const { data: jobs } = await db
     .from('sf_jobs_cache')
-    .select('id, zip, completed_at, customer_id')
+    .select('id, zip, completed_at')
     .in('id', jobIds)
     .eq('is_closed', true)
     .not('zip', 'is', null)
@@ -343,27 +343,49 @@ export async function detectCallbacks(db: SupabaseClient, jobIds: string[]): Pro
 
   if (!jobs || jobs.length === 0) return
 
+  // 2. Fetch all closed jobs at the relevant zips within a 30-day lookback window
+  const zips = [...new Set(jobs.map(j => j.zip as string))]
+  const times = jobs.map(j => new Date(j.completed_at as string).getTime())
+  const windowStart = new Date(Math.min(...times) - 30 * 86_400_000).toISOString()
+  const windowEnd = new Date(Math.max(...times)).toISOString()
+  const batchIdSet = new Set(jobIds)
+
+  const { data: context } = await db
+    .from('sf_jobs_cache')
+    .select('id, zip, completed_at')
+    .in('zip', zips)
+    .eq('is_closed', true)
+    .gte('completed_at', windowStart)
+    .lte('completed_at', windowEnd)
+
+  if (!context) return
+
+  // Build a map of zip → sorted completed dates for non-batch jobs
+  const priorByZip = new Map<string, number[]>()
+  for (const row of context) {
+    if (batchIdSet.has(row.id as string)) continue
+    const z = row.zip as string
+    if (!priorByZip.has(z)) priorByZip.set(z, [])
+    priorByZip.get(z)!.push(new Date(row.completed_at as string).getTime())
+  }
+
+  // Determine which batch jobs are callbacks
+  const callbackIds: string[] = []
   for (const job of jobs) {
-    const completedAt = new Date(job.completed_at)
-    const thirtyDaysBefore = new Date(completedAt.getTime() - 30 * 86_400_000).toISOString()
-
-    // Look for a prior completed job at same zip (same customer or different — both count)
-    const { data: prior } = await db
-      .from('sf_jobs_cache')
-      .select('id')
-      .eq('zip', job.zip)
-      .eq('is_closed', true)
-      .lt('completed_at', job.completed_at)
-      .gte('completed_at', thirtyDaysBefore)
-      .neq('id', job.id)
-      .limit(1)
-
-    if (prior && prior.length > 0) {
-      await db.from('sf_jobs_cache').update({
-        is_callback: true,
-        callback_source: 'heuristic',
-      }).eq('id', job.id)
+    const z = job.zip as string
+    const completedTime = new Date(job.completed_at as string).getTime()
+    const thirtyBefore = completedTime - 30 * 86_400_000
+    const priors = priorByZip.get(z) ?? []
+    if (priors.some(t => t < completedTime && t >= thirtyBefore)) {
+      callbackIds.push(job.id as string)
     }
+  }
+
+  // 3. Batch-update the callbacks
+  if (callbackIds.length > 0) {
+    await db.from('sf_jobs_cache')
+      .update({ is_callback: true, callback_source: 'heuristic' })
+      .in('id', callbackIds)
   }
 }
 

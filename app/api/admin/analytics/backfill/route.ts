@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { ServiceFusionProvider } from '@/lib/crm/service-fusion'
-import { syncRefTables, processJobsBatch, processInvoices, processEstimates, processCustomers, detectCallbacks } from '@/lib/analytics/sync'
+import { processJobsBatch, processInvoices, processEstimates, processCustomers, detectCallbacks } from '@/lib/analytics/sync'
 
 export const maxDuration = 60
 
@@ -48,11 +48,6 @@ export async function POST(req: NextRequest) {
     entity = body.entity ?? 'jobs'
     nextPage = 1
     recordsSyncedSoFar = 0
-
-    // Sync ref tables only on the very first call (page 1 of jobs)
-    if (entity === 'jobs') {
-      await syncRefTables(db, provider as any)
-    }
 
     const { data: log } = await db.from('analytics_sync_log').insert({
       sync_type: 'backfill',
