@@ -20,7 +20,7 @@ for (const k of required) {
   if (!process.env[k]) { console.error(`Missing env var: ${k}`); process.exit(1) }
 }
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL.trim().replace(/\/$/, '')
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '')
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY.trim()
 const parsedUrl = new URL(supabaseUrl)
 console.log(`Supabase host: ${parsedUrl.host}`)
