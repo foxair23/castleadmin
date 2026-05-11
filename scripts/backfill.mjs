@@ -11,7 +11,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const SF_TOKEN_URL = 'https://api.servicefusion.com/oauth/access_token'
 const SF_BASE_URL  = 'https://api.servicefusion.com/v1'
-const TIMEOUT_MS   = 20_000   // 20 s per SF request — generous for slow API moments
+const TIMEOUT_MS   = 45_000   // 45 s — customers endpoint is very slow
 const PER_PAGE     = 50       // jobs; invoices/estimates/customers use 100
 
 // ── Env validation ────────────────────────────────────────────────────────
@@ -303,7 +303,7 @@ try {
     await runEntity('Estimates', '/estimates', 100, writeEstimates)
   }
   if (entities.includes('customers')) {
-    await runEntity('Customers', '/customers', 25, writeCustomers)
+    await runEntity('Customers', '/customers', 10, writeCustomers)
   }
 
   console.log(`\nBackfill complete! ${new Date().toISOString()}`)
