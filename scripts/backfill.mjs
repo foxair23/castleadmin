@@ -198,15 +198,13 @@ async function writeInvoices(raws) {
   const now = new Date().toISOString()
   const rows = raws.map(inv => ({
     id:          String(inv.id),
-    job_id:      inv.job_id      ? String(inv.job_id)      : null,
-    customer_id: inv.customer_id ? String(inv.customer_id) : null,
-    issued_at:   inv.created_at  ? new Date(inv.created_at).toISOString()  :
-                 inv.created     ? new Date(inv.created).toISOString()     : null,
-    due_at:      inv.due_date    ? new Date(inv.due_date).toISOString()    : null,
-    total:       inv.total    != null ? parseFloat(String(inv.total))    : null,
-    balance_due: inv.balance  != null ? parseFloat(String(inv.balance))  :
-                 inv.balance_due != null ? parseFloat(String(inv.balance_due)) : null,
-    paid_at:     inv.paid_date   ? new Date(inv.paid_date).toISOString()   : null,
+    job_id:      inv.job_id               ? String(inv.job_id)                          : null,
+    customer_id: inv.bill_to_customer_id  ? String(inv.bill_to_customer_id)             : null,
+    issued_at:   inv.date                 ? new Date(inv.date).toISOString()            : null,
+    due_at:      inv.due_date             ? new Date(inv.due_date).toISOString()        : null,
+    total:       inv.total    != null     ? parseFloat(String(inv.total))               : null,
+    balance_due: null,
+    paid_at:     null,
     synced_at: now,
   }))
   const { error } = await db.from('sf_invoices_cache').upsert(rows, { onConflict: 'id' })
@@ -305,7 +303,7 @@ try {
     await runEntity('Estimates', '/estimates', 100, writeEstimates)
   }
   if (entities.includes('customers')) {
-    await runEntity('Customers', '/customers', 100, writeCustomers)
+    await runEntity('Customers', '/customers', 25, writeCustomers)
   }
 
   console.log(`\nBackfill complete! ${new Date().toISOString()}`)
