@@ -1,0 +1,32 @@
+name: Historical Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      entities:
+        description: 'Entities to backfill (space-separated: jobs invoices estimates customers)'
+        required: false
+        default: 'jobs invoices estimates customers'
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci --ignore-scripts
+
+      - name: Run backfill
+        run: node scripts/backfill.mjs ${{ github.event.inputs.entities }}
+        env:
+          SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
+          SF_CLIENT_SECRET: ${{ secrets.SF_CLIENT_SECRET }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
