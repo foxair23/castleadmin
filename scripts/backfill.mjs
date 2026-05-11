@@ -21,7 +21,16 @@ for (const k of required) {
 }
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL.trim().replace(/\/$/, '')
-const db = createClient(supabaseUrl, process.env.SUPABASE_SERVICE_ROLE_KEY.trim())
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY.trim()
+console.log(`Supabase URL: ${supabaseUrl.slice(0, 40)}...`)
+console.log(`Service key prefix: ${supabaseKey.slice(0, 20)}...`)
+const db = createClient(supabaseUrl, supabaseKey)
+
+async function testDb() {
+  const { error } = await db.from('sf_jobs_cache').select('id').limit(1)
+  if (error) throw new Error(`Supabase connection failed: ${error.message} (code: ${error.code})`)
+  console.log('Supabase connection OK.')
+}
 
 // ── SF auth ───────────────────────────────────────────────────────────────
 let sfToken = null
@@ -268,6 +277,7 @@ console.log(`Entities: ${entities.join(', ')}`)
 console.log(`Started: ${new Date().toISOString()}`)
 
 try {
+  await testDb()
   if (entities.includes('jobs')) {
     await runEntity('Jobs', '/jobs', PER_PAGE, writeJobs)
   }
