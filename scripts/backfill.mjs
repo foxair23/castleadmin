@@ -27,21 +27,23 @@ console.log(`Service key prefix: ${supabaseKey.slice(0, 20)}...`)
 const db = createClient(supabaseUrl, supabaseKey)
 
 async function testDb() {
-  const testUrl = `${supabaseUrl}/rest/v1/sf_jobs_cache?select=id&limit=1`
-  console.log(`  Testing REST: ${testUrl.slice(0, 70)}`)
-  const resp = await fetch(testUrl, {
-    headers: {
-      'apikey': supabaseKey,
-      'Authorization': `Bearer ${supabaseKey}`,
-      'Accept': 'application/json',
-    }
+  // Test 1: profiles table (always exists)
+  const profilesUrl = `${supabaseUrl}/rest/v1/profiles?select=id&limit=1`
+  const r1 = await fetch(profilesUrl, {
+    headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Accept': 'application/json' }
   })
-  const body = await resp.text()
-  console.log(`  HTTP status: ${resp.status}`)
-  if (!resp.ok) {
-    console.log(`  Response body: ${body.slice(0, 300)}`)
-    throw new Error(`Supabase REST API returned ${resp.status}`)
-  }
+  console.log(`  profiles table: HTTP ${r1.status}`)
+  if (!r1.ok) console.log(`  profiles body: ${(await r1.text()).slice(0, 200)}`)
+
+  // Test 2: sf_jobs_cache table
+  const jobsUrl = `${supabaseUrl}/rest/v1/sf_jobs_cache?select=id&limit=1`
+  const r2 = await fetch(jobsUrl, {
+    headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Accept': 'application/json' }
+  })
+  console.log(`  sf_jobs_cache table: HTTP ${r2.status}`)
+  if (!r2.ok) console.log(`  sf_jobs_cache body: ${(await r2.text()).slice(0, 200)}`)
+
+  if (!r2.ok) throw new Error(`sf_jobs_cache not accessible (HTTP ${r2.status})`)
   console.log('  Supabase connection OK.')
 }
 
