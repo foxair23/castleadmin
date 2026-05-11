@@ -25,18 +25,15 @@ export interface SfRawJob {
   number?: string
   customer_id?: number | string
   customer_name?: string
-  category_id?: number | string
   category?: string
   status?: string
-  status_id?: number | string
-  created?: string          // SF created_at field
-  start_date?: string       // scheduled date
+  created_at?: string
+  start_date?: string
   end_date?: string
-  completed_date?: string
+  closed_at?: string
   total?: number | string
-  lead_source?: string
-  address?: string
-  zip?: string
+  source?: string
+  postal_code?: string
   techs_assigned?: Array<{ id: number | string; name?: string }>
 }
 
