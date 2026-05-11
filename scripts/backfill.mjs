@@ -27,9 +27,22 @@ console.log(`Service key prefix: ${supabaseKey.slice(0, 20)}...`)
 const db = createClient(supabaseUrl, supabaseKey)
 
 async function testDb() {
-  const { error } = await db.from('sf_jobs_cache').select('id').limit(1)
-  if (error) throw new Error(`Supabase connection failed: ${error.message} (code: ${error.code})`)
-  console.log('Supabase connection OK.')
+  const testUrl = `${supabaseUrl}/rest/v1/sf_jobs_cache?select=id&limit=1`
+  console.log(`  Testing REST: ${testUrl.slice(0, 70)}`)
+  const resp = await fetch(testUrl, {
+    headers: {
+      'apikey': supabaseKey,
+      'Authorization': `Bearer ${supabaseKey}`,
+      'Accept': 'application/json',
+    }
+  })
+  const body = await resp.text()
+  console.log(`  HTTP status: ${resp.status}`)
+  if (!resp.ok) {
+    console.log(`  Response body: ${body.slice(0, 300)}`)
+    throw new Error(`Supabase REST API returned ${resp.status}`)
+  }
+  console.log('  Supabase connection OK.')
 }
 
 // ── SF auth ───────────────────────────────────────────────────────────────
