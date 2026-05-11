@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { ServiceFusionProvider } from '@/lib/crm/service-fusion'
-import { syncRefTables, processJob, processInvoices, processEstimates, processCustomers, detectCallbacks } from '@/lib/analytics/sync'
+import { syncRefTables, processJobsBatch, processInvoices, processEstimates, processCustomers, detectCallbacks } from '@/lib/analytics/sync'
 
 export const maxDuration = 60
 
@@ -74,13 +74,8 @@ export async function POST(req: NextRequest) {
       const resp = await (provider as any).listJobsPaged(nextPage, 50)
       pageCount = resp._meta.pageCount
       totalCount = resp._meta.totalCount
-      const jobIds: string[] = []
-      for (const raw of resp.items) {
-        await processJob(db, raw, { isBackfill: true })
-        jobIds.push(String(raw.id))
-        recordsThisPage++
-      }
-      await detectCallbacks(db, jobIds)
+      recordsThisPage = await processJobsBatch(db, resp.items, { isBackfill: true })
+      await detectCallbacks(db, resp.items.map((r: { id: number | string }) => String(r.id)))
     } else if (entity === 'invoices') {
       const resp = await (provider as any).listInvoicesPaged(nextPage, 100)
       pageCount = resp._meta.pageCount

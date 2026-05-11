@@ -183,8 +183,149 @@ export async function processJob(
   return { scheduleChanged, statusChanged }
 }
 
-// ── Callback detection ────────────────────────────────────────────────────
-// Run after a batch of jobs have been upserted. For each newly-closed job,
+// ── Batch job processing (backfill) ───────────────────────────────────────
+// Processes an array of raw jobs in 5 DB round-trips total instead of ~5×N.
+// Returns count of records upserted.
+
+export async function processJobsBatch(
+  db: SupabaseClient,
+  raws: SfRawJob[],
+  opts: { isBackfill: boolean }
+): Promise<number> {
+  if (raws.length === 0) return 0
+  const now = new Date().toISOString()
+
+  const jobIds = raws.map(r => String(r.id))
+
+  // 1. Bulk-fetch existing cache rows
+  const { data: existingRows } = await db
+    .from('sf_jobs_cache')
+    .select('id, status_name, scheduled_at, original_scheduled_at, reschedule_count, parts_reschedule_count, multi_visit, schedule_history_truncated')
+    .in('id', jobIds)
+
+  const existingMap = new Map<string, typeof existingRows extends (infer T)[] | null ? T : never>()
+  for (const row of existingRows ?? []) existingMap.set(row.id, row)
+
+  // 2. Compute all changes in memory
+  const jobRows: Record<string, unknown>[] = []
+  const statusHistoryRows: Record<string, unknown>[] = []
+  const schedHistoryRows: Record<string, unknown>[] = []
+  const techRows: Record<string, unknown>[] = []
+
+  for (const raw of raws) {
+    const jobId = String(raw.id)
+    const scheduledAt = raw.start_date ? new Date(raw.start_date).toISOString() : null
+    const completedAt = raw.completed_date ? new Date(raw.completed_date).toISOString() : null
+    const createdAtSf = raw.created ? new Date(raw.created).toISOString() : null
+    const statusName = raw.status ?? ''
+    const isClosed = statusName.toLowerCase().includes('closed') ||
+      statusName.toLowerCase().includes('completed') ||
+      statusName.toLowerCase().includes('invoiced') ||
+      statusName.toLowerCase().includes('paid')
+
+    const existing = existingMap.get(jobId) ?? null
+    const prevStatus = existing?.status_name ?? null
+
+    // Status history
+    if (prevStatus !== statusName && statusName) {
+      statusHistoryRows.push({
+        sf_job_id: jobId,
+        status: statusName,
+        status_category: isClosed ? 'Closed Jobs' : 'Open Jobs',
+        previous_status: prevStatus,
+        observed_at: now,
+      })
+    }
+
+    // Schedule history
+    let originalScheduledAt = existing?.original_scheduled_at ?? null
+    let rescheduleCount = existing?.reschedule_count ?? 0
+    let partsRescheduleCount = existing?.parts_reschedule_count ?? 0
+    const scheduleHistoryTruncated = existing ? (existing.schedule_history_truncated ?? false) : opts.isBackfill
+
+    if (!existing) {
+      originalScheduledAt = scheduledAt
+      if (scheduledAt) {
+        schedHistoryRows.push({
+          sf_job_id: jobId,
+          scheduled_at: scheduledAt,
+          previous_scheduled_at: null,
+          observed_at: now,
+          change_type: 'initial',
+          reschedule_reason: null,
+          reschedule_reason_source: null,
+          job_status_at_change: statusName,
+        })
+      }
+    } else if (scheduledAt && existing.scheduled_at !== scheduledAt) {
+      const classification = classifyReschedule({
+        previousScheduledAt: new Date(existing.scheduled_at ?? scheduledAt),
+        newScheduledAt: new Date(scheduledAt),
+        observedAt: new Date(),
+        jobStatusAtChange: statusName,
+      })
+      const changeType = isClosed ? 'cancelled' : 'rescheduled'
+      schedHistoryRows.push({
+        sf_job_id: jobId,
+        scheduled_at: scheduledAt,
+        previous_scheduled_at: existing.scheduled_at,
+        observed_at: now,
+        change_type: changeType,
+        reschedule_reason: changeType === 'rescheduled' ? classification.reason : null,
+        reschedule_reason_source: changeType === 'rescheduled' ? classification.source : null,
+        job_status_at_change: statusName,
+      })
+      if (changeType === 'rescheduled') {
+        rescheduleCount++
+        if (classification.reason === 'parts_or_incomplete') partsRescheduleCount++
+      }
+    }
+
+    // Main cache row
+    jobRows.push({
+      id: jobId,
+      customer_id: raw.customer_id ? String(raw.customer_id) : null,
+      category_id: raw.category_id ? String(raw.category_id) : null,
+      category_name: raw.category ?? null,
+      status_id: raw.status_id ? String(raw.status_id) : null,
+      status_name: statusName,
+      status_category: isClosed ? 'Closed Jobs' : 'Open Jobs',
+      is_closed: isClosed,
+      created_at_sf: createdAtSf,
+      scheduled_at: scheduledAt,
+      original_scheduled_at: originalScheduledAt,
+      completed_at: completedAt,
+      total_amount: raw.total != null ? parseFloat(String(raw.total)) : null,
+      lead_source: raw.lead_source ?? null,
+      zip: raw.zip ?? null,
+      reschedule_count: rescheduleCount,
+      parts_reschedule_count: partsRescheduleCount,
+      schedule_history_truncated: scheduleHistoryTruncated,
+      synced_at: now,
+    })
+
+    // Tech assignments
+    for (const t of raw.techs_assigned ?? []) {
+      techRows.push({ sf_job_id: jobId, sf_tech_id: String(t.id), synced_at: now })
+    }
+  }
+
+  // 3. Batch writes (5 round-trips total regardless of page size)
+  await db.from('sf_jobs_cache').upsert(jobRows as Parameters<ReturnType<typeof db.from>['upsert']>[0], { onConflict: 'id' })
+  if (statusHistoryRows.length > 0) {
+    await db.from('sf_job_status_history').insert(statusHistoryRows as Parameters<ReturnType<typeof db.from>['insert']>[0])
+  }
+  if (schedHistoryRows.length > 0) {
+    await db.from('sf_job_schedule_history').insert(schedHistoryRows as Parameters<ReturnType<typeof db.from>['insert']>[0])
+  }
+  if (techRows.length > 0) {
+    await db.from('sf_job_techs_cache').upsert(techRows as Parameters<ReturnType<typeof db.from>['upsert']>[0], { onConflict: 'sf_job_id,sf_tech_id' })
+  }
+
+  return raws.length
+}
+
+
 // check if there was a prior closed job at the same zip within 30 days.
 // This is a zip-level heuristic (SF doesn't give us parsed address).
 
