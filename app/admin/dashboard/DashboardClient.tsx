@@ -141,45 +141,67 @@ function BackfillModal({ onClose }: { onClose: () => void }) {
     try {
       for (let ei = 0; ei < entitiesToRun.length; ei++) {
         const entity = entitiesToRun[ei]
-        let resumeId: string | null = null
+        let logId: string | null = null
+        let page = 1
+        let pagesTotal = 1
 
         while (true) {
           if (cancelRef.cancelled) return
 
-          const payload: Record<string, string> = resumeId
-            ? { resume_id: resumeId }
-            : { entity }
-
-          const res: Response = await fetch('/api/admin/analytics/backfill', {
+          // Phase 1: fetch one page from SF API (no DB writes)
+          const fetchRes: Response = await fetch('/api/admin/analytics/backfill', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ phase: 'fetch', entity, page }),
           })
-
-          if (!res.ok) {
+          if (!fetchRes.ok) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const json: any = await res.json().catch(() => ({}))
-            throw new Error(json.error ?? `HTTP ${res.status}`)
+            const j: any = await fetchRes.json().catch(() => ({}))
+            throw new Error(j.error ?? `Fetch error HTTP ${fetchRes.status}`)
           }
-
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const data: any = await res.json()
+          const fetched: any = await fetchRes.json()
+          pagesTotal = fetched.pages_total
+
+          if (cancelRef.cancelled) return
+
+          // Phase 2: write items to DB (no SF API call)
+          const writeRes: Response = await fetch('/api/admin/analytics/backfill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              phase: 'write',
+              entity,
+              page,
+              pages_total: pagesTotal,
+              total_count: fetched.total_count,
+              items: fetched.items,
+              log_id: logId,
+            }),
+          })
+          if (!writeRes.ok) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const j: any = await writeRes.json().catch(() => ({}))
+            throw new Error(j.error ?? `Write error HTTP ${writeRes.status}`)
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const written: any = await writeRes.json()
+          logId = written.log_id
 
           setProgress({
             entity,
-            page: data.page,
-            pagesTotal: data.pages_total,
-            records: data.records_synced,
-            recordsTotal: data.records_total,
+            page,
+            pagesTotal,
+            records: written.records_synced,
+            recordsTotal: written.records_total,
             entityIndex: ei + 1,
             entityCount: entitiesToRun.length,
           })
 
-          if (data.done) break
-          resumeId = data.resume_id
+          if (written.done) break
+          page++
 
-          // Small pause between requests to stay well within rate limits
-          await new Promise(r => setTimeout(r, 400))
+          await new Promise(r => setTimeout(r, 200))
         }
       }
 
