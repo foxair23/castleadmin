@@ -1,4 +1,4 @@
-import { redirect, notFound } from 'next/navigation'
+import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import Link from 'next/link'
@@ -41,7 +41,7 @@ export default async function TechDetailPage({
   const db = adminDb()
   const wkEnd = weekEnd(weekStart)
 
-  // Look up profile by sf_technician_id
+  // Look up profile by sf_technician_id to get the piecework UUID
   const { data: techProfile } = await db
     .from('profiles')
     .select('id, full_name, sf_technician_id')
@@ -56,7 +56,8 @@ export default async function TechDetailPage({
 
   const assignedJobIds = (allAssignments ?? []).map(a => a.sf_job_id as string)
 
-  let sfJobs: { id: string; total_amount: number | null; completed_at: string | null }[] = []
+  type SfJobRaw = { id: string; total_amount: number | null; completed_at: string | null }
+  let sfJobRows: SfJobRaw[] = []
   if (assignedJobIds.length > 0) {
     const { data } = await db
       .from('sf_jobs_cache')
@@ -67,23 +68,24 @@ export default async function TechDetailPage({
       .lte('completed_at', wkEnd + 'T23:59:59')
       .not('completed_at', 'is', null)
       .order('completed_at', { ascending: true })
-    sfJobs = (data ?? []) as typeof sfJobs
+    sfJobRows = (data ?? []) as SfJobRaw[]
   }
 
-  // Fetch piecework jobs for this tech+week (if profile is linked)
-  type PieceworkJob = {
+  // Fetch piecework jobs for this tech + week (including sf_job_id for joining)
+  type PwJobRaw = {
     id: string
     job_name: string
     work_date: string
     total_pay: number
+    sf_job_id: string | null
     items: { name: string; quantity: number; calculated_pay: number }[]
   }
-  let pieceworkJobs: PieceworkJob[] = []
+  let pwJobRows: PwJobRaw[] = []
 
   if (techProfile?.id) {
     const { data: pwJobs } = await db
       .from('jobs')
-      .select('id, job_name, work_date, total_pay')
+      .select('id, job_name, work_date, total_pay, sf_job_id')
       .eq('tech_id', techProfile.id)
       .eq('week_start_date', weekStart)
       .order('work_date', { ascending: true })
@@ -95,7 +97,7 @@ export default async function TechDetailPage({
         .select('job_id, quantity, calculated_pay, job_types(name)')
         .in('job_id', jobIds)
 
-      const itemsByJob: Record<string, PieceworkJob['items']> = {}
+      const itemsByJob: Record<string, PwJobRaw['items']> = {}
       for (const item of items ?? []) {
         const jid = item.job_id as string
         if (!itemsByJob[jid]) itemsByJob[jid] = []
@@ -108,42 +110,85 @@ export default async function TechDetailPage({
         })
       }
 
-      pieceworkJobs = pwJobs.map(j => ({
+      pwJobRows = pwJobs.map(j => ({
         id: j.id as string,
         job_name: j.job_name as string,
         work_date: j.work_date as string,
         total_pay: j.total_pay as number,
+        sf_job_id: j.sf_job_id as string | null,
         items: itemsByJob[j.id as string] ?? [],
       }))
     }
   }
 
+  // Build unified rows: join SF jobs + piecework by sf_job_id where possible
+  type UnifiedRow = {
+    key: string
+    date: string
+    sfJobId: string | null
+    jobName: string | null
+    revenue: number | null
+    labor: number | null
+    items: PwJobRaw['items']
+  }
+
+  const sfJobMap = new Map(sfJobRows.map(j => [j.id, j]))
+  const usedSfIds = new Set<string>()
+  const rows: UnifiedRow[] = []
+
+  // First pass: piecework jobs (may join to SF)
+  for (const pw of pwJobRows) {
+    const sf = pw.sf_job_id ? sfJobMap.get(pw.sf_job_id) : null
+    if (sf) usedSfIds.add(sf.id)
+    rows.push({
+      key: pw.id,
+      date: sf?.completed_at?.slice(0, 10) ?? pw.work_date,
+      sfJobId: sf?.id ?? null,
+      jobName: pw.job_name,
+      revenue: sf?.total_amount ?? null,
+      labor: pw.total_pay,
+      items: pw.items,
+    })
+  }
+
+  // Second pass: SF jobs with no matching piecework entry
+  for (const sf of sfJobRows) {
+    if (usedSfIds.has(sf.id)) continue
+    rows.push({
+      key: sf.id,
+      date: sf.completed_at!.slice(0, 10),
+      sfJobId: sf.id,
+      jobName: null,
+      revenue: sf.total_amount,
+      labor: null,
+      items: [],
+    })
+  }
+
+  // Sort by date
+  rows.sort((a, b) => a.date.localeCompare(b.date))
+
+  const totalRevenue = rows.reduce((s, r) => s + (r.revenue ?? 0), 0)
+  const totalLabor = pwJobRows.length > 0
+    ? rows.reduce((s, r) => s + (r.labor ?? 0), 0)
+    : null
+
   const techName = techProfile?.full_name ?? `Tech ${techId}`
-  const totalRevenue = sfJobs.reduce((s, j) => s + (j.total_amount ?? 0), 0)
-  const totalLabor = pieceworkJobs.reduce((s, j) => s + j.total_pay, 0)
-  const hasPiecework = pieceworkJobs.length > 0
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/admin/dashboard"
-            className="text-sm text-gray-500 hover:text-gray-700 font-medium"
-          >
-            ← Dashboard
-          </Link>
-        </div>
-
+        <Link href="/admin/dashboard" className="text-sm text-gray-500 hover:text-gray-700 font-medium">
+          ← Dashboard
+        </Link>
         <TechDetailClient
-          techId={techId}
           techName={techName}
           weekStart={weekStart}
           weekEnd={wkEnd}
-          sfJobs={sfJobs}
-          pieceworkJobs={pieceworkJobs}
+          rows={rows}
           totalRevenue={totalRevenue}
-          totalLabor={hasPiecework ? totalLabor : null}
+          totalLabor={totalLabor}
+          hasPieceworkLink={!!techProfile?.id}
         />
       </div>
     </div>

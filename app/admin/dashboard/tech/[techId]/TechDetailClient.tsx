@@ -1,41 +1,36 @@
 'use client'
 
-interface SfJob {
-  id: string
-  total_amount: number | null
-  completed_at: string | null
-}
-
-interface PieceworkItem {
+interface WorkItem {
   name: string
   quantity: number
   calculated_pay: number
 }
 
-interface PieceworkJob {
-  id: string
-  job_name: string
-  work_date: string
-  total_pay: number
-  items: PieceworkItem[]
+interface UnifiedRow {
+  key: string
+  date: string
+  sfJobId: string | null
+  jobName: string | null
+  revenue: number | null
+  labor: number | null
+  items: WorkItem[]
 }
 
 interface Props {
-  techId: string
   techName: string
   weekStart: string
   weekEnd: string
-  sfJobs: SfJob[]
-  pieceworkJobs: PieceworkJob[]
+  rows: UnifiedRow[]
   totalRevenue: number
   totalLabor: number | null
+  hasPieceworkLink: boolean
 }
 
 const fmt$ = (n: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 
 function formatDate(iso: string): string {
-  return new Date(iso.slice(0, 10) + 'T00:00:00').toLocaleDateString('en-US', {
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric',
   })
 }
@@ -51,10 +46,10 @@ export default function TechDetailClient({
   techName,
   weekStart,
   weekEnd,
-  sfJobs,
-  pieceworkJobs,
+  rows,
   totalRevenue,
   totalLabor,
+  hasPieceworkLink,
 }: Props) {
   const profit = totalLabor !== null ? totalRevenue - totalLabor : null
   const marginPct = profit !== null && totalRevenue > 0 ? (profit / totalRevenue) * 100 : null
@@ -70,8 +65,8 @@ export default function TechDetailClient({
       {/* Summary strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="bg-white border border-gray-200 rounded-lg p-4">
-          <p className="text-xs text-gray-500 mb-1">SF Jobs</p>
-          <p className="text-2xl font-bold text-gray-900">{sfJobs.length}</p>
+          <p className="text-xs text-gray-500 mb-1">Jobs</p>
+          <p className="text-2xl font-bold text-gray-900">{rows.filter(r => r.revenue !== null).length}</p>
         </div>
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <p className="text-xs text-gray-500 mb-1">Revenue</p>
@@ -79,115 +74,112 @@ export default function TechDetailClient({
         </div>
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <p className="text-xs text-gray-500 mb-1">Labor</p>
-          {totalLabor !== null ? (
-            <p className="text-2xl font-bold text-gray-900">{fmt$(totalLabor)}</p>
-          ) : (
-            <p className="text-2xl font-bold text-gray-400">—</p>
-          )}
+          {totalLabor !== null
+            ? <p className="text-2xl font-bold text-gray-900">{fmt$(totalLabor)}</p>
+            : <p className="text-2xl font-bold text-gray-400">—</p>}
         </div>
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <p className="text-xs text-gray-500 mb-1">Margin</p>
-          {marginPct !== null ? (
-            <p className={`text-2xl font-bold ${
-              marginPct >= 40 ? 'text-green-700' :
-              marginPct >= 20 ? 'text-yellow-700' :
-              'text-red-600'
-            }`}>
-              {marginPct.toFixed(1)}%
-            </p>
-          ) : (
-            <p className="text-2xl font-bold text-gray-400">—</p>
-          )}
+          {marginPct !== null
+            ? <p className={`text-2xl font-bold ${marginPct >= 40 ? 'text-green-700' : marginPct >= 20 ? 'text-yellow-700' : 'text-red-600'}`}>
+                {marginPct.toFixed(1)}%
+              </p>
+            : <p className="text-2xl font-bold text-gray-400">—</p>}
           {profit !== null && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              {profit >= 0 ? '+' : ''}{fmt$(profit)} profit
-            </p>
+            <p className="text-xs text-gray-400 mt-0.5">{profit >= 0 ? '+' : ''}{fmt$(profit)} profit</p>
           )}
         </div>
       </div>
 
-      {/* SF Jobs table */}
+      {/* Unified job table */}
       <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-2">Service Fusion Jobs</h2>
+        <h2 className="text-sm font-semibold text-gray-700 mb-2">Jobs This Week</h2>
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          {sfJobs.length === 0 ? (
-            <p className="text-sm text-gray-400 py-6 text-center">No completed SF jobs this week.</p>
+          {rows.length === 0 ? (
+            <p className="text-sm text-gray-400 py-6 text-center">No jobs this week.</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="text-left py-2 px-4 text-xs font-medium text-gray-500">Job ID</th>
-                  <th className="text-left py-2 px-4 text-xs font-medium text-gray-500">Completed</th>
+                  <th className="text-left py-2 px-4 text-xs font-medium text-gray-500">Date</th>
+                  <th className="text-left py-2 px-4 text-xs font-medium text-gray-500">Job</th>
                   <th className="text-right py-2 px-4 text-xs font-medium text-gray-500">Revenue</th>
+                  <th className="text-right py-2 px-4 text-xs font-medium text-gray-500">Labor</th>
+                  <th className="text-right py-2 px-4 text-xs font-medium text-gray-500">Profit</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {sfJobs.map(job => (
-                  <tr key={job.id} className="hover:bg-gray-50">
-                    <td className="py-2.5 px-4 font-mono text-xs text-gray-600">{job.id}</td>
-                    <td className="py-2.5 px-4 text-gray-700">
-                      {job.completed_at ? formatDate(job.completed_at) : '—'}
-                    </td>
-                    <td className="py-2.5 px-4 text-right font-medium text-gray-900">
-                      {job.total_amount != null ? fmt$(job.total_amount) : '—'}
-                    </td>
-                  </tr>
-                ))}
+              <tbody>
+                {rows.map(row => {
+                  const rowProfit = row.revenue !== null && row.labor !== null
+                    ? row.revenue - row.labor
+                    : null
+                  return (
+                    <>
+                      <tr key={row.key} className="border-t border-gray-100 hover:bg-gray-50">
+                        <td className="py-2.5 px-4 text-gray-600 whitespace-nowrap">{formatDate(row.date)}</td>
+                        <td className="py-2.5 px-4">
+                          {row.jobName && (
+                            <span className="text-gray-900 font-medium">{row.jobName}</span>
+                          )}
+                          {row.sfJobId && (
+                            <span className="block text-xs text-gray-400 font-mono">{row.sfJobId}</span>
+                          )}
+                          {!row.jobName && !row.sfJobId && (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-medium text-gray-900">
+                          {row.revenue !== null ? fmt$(row.revenue) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="py-2.5 px-4 text-right text-gray-600">
+                          {row.labor !== null ? fmt$(row.labor) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-medium">
+                          {rowProfit !== null
+                            ? <span className={rowProfit >= 0 ? 'text-green-700' : 'text-red-600'}>{fmt$(rowProfit)}</span>
+                            : <span className="text-gray-300">—</span>}
+                        </td>
+                      </tr>
+                      {row.items.length > 0 && (
+                        <tr key={`${row.key}-items`} className="bg-gray-50 border-t border-gray-100">
+                          <td />
+                          <td colSpan={4} className="px-4 py-1.5">
+                            <div className="space-y-0.5">
+                              {row.items.map((item, i) => (
+                                <div key={i} className="flex justify-between text-xs text-gray-500">
+                                  <span className="pl-3">{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ''}</span>
+                                  <span>{fmt$(item.calculated_pay)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  )
+                })}
               </tbody>
-              <tfoot className="border-t border-gray-200 bg-gray-50">
+              <tfoot className="border-t-2 border-gray-200 bg-gray-50">
                 <tr>
-                  <td colSpan={2} className="py-2 px-4 text-xs font-semibold text-gray-600">Total</td>
-                  <td className="py-2 px-4 text-right text-sm font-bold text-gray-900">{fmt$(totalRevenue)}</td>
+                  <td colSpan={2} className="py-2.5 px-4 text-xs font-semibold text-gray-600">Total</td>
+                  <td className="py-2.5 px-4 text-right text-sm font-bold text-gray-900">{fmt$(totalRevenue)}</td>
+                  <td className="py-2.5 px-4 text-right text-sm font-bold text-gray-900">
+                    {totalLabor !== null ? fmt$(totalLabor) : <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="py-2.5 px-4 text-right text-sm font-bold">
+                    {profit !== null
+                      ? <span className={profit >= 0 ? 'text-green-700' : 'text-red-600'}>{fmt$(profit)}</span>
+                      : <span className="text-gray-400">—</span>}
+                  </td>
                 </tr>
               </tfoot>
             </table>
           )}
-        </div>
-      </div>
 
-      {/* Piecework Jobs */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-2">Piecework Submitted</h2>
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          {pieceworkJobs.length === 0 ? (
-            <p className="text-sm text-gray-400 py-6 text-center">
-              No piecework submitted for this week.
-              {totalLabor === null && (
-                <span className="block text-xs text-gray-400 mt-1">
-                  Link this tech&apos;s profile to their SF technician ID to enable labor tracking.
-                </span>
-              )}
+          {!hasPieceworkLink && (
+            <p className="text-xs text-gray-400 px-4 py-3 border-t border-gray-100">
+              Labor columns are empty — set this tech&apos;s <code className="bg-gray-100 px-1 rounded">sf_technician_id</code> in Supabase to enable piecework tracking.
             </p>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {pieceworkJobs.map(job => (
-                <div key={job.id} className="px-4 py-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <div>
-                      <span className="text-sm font-medium text-gray-900">{job.job_name}</span>
-                      <span className="text-xs text-gray-400 ml-2">{formatDate(job.work_date)}</span>
-                    </div>
-                    <span className="text-sm font-bold text-gray-900">{fmt$(job.total_pay)}</span>
-                  </div>
-                  {job.items.length > 0 && (
-                    <div className="mt-1 space-y-0.5">
-                      {job.items.map((item, i) => (
-                        <div key={i} className="flex items-center justify-between text-xs text-gray-500 pl-3">
-                          <span>{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ''}</span>
-                          <span>{fmt$(item.calculated_pay)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between border-t border-gray-200">
-                <span className="text-xs font-semibold text-gray-600">Total labor</span>
-                <span className="text-sm font-bold text-gray-900">
-                  {totalLabor !== null ? fmt$(totalLabor) : '—'}
-                </span>
-              </div>
-            </div>
           )}
         </div>
       </div>
