@@ -7,14 +7,24 @@
 
 const SF_TOKEN_URL = 'https://api.servicefusion.com/oauth/access_token'
 const SF_BASE_URL = 'https://api.servicefusion.com/v1'
+const TIMEOUT_MS = 45_000
 
 const required = ['SF_CLIENT_ID', 'SF_CLIENT_SECRET']
 for (const k of required) {
   if (!process.env[k]) { console.error(`Missing env var: ${k}`); process.exit(1) }
 }
 
+async function fetchWithTimeout(url, opts = {}) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try { return await fetch(url, { ...opts, signal: controller.signal }) }
+  finally { clearTimeout(timer) }
+}
+
+let sfToken = null
 async function getToken() {
-  const resp = await fetch(SF_TOKEN_URL, {
+  if (sfToken) return sfToken
+  const resp = await fetchWithTimeout(SF_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -24,16 +34,28 @@ async function getToken() {
     }),
   })
   if (!resp.ok) throw new Error(`SF auth failed (${resp.status}): ${await resp.text()}`)
-  return (await resp.json()).access_token
+  sfToken = (await resp.json()).access_token
+  return sfToken
 }
 
 async function sfGet(path) {
-  const token = await getToken()
-  const resp = await fetch(`${SF_BASE_URL}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  })
-  if (!resp.ok) throw new Error(`SF API error (${resp.status}): ${await resp.text()}`)
-  return resp.json()
+  let attempt = 0
+  while (true) {
+    attempt++
+    try {
+      const token = await getToken()
+      const resp = await fetchWithTimeout(`${SF_BASE_URL}${path}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      })
+      if (!resp.ok) throw new Error(`SF API error (${resp.status}): ${await resp.text()}`)
+      return resp.json()
+    } catch (err) {
+      if (attempt >= 3) throw err
+      console.log(`  Attempt ${attempt} failed (${err.message}), retrying...`)
+      sfToken = null
+      await new Promise(r => setTimeout(r, attempt * 3000))
+    }
+  }
 }
 
 const argId = process.argv[2]
