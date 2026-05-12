@@ -56,19 +56,41 @@ export default async function TechDetailPage({
 
   const assignedJobIds = (allAssignments ?? []).map(a => a.sf_job_id as string)
 
-  type SfJobRaw = { id: string; total_amount: number | null; completed_at: string | null }
+  type SfJobRaw = { id: string; revenue: number; completed_at: string | null }
   let sfJobRows: SfJobRaw[] = []
   if (assignedJobIds.length > 0) {
-    const { data } = await db
+    const { data: jobData } = await db
       .from('sf_jobs_cache')
-      .select('id, total_amount, completed_at')
+      .select('id, completed_at')
       .in('id', assignedJobIds)
       .eq('is_closed', true)
       .gte('completed_at', weekStart + 'T00:00:00')
       .lte('completed_at', wkEnd + 'T23:59:59')
       .not('completed_at', 'is', null)
       .order('completed_at', { ascending: true })
-    sfJobRows = (data ?? []) as SfJobRaw[]
+
+    const weekJobIds = (jobData ?? []).map(j => j.id as string)
+
+    // Get invoice totals for revenue (source of truth)
+    const invoiceRevenueByJobId = new Map<string, number>()
+    if (weekJobIds.length > 0) {
+      const { data: invoices } = await db
+        .from('sf_invoices_cache')
+        .select('job_id, total')
+        .in('job_id', weekJobIds)
+        .not('total', 'is', null)
+
+      for (const inv of invoices ?? []) {
+        const jid = inv.job_id as string
+        invoiceRevenueByJobId.set(jid, (invoiceRevenueByJobId.get(jid) ?? 0) + ((inv.total as number) ?? 0))
+      }
+    }
+
+    sfJobRows = (jobData ?? []).map(j => ({
+      id: j.id as string,
+      revenue: invoiceRevenueByJobId.get(j.id as string) ?? 0,
+      completed_at: j.completed_at as string | null,
+    }))
   }
 
   // Fetch piecework jobs for this tech + week (including sf_job_id for joining)
@@ -133,6 +155,7 @@ export default async function TechDetailPage({
   }
 
   const sfJobMap = new Map(sfJobRows.map(j => [j.id, j]))
+
   const usedSfIds = new Set<string>()
   const rows: UnifiedRow[] = []
 
@@ -145,7 +168,7 @@ export default async function TechDetailPage({
       date: sf?.completed_at?.slice(0, 10) ?? pw.work_date,
       sfJobId: sf?.id ?? null,
       jobName: pw.job_name,
-      revenue: sf?.total_amount ?? null,
+      revenue: sf ? sf.revenue : null,
       labor: pw.total_pay,
       items: pw.items,
     })
@@ -159,7 +182,7 @@ export default async function TechDetailPage({
       date: sf.completed_at!.slice(0, 10),
       sfJobId: sf.id,
       jobName: null,
-      revenue: sf.total_amount,
+      revenue: sf.revenue,
       labor: null,
       items: [],
     })
