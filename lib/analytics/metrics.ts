@@ -239,41 +239,6 @@ export async function getTechScoreboard(db: SupabaseClient, weekStart: string) {
   twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 84)
   const baselineFrom = twelveWeeksAgo.toISOString().slice(0, 10)
 
-  // Jobs this week per tech
-  const { data: weekJobs } = await db
-    .from('sf_job_techs_cache')
-    .select('sf_tech_id, sf_jobs_cache!inner(id, total_amount, completed_at, is_closed)')
-    .gte('sf_jobs_cache.completed_at', weekStart)
-    .lte('sf_jobs_cache.completed_at', weekEndStr)
-    .eq('sf_jobs_cache.is_closed', true)
-
-  // Baseline jobs (12 weeks) per tech
-  const { data: baselineJobs } = await db
-    .from('sf_job_techs_cache')
-    .select('sf_tech_id, sf_jobs_cache!inner(id, total_amount, completed_at, is_closed)')
-    .gte('sf_jobs_cache.completed_at', baselineFrom)
-    .lt('sf_jobs_cache.completed_at', weekStart)
-    .eq('sf_jobs_cache.is_closed', true)
-
-  // Aggregate
-  const weekByTech: Record<string, { jobs: number; revenue: number }> = {}
-  for (const row of (weekJobs ?? []) as any[]) {
-    const tid = row.sf_tech_id
-    if (!weekByTech[tid]) weekByTech[tid] = { jobs: 0, revenue: 0 }
-    weekByTech[tid].jobs++
-    weekByTech[tid].revenue += row.sf_jobs_cache?.total_amount ?? 0
-  }
-
-  const baselineByTech: Record<string, { jobs: number; revenue: number; weeks: number }> = {}
-  for (const row of (baselineJobs ?? []) as any[]) {
-    const tid = row.sf_tech_id
-    if (!baselineByTech[tid]) baselineByTech[tid] = { jobs: 0, revenue: 0, weeks: 12 }
-    baselineByTech[tid].jobs++
-    baselineByTech[tid].revenue += row.sf_jobs_cache?.total_amount ?? 0
-  }
-
-  const allTechIds = new Set([...Object.keys(weekByTech), ...Object.keys(baselineByTech)])
-
   // Load name mapping from profiles (sf_technician_id → full_name)
   const { data: profiles } = await db
     .from('profiles')
@@ -284,9 +249,55 @@ export async function getTechScoreboard(db: SupabaseClient, weekStart: string) {
     if (p.sf_technician_id) nameMap.set(String(p.sf_technician_id), p.full_name)
   }
 
+  // Fetch closed jobs in the relevant window
+  const { data: jobs } = await db
+    .from('sf_jobs_cache')
+    .select('id, total_amount, completed_at')
+    .eq('is_closed', true)
+    .gte('completed_at', baselineFrom)
+    .lte('completed_at', weekEndStr)
+    .not('completed_at', 'is', null)
+
+  if (!jobs || jobs.length === 0) return []
+
+  const jobIds = jobs.map(j => j.id as string)
+  const jobMap = new Map(jobs.map(j => [j.id as string, j]))
+
+  // Fetch tech assignments for those jobs
+  const { data: assignments } = await db
+    .from('sf_job_techs_cache')
+    .select('sf_job_id, sf_tech_id')
+    .in('sf_job_id', jobIds)
+
+  // Aggregate
+  const weekByTech: Record<string, { jobs: number; revenue: number }> = {}
+  const baselineByTech: Record<string, { jobs: number; revenue: number }> = {}
+
+  for (const a of assignments ?? []) {
+    const jobId = a.sf_job_id as string
+    const techId = a.sf_tech_id as string
+    const job = jobMap.get(jobId)
+    if (!job) continue
+
+    const completedDate = (job.completed_at as string).slice(0, 10)
+    const revenue = (job.total_amount as number) ?? 0
+
+    if (completedDate >= weekStart && completedDate <= weekEndStr) {
+      if (!weekByTech[techId]) weekByTech[techId] = { jobs: 0, revenue: 0 }
+      weekByTech[techId].jobs++
+      weekByTech[techId].revenue += revenue
+    } else {
+      if (!baselineByTech[techId]) baselineByTech[techId] = { jobs: 0, revenue: 0 }
+      baselineByTech[techId].jobs++
+      baselineByTech[techId].revenue += revenue
+    }
+  }
+
+  const allTechIds = new Set([...Object.keys(weekByTech), ...Object.keys(baselineByTech)])
+
   return Array.from(allTechIds).map(techId => {
     const week = weekByTech[techId] ?? { jobs: 0, revenue: 0 }
-    const baseline = baselineByTech[techId] ?? { jobs: 0, revenue: 0, weeks: 12 }
+    const baseline = baselineByTech[techId] ?? { jobs: 0, revenue: 0 }
     const baselineWeeklyRevenue = baseline.revenue / 12
     const baselineWeeklyJobs = baseline.jobs / 12
     const revenueDeltaPct = baselineWeeklyRevenue > 0
@@ -303,7 +314,7 @@ export async function getTechScoreboard(db: SupabaseClient, weekStart: string) {
       baselineWeeklyJobs,
       revenueDeltaPct,
     }
-  })
+  }).sort((a, b) => b.revenueThisWeek - a.revenueThisWeek)
 }
 
 // ── Pipeline (estimates) ──────────────────────────────────────────────────
