@@ -1,0 +1,27 @@
+name: Check SF Job Fields
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'SF internal job ID (leave blank to use first job from list)'
+        required: false
+        default: ''
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Check SF job fields
+        run: node scripts/check-sf-job.mjs ${{ github.event.inputs.job_id }}
+        env:
+          SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
+          SF_CLIENT_SECRET: ${{ secrets.SF_CLIENT_SECRET }}
