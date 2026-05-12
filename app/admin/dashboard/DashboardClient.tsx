@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ResponsiveContainer,
@@ -106,6 +106,41 @@ function ChartLegend() {
       <span className="flex items-center gap-1"><span className="inline-block w-6 border-t-2 border-dashed border-gray-400"></span> 28d avg</span>
     </div>
   )
+}
+
+interface TechWeekRow {
+  techId: string
+  techName: string | null
+  sfJobs: number
+  sfRevenue: number
+  avgTicket: number
+  pieceworkPay: number | null
+  profit: number | null
+  marginPct: number | null
+}
+
+function getRecentMondays(n: number): string[] {
+  const today = new Date()
+  const day = today.getDay()
+  const diff = day === 0 ? 6 : day - 1
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - diff)
+  monday.setHours(0, 0, 0, 0)
+  const result: string[] = []
+  for (let i = 0; i < n; i++) {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() - i * 7)
+    result.push(d.toISOString().slice(0, 10))
+  }
+  return result
+}
+
+function weekLabel(weekStart: string): string {
+  const start = new Date(weekStart + 'T00:00:00')
+  const end = new Date(weekStart + 'T00:00:00')
+  end.setDate(end.getDate() + 6)
+  const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${fmt(start)} – ${fmt(end)}`
 }
 
 // Backfill modal — processes one page per request, loops until done
@@ -327,6 +362,29 @@ export default function DashboardClient({
   const router = useRouter()
   const [syncing, setSyncing] = useState(false)
   const [showBackfill, setShowBackfill] = useState(false)
+
+  // Tech scoreboard — week selector + client-side fetch
+  const weekOptions = getRecentMondays(13)
+  const [techWeekStart, setTechWeekStart] = useState(weekOptions[0])
+  const [techWeekRows, setTechWeekRows] = useState<TechWeekRow[] | null>(null)
+  const [techWeekLoading, setTechWeekLoading] = useState(false)
+
+  const fetchTechWeek = useCallback(async (wk: string) => {
+    setTechWeekLoading(true)
+    try {
+      const res = await fetch(`/api/admin/analytics/tech-week?weekStart=${wk}`)
+      if (res.ok) {
+        const data = await res.json()
+        setTechWeekRows(data.rows ?? [])
+      }
+    } finally {
+      setTechWeekLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchTechWeek(techWeekStart)
+  }, [techWeekStart, fetchTechWeek])
 
   // Annotations state (local editable copy)
   const [annotationList, setAnnotationList] = useState(annotations)
@@ -762,9 +820,22 @@ export default function DashboardClient({
 
           {/* Section 4 — Tech Scoreboard */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Tech Scoreboard (This Week)</h2>
+            <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+              <h2 className="text-sm font-semibold text-gray-700">Tech Scoreboard</h2>
+              <select
+                value={techWeekStart}
+                onChange={e => setTechWeekStart(e.target.value)}
+                className="text-xs border border-gray-300 rounded-md px-2 py-1.5 text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
+              >
+                {weekOptions.map(w => (
+                  <option key={w} value={w}>{weekLabel(w)}</option>
+                ))}
+              </select>
+            </div>
             <Card>
-              {techScoreboard.length === 0 ? (
+              {techWeekLoading ? (
+                <p className="text-sm text-gray-400 py-4 text-center">Loading…</p>
+              ) : techWeekRows === null || techWeekRows.length === 0 ? (
                 <p className="text-sm text-gray-400 py-4 text-center">No tech data for this week yet.</p>
               ) : (
                 <div className="overflow-x-auto">
@@ -774,37 +845,52 @@ export default function DashboardClient({
                         <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Tech</th>
                         <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Jobs</th>
                         <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Revenue</th>
-                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Avg ticket</th>
-                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">vs Baseline</th>
+                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Avg Ticket</th>
+                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Labor</th>
+                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Profit</th>
+                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Margin</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                      {techScoreboard.map(row => {
-                        const delta = row.revenueDeltaPct
-                        let pillClass = 'bg-green-50 text-green-700'
-                        if (delta !== null && delta < -15) pillClass = 'bg-red-50 text-red-600'
-                        else if (delta !== null && delta < 0) pillClass = 'bg-yellow-50 text-yellow-700'
-
+                      {techWeekRows.map(row => {
+                        const marginOk = row.marginPct !== null && row.marginPct >= 40
+                        const marginWarn = row.marginPct !== null && row.marginPct >= 20 && row.marginPct < 40
+                        const marginBad = row.marginPct !== null && row.marginPct < 20
                         return (
                           <tr key={row.techId}>
                             <td className="py-2 px-3 font-medium text-gray-700 text-xs">{row.techName ?? row.techId}</td>
-                            <td className="py-2 px-3 text-right text-gray-700">{row.jobsThisWeek}</td>
-                            <td className="py-2 px-3 text-right text-gray-700">{fmt$(row.revenueThisWeek)}</td>
-                            <td className="py-2 px-3 text-right text-gray-700">{fmt$(row.avgTicketThisWeek)}</td>
-                            <td className="py-2 px-3 text-right">
-                              {delta !== null ? (
-                                <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${pillClass}`}>
-                                  {delta >= 0 ? '+' : ''}{delta.toFixed(1)}%
+                            <td className="py-2 px-3 text-right text-gray-700">{row.sfJobs}</td>
+                            <td className="py-2 px-3 text-right text-gray-700">{fmt$(row.sfRevenue)}</td>
+                            <td className="py-2 px-3 text-right text-gray-500">{fmt$(row.avgTicket)}</td>
+                            <td className="py-2 px-3 text-right text-gray-500">
+                              {row.pieceworkPay !== null ? fmt$(row.pieceworkPay) : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="py-2 px-3 text-right font-medium">
+                              {row.profit !== null ? (
+                                <span className={row.profit >= 0 ? 'text-green-700' : 'text-red-600'}>
+                                  {fmt$(row.profit)}
                                 </span>
-                              ) : (
-                                <span className="text-gray-400 text-xs">—</span>
-                              )}
+                              ) : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="py-2 px-3 text-right">
+                              {row.marginPct !== null ? (
+                                <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${
+                                  marginOk ? 'bg-green-50 text-green-700' :
+                                  marginWarn ? 'bg-yellow-50 text-yellow-700' :
+                                  marginBad ? 'bg-red-50 text-red-600' : ''
+                                }`}>
+                                  {row.marginPct.toFixed(1)}%
+                                </span>
+                              ) : <span className="text-gray-300 text-xs">—</span>}
                             </td>
                           </tr>
                         )
                       })}
                     </tbody>
                   </table>
+                  <p className="text-xs text-gray-400 mt-3 px-3">
+                    Labor = piecework pay submitted for the week. Dashes mean no piecework submitted yet.
+                  </p>
                 </div>
               )}
             </Card>
