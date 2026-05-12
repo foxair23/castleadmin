@@ -72,7 +72,7 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Sync failed')
-      setSyncResult(r => ({ ...r, [techId]: `Synced ${data.jobsSynced} jobs` }))
+      setSyncResult(r => ({ ...r, [techId]: `Synced ${data.jobsMatched} jobs (scanned ${data.scanned})` }))
     } catch (err: unknown) {
       setSyncResult(r => ({ ...r, [techId]: err instanceof Error ? err.message : 'Sync failed' }))
     }
