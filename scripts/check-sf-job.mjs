@@ -14,26 +14,40 @@ for (const k of required) {
 }
 
 async function getToken() {
-  const resp = await fetch(SF_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'client_credentials',
-      client_id: process.env.SF_CLIENT_ID,
-      client_secret: process.env.SF_CLIENT_SECRET,
-    }),
-  })
-  if (!resp.ok) throw new Error(`SF auth failed (${resp.status}): ${await resp.text()}`)
-  return (await resp.json()).access_token
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15_000)
+  try {
+    const resp = await fetch(SF_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: process.env.SF_CLIENT_ID,
+        client_secret: process.env.SF_CLIENT_SECRET,
+      }),
+      signal: controller.signal,
+    })
+    if (!resp.ok) throw new Error(`SF auth failed (${resp.status}): ${await resp.text()}`)
+    return (await resp.json()).access_token
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function sfGet(path) {
   const token = await getToken()
-  const resp = await fetch(`${SF_BASE_URL}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  })
-  if (!resp.ok) throw new Error(`SF API error (${resp.status}): ${await resp.text()}`)
-  return resp.json()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15_000)
+  try {
+    const resp = await fetch(`${SF_BASE_URL}${path}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!resp.ok) throw new Error(`SF API error (${resp.status}): ${await resp.text()}`)
+    return resp.json()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 const argId = process.argv[2]
