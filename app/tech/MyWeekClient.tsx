@@ -30,6 +30,7 @@ interface Job {
   week_start_date: string
   source: string
   sf_status: string | null
+  sf_job_number: string | null
   job_work_items: WorkItem[]
 }
 
@@ -292,6 +293,9 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium text-gray-900 text-sm truncate">{job.job_name}</p>
                           <SFBadge source={job.source} sfStatus={job.sf_status} />
+                          {job.sf_job_number && (
+                            <span className="text-xs text-gray-400 font-mono shrink-0">SF #{job.sf_job_number}</span>
+                          )}
                           {job.job_work_items.some(isItemIncomplete) && (
                             <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium shrink-0">
                               Needs details

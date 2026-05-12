@@ -10,6 +10,7 @@ interface UnifiedRow {
   key: string
   date: string
   sfJobId: string | null
+  sfJobNumber: string | null
   jobName: string | null
   revenue: number | null
   labor: number | null
@@ -121,10 +122,12 @@ export default function TechDetailClient({
                           {row.jobName && (
                             <span className="text-gray-900 font-medium">{row.jobName}</span>
                           )}
-                          {row.sfJobId && (
+                          {row.sfJobNumber ? (
+                            <span className="block text-xs text-gray-400 font-mono">SF #{row.sfJobNumber}</span>
+                          ) : row.sfJobId ? (
                             <span className="block text-xs text-gray-400 font-mono">{row.sfJobId}</span>
-                          )}
-                          {!row.jobName && !row.sfJobId && (
+                          ) : null}
+                          {!row.jobName && !row.sfJobId && !row.sfJobNumber && (
                             <span className="text-gray-400">—</span>
                           )}
                         </td>

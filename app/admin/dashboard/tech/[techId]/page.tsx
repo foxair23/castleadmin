@@ -55,6 +55,7 @@ export default async function TechDetailPage({
     work_date: string
     total_pay: number
     sf_job_id: string | null
+    sf_job_number: string | null
     items: { name: string; quantity: number; calculated_pay: number }[]
   }
   let pwJobRows: PwJobRaw[] = []
@@ -62,7 +63,7 @@ export default async function TechDetailPage({
   if (techProfile?.id) {
     const { data: pwJobs } = await db
       .from('jobs')
-      .select('id, job_name, work_date, total_pay, sf_job_id')
+      .select('id, job_name, work_date, total_pay, sf_job_id, sf_job_number')
       .eq('tech_id', techProfile.id)
       .eq('week_start_date', weekStart)
       .order('work_date', { ascending: true })
@@ -92,6 +93,7 @@ export default async function TechDetailPage({
         work_date: j.work_date as string,
         total_pay: j.total_pay as number,
         sf_job_id: j.sf_job_id as string | null,
+        sf_job_number: j.sf_job_number as string | null,
         items: itemsByJob[j.id as string] ?? [],
       }))
     }
@@ -146,6 +148,7 @@ export default async function TechDetailPage({
     key: string
     date: string
     sfJobId: string | null
+    sfJobNumber: string | null
     jobName: string | null
     revenue: number | null
     labor: number | null
@@ -166,6 +169,7 @@ export default async function TechDetailPage({
       key: pw.id,
       date: sfInWeek?.completed_at?.slice(0, 10) ?? pw.work_date,
       sfJobId: pw.sf_job_id,
+      sfJobNumber: pw.sf_job_number,
       jobName: pw.job_name,
       revenue,
       labor: pw.total_pay,
@@ -180,6 +184,7 @@ export default async function TechDetailPage({
       key: sf.id,
       date: sf.completed_at!.slice(0, 10),
       sfJobId: sf.id,
+      sfJobNumber: null,
       jobName: null,
       revenue: sf.total_amount ?? null,
       labor: null,
