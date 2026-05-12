@@ -857,7 +857,11 @@ export default function DashboardClient({
                         const marginWarn = row.marginPct !== null && row.marginPct >= 20 && row.marginPct < 40
                         const marginBad = row.marginPct !== null && row.marginPct < 20
                         return (
-                          <tr key={row.techId}>
+                          <tr
+                            key={row.techId}
+                            onClick={() => router.push(`/admin/dashboard/tech/${encodeURIComponent(row.techId)}?weekStart=${techWeekStart}`)}
+                            className="cursor-pointer hover:bg-gray-50 transition-colors"
+                          >
                             <td className="py-2 px-3 font-medium text-gray-700 text-xs">{row.techName ?? row.techId}</td>
                             <td className="py-2 px-3 text-right text-gray-700">{row.sfJobs}</td>
                             <td className="py-2 px-3 text-right text-gray-700">{fmt$(row.sfRevenue)}</td>
