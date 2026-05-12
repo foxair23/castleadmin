@@ -84,20 +84,47 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
   async function syncAllTechs() {
     setSyncingAll(true)
     setSyncAllResult('')
-    try {
-      const res = await fetch('/api/admin/sf/sync-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weeks: 8 }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'Sync failed')
-      const totals = Object.values(data.summary as Record<string, { added: number; updated: number }>)
-        .reduce((acc, t) => ({ added: acc.added + t.added, updated: acc.updated + t.updated }), { added: 0, updated: 0 })
-      setSyncAllResult(`Done — ${totals.added} jobs added, ${totals.updated} updated across ${data.techCount} techs (last ${data.weeks} weeks)`)
-    } catch (err: unknown) {
-      setSyncAllResult(err instanceof Error ? err.message : 'Sync failed')
+
+    // Build last 8 week-start dates (Mondays) client-side
+    const weekStarts: string[] = []
+    const d = new Date()
+    // Rewind to most recent Monday
+    const day = d.getDay()
+    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
+    for (let i = 0; i < 8; i++) {
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const dd = String(d.getDate()).padStart(2, '0')
+      weekStarts.push(`${y}-${m}-${dd}`)
+      d.setDate(d.getDate() - 7)
     }
+
+    let totalAdded = 0
+    let totalUpdated = 0
+    let techCount = 0
+
+    for (let i = 0; i < weekStarts.length; i++) {
+      const weekStart = weekStarts[i]
+      setSyncAllResult(`Syncing week ${i + 1} of ${weekStarts.length} (${weekStart})…`)
+      try {
+        const res = await fetch('/api/admin/sf/sync-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ weekStart }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? 'Sync failed')
+        totalAdded += data.added
+        totalUpdated += data.updated
+        techCount = data.techCount
+      } catch (err: unknown) {
+        setSyncAllResult(err instanceof Error ? err.message : 'Sync failed')
+        setSyncingAll(false)
+        return
+      }
+    }
+
+    setSyncAllResult(`Done — ${totalAdded} jobs added, ${totalUpdated} updated across ${techCount} techs (last 8 weeks)`)
     setSyncingAll(false)
   }
 
