@@ -27,6 +27,8 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
   )
   const [saving, setSaving] = useState<Record<string, boolean>>({})
   const [saved, setSaved] = useState<Record<string, boolean>>({})
+  const [syncing, setSyncing] = useState<Record<string, boolean>>({})
+  const [syncResult, setSyncResult] = useState<Record<string, string>>({})
 
   useEffect(() => { loadSfTechs() }, [])
 
@@ -55,6 +57,26 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
       setSfTechsError(err instanceof Error ? err.message : 'Failed to load SF technicians')
     }
     setSfTechsLoading(false)
+  }
+
+  async function syncTechJobs(techId: string) {
+    const sfTechId = mappings[techId]
+    if (!sfTechId) return
+    setSyncing(s => ({ ...s, [techId]: true }))
+    setSyncResult(r => ({ ...r, [techId]: '' }))
+    try {
+      const res = await fetch('/api/admin/sf/sync-tech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sf_tech_id: sfTechId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Sync failed')
+      setSyncResult(r => ({ ...r, [techId]: `Synced ${data.jobsSynced} jobs` }))
+    } catch (err: unknown) {
+      setSyncResult(r => ({ ...r, [techId]: err instanceof Error ? err.message : 'Sync failed' }))
+    }
+    setSyncing(s => ({ ...s, [techId]: false }))
   }
 
   async function saveMapping(techId: string) {
@@ -139,12 +161,13 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Service Fusion Technician</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-600">Status</th>
                 <th className="px-4 py-3"></th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {initialTechs.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="text-center py-8 text-gray-400 text-sm">
+                  <td colSpan={5} className="text-center py-8 text-gray-400 text-sm">
                     No technicians found. Add technicians under Technicians first.
                   </td>
                 </tr>
@@ -192,6 +215,24 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
                     >
                       {saving[tech.id] ? 'Saving…' : saved[tech.id] ? 'Saved ✓' : 'Save'}
                     </button>
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {mappings[tech.id] && (
+                      <div className="flex flex-col gap-0.5">
+                        <button
+                          onClick={() => syncTechJobs(tech.id)}
+                          disabled={syncing[tech.id]}
+                          className="text-xs bg-gray-700 text-white px-3 py-1.5 rounded hover:bg-gray-800 disabled:opacity-60 whitespace-nowrap"
+                        >
+                          {syncing[tech.id] ? 'Syncing…' : 'Resync Jobs'}
+                        </button>
+                        {syncResult[tech.id] && (
+                          <span className={`text-xs ${syncResult[tech.id].startsWith('Synced') ? 'text-green-600' : 'text-red-600'}`}>
+                            {syncResult[tech.id]}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
