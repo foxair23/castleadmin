@@ -53,30 +53,16 @@ export async function GET(req: NextRequest) {
   // 2. Fetch closed SF jobs in the week
   const { data: sfJobs } = await db
     .from('sf_jobs_cache')
-    .select('id, completed_at')
+    .select('id, total_amount, completed_at')
     .eq('is_closed', true)
     .gte('completed_at', weekStart + 'T00:00:00')
     .lte('completed_at', weekEnd + 'T23:59:59')
     .not('completed_at', 'is', null)
 
   const sfJobIds = (sfJobs ?? []).map(j => j.id as string)
+  const sfJobMap = new Map((sfJobs ?? []).map(j => [j.id as string, j]))
 
-  // 3. Fetch invoice totals for those jobs (revenue source of truth)
-  const invoiceRevenueByJobId = new Map<string, number>()
-  if (sfJobIds.length > 0) {
-    const { data: invoices } = await db
-      .from('sf_invoices_cache')
-      .select('job_id, total')
-      .in('job_id', sfJobIds)
-      .not('total', 'is', null)
-
-    for (const inv of invoices ?? []) {
-      const jid = inv.job_id as string
-      invoiceRevenueByJobId.set(jid, (invoiceRevenueByJobId.get(jid) ?? 0) + ((inv.total as number) ?? 0))
-    }
-  }
-
-  // 4. Fetch tech assignments for those jobs
+  // 3. Fetch tech assignments for those jobs
   const sfByTech: Record<string, { jobs: number; revenue: number }> = {}
   if (sfJobIds.length > 0) {
     const { data: assignments } = await db
@@ -87,13 +73,15 @@ export async function GET(req: NextRequest) {
     for (const a of assignments ?? []) {
       const jobId = a.sf_job_id as string
       const techId = a.sf_tech_id as string
+      const job = sfJobMap.get(jobId)
+      if (!job) continue
       if (!sfByTech[techId]) sfByTech[techId] = { jobs: 0, revenue: 0 }
       sfByTech[techId].jobs++
-      sfByTech[techId].revenue += invoiceRevenueByJobId.get(jobId) ?? 0
+      sfByTech[techId].revenue += (job.total_amount as number) ?? 0
     }
   }
 
-  // 5. Fetch piecework pay for the week from the jobs table
+  // 4. Fetch piecework pay for the week from the jobs table
   const { data: pieceworkJobs } = await db
     .from('jobs')
     .select('tech_id, total_pay')
@@ -105,7 +93,7 @@ export async function GET(req: NextRequest) {
     pieceworkByTechUuid[techId] = (pieceworkByTechUuid[techId] ?? 0) + ((j.total_pay as number) ?? 0)
   }
 
-  // 6. Merge by sf_technician_id
+  // 5. Merge by sf_technician_id
   // Collect all SF tech IDs that appear in the scoreboard
   const allSfTechIds = new Set(Object.keys(sfByTech))
 
