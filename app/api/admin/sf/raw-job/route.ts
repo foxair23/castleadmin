@@ -12,6 +12,7 @@ async function getToken(): Promise<string> {
       client_id: process.env.SF_CLIENT_ID,
       client_secret: process.env.SF_CLIENT_SECRET,
     }),
+    cache: 'no-store',
   })
   if (!resp.ok) throw new Error(`SF auth failed: ${resp.status}`)
   const json = await resp.json()
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
     const token = await getToken()
     const resp = await fetch(`${SF_BASE_URL}/jobs/${jobId}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      cache: 'no-store',
     })
     if (!resp.ok) return NextResponse.json({ error: `SF API ${resp.status}` }, { status: resp.status })
     const raw = await resp.json()
