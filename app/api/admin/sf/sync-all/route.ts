@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { getProvider } from '@/lib/crm'
-import { getWeekStart, getWeekEnd, parseDate, formatDate } from '@/lib/week'
+import { getWeekEnd, parseDate } from '@/lib/week'
 
 export const maxDuration = 60
 
@@ -13,16 +13,6 @@ function adminDb() {
   )
 }
 
-function getPastWeekStarts(count: number): string[] {
-  const weeks: string[] = []
-  const d = parseDate(getWeekStart())
-  for (let i = 0; i < count; i++) {
-    weeks.push(formatDate(d))
-    d.setDate(d.getDate() - 7)
-  }
-  return weeks
-}
-
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -31,62 +21,81 @@ export async function POST(req: NextRequest) {
   const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (p?.role !== 'admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const body = await req.json().catch(() => ({}))
-  const weeks = Math.min(12, Math.max(1, Number(body?.weeks ?? 4) || 4))
+  try {
+    const body = await req.json().catch(() => ({}))
+    const weekStart = body?.weekStart as string
+    if (!weekStart || !/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+      return NextResponse.json({ error: 'weekStart required (YYYY-MM-DD)' }, { status: 400 })
+    }
 
-  const db = adminDb()
-  const provider = getProvider()
-  const now = new Date().toISOString()
+    const weekEnd = getWeekEnd(weekStart)
+    const weekStartDate = parseDate(weekStart)
+    const weekEndDate = parseDate(weekEnd)
 
-  // Load all active techs with SF mapping
-  const { data: profiles } = await db
-    .from('profiles')
-    .select('id, full_name, sf_technician_id')
-    .eq('role', 'technician')
-    .eq('is_active', true)
-    .not('sf_technician_id', 'is', null)
+    const db = adminDb()
+    const provider = getProvider()
+    const now = new Date().toISOString()
 
-  if (!profiles?.length) {
-    return NextResponse.json({ error: 'No mapped technicians found' }, { status: 400 })
-  }
+    // Load all active techs with SF mapping
+    const { data: profiles } = await db
+      .from('profiles')
+      .select('id, full_name, sf_technician_id')
+      .eq('role', 'technician')
+      .eq('is_active', true)
+      .not('sf_technician_id', 'is', null)
 
-  const weekStarts = getPastWeekStarts(weeks)
-  const summary: Record<string, { added: number; updated: number }> = {}
+    if (!profiles?.length) {
+      return NextResponse.json({ error: 'No mapped technicians found' }, { status: 400 })
+    }
 
-  for (const profile of profiles) {
-    summary[profile.full_name] = { added: 0, updated: 0 }
+    // Fetch all techs' SF jobs in parallel
+    const techResults = await Promise.all(
+      profiles.map(async profile => {
+        try {
+          const sfJobs = await provider.listJobsForTech(
+            profile.sf_technician_id as string,
+            weekStartDate,
+            weekEndDate
+          )
+          return { profile, sfJobs }
+        } catch {
+          return { profile, sfJobs: [] }
+        }
+      })
+    )
 
-    for (const weekStart of weekStarts) {
-      const weekEnd = getWeekEnd(weekStart)
-      const weekStartDate = parseDate(weekStart)
-      const weekEndDate = parseDate(weekEnd)
+    // Bulk-check which (tech_id, sf_job_id) pairs already exist
+    const allPairs = techResults.flatMap(({ profile, sfJobs }) =>
+      sfJobs.map(j => ({ techId: profile.id, sfJobId: j.id }))
+    )
 
-      let sfJobs
-      try {
-        sfJobs = await provider.listJobsForTech(
-          profile.sf_technician_id as string,
-          weekStartDate,
-          weekEndDate
-        )
-      } catch {
-        // SF API error for this tech/week — skip and continue
-        continue
+    const allSfJobIds = [...new Set(allPairs.map(p => p.sfJobId))]
+    const existingSet = new Set<string>()
+
+    if (allSfJobIds.length > 0) {
+      const { data: existing } = await db
+        .from('jobs')
+        .select('tech_id, sf_job_id')
+        .in('sf_job_id', allSfJobIds)
+        .not('sf_job_id', 'is', null)
+      for (const row of existing ?? []) {
+        existingSet.add(`${row.tech_id}::${row.sf_job_id}`)
       }
+    }
 
+    let added = 0
+    let updated = 0
+
+    for (const { profile, sfJobs } of techResults) {
       for (const sfJob of sfJobs) {
-        const { data: existing } = await db
-          .from('jobs')
-          .select('id')
-          .eq('tech_id', profile.id)
-          .eq('sf_job_id', sfJob.id)
-          .maybeSingle()
-
-        if (existing) {
+        const key = `${profile.id}::${sfJob.id}`
+        if (existingSet.has(key)) {
           await db
             .from('jobs')
             .update({ sf_status: sfJob.status, sf_job_number: sfJob.jobNumber, sf_last_synced_at: now })
-            .eq('id', existing.id)
-          summary[profile.full_name].updated++
+            .eq('tech_id', profile.id)
+            .eq('sf_job_id', sfJob.id)
+          updated++
         } else {
           await db.from('jobs').insert({
             tech_id: profile.id,
@@ -101,11 +110,14 @@ export async function POST(req: NextRequest) {
             sf_status: sfJob.status,
             sf_last_synced_at: now,
           })
-          summary[profile.full_name].added++
+          added++
         }
       }
     }
-  }
 
-  return NextResponse.json({ ok: true, weeks, techCount: profiles.length, summary })
+    return NextResponse.json({ ok: true, weekStart, techCount: profiles.length, added, updated })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error'
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }
