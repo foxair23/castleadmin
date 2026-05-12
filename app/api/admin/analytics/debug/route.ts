@@ -18,21 +18,25 @@ export async function GET() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  // 1. Check what's in the DB
-  const { count: totalInvoices } = await db
-    .from('sf_invoices_cache')
+  // 1. Check job total_amount in DB
+  const { count: jobsWithAmount } = await db
+    .from('sf_jobs_cache')
     .select('id', { count: 'exact', head: true })
+    .not('total_amount', 'is', null)
+    .gt('total_amount', 0)
 
+  const { data: sampleJobs } = await db
+    .from('sf_jobs_cache')
+    .select('id, total_amount, completed_at')
+    .eq('is_closed', true)
+    .not('completed_at', 'is', null)
+    .limit(5)
+
+  // 2. Check invoice data in DB
   const { count: invoicesWithJobId } = await db
     .from('sf_invoices_cache')
     .select('id', { count: 'exact', head: true })
     .not('job_id', 'is', null)
-
-  const { count: invoicesWithTotal } = await db
-    .from('sf_invoices_cache')
-    .select('id', { count: 'exact', head: true })
-    .not('total', 'is', null)
-    .gt('total', 0)
 
   const { data: sampleInvoices } = await db
     .from('sf_invoices_cache')
@@ -40,24 +44,24 @@ export async function GET() {
     .gt('total', 0)
     .limit(3)
 
-  // 2. Fetch a live invoice from SF API to see actual field names
-  let sfInvoiceKeys: string[] = []
-  let sfInvoiceSample: Record<string, unknown> | null = null
+  // 3. Fetch a live job from SF API to see if total field exists
+  let sfJobKeys: string[] = []
+  let sfJobTotal: unknown = null
   try {
     const provider = new ServiceFusionProvider()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const resp = await (provider as any).listInvoicesPaged(1, 1)
+    const resp = await (provider as any).listJobsPaged(1, 1)
     const raw = resp.items[0] ?? null
     if (raw) {
-      sfInvoiceKeys = Object.keys(raw)
-      sfInvoiceSample = raw
+      sfJobKeys = Object.keys(raw)
+      sfJobTotal = raw.total
     }
   } catch (e) {
-    sfInvoiceKeys = [`error: ${e instanceof Error ? e.message : String(e)}`]
+    sfJobKeys = [`error: ${e instanceof Error ? e.message : String(e)}`]
   }
 
   return NextResponse.json({
-    db: { totalInvoices, invoicesWithJobId, invoicesWithTotal, sampleInvoices },
-    sfApi: { keys: sfInvoiceKeys, sample: sfInvoiceSample },
+    db: { jobsWithAmount, sampleJobs, invoicesWithJobId, sampleInvoices },
+    sfApi: { jobKeys: sfJobKeys, sampleJobTotal: sfJobTotal },
   })
 }
