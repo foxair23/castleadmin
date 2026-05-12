@@ -1,0 +1,41 @@
+name: Sync Tech Jobs from SF
+
+on:
+  workflow_dispatch:
+    inputs:
+      weeks:
+        description: 'Number of weeks to sync (default: 52 = ~1 year)'
+        required: false
+        default: '52'
+      from_date:
+        description: 'Or sync from a specific date (YYYY-MM-DD). Overrides weeks if set.'
+        required: false
+        default: ''
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci --ignore-scripts
+
+      - name: Sync tech jobs
+        run: |
+          if [ -n "${{ github.event.inputs.from_date }}" ]; then
+            node scripts/sync-tech-jobs.mjs --from=${{ github.event.inputs.from_date }}
+          else
+            node scripts/sync-tech-jobs.mjs --weeks=${{ github.event.inputs.weeks }}
+          fi
+        env:
+          SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
+          SF_CLIENT_SECRET: ${{ secrets.SF_CLIENT_SECRET }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
