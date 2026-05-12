@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { ServiceFusionProvider } from '@/lib/crm/service-fusion'
 
 export const maxDuration = 60
 
@@ -17,7 +18,7 @@ export async function GET() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  // Check invoice data quality
+  // 1. Check what's in the DB
   const { count: totalInvoices } = await db
     .from('sf_invoices_cache')
     .select('id', { count: 'exact', head: true })
@@ -33,25 +34,30 @@ export async function GET() {
     .not('total', 'is', null)
     .gt('total', 0)
 
-  // Sample a few invoices to see what fields are populated
   const { data: sampleInvoices } = await db
     .from('sf_invoices_cache')
-    .select('id, job_id, customer_id, issued_at, total, balance_due')
-    .limit(5)
-
-  // Sample invoices that DO have a job_id
-  const { data: invoicesWithJob } = await db
-    .from('sf_invoices_cache')
-    .select('id, job_id, total')
-    .not('job_id', 'is', null)
+    .select('id, job_id, customer_id, issued_at, total')
     .gt('total', 0)
-    .limit(5)
+    .limit(3)
+
+  // 2. Fetch a live invoice from SF API to see actual field names
+  let sfInvoiceKeys: string[] = []
+  let sfInvoiceSample: Record<string, unknown> | null = null
+  try {
+    const provider = new ServiceFusionProvider()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const resp = await (provider as any).listInvoicesPaged(1, 1)
+    const raw = resp.items[0] ?? null
+    if (raw) {
+      sfInvoiceKeys = Object.keys(raw)
+      sfInvoiceSample = raw
+    }
+  } catch (e) {
+    sfInvoiceKeys = [`error: ${e instanceof Error ? e.message : String(e)}`]
+  }
 
   return NextResponse.json({
-    totalInvoices,
-    invoicesWithJobId,
-    invoicesWithTotal,
-    sampleInvoices,
-    invoicesWithJob,
+    db: { totalInvoices, invoicesWithJobId, invoicesWithTotal, sampleInvoices },
+    sfApi: { keys: sfInvoiceKeys, sample: sfInvoiceSample },
   })
 }
