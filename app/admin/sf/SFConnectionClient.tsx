@@ -29,6 +29,8 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
   const [saved, setSaved] = useState<Record<string, boolean>>({})
   const [syncing, setSyncing] = useState<Record<string, boolean>>({})
   const [syncResult, setSyncResult] = useState<Record<string, string>>({})
+  const [syncingAll, setSyncingAll] = useState(false)
+  const [syncAllResult, setSyncAllResult] = useState<string>('')
 
   useEffect(() => { loadSfTechs() }, [])
 
@@ -79,6 +81,26 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
     setSyncing(s => ({ ...s, [techId]: false }))
   }
 
+  async function syncAllTechs() {
+    setSyncingAll(true)
+    setSyncAllResult('')
+    try {
+      const res = await fetch('/api/admin/sf/sync-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weeks: 8 }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Sync failed')
+      const totals = Object.values(data.summary as Record<string, { added: number; updated: number }>)
+        .reduce((acc, t) => ({ added: acc.added + t.added, updated: acc.updated + t.updated }), { added: 0, updated: 0 })
+      setSyncAllResult(`Done — ${totals.added} jobs added, ${totals.updated} updated across ${data.techCount} techs (last ${data.weeks} weeks)`)
+    } catch (err: unknown) {
+      setSyncAllResult(err instanceof Error ? err.message : 'Sync failed')
+    }
+    setSyncingAll(false)
+  }
+
   async function saveMapping(techId: string) {
     setSaving(s => ({ ...s, [techId]: true }))
     const res = await fetch('/api/admin/sf/mapping', {
@@ -126,6 +148,32 @@ export default function SFConnectionClient({ initialTechs }: { initialTechs: App
           className="bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-red-700 disabled:opacity-60"
         >
           {testing ? 'Testing…' : 'Test Connection'}
+        </button>
+      </div>
+
+      {/* Sync all techs */}
+      <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-800 mb-1">Sync All Technicians</h2>
+          <p className="text-xs text-gray-500">
+            Pulls jobs from Service Fusion for all mapped techs for the last 8 weeks and creates piecework entries where none exist. This is the same sync techs run from their own view.
+          </p>
+        </div>
+        {syncAllResult && (
+          <div className={`text-sm px-3 py-2 rounded border ${
+            syncAllResult.startsWith('Done')
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : 'bg-red-50 border-red-200 text-red-700'
+          }`}>
+            {syncAllResult}
+          </div>
+        )}
+        <button
+          onClick={syncAllTechs}
+          disabled={syncingAll}
+          className="bg-gray-800 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-gray-900 disabled:opacity-60"
+        >
+          {syncingAll ? 'Syncing… (this may take up to 60 seconds)' : 'Sync All Techs from SF'}
         </button>
       </div>
 
