@@ -5,11 +5,6 @@
 // Usage: node scripts/check-sf-job.mjs [internalId]
 // If no ID provided, fetches the first job from the list.
 
-import { setGlobalDispatcher, Agent } from 'node:undici'
-
-// Override undici's default headers timeout (too short for SF API)
-setGlobalDispatcher(new Agent({ headersTimeout: 60_000, bodyTimeout: 60_000 }))
-
 const SF_TOKEN_URL = 'https://api.servicefusion.com/oauth/access_token'
 const SF_BASE_URL = 'https://api.servicefusion.com/v1'
 const TIMEOUT_MS = 45_000
