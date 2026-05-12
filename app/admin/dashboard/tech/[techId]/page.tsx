@@ -48,37 +48,7 @@ export default async function TechDetailPage({
     .eq('sf_technician_id', techId)
     .maybeSingle()
 
-  // Fetch SF jobs for this tech in the week — same logic as scoreboard:
-  // get week's jobs first (small set), then filter to this tech's assignments.
-  // Avoids huge .in() on all-time tech assignments which PostgREST truncates.
-  type SfJobRaw = { id: string; total_amount: number | null; completed_at: string | null }
-  let sfJobRows: SfJobRaw[] = []
-
-  const { data: weekJobs } = await db
-    .from('sf_jobs_cache')
-    .select('id, total_amount, completed_at')
-    .eq('is_closed', true)
-    .gte('completed_at', weekStart + 'T00:00:00')
-    .lte('completed_at', wkEnd + 'T23:59:59')
-    .not('completed_at', 'is', null)
-
-  const weekJobIds = (weekJobs ?? []).map(j => j.id as string)
-  const weekJobMap = new Map((weekJobs ?? []).map(j => [j.id as string, j as SfJobRaw]))
-
-  if (weekJobIds.length > 0) {
-    const { data: techAssignments } = await db
-      .from('sf_job_techs_cache')
-      .select('sf_job_id')
-      .eq('sf_tech_id', techId)
-      .in('sf_job_id', weekJobIds)
-
-    sfJobRows = (techAssignments ?? [])
-      .map(a => weekJobMap.get(a.sf_job_id as string))
-      .filter((j): j is SfJobRaw => j !== undefined)
-      .sort((a, b) => (a.completed_at ?? '').localeCompare(b.completed_at ?? ''))
-  }
-
-  // Fetch piecework jobs for this tech + week (including sf_job_id for joining)
+  // ── Piecework jobs for this tech + week ───────────────────────────────────
   type PwJobRaw = {
     id: string
     job_name: string
@@ -109,9 +79,8 @@ export default async function TechDetailPage({
         const jid = item.job_id as string
         if (!itemsByJob[jid]) itemsByJob[jid] = []
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const typeName = (item.job_types as any)?.name ?? 'Unknown'
         itemsByJob[jid].push({
-          name: typeName,
+          name: (item.job_types as any)?.name ?? 'Unknown',
           quantity: item.quantity as number,
           calculated_pay: item.calculated_pay as number,
         })
@@ -128,7 +97,51 @@ export default async function TechDetailPage({
     }
   }
 
-  // Build unified rows: join SF jobs + piecework by sf_job_id where possible
+  // ── SF revenue lookup for piecework jobs ──────────────────────────────────
+  // Look up by specific sf_job_id with NO date filter — piecework is often
+  // submitted in a different week than the SF job's completed_at date.
+  const pwSfJobIds = pwJobRows.map(j => j.sf_job_id).filter((id): id is string => id !== null)
+  const sfRevenueById = new Map<string, number | null>()
+  if (pwSfJobIds.length > 0) {
+    const { data: sfLookup } = await db
+      .from('sf_jobs_cache')
+      .select('id, total_amount')
+      .in('id', pwSfJobIds)
+    for (const j of sfLookup ?? []) {
+      sfRevenueById.set(j.id as string, (j.total_amount as number | null))
+    }
+  }
+
+  // ── SF jobs completed this week, assigned to this tech ────────────────────
+  // Same query order as the scoreboard: week jobs first, then filter by tech.
+  type SfJobRaw = { id: string; total_amount: number | null; completed_at: string | null }
+  let sfJobRows: SfJobRaw[] = []
+
+  const { data: weekJobs } = await db
+    .from('sf_jobs_cache')
+    .select('id, total_amount, completed_at')
+    .eq('is_closed', true)
+    .gte('completed_at', weekStart + 'T00:00:00')
+    .lte('completed_at', wkEnd + 'T23:59:59')
+    .not('completed_at', 'is', null)
+
+  const weekJobIds = (weekJobs ?? []).map(j => j.id as string)
+  const weekJobMap = new Map((weekJobs ?? []).map(j => [j.id as string, j as SfJobRaw]))
+
+  if (weekJobIds.length > 0) {
+    const { data: techAssignments } = await db
+      .from('sf_job_techs_cache')
+      .select('sf_job_id')
+      .eq('sf_tech_id', techId)
+      .in('sf_job_id', weekJobIds)
+
+    sfJobRows = (techAssignments ?? [])
+      .map(a => weekJobMap.get(a.sf_job_id as string))
+      .filter((j): j is SfJobRaw => j !== undefined)
+      .sort((a, b) => (a.completed_at ?? '').localeCompare(b.completed_at ?? ''))
+  }
+
+  // ── Build unified rows ────────────────────────────────────────────────────
   type UnifiedRow = {
     key: string
     date: string
@@ -143,16 +156,18 @@ export default async function TechDetailPage({
   const usedSfIds = new Set<string>()
   const rows: UnifiedRow[] = []
 
-  // First pass: piecework jobs (may join to SF)
+  // First pass: piecework jobs — revenue from sfRevenueById (no date restriction)
   for (const pw of pwJobRows) {
-    const sf = pw.sf_job_id ? sfJobMap.get(pw.sf_job_id) : null
-    if (sf) usedSfIds.add(sf.id)
+    if (pw.sf_job_id) usedSfIds.add(pw.sf_job_id)
+    // Use the week's SF job for the date; fall back to just having the ID
+    const sfInWeek = pw.sf_job_id ? sfJobMap.get(pw.sf_job_id) : undefined
+    const revenue = pw.sf_job_id !== null ? (sfRevenueById.get(pw.sf_job_id) ?? null) : null
     rows.push({
       key: pw.id,
-      date: sf?.completed_at?.slice(0, 10) ?? pw.work_date,
-      sfJobId: sf?.id ?? null,
+      date: sfInWeek?.completed_at?.slice(0, 10) ?? pw.work_date,
+      sfJobId: pw.sf_job_id,
       jobName: pw.job_name,
-      revenue: sf ? (sf.total_amount ?? null) : null,
+      revenue,
       labor: pw.total_pay,
       items: pw.items,
     })
