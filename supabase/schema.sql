@@ -65,12 +65,16 @@ alter table public.week_submissions enable row level security;
 
 -- Helper: is the current user an admin?
 create or replace function public.is_admin()
-returns boolean language sql security definer as $$
+returns boolean language sql security definer
+set search_path = ''
+as $$
   select exists (
     select 1 from public.profiles
     where id = auth.uid() and role = 'admin' and is_active = true
   );
 $$;
+
+revoke execute on function public.is_admin() from anon;
 
 -- profiles: admins see all; techs see themselves
 create policy "admin_all_profiles" on public.profiles
@@ -170,7 +174,9 @@ create policy "tech_own_submissions_insert" on public.week_submissions
 -- Auto-update updated_at on jobs
 -- ============================================================
 create or replace function public.set_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql
+set search_path = ''
+as $$
 begin
   new.updated_at = now();
   return new;
