@@ -42,11 +42,12 @@ interface Props {
   submittedAt: string | null
   adminUnlocked: boolean
   sfMapped: boolean
+  weeklyBonus: number
   lastWeek: string
   showLastWeekNudge: boolean
 }
 
-export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked, sfMapped, lastWeek, showLastWeekNudge }: Props) {
+export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked, sfMapped, weeklyBonus, lastWeek, showLastWeekNudge }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [unsubmitting, setUnsubmitting] = useState(false)
@@ -66,7 +67,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
   const weekEnd = getWeekEnd(selectedWeek)
   const deadline = getDeadlineForWeek(selectedWeek)
 
-  const totalPay = jobs.reduce((sum, j) => sum + j.total_pay, 0)
+  const totalPay = jobs.reduce((sum, j) => sum + j.total_pay, 0) + weeklyBonus
 
   function isItemIncomplete(item: WorkItem): boolean {
     if (!item.job_types) return false
@@ -371,6 +372,12 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
 
       {/* Footer */}
       <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 pt-4 mt-4 space-y-3">
+        {weeklyBonus > 0 && (
+          <div className="flex items-center justify-between text-sm text-purple-700">
+            <span>Weekly Bonus</span>
+            <span>{formatMoney(weeklyBonus)}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-gray-700">Week Total</span>
           <span className="text-lg font-bold text-gray-900">{formatMoney(totalPay)}</span>

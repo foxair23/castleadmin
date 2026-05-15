@@ -10,6 +10,7 @@ interface Tech {
   role: string
   is_active: boolean
   created_at: string
+  weekly_bonus: number
 }
 
 interface NewTechForm {
@@ -30,6 +31,8 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
   const [emailingId, setEmailingId] = useState<string | null>(null)
   const [emailForm, setEmailForm] = useState<Record<string, string>>({})
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [bonusId, setBonusId] = useState<string | null>(null)
+  const [bonusForm, setBonusForm] = useState<Record<string, string>>({})
 
   async function handleCreateTech(e: React.FormEvent) {
     e.preventDefault()
@@ -103,6 +106,31 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
     } else {
       const data = await res.json()
       setError(data.error ?? 'Failed to update email')
+    }
+  }
+
+  async function handleSaveBonus(techId: string) {
+    const raw = bonusForm[techId]?.trim()
+    const val = parseFloat(raw ?? '')
+    if (isNaN(val) || val < 0) {
+      setError('Enter a valid non-negative dollar amount.')
+      return
+    }
+    setError('')
+    setSuccess('')
+    const res = await fetch(`/api/admin/techs/${techId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weekly_bonus: val }),
+    })
+    if (res.ok) {
+      setTechs(ts => ts.map(t => t.id === techId ? { ...t, weekly_bonus: val } : t))
+      setSuccess('Weekly bonus updated.')
+      setBonusId(null)
+      setBonusForm({})
+    } else {
+      const data = await res.json()
+      setError(data.error ?? 'Failed to update bonus')
     }
   }
 
@@ -234,7 +262,14 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
               {techs.map(tech => (
                 <>
                   <tr key={tech.id} className={tech.is_active ? '' : 'opacity-50'}>
-                    <td className="px-4 py-3 font-medium text-gray-900">{tech.full_name}</td>
+                    <td className="px-4 py-3 font-medium text-gray-900">
+                      {tech.full_name}
+                      {tech.weekly_bonus > 0 && (
+                        <span className="ml-2 text-xs text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded font-medium">
+                          +${tech.weekly_bonus.toFixed(0)}/wk
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-500 text-sm">{tech.email}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -247,8 +282,21 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                       <div className="flex justify-end gap-3 text-xs">
                         <button
                           onClick={() => {
+                            setBonusId(bonusId === tech.id ? null : tech.id)
+                            setBonusForm(f => ({ ...f, [tech.id]: String(tech.weekly_bonus) }))
+                            setEmailingId(null)
+                            setResetingId(null)
+                            setError('')
+                          }}
+                          className="text-purple-600 hover:underline"
+                        >
+                          Set Bonus
+                        </button>
+                        <button
+                          onClick={() => {
                             setEmailingId(emailingId === tech.id ? null : tech.id)
                             setResetingId(null)
+                            setBonusId(null)
                             setError('')
                           }}
                           className="text-red-600 hover:underline"
@@ -259,6 +307,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                           onClick={() => {
                             setResetingId(resetingId === tech.id ? null : tech.id)
                             setEmailingId(null)
+                            setBonusId(null)
                             setError('')
                           }}
                           className="text-red-600 hover:underline"
@@ -275,6 +324,36 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                       </div>
                     </td>
                   </tr>
+                  {bonusId === tech.id && (
+                    <tr key={`${tech.id}-bonus`}>
+                      <td colSpan={4} className="bg-purple-50 px-4 py-3">
+                        <div className="flex gap-2 items-center flex-wrap">
+                          <label className="text-xs text-gray-600 whitespace-nowrap">Weekly bonus ($):</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={bonusForm[tech.id] ?? '0'}
+                            onChange={e => setBonusForm(f => ({ ...f, [tech.id]: e.target.value }))}
+                            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-28 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                          />
+                          <span className="text-xs text-gray-400">Set to 0 to remove</span>
+                          <button
+                            onClick={() => handleSaveBonus(tech.id)}
+                            className="bg-purple-600 text-white rounded px-3 py-1.5 text-xs hover:bg-purple-700"
+                          >
+                            Save Bonus
+                          </button>
+                          <button
+                            onClick={() => { setBonusId(null); setBonusForm({}) }}
+                            className="text-gray-500 hover:underline text-xs"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {emailingId === tech.id && (
                     <tr key={`${tech.id}-email`}>
                       <td colSpan={4} className="bg-blue-50 px-4 py-3">

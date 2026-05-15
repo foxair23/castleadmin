@@ -32,6 +32,7 @@ interface Tech {
   id: string
   full_name: string
   is_active: boolean
+  weekly_bonus: number
 }
 
 interface Submission {
@@ -82,7 +83,9 @@ export default function AdminSummaryClient({
     jobsByTech.get(job.tech_id)!.push(job)
   }
 
-  const grandTotal = jobs.reduce((s, j) => s + j.total_pay, 0)
+  const bonusById = new Map(techs.map(t => [t.id, t.weekly_bonus ?? 0]))
+  const grandTotal = jobs.reduce((s, j) => s + j.total_pay, 0) +
+    techs.reduce((s, t) => s + (t.weekly_bonus ?? 0), 0)
 
   function techStatus(techId: string) {
     const sub = submissionMap.get(techId)
@@ -142,7 +145,8 @@ export default function AdminSummaryClient({
             <tbody className="divide-y divide-gray-100">
               {techs.map(tech => {
                 const techJobs = jobsByTech.get(tech.id) ?? []
-                const techTotal = techJobs.reduce((s, j) => s + j.total_pay, 0)
+                const bonus = bonusById.get(tech.id) ?? 0
+                const techTotal = techJobs.reduce((s, j) => s + j.total_pay, 0) + bonus
                 const sub = submissionMap.get(tech.id)
                 const isUnlocked = sub?.admin_unlocked === true && !sub?.submitted_at
                 const status = techStatus(tech.id)
@@ -197,10 +201,19 @@ export default function AdminSummaryClient({
                       </td>
                     </tr>
 
-                    {isExpanded && techJobs.length > 0 && (
+                    {isExpanded && (techJobs.length > 0 || bonus > 0) && (
                       <tr key={`${tech.id}-detail`}>
                         <td colSpan={7} className="bg-gray-50 px-4 py-3">
                           <div className="space-y-4 ml-2">
+                            {bonus > 0 && (
+                              <div className="border-l-2 border-purple-300 pl-3 flex justify-between items-center">
+                                <div>
+                                  <p className="font-medium text-gray-800 text-sm">Weekly Bonus</p>
+                                  <p className="text-xs text-gray-500">Flat weekly stipend</p>
+                                </div>
+                                <p className="font-semibold text-gray-900 text-sm">{formatMoney(bonus)}</p>
+                              </div>
+                            )}
                             {techJobs.map(job => (
                               <div key={job.id} className={`border-l-2 pl-3 ${job.source === 'service_fusion' ? 'border-red-300' : 'border-blue-300'}`}>
                                 <div className="flex justify-between items-start">

@@ -24,7 +24,7 @@ export default async function TechPage({
   const [{ data: profile }, { data: jobs }, { data: submission }, { data: lastWeekSubmission }] = await Promise.all([
     supabase
       .from('profiles')
-      .select('sf_technician_id')
+      .select('sf_technician_id, weekly_bonus')
       .eq('id', user.id)
       .single(),
     supabase
@@ -68,6 +68,7 @@ export default async function TechPage({
       submittedAt={submission?.submitted_at ?? null}
       adminUnlocked={submission?.admin_unlocked ?? false}
       sfMapped={!!profile?.sf_technician_id}
+      weeklyBonus={(profile?.weekly_bonus as number | null) ?? 0}
       lastWeek={lastWeek}
       showLastWeekNudge={showLastWeekNudge}
     />

@@ -24,6 +24,7 @@ interface Props {
   rows: UnifiedRow[]
   totalRevenue: number
   totalLabor: number | null
+  weeklyBonus: number
   hasPieceworkLink: boolean
 }
 
@@ -50,6 +51,7 @@ export default function TechDetailClient({
   rows,
   totalRevenue,
   totalLabor,
+  weeklyBonus,
   hasPieceworkLink,
 }: Props) {
   const profit = totalLabor !== null ? totalRevenue - totalLabor : null
@@ -162,6 +164,20 @@ export default function TechDetailClient({
                   )
                 })}
               </tbody>
+              {weeklyBonus > 0 && (
+                <tbody>
+                  <tr className="border-t border-purple-100 bg-purple-50">
+                    <td className="py-2.5 px-4 text-gray-400 text-xs">—</td>
+                    <td className="py-2.5 px-4">
+                      <span className="text-purple-700 font-medium text-sm">Weekly Bonus</span>
+                      <span className="block text-xs text-purple-400">Flat weekly stipend</span>
+                    </td>
+                    <td className="py-2.5 px-4 text-right text-gray-300">—</td>
+                    <td className="py-2.5 px-4 text-right font-medium text-purple-700">{fmt$(weeklyBonus)}</td>
+                    <td className="py-2.5 px-4 text-right text-gray-300">—</td>
+                  </tr>
+                </tbody>
+              )}
               <tfoot className="border-t-2 border-gray-200 bg-gray-50">
                 <tr>
                   <td colSpan={2} className="py-2.5 px-4 text-xs font-semibold text-gray-600">Total</td>

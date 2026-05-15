@@ -44,7 +44,7 @@ export default async function TechDetailPage({
   // Look up profile by sf_technician_id to get the piecework UUID
   const { data: techProfile } = await db
     .from('profiles')
-    .select('id, full_name, sf_technician_id')
+    .select('id, full_name, sf_technician_id, weekly_bonus')
     .eq('sf_technician_id', techId)
     .maybeSingle()
 
@@ -195,9 +195,13 @@ export default async function TechDetailPage({
   // Sort by date
   rows.sort((a, b) => a.date.localeCompare(b.date))
 
+  const weeklyBonus = (techProfile?.weekly_bonus as number | null) ?? 0
   const totalRevenue = rows.reduce((s, r) => s + (r.revenue ?? 0), 0)
-  const totalLabor = pwJobRows.length > 0
+  const pieceworkLabor = pwJobRows.length > 0
     ? rows.reduce((s, r) => s + (r.labor ?? 0), 0)
+    : null
+  const totalLabor = pieceworkLabor !== null ? pieceworkLabor + weeklyBonus
+    : weeklyBonus > 0 ? weeklyBonus
     : null
 
   const techName = techProfile?.full_name ?? `Tech ${techId}`
@@ -215,6 +219,7 @@ export default async function TechDetailPage({
           rows={rows}
           totalRevenue={totalRevenue}
           totalLabor={totalLabor}
+          weeklyBonus={weeklyBonus}
           hasPieceworkLink={!!techProfile?.id}
         />
       </div>

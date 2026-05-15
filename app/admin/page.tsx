@@ -20,7 +20,7 @@ export default async function AdminPage({
   // Load all active technicians
   const { data: techs } = await supabase
     .from('profiles')
-    .select('id, full_name, is_active')
+    .select('id, full_name, is_active, weekly_bonus')
     .eq('role', 'technician')
     .order('full_name')
 
