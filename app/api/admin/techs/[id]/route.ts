@@ -68,5 +68,21 @@ export async function PATCH(
     return NextResponse.json({ profile })
   }
 
+  // Handle weekly bonus update
+  if (typeof body.weekly_bonus === 'number') {
+    if (body.weekly_bonus < 0) {
+      return NextResponse.json({ error: 'Weekly bonus cannot be negative' }, { status: 400 })
+    }
+    const { data: profile, error } = await adminClient
+      .from('profiles')
+      .update({ weekly_bonus: body.weekly_bonus })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ profile })
+  }
+
   return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
 }

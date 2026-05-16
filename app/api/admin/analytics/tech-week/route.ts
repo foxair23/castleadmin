@@ -36,15 +36,19 @@ export async function GET(req: NextRequest) {
   // 1. Load profiles: sf_technician_id ↔ UUID
   const { data: profiles } = await db
     .from('profiles')
-    .select('id, full_name, sf_technician_id')
+    .select('id, full_name, sf_technician_id, weekly_bonus')
     .eq('role', 'technician')
     .eq('is_active', true)
 
-  const sfIdToProfile = new Map<string, { id: string; full_name: string }>()
+  const sfIdToProfile = new Map<string, { id: string; full_name: string; weekly_bonus: number }>()
   const uuidToSfId = new Map<string, string>()
   for (const p of profiles ?? []) {
     if (p.sf_technician_id) {
-      sfIdToProfile.set(String(p.sf_technician_id), { id: p.id, full_name: p.full_name })
+      sfIdToProfile.set(String(p.sf_technician_id), {
+        id: p.id,
+        full_name: p.full_name,
+        weekly_bonus: (p.weekly_bonus as number) ?? 0,
+      })
       uuidToSfId.set(p.id, String(p.sf_technician_id))
     }
   }
@@ -124,7 +128,8 @@ export async function GET(req: NextRequest) {
   // 6. Build result rows
   const rows = Array.from(byTech.entries()).map(([sfTechId, agg]) => {
     const profile = sfIdToProfile.get(sfTechId)
-    const pieceworkPay = agg.labor > 0 ? agg.labor : null
+    const bonus = profile?.weekly_bonus ?? 0
+    const pieceworkPay = agg.labor > 0 ? agg.labor + bonus : (bonus > 0 ? bonus : null)
     const profit = pieceworkPay !== null ? agg.revenue - pieceworkPay : null
     const marginPct = profit !== null && agg.revenue > 0
       ? (profit / agg.revenue) * 100

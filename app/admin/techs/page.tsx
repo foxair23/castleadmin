@@ -12,7 +12,7 @@ export default async function TechsPage() {
   const [{ data: techs }, { data: { users } }] = await Promise.all([
     supabase
       .from('profiles')
-      .select('id, full_name, role, is_active, created_at')
+      .select('id, full_name, role, is_active, created_at, weekly_bonus')
       .eq('role', 'technician')
       .order('full_name'),
     adminClient.auth.admin.listUsers({ perPage: 1000 }),
