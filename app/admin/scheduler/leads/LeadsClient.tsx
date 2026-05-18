@@ -1,0 +1,170 @@
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+
+interface Lead {
+  id: string
+  created_at: string
+  status: 'pending' | 'approved' | 'rejected'
+  sync_status: string
+  service_type: string
+  service_category: string
+  customer_first_name: string
+  customer_last_name: string
+  customer_phone: string
+  address_city: string
+  address_state: string
+  address_in_service_area: boolean | null
+  appointment_date: string
+  appointment_window_start: string
+  appointment_window_end: string
+}
+
+type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected'
+
+const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  pending:  { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Pending' },
+  approved: { bg: 'bg-green-100',  text: 'text-green-800',  label: 'Approved' },
+  rejected: { bg: 'bg-red-100',    text: 'text-red-800',    label: 'Rejected' },
+}
+
+const SYNC_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  not_attempted:  { bg: 'bg-gray-100',   text: 'text-gray-600',   label: '—' },
+  in_progress:    { bg: 'bg-blue-100',   text: 'text-blue-700',   label: 'Syncing' },
+  synced:         { bg: 'bg-green-100',  text: 'text-green-700',  label: 'Synced' },
+  sync_failed:    { bg: 'bg-red-100',    text: 'text-red-700',    label: 'Failed' },
+  manually_synced:{ bg: 'bg-purple-100', text: 'text-purple-700', label: 'Manual' },
+}
+
+function formatApptDate(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function formatWindow(start: string, end: string): string {
+  function fmt(t: string) {
+    const [h] = t.split(':').map(Number)
+    return h >= 12 ? `${h === 12 ? 12 : h - 12}pm` : `${h}am`
+  }
+  return `${fmt(start)}–${fmt(end)}`
+}
+
+function Badge({ bg, text, label }: { bg: string; text: string; label: string }) {
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${bg} ${text}`}>
+      {label}
+    </span>
+  )
+}
+
+export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) {
+  const [filter, setFilter] = useState<StatusFilter>('pending')
+
+  const counts = {
+    all: initialLeads.length,
+    pending: initialLeads.filter(l => l.status === 'pending').length,
+    approved: initialLeads.filter(l => l.status === 'approved').length,
+    rejected: initialLeads.filter(l => l.status === 'rejected').length,
+  }
+
+  const visible = filter === 'all' ? initialLeads : initialLeads.filter(l => l.status === filter)
+
+  const tabs: { key: StatusFilter; label: string }[] = [
+    { key: 'pending',  label: `Pending (${counts.pending})` },
+    { key: 'approved', label: `Approved (${counts.approved})` },
+    { key: 'rejected', label: `Rejected (${counts.rejected})` },
+    { key: 'all',      label: `All (${counts.all})` },
+  ]
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Scheduler Leads</h1>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="flex gap-1 mb-4 border-b border-gray-200">
+        {tabs.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setFilter(tab.key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              filter === tab.key
+                ? 'border-red-600 text-red-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          No {filter === 'all' ? '' : filter} leads yet.
+        </div>
+      ) : (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">ID</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Customer</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Service</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Appointment</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Area</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Sync</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {visible.map(lead => {
+                const ss = STATUS_STYLES[lead.status] ?? STATUS_STYLES.pending
+                const sy = SYNC_STYLES[lead.sync_status] ?? SYNC_STYLES.not_attempted
+                return (
+                  <tr key={lead.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500">
+                      <Link href={`/admin/scheduler/leads/${lead.id}`} className="hover:text-red-600">
+                        {lead.id}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link href={`/admin/scheduler/leads/${lead.id}`} className="font-medium text-gray-900 hover:text-red-600 block">
+                        {lead.customer_first_name} {lead.customer_last_name}
+                      </Link>
+                      <span className="text-gray-400 text-xs">{lead.address_city}, {lead.address_state}</span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      <div>{lead.service_category}</div>
+                      <span className="text-gray-400 text-xs capitalize">{lead.service_type.replace('_', ' ')}</span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      <div>{formatApptDate(lead.appointment_date)}</div>
+                      <span className="text-gray-400 text-xs">{formatWindow(lead.appointment_window_start, lead.appointment_window_end)}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {lead.address_in_service_area === null ? (
+                        <span className="text-gray-400 text-xs">unknown</span>
+                      ) : lead.address_in_service_area ? (
+                        <span className="text-green-600 text-xs font-medium">✓ In area</span>
+                      ) : (
+                        <span className="text-red-500 text-xs font-medium">✗ Outside</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge {...ss} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {lead.sync_status !== 'not_attempted' && <Badge {...sy} />}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
