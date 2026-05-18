@@ -179,6 +179,14 @@ ALTER TABLE public.scheduler_city_zip_map         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.scheduler_leads                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.scheduler_lead_attachments     ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "admin_all_scheduler_settings"          ON public.scheduler_settings;
+DROP POLICY IF EXISTS "admin_all_scheduler_settings_log"      ON public.scheduler_settings_log;
+DROP POLICY IF EXISTS "admin_all_scheduler_widget_instances"  ON public.scheduler_widget_instances;
+DROP POLICY IF EXISTS "admin_all_scheduler_service_area_cities" ON public.scheduler_service_area_cities;
+DROP POLICY IF EXISTS "admin_all_scheduler_city_zip_map"      ON public.scheduler_city_zip_map;
+DROP POLICY IF EXISTS "admin_all_scheduler_leads"             ON public.scheduler_leads;
+DROP POLICY IF EXISTS "admin_all_scheduler_lead_attachments"  ON public.scheduler_lead_attachments;
+
 CREATE POLICY "admin_all_scheduler_settings"
   ON public.scheduler_settings FOR ALL USING (public.is_admin());
 
@@ -595,6 +603,7 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 -- Service role has full access (used by API routes)
+DROP POLICY IF EXISTS "service_role_all_scheduler_uploads" ON storage.objects;
 CREATE POLICY "service_role_all_scheduler_uploads"
   ON storage.objects FOR ALL
   USING (bucket_id = 'scheduler-uploads' AND (SELECT auth.role()) = 'service_role');
