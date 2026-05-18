@@ -38,16 +38,19 @@ function serviceClient() {
 // Do NOT expose keys like sync_mode or internal operational settings.
 const PUBLIC_KEYS = [
   'office_phone',
+  'tcpa_copy',
+  'marketing_sms_copy',
   'time_windows',
+  'available_days',
   'scheduling_horizon_days',
+  'scheduling_enabled',
+  'scheduling_disabled_message',
   'garage_door_categories',
   'gate_categories',
   'garage_door_issues',
   'gate_issues',
   'incentive_banner_enabled',
   'incentive_banner_text',
-  'scheduling_enabled',
-  'scheduling_disabled_message',
 ]
 
 export async function GET(req: NextRequest) {

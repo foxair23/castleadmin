@@ -228,22 +228,33 @@ GRANT USAGE ON SEQUENCE public.scheduler_lead_seq TO authenticated;
 -- ============================================================
 
 INSERT INTO public.scheduler_settings (key, value) VALUES
-  ('sync_mode',               '"manual"'),
-  ('auto_sync_area_only',     'true'),
-  ('auto_sync_skip_dupes',    'true'),
-  ('booking_horizon_days',    '14'),
-  ('available_days',          '[1,2,3,4,5,6]'),
-  ('time_windows',            '[{"start":"08:00","end":"12:00","label":"8 AM – 12 PM"},{"start":"12:00","end":"16:00","label":"12 PM – 4 PM"}]'),
-  ('incentive_copy',          '"$50 off your first service"'),
-  ('incentive_active',        'true'),
-  ('office_notification_email', '"office@castlegaragedoors.com"'),
-  ('max_upload_files',        '5'),
-  ('max_upload_size_mb',      '25'),
-  ('file_retention_days',     '30'),
-  ('tcpa_copy',               '"By checking this box, you consent to receive text messages about your appointment from Castle Garage Doors & Gates. Message and data rates may apply. Reply STOP to opt out."'),
-  ('marketing_sms_copy',      '"I''d like to receive promotions and tips by SMS."'),
-  ('office_phone',            '"(800) 576-1397"'),
-  ('tos_url',                 '"https://castlegaragedoors.com/terms"')
+  -- Sync / operational (internal, not exposed to widget)
+  ('sync_mode',                    '"manual"'),
+  ('auto_sync_area_only',          'true'),
+  ('auto_sync_skip_dupes',         'true'),
+  ('office_notification_email',    '"office@castlegaragedoors.com"'),
+  ('max_upload_files',             '5'),
+  ('max_upload_size_mb',           '25'),
+  ('file_retention_days',          '30'),
+  ('tos_url',                      '"https://castlegaragedoors.com/terms"'),
+  -- Scheduling availability (public)
+  ('scheduling_enabled',           'true'),
+  ('scheduling_disabled_message',  '"Online scheduling is temporarily unavailable. Please call us to schedule your appointment."'),
+  ('scheduling_horizon_days',      '14'),
+  ('available_days',               '[1,2,3,4,5,6]'),
+  ('time_windows',                 '[{"start":"08:00","end":"12:00","label":"8 AM – 12 PM"},{"start":"12:00","end":"16:00","label":"12 PM – 4 PM"}]'),
+  -- Incentive banner (public)
+  ('incentive_banner_enabled',     'true'),
+  ('incentive_banner_text',        '"$50 off your first service"'),
+  -- Contact / legal copy (public)
+  ('office_phone',                 '"(800) 576-1397"'),
+  ('tcpa_copy',                    '"By checking this box, you consent to receive text messages about your appointment from Castle Garage Doors & Gates. Message and data rates may apply. Reply STOP to opt out."'),
+  ('marketing_sms_copy',           '"I''d like to receive promotions and tips by SMS."'),
+  -- Service categories (public)
+  ('garage_door_categories',       '["Repair","Spring Replacement","New Door Installation","Opener Repair","Opener Installation","Cable Replacement","Other"]'),
+  ('gate_categories',              '["Repair","Opener Repair","Opener Installation","New Gate Installation","Other"]'),
+  ('garage_door_issues',           '["Door won''t open","Door won''t close","Door is noisy","Door is off-track","Broken spring","Broken cable","Remote/keypad not working","Door moves slowly","Other"]'),
+  ('gate_issues',                  '["Gate won''t open","Gate won''t close","Gate is noisy","Remote/keypad not working","Gate moves slowly","Other"]')
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================
