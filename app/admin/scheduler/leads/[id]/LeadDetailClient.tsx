@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
-import { approveLead, rejectLead, updateLeadNotes } from '../actions'
+import { approveLead, rejectLead, updateLeadNotes, retrySfSync } from '../actions'
 
 interface Lead {
   id: string
@@ -250,6 +250,21 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         {lead.service_fusion_customer_id && <Row label="SF Customer ID" value={lead.service_fusion_customer_id} />}
         {lead.service_fusion_job_id && <Row label="SF Job ID" value={lead.service_fusion_job_id} />}
         {lead.synced_at && <Row label="Synced at" value={formatTs(lead.synced_at)} />}
+        {lead.sync_status === 'sync_failed' && lead.status === 'approved' && (
+          <button
+            onClick={() => {
+              setActionError('')
+              startTransition(async () => {
+                try { await retrySfSync(lead.id) }
+                catch (e) { setActionError(e instanceof Error ? e.message : 'Sync failed') }
+              })
+            }}
+            disabled={isPending}
+            className="mt-3 px-4 py-1.5 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+          >
+            {isPending ? 'Retrying…' : 'Retry sync'}
+          </button>
+        )}
       </Section>
 
       <Section title="Audit">

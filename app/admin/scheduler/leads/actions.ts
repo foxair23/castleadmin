@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { syncLeadToServiceFusion } from '@/lib/scheduler/sf-sync'
 
 async function getAdminUserId(): Promise<string> {
   const supabase = await createClient()
@@ -34,6 +35,14 @@ export async function approveLead(id: string) {
 
   if (error) throw new Error(error.message)
 
+  // Fire SF sync — errors are caught inside and stored in sync_attempts;
+  // we surface the error to the admin but don't block the approval.
+  try {
+    await syncLeadToServiceFusion(id)
+  } catch {
+    // sync_status is already set to 'sync_failed' by syncLeadToServiceFusion
+  }
+
   revalidatePath('/admin/scheduler/leads')
   revalidatePath(`/admin/scheduler/leads/${id}`)
 }
@@ -52,6 +61,13 @@ export async function rejectLead(id: string, reason: string) {
 
   if (error) throw new Error(error.message)
 
+  revalidatePath('/admin/scheduler/leads')
+  revalidatePath(`/admin/scheduler/leads/${id}`)
+}
+
+export async function retrySfSync(id: string) {
+  await getAdminUserId()
+  await syncLeadToServiceFusion(id)
   revalidatePath('/admin/scheduler/leads')
   revalidatePath(`/admin/scheduler/leads/${id}`)
 }

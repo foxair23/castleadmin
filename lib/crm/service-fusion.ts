@@ -74,6 +74,31 @@ async function getToken(): Promise<string> {
   return (await getCachedToken()) ?? (await fetchNewToken())
 }
 
+async function sfPost(path: string, body: unknown): Promise<unknown> {
+  const token = await getToken()
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  try {
+    const resp = await fetch(`${SF_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    if (resp.status === 429) throw new Error('Service Fusion is busy — please try again in a moment.')
+    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
+    return resp.json()
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export { sfPost }
+
 async function sfGet(path: string, params?: Record<string, string>): Promise<unknown> {
   const token = await getToken()
   const url = new URL(`${SF_BASE_URL}${path}`)
