@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 const TABS = [
   { href: '/admin/scheduler/dashboard',    label: 'Overview' },
   { href: '/admin/scheduler/leads',        label: 'Leads' },
+  { href: '/admin/scheduler/preview',      label: 'Preview' },
   { href: '/admin/scheduler/widgets',      label: 'Widgets' },
   { href: '/admin/scheduler/service-area', label: 'Service Area' },
   { href: '/admin/scheduler/settings',     label: 'Settings' },
