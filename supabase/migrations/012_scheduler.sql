@@ -577,3 +577,24 @@ INSERT INTO public.scheduler_city_zip_map (city, state, zip) VALUES
   ('Winchester', 'CA', '92596'),
   ('Woodcrest', 'CA', '92504')
 ON CONFLICT (city, state, zip) DO NOTHING;
+
+-- ============================================================
+-- Storage bucket for scheduler file uploads
+-- ============================================================
+-- Run this in the Supabase SQL editor. The bucket is private;
+-- files are accessed via signed URLs generated server-side.
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'scheduler-uploads',
+  'scheduler-uploads',
+  false,
+  26214400,  -- 25 MB in bytes
+  ARRAY['image/jpeg','image/png','image/webp','image/heic','image/heif','application/pdf']
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- Service role has full access (used by API routes)
+CREATE POLICY "service_role_all_scheduler_uploads"
+  ON storage.objects FOR ALL
+  USING (bucket_id = 'scheduler-uploads' AND (SELECT auth.role()) = 'service_role');
