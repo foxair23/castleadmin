@@ -4,7 +4,6 @@ import { createClient } from '@supabase/supabase-js'
 const ALLOWED_ORIGINS = [
   'https://schedule.castlegaragedoors.com',
   'https://foxair23.github.io',
-  // Allow localhost for development
   /^http:\/\/localhost:\d+$/,
 ]
 
@@ -35,42 +34,34 @@ function serviceClient() {
 }
 
 interface BookingPayload {
-  service_type: 'garage_door' | 'gate'
-  service_category: string
-  diagnostic_answers?: Record<string, unknown>
-  customer_first_name: string
-  customer_last_name: string
-  customer_phone: string
-  customer_email: string
-  customer_sms_appointment_consent?: boolean
-  customer_sms_marketing_consent?: boolean
+  // Partial lead linkage
+  partial_lead_id?: string
+  session_id?: string
+  // Contact (captured in step 2)
+  first_name: string
+  mobile_phone: string
+  // Service
+  primary_category: 'garage_door' | 'gate'
+  service_type: string
+  answers?: Record<string, string | undefined>
+  // Optional details
+  optional_note?: string
+  uploaded_photo_urls?: string[]
+  // Schedule
+  appointment_date: string        // YYYY-MM-DD
+  appointment_window_start: string // HH:MM
+  appointment_window_end: string   // HH:MM
+  // Property
   address_line1: string
-  address_line2?: string
   address_city: string
   address_state?: string
   address_zip: string
   address_is_owner?: boolean
-  appointment_date: string        // YYYY-MM-DD
-  appointment_window_start: string // HH:MM
-  appointment_window_end: string   // HH:MM
-  description?: string
-  incentive_applied?: string
+  customer_email?: string
+  additional_notes?: string
+  // Widget
+  widget_key?: string
 }
-
-const REQUIRED_FIELDS: (keyof BookingPayload)[] = [
-  'service_type',
-  'service_category',
-  'customer_first_name',
-  'customer_last_name',
-  'customer_phone',
-  'customer_email',
-  'address_line1',
-  'address_city',
-  'address_zip',
-  'appointment_date',
-  'appointment_window_start',
-  'appointment_window_end',
-]
 
 function isValidDate(s: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s))
@@ -84,9 +75,17 @@ export async function POST(req: NextRequest) {
   const origin = req.headers.get('origin')
   const cors = corsHeaders(origin)
 
-  // ── 1. Widget key auth ───────────────────────────────────────────────────
-  const widgetKey = req.headers.get('x-castle-widget-key')
-  if (!widgetKey) {
+  // ── 1. Parse body ────────────────────────────────────────────────────────
+  let body: BookingPayload
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400, headers: cors })
+  }
+
+  // ── 2. Widget key auth ───────────────────────────────────────────────────
+  const key = req.headers.get('x-castle-widget-key') || body.widget_key
+  if (!key) {
     return NextResponse.json({ error: 'Missing widget key' }, { status: 401, headers: cors })
   }
 
@@ -95,25 +94,26 @@ export async function POST(req: NextRequest) {
   const { data: widget, error: widgetErr } = await db
     .from('scheduler_widget_instances')
     .select('id, lead_source, is_active')
-    .eq('api_key', widgetKey)
+    .eq('api_key', key)
     .single()
 
   if (widgetErr || !widget || !widget.is_active) {
     return NextResponse.json({ error: 'Invalid or inactive widget key' }, { status: 401, headers: cors })
   }
 
-  // ── 2. Parse + validate payload ──────────────────────────────────────────
-  let body: BookingPayload
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400, headers: cors })
-  }
+  // ── 2. Validate required fields ──────────────────────────────────────────
+  const missing: string[] = []
+  if (!body.first_name?.trim()) missing.push('first_name')
+  if (!body.mobile_phone?.trim()) missing.push('mobile_phone')
+  if (!body.primary_category) missing.push('primary_category')
+  if (!body.service_type?.trim()) missing.push('service_type')
+  if (!body.address_line1?.trim()) missing.push('address_line1')
+  if (!body.address_city?.trim()) missing.push('address_city')
+  if (!body.address_zip?.trim()) missing.push('address_zip')
+  if (!body.appointment_date) missing.push('appointment_date')
+  if (!body.appointment_window_start) missing.push('appointment_window_start')
+  if (!body.appointment_window_end) missing.push('appointment_window_end')
 
-  const missing = REQUIRED_FIELDS.filter((f) => {
-    const v = body[f]
-    return v === undefined || v === null || v === ''
-  })
   if (missing.length > 0) {
     return NextResponse.json(
       { error: `Missing required fields: ${missing.join(', ')}` },
@@ -121,8 +121,8 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  if (!['garage_door', 'gate'].includes(body.service_type)) {
-    return NextResponse.json({ error: 'Invalid service_type' }, { status: 400, headers: cors })
+  if (!['garage_door', 'gate'].includes(body.primary_category)) {
+    return NextResponse.json({ error: 'Invalid primary_category' }, { status: 400, headers: cors })
   }
 
   if (!isValidDate(body.appointment_date)) {
@@ -134,7 +134,6 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 3. Service area check ─────────────────────────────────────────────────
-  // City match (case-insensitive) against active service area cities
   const incomingCity = body.address_city.trim()
   const incomingZip  = body.address_zip.trim()
 
@@ -147,7 +146,6 @@ export async function POST(req: NextRequest) {
 
   let inServiceArea = !!(cityMatch && cityMatch.length > 0)
 
-  // Zip match against city→zip map where city is active
   if (!inServiceArea) {
     const { data: zipMatch } = await db
       .from('scheduler_city_zip_map')
@@ -163,74 +161,101 @@ export async function POST(req: NextRequest) {
         .eq('is_active', true)
         .in('city', zippedCities)
         .limit(1)
-
       inServiceArea = !!(activeZipCity && activeZipCity.length > 0)
     }
   }
 
-  // ── 4. Duplicate check (same phone or email within 60 minutes) ────────────
+  // ── 4. Duplicate check (same phone within 60 minutes, completed bookings only) ──
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
 
   const { data: duplicate } = await db
     .from('scheduler_leads')
     .select('id')
+    .eq('is_partial', false)
     .gte('created_at', oneHourAgo)
-    .or(
-      `customer_phone.eq.${body.customer_phone},customer_email.eq.${body.customer_email}`
-    )
+    .eq('customer_phone', body.mobile_phone.trim())
     .limit(1)
 
   if (duplicate && duplicate.length > 0) {
     return NextResponse.json(
-      { error: 'A booking with this contact information was already submitted recently. Please wait before trying again.' },
+      { error: 'A booking with this phone number was already submitted recently.' },
       { status: 429, headers: cors }
     )
   }
 
-  // ── 5. Insert lead ────────────────────────────────────────────────────────
-  const { data: lead, error: insertErr } = await db
-    .from('scheduler_leads')
-    .insert({
-      lead_source:                      widget.lead_source,
-      widget_instance_id:               widget.id,
-      service_type:                     body.service_type,
-      service_category:                 body.service_category,
-      diagnostic_answers:               body.diagnostic_answers ?? {},
-      customer_first_name:              body.customer_first_name.trim(),
-      customer_last_name:               body.customer_last_name.trim(),
-      customer_phone:                   body.customer_phone.trim(),
-      customer_email:                   body.customer_email.trim().toLowerCase(),
-      customer_sms_appointment_consent: body.customer_sms_appointment_consent ?? false,
-      customer_sms_marketing_consent:   body.customer_sms_marketing_consent ?? false,
-      address_line1:                    body.address_line1.trim(),
-      address_line2:                    body.address_line2?.trim() ?? null,
-      address_city:                     incomingCity,
-      address_state:                    body.address_state?.trim() ?? 'CA',
-      address_zip:                      incomingZip,
-      address_is_owner:                 body.address_is_owner ?? true,
-      address_in_service_area:          inServiceArea,
-      appointment_date:                 body.appointment_date,
-      appointment_window_start:         body.appointment_window_start,
-      appointment_window_end:           body.appointment_window_end,
-      appointment_timezone:             'America/Los_Angeles',
-      description:                      body.description?.trim() ?? null,
-      incentive_applied:                body.incentive_applied?.trim() ?? null,
-    })
-    .select('id, appointment_date, appointment_window_start, appointment_window_end, address_in_service_area')
-    .single()
+  // ── 5. Build lead row ─────────────────────────────────────────────────────
+  const leadRow = {
+    session_id:               body.session_id ?? null,
+    is_partial:               false,
+    lead_source:              widget.lead_source ?? 'website',
+    widget_instance_id:       widget.id,
+    // Service — map new field names to existing DB columns
+    service_type:             body.primary_category,   // DB: 'garage_door'|'gate'
+    service_category:         body.service_type,        // DB: 'repairs_service' etc.
+    diagnostic_answers:       body.answers ?? {},
+    // Customer
+    customer_first_name:      body.first_name.trim(),
+    customer_phone:           body.mobile_phone.trim(),
+    customer_email:           body.customer_email?.trim().toLowerCase() || null,
+    // Address
+    address_line1:            body.address_line1.trim(),
+    address_city:             incomingCity,
+    address_state:            body.address_state?.trim() ?? 'CA',
+    address_zip:              incomingZip,
+    address_is_owner:         body.address_is_owner ?? true,
+    address_in_service_area:  inServiceArea,
+    // Appointment
+    appointment_date:         body.appointment_date,
+    appointment_window_start: body.appointment_window_start,
+    appointment_window_end:   body.appointment_window_end,
+    appointment_timezone:     'America/Los_Angeles',
+    // Notes
+    description:              body.optional_note?.trim() || null,
+    additional_notes:         body.additional_notes?.trim() || null,
+  }
 
-  if (insertErr || !lead) {
-    console.error('[scheduler/bookings] insert error:', insertErr)
-    return NextResponse.json({ error: 'Failed to save booking' }, { status: 500, headers: cors })
+  // ── 6. If partial_lead_id given, update that row; otherwise insert ────────
+  let leadId: string | null = null
+  let leadData: { id: string; appointment_date: string; appointment_window_start: string; appointment_window_end: string; address_in_service_area: boolean } | null = null
+
+  if (body.partial_lead_id) {
+    const { data, error } = await db
+      .from('scheduler_leads')
+      .update(leadRow)
+      .eq('id', body.partial_lead_id)
+      .select('id, appointment_date, appointment_window_start, appointment_window_end, address_in_service_area')
+      .single()
+
+    if (!error && data) {
+      leadData = data as unknown as typeof leadData
+      leadId = data.id
+    }
+  }
+
+  // Fall back to insert if update didn't happen (no partial_lead_id or update failed)
+  if (!leadId) {
+    const { data, error: insertErr } = await db
+      .from('scheduler_leads')
+      .insert(leadRow)
+      .select('id, appointment_date, appointment_window_start, appointment_window_end, address_in_service_area')
+      .single()
+
+    if (insertErr || !data) {
+      console.error('[scheduler/bookings] insert error:', insertErr)
+      return NextResponse.json({ error: 'Failed to save booking' }, { status: 500, headers: cors })
+    }
+
+    leadData = data as unknown as typeof leadData
+    leadId = data.id
   }
 
   return NextResponse.json(
     {
-      id: lead.id,
-      appointment_date:         lead.appointment_date,
-      appointment_window_start: lead.appointment_window_start,
-      appointment_window_end:   lead.appointment_window_end,
-      in_service_area:          lead.address_in_service_area,
+      id:                       leadData!.id,
+      appointment_date:         leadData!.appointment_date,
+      appointment_window_start: leadData!.appointment_window_start,
+      appointment_window_end:   leadData!.appointment_window_end,
+      in_service_area:          leadData!.address_in_service_area,
     },
     { status: 201, headers: cors }
   )

@@ -1,10 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useState, Suspense } from 'react';
-import { fetchConfig } from '../lib/api';
-import { SchedulerConfig } from '../lib/types';
-import { DEFAULT_CONFIG } from '../lib/api';
+import { useEffect, Suspense } from 'react';
 import { clearFlowState } from '../lib/storage';
 import Link from 'next/link';
 
@@ -29,6 +26,10 @@ function formatWindow(start: string, end: string): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+// Hardcoded phone — config is no longer fetched client-side on confirmation
+const OFFICE_PHONE = '(800) 576-1397';
+const OFFICE_PHONE_DIGITS = '8005761397';
+
 function ConfirmationContent() {
   const params = useSearchParams();
   const id = params.get('id');
@@ -36,13 +37,11 @@ function ConfirmationContent() {
   const ws = params.get('ws');
   const we = params.get('we');
   const widgetKey = params.get('key') ?? '';
-
-  const [config, setConfig] = useState<SchedulerConfig>(DEFAULT_CONFIG);
+  const firstName = params.get('name') ?? '';
 
   useEffect(() => {
     clearFlowState();
-    fetchConfig(widgetKey).then(setConfig);
-  }, [widgetKey]);
+  }, []);
 
   return (
     <div
@@ -102,7 +101,7 @@ function ConfirmationContent() {
             margin: '0 0 0.5rem',
           }}
         >
-          Your booking is confirmed!
+          {firstName ? `You're all set, ${firstName}!` : "You're all set!"}
         </h1>
         <p
           style={{
@@ -111,7 +110,7 @@ function ConfirmationContent() {
             fontSize: '1rem',
           }}
         >
-          We look forward to seeing you.
+          Your appointment is confirmed. We&apos;ll see you soon.
         </p>
 
         {id && (
@@ -219,7 +218,7 @@ function ConfirmationContent() {
             Questions? Call Us
           </p>
           <a
-            href={`tel:${config.office_phone.replace(/\D/g, '')}`}
+            href={`tel:${OFFICE_PHONE_DIGITS}`}
             style={{
               fontFamily: 'var(--font-heading)',
               fontSize: '1.1rem',
@@ -228,7 +227,7 @@ function ConfirmationContent() {
               textDecoration: 'none',
             }}
           >
-            {config.office_phone}
+            {OFFICE_PHONE}
           </a>
         </div>
 
