@@ -19,7 +19,7 @@ interface Props {
 function EmbedSnippet({ widget }: { widget: Widget }) {
   const [copied, setCopied] = useState(false)
 
-  const adminUrl = process.env.NEXT_PUBLIC_CASTLE_ADMIN_URL ?? 'https://admin.castlegaragedoors.com'
+  const adminUrl = process.env.NEXT_PUBLIC_CASTLE_ADMIN_URL ?? 'https://castleadmin.vercel.app'
   const snippet = `<iframe
   src="${adminUrl}/embed/scheduler?key=${widget.api_key}"
   style="width:100%;border:none;min-height:600px"
