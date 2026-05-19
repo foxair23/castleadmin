@@ -1,4 +1,4 @@
-import { SchedulerConfig, BookingPayload, BookingResponse } from './types';
+import { BookingPayload, BookingResponse, PartialLeadPayload, SchedulerConfig } from './types';
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
   office_phone: '(800) 576-1397',
@@ -8,30 +8,6 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   ],
   scheduling_horizon_days: 14,
   available_days: [1, 2, 3, 4, 5, 6],
-  garage_door_categories: ['Repair & Service', 'New Installation', 'Maintenance'],
-  gate_categories: ['Repair & Service', 'New Installation', 'Maintenance'],
-  garage_door_issues: [
-    "Won't open or close",
-    'Making noise',
-    'Moving slowly',
-    'Off the tracks',
-    'Broken spring',
-    'Opener not working',
-    'Damaged panel',
-    'Remote / keypad issue',
-    'Safety sensor issue',
-    'Weather seal damaged',
-  ],
-  gate_issues: [
-    "Won't open or close",
-    'Making noise',
-    'Moving slowly',
-    'Off track',
-    'Motor / opener issue',
-    'Remote / keypad issue',
-    'Damaged gate',
-    'Safety sensor issue',
-  ],
   incentive_banner_enabled: true,
   incentive_banner_text: '$50 off your first service',
   tcpa_copy:
@@ -42,21 +18,18 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
     'Online scheduling is temporarily unavailable. Please call us to book.',
 };
 
-export async function fetchConfig(widgetKey: string): Promise<SchedulerConfig> {
+export async function savePartialLead(payload: PartialLeadPayload): Promise<string | null> {
   try {
-    const res = await fetch('/api/scheduler/config', {
-      headers: {
-        'X-Castle-Widget-Key': widgetKey,
-      },
-      cache: 'no-store',
+    const res = await fetch('/api/scheduler/partial', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      return DEFAULT_CONFIG;
-    }
+    if (!res.ok) return null;
     const data = await res.json();
-    return { ...DEFAULT_CONFIG, ...data };
+    return (data as { id?: string }).id ?? null;
   } catch {
-    return DEFAULT_CONFIG;
+    return null;
   }
 }
 
@@ -70,7 +43,7 @@ export async function submitBooking(
       'Content-Type': 'application/json',
       'X-Castle-Widget-Key': widgetKey,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, widget_key: widgetKey }),
   });
 
   if (res.ok) {
