@@ -105,6 +105,25 @@ export default function PreviewClient({ widgets }: { widgets: Widget[] }) {
           <span className="hidden sm:inline">Reload</span>
         </button>
 
+        {/* Start over */}
+        <button
+          onClick={() => {
+            try {
+              localStorage.removeItem('castle_scheduler_flow_v1')
+              sessionStorage.removeItem('castle_scheduler_session_id')
+            } catch { /* ignore */ }
+            setKey(k => k + 1)
+          }}
+          title="Start over (clears saved flow state)"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-lg text-gray-500 hover:text-gray-800 hover:border-gray-300 transition-colors bg-white"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="1 4 1 10 7 10"/>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+          <span className="hidden sm:inline">Start over</span>
+        </button>
+
         {/* Open in new tab */}
         {embedUrl && (
           <a

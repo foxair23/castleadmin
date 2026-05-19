@@ -8,20 +8,21 @@ interface Lead {
   created_at: string
   status: 'pending' | 'approved' | 'rejected'
   sync_status: string
-  service_type: string
-  service_category: string
+  is_partial: boolean
+  service_type: string | null
+  service_category: string | null
   customer_first_name: string
-  customer_last_name: string
+  customer_last_name: string | null
   customer_phone: string
-  address_city: string
-  address_state: string
+  address_city: string | null
+  address_state: string | null
   address_in_service_area: boolean | null
-  appointment_date: string
-  appointment_window_start: string
-  appointment_window_end: string
+  appointment_date: string | null
+  appointment_window_start: string | null
+  appointment_window_end: string | null
 }
 
-type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected'
+type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'partial'
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   pending:  { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Pending' },
@@ -61,20 +62,28 @@ function Badge({ bg, text, label }: { bg: string; text: string; label: string })
 export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) {
   const [filter, setFilter] = useState<StatusFilter>('pending')
 
+  const fullLeads = initialLeads.filter(l => !l.is_partial)
+  const partialLeads = initialLeads.filter(l => l.is_partial)
+
   const counts = {
-    all: initialLeads.length,
-    pending: initialLeads.filter(l => l.status === 'pending').length,
-    approved: initialLeads.filter(l => l.status === 'approved').length,
-    rejected: initialLeads.filter(l => l.status === 'rejected').length,
+    all: fullLeads.length,
+    pending: fullLeads.filter(l => l.status === 'pending').length,
+    approved: fullLeads.filter(l => l.status === 'approved').length,
+    rejected: fullLeads.filter(l => l.status === 'rejected').length,
+    partial: partialLeads.length,
   }
 
-  const visible = filter === 'all' ? initialLeads : initialLeads.filter(l => l.status === filter)
+  const visible =
+    filter === 'partial' ? partialLeads :
+    filter === 'all' ? fullLeads :
+    fullLeads.filter(l => l.status === filter)
 
   const tabs: { key: StatusFilter; label: string }[] = [
     { key: 'pending',  label: `Pending (${counts.pending})` },
     { key: 'approved', label: `Approved (${counts.approved})` },
     { key: 'rejected', label: `Rejected (${counts.rejected})` },
     { key: 'all',      label: `All (${counts.all})` },
+    { key: 'partial',  label: `Partial (${counts.partial})` },
   ]
 
   return (
@@ -126,22 +135,43 @@ export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) 
                   <tr key={lead.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">
                       <Link href={`/admin/scheduler/leads/${lead.id}`} className="hover:text-red-600">
-                        {lead.id}
+                        {lead.id.slice(0, 8)}…
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/admin/scheduler/leads/${lead.id}`} className="font-medium text-gray-900 hover:text-red-600 block">
-                        {lead.customer_first_name} {lead.customer_last_name}
-                      </Link>
-                      <span className="text-gray-400 text-xs">{lead.address_city}, {lead.address_state}</span>
+                      <div className="flex items-center gap-1.5">
+                        <Link href={`/admin/scheduler/leads/${lead.id}`} className="font-medium text-gray-900 hover:text-red-600">
+                          {lead.customer_first_name}{lead.customer_last_name ? ` ${lead.customer_last_name}` : ''}
+                        </Link>
+                        {lead.is_partial && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">Partial</span>
+                        )}
+                      </div>
+                      <span className="text-gray-400 text-xs">
+                        {lead.address_city ? `${lead.address_city}${lead.address_state ? `, ${lead.address_state}` : ''}` : lead.customer_phone}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-gray-700">
-                      <div>{lead.service_category}</div>
-                      <span className="text-gray-400 text-xs capitalize">{lead.service_type.replace('_', ' ')}</span>
+                      {lead.service_category ? (
+                        <>
+                          <div>{lead.service_category}</div>
+                          <span className="text-gray-400 text-xs capitalize">{lead.service_type?.replace(/_/g, ' ')}</span>
+                        </>
+                      ) : (
+                        <span className="text-gray-400 text-xs">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-700">
-                      <div>{formatApptDate(lead.appointment_date)}</div>
-                      <span className="text-gray-400 text-xs">{formatWindow(lead.appointment_window_start, lead.appointment_window_end)}</span>
+                      {lead.appointment_date ? (
+                        <>
+                          <div>{formatApptDate(lead.appointment_date)}</div>
+                          {lead.appointment_window_start && lead.appointment_window_end && (
+                            <span className="text-gray-400 text-xs">{formatWindow(lead.appointment_window_start, lead.appointment_window_end)}</span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-gray-400 text-xs">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {lead.address_in_service_area === null ? (
@@ -153,10 +183,13 @@ export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) 
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <Badge {...ss} />
+                      {lead.is_partial
+                        ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">Partial</span>
+                        : <Badge {...ss} />
+                      }
                     </td>
                     <td className="px-4 py-3">
-                      {lead.sync_status !== 'not_attempted' && <Badge {...sy} />}
+                      {!lead.is_partial && lead.sync_status !== 'not_attempted' && <Badge {...sy} />}
                     </td>
                   </tr>
                 )

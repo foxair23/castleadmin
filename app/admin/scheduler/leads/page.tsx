@@ -9,7 +9,7 @@ export default async function LeadsPage() {
   const { data: leads } = await supabase
     .from('scheduler_leads')
     .select(
-      'id, created_at, status, sync_status, service_type, service_category, ' +
+      'id, created_at, status, sync_status, is_partial, service_type, service_category, ' +
       'customer_first_name, customer_last_name, customer_phone, ' +
       'address_city, address_state, address_in_service_area, ' +
       'appointment_date, appointment_window_start, appointment_window_end'
