@@ -22,7 +22,7 @@ export default function EmbedLayout({ children }: { children: ReactNode }) {
             --color-white: #FFFFFF;
             --color-text: #1A1A1A;
             --color-text-muted: #6B6B6B;
-            --color-border: #E0E0DE;
+            --color-border: #B4B4B2;
             --shadow-card: 0 2px 8px rgba(0,0,0,0.08);
             --radius-card: 10px;
             --radius-input: 6px;
@@ -31,7 +31,15 @@ export default function EmbedLayout({ children }: { children: ReactNode }) {
             --font-body: 'Source Sans 3', sans-serif;
           }
           *, *::before, *::after { box-sizing: border-box; }
-          body { font-family: var(--font-body); }
+          body { font-family: var(--font-body); color: var(--color-text); }
+          input, textarea, select {
+            background-color: var(--color-bg) !important;
+            color: var(--color-text) !important;
+          }
+          input::placeholder, textarea::placeholder {
+            color: var(--color-text-muted);
+            opacity: 1;
+          }
         `}</style>
       </head>
       <body style={{ margin: 0, padding: 0, background: 'var(--color-bg)' }}>
