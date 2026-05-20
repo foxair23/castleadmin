@@ -171,7 +171,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         <span className="text-gray-300">/</span>
         <h1 className="text-lg font-bold text-gray-900 font-mono">{lead.id}</h1>
         <span className={`ml-auto px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_STYLES[lead.status] ?? ''}`}>
-          {lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}
+          {lead.is_partial && lead.status === 'approved' ? 'Actioned' : lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}
         </span>
       </div>
 
@@ -195,7 +195,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
             disabled={isPending}
             className="px-5 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
           >
-            {isPending ? 'Working…' : 'Approve'}
+            {isPending ? 'Working…' : lead.is_partial ? 'Actioned' : 'Approve'}
           </button>
           <button
             onClick={() => setShowRejectModal(true)}
