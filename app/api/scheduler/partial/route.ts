@@ -44,7 +44,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid widget key' }, { status: 401 })
   }
 
-  // Plain insert — no upsert/conflict logic needed for partial leads
+  const leadFields = {
+    customer_first_name: first_name.trim(),
+    customer_phone: mobile_phone.trim(),
+    address_zip: zip?.trim() || null,
+  }
+
+  // If a partial lead already exists for this session, update and return it.
+  const { data: existing } = await db
+    .from('scheduler_leads')
+    .select('id')
+    .eq('session_id', session_id)
+    .eq('is_partial', true)
+    .maybeSingle()
+
+  if (existing) {
+    await db.from('scheduler_leads').update(leadFields).eq('id', (existing as { id: string }).id)
+    return NextResponse.json({ id: (existing as { id: string }).id })
+  }
+
   const { data, error } = await db
     .from('scheduler_leads')
     .insert({
@@ -52,15 +70,13 @@ export async function POST(req: NextRequest) {
       is_partial: true,
       lead_source: widget.lead_source ?? 'website',
       widget_instance_id: widget.id,
-      customer_first_name: first_name.trim(),
-      customer_phone: mobile_phone.trim(),
-      address_zip: zip?.trim() || null,
+      ...leadFields,
     })
     .select('id')
     .single()
 
   if (error) {
-    console.error('[partial] insert error:', error.message, error.details)
+    console.error('[partial] insert error:', error.code, error.message, error.details)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
