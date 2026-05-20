@@ -176,8 +176,8 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
       </div>
 
       {lead.is_partial && (
-        <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded text-sm text-orange-700 font-medium">
-          Partial lead — customer dropped off before completing the booking form.
+        <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded text-sm text-orange-700">
+          <span className="font-semibold">Partial lead</span> — customer dropped off before completing the booking form. Approving marks it as handled; Service Fusion sync is skipped (create the SF job manually if needed).
         </div>
       )}
 
@@ -188,7 +188,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
       )}
 
       {/* Action buttons */}
-      {lead.status === 'pending' && !lead.is_partial && (
+      {lead.status === 'pending' && (
         <div className="flex gap-3 mb-6">
           <button
             onClick={handleApprove}
@@ -207,7 +207,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         </div>
       )}
 
-      {lead.status === 'approved' && !lead.is_partial && (
+      {lead.status === 'approved' && (
         <div className="flex gap-3 mb-6">
           <button
             onClick={() => setShowRejectModal(true)}

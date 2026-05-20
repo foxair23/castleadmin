@@ -24,6 +24,14 @@ export async function approveLead(id: string) {
   const supabase = await createClient()
   const userId = await getAdminUserId()
 
+  const { data: lead, error: fetchErr } = await supabase
+    .from('scheduler_leads')
+    .select('is_partial')
+    .eq('id', id)
+    .single()
+
+  if (fetchErr) throw new Error(fetchErr.message)
+
   const { error } = await supabase
     .from('scheduler_leads')
     .update({
@@ -35,12 +43,14 @@ export async function approveLead(id: string) {
 
   if (error) throw new Error(error.message)
 
-  // Fire SF sync — errors are caught inside and stored in sync_attempts;
-  // we surface the error to the admin but don't block the approval.
-  try {
-    await syncLeadToServiceFusion(id)
-  } catch {
-    // sync_status is already set to 'sync_failed' by syncLeadToServiceFusion
+  // Partial leads lack the required data for SF sync — skip it.
+  // The admin is expected to create the SF job manually for these.
+  if (!lead?.is_partial) {
+    try {
+      await syncLeadToServiceFusion(id)
+    } catch {
+      // sync_status is already set to 'sync_failed' by syncLeadToServiceFusion
+    }
   }
 
   revalidatePath('/admin/scheduler/leads')
