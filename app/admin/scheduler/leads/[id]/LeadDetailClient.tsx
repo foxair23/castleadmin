@@ -9,25 +9,26 @@ interface Lead {
   created_at: string
   status: string
   sync_status: string
-  service_type: string
-  service_category: string
+  is_partial: boolean
+  service_type: string | null
+  service_category: string | null
   diagnostic_answers: Record<string, unknown>
   customer_first_name: string
-  customer_last_name: string
+  customer_last_name: string | null
   customer_phone: string
-  customer_email: string
+  customer_email: string | null
   customer_sms_appointment_consent: boolean
   customer_sms_marketing_consent: boolean
-  address_line1: string
+  address_line1: string | null
   address_line2: string | null
-  address_city: string
-  address_state: string
-  address_zip: string
+  address_city: string | null
+  address_state: string | null
+  address_zip: string | null
   address_is_owner: boolean
   address_in_service_area: boolean | null
-  appointment_date: string
-  appointment_window_start: string
-  appointment_window_end: string
+  appointment_date: string | null
+  appointment_window_start: string | null
+  appointment_window_end: string | null
   description: string | null
   incentive_applied: string | null
   service_fusion_customer_id: string | null
@@ -170,9 +171,15 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         <span className="text-gray-300">/</span>
         <h1 className="text-lg font-bold text-gray-900 font-mono">{lead.id}</h1>
         <span className={`ml-auto px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_STYLES[lead.status] ?? ''}`}>
-          {lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}
+          {lead.is_partial && lead.status === 'approved' ? 'Actioned' : lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}
         </span>
       </div>
+
+      {lead.is_partial && (
+        <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded text-sm text-orange-700">
+          <span className="font-semibold">Partial lead</span> — customer dropped off before completing the booking form. Approving marks it as handled; Service Fusion sync is skipped (create the SF job manually if needed).
+        </div>
+      )}
 
       {actionError && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
@@ -188,7 +195,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
             disabled={isPending}
             className="px-5 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
           >
-            {isPending ? 'Working…' : 'Approve'}
+            {isPending ? 'Working…' : lead.is_partial ? 'Actioned' : 'Approve'}
           </button>
           <button
             onClick={() => setShowRejectModal(true)}
@@ -212,14 +219,20 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         </div>
       )}
 
-      <Section title="Appointment">
-        <Row label="Date" value={formatDate(lead.appointment_date)} />
-        <Row label="Time window" value={formatWindow(lead.appointment_window_start, lead.appointment_window_end)} />
-        {lead.incentive_applied && <Row label="Incentive" value={lead.incentive_applied} />}
-      </Section>
+      {(lead.appointment_date || lead.incentive_applied) && (
+        <Section title="Appointment">
+          {lead.appointment_date && <Row label="Date" value={formatDate(lead.appointment_date)} />}
+          {lead.appointment_window_start && lead.appointment_window_end && (
+            <Row label="Time window" value={formatWindow(lead.appointment_window_start, lead.appointment_window_end)} />
+          )}
+          {lead.incentive_applied && <Row label="Incentive" value={lead.incentive_applied} />}
+        </Section>
+      )}
 
       <Section title="Service">
-        <Row label="Type" value={lead.service_type === 'garage_door' ? 'Garage Door' : 'Gate'} />
+        {lead.service_type && (
+          <Row label="Type" value={lead.service_type === 'garage_door' ? 'Garage Door' : 'Gate'} />
+        )}
         <Row label="Category" value={lead.service_category} />
         {diag.issues && diag.issues.length > 0 && <Row label="Issues" value={diag.issues.join(', ')} />}
         {diag.opener && <Row label="Opener" value={diag.opener} />}
@@ -228,22 +241,26 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
       </Section>
 
       <Section title="Customer">
-        <Row label="Name" value={`${lead.customer_first_name} ${lead.customer_last_name}`} />
+        <Row label="Name" value={[lead.customer_first_name, lead.customer_last_name].filter(Boolean).join(' ')} />
         <Row label="Phone" value={formatPhone(lead.customer_phone)} />
         <Row label="Email" value={lead.customer_email} />
-        <Row label="SMS (appt)" value={lead.customer_sms_appointment_consent} />
-        <Row label="SMS (marketing)" value={lead.customer_sms_marketing_consent} />
+        {!lead.is_partial && <Row label="SMS (appt)" value={lead.customer_sms_appointment_consent} />}
+        {!lead.is_partial && <Row label="SMS (marketing)" value={lead.customer_sms_marketing_consent} />}
       </Section>
 
-      <Section title="Address">
-        <Row label="Street" value={[lead.address_line1, lead.address_line2].filter(Boolean).join(', ')} />
-        <Row label="City / State / ZIP" value={`${lead.address_city}, ${lead.address_state} ${lead.address_zip}`} />
-        <Row label="Property owner" value={lead.address_is_owner} />
-        <Row
-          label="Service area"
-          value={lead.address_in_service_area === null ? 'Unknown' : lead.address_in_service_area ? 'In area' : 'Outside area'}
-        />
-      </Section>
+      {(lead.address_line1 || lead.address_city || lead.address_zip) && (
+        <Section title="Address">
+          <Row label="Street" value={[lead.address_line1, lead.address_line2].filter(Boolean).join(', ')} />
+          {lead.address_city && (
+            <Row label="City / State / ZIP" value={[lead.address_city, lead.address_state, lead.address_zip].filter(Boolean).join(' ')} />
+          )}
+          <Row label="Property owner" value={lead.address_is_owner} />
+          <Row
+            label="Service area"
+            value={lead.address_in_service_area === null ? 'Unknown' : lead.address_in_service_area ? 'In area' : 'Outside area'}
+          />
+        </Section>
+      )}
 
       <Section title="Service Fusion">
         <Row label="Sync status" value={SYNC_LABELS[lead.sync_status] ?? lead.sync_status} />
