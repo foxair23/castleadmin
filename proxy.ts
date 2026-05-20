@@ -27,9 +27,13 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // Public routes
-  if (pathname === '/login') {
-    if (user) {
+  // Public routes — no auth required
+  if (
+    pathname === '/login' ||
+    pathname.startsWith('/embed/') ||
+    pathname.startsWith('/api/scheduler/')
+  ) {
+    if (pathname === '/login' && user) {
       return NextResponse.redirect(new URL('/', request.url))
     }
     return supabaseResponse
