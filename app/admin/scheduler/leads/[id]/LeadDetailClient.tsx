@@ -9,25 +9,26 @@ interface Lead {
   created_at: string
   status: string
   sync_status: string
-  service_type: string
-  service_category: string
+  is_partial: boolean
+  service_type: string | null
+  service_category: string | null
   diagnostic_answers: Record<string, unknown>
   customer_first_name: string
-  customer_last_name: string
+  customer_last_name: string | null
   customer_phone: string
-  customer_email: string
+  customer_email: string | null
   customer_sms_appointment_consent: boolean
   customer_sms_marketing_consent: boolean
-  address_line1: string
+  address_line1: string | null
   address_line2: string | null
-  address_city: string
-  address_state: string
-  address_zip: string
+  address_city: string | null
+  address_state: string | null
+  address_zip: string | null
   address_is_owner: boolean
   address_in_service_area: boolean | null
-  appointment_date: string
-  appointment_window_start: string
-  appointment_window_end: string
+  appointment_date: string | null
+  appointment_window_start: string | null
+  appointment_window_end: string | null
   description: string | null
   incentive_applied: string | null
   service_fusion_customer_id: string | null
@@ -174,6 +175,12 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         </span>
       </div>
 
+      {lead.is_partial && (
+        <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded text-sm text-orange-700 font-medium">
+          Partial lead — customer dropped off before completing the booking form.
+        </div>
+      )}
+
       {actionError && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
           {actionError}
@@ -181,7 +188,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
       )}
 
       {/* Action buttons */}
-      {lead.status === 'pending' && (
+      {lead.status === 'pending' && !lead.is_partial && (
         <div className="flex gap-3 mb-6">
           <button
             onClick={handleApprove}
@@ -200,7 +207,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         </div>
       )}
 
-      {lead.status === 'approved' && (
+      {lead.status === 'approved' && !lead.is_partial && (
         <div className="flex gap-3 mb-6">
           <button
             onClick={() => setShowRejectModal(true)}
@@ -212,14 +219,20 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         </div>
       )}
 
-      <Section title="Appointment">
-        <Row label="Date" value={formatDate(lead.appointment_date)} />
-        <Row label="Time window" value={formatWindow(lead.appointment_window_start, lead.appointment_window_end)} />
-        {lead.incentive_applied && <Row label="Incentive" value={lead.incentive_applied} />}
-      </Section>
+      {(lead.appointment_date || lead.incentive_applied) && (
+        <Section title="Appointment">
+          {lead.appointment_date && <Row label="Date" value={formatDate(lead.appointment_date)} />}
+          {lead.appointment_window_start && lead.appointment_window_end && (
+            <Row label="Time window" value={formatWindow(lead.appointment_window_start, lead.appointment_window_end)} />
+          )}
+          {lead.incentive_applied && <Row label="Incentive" value={lead.incentive_applied} />}
+        </Section>
+      )}
 
       <Section title="Service">
-        <Row label="Type" value={lead.service_type === 'garage_door' ? 'Garage Door' : 'Gate'} />
+        {lead.service_type && (
+          <Row label="Type" value={lead.service_type === 'garage_door' ? 'Garage Door' : 'Gate'} />
+        )}
         <Row label="Category" value={lead.service_category} />
         {diag.issues && diag.issues.length > 0 && <Row label="Issues" value={diag.issues.join(', ')} />}
         {diag.opener && <Row label="Opener" value={diag.opener} />}
@@ -228,22 +241,26 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
       </Section>
 
       <Section title="Customer">
-        <Row label="Name" value={`${lead.customer_first_name} ${lead.customer_last_name}`} />
+        <Row label="Name" value={[lead.customer_first_name, lead.customer_last_name].filter(Boolean).join(' ')} />
         <Row label="Phone" value={formatPhone(lead.customer_phone)} />
         <Row label="Email" value={lead.customer_email} />
-        <Row label="SMS (appt)" value={lead.customer_sms_appointment_consent} />
-        <Row label="SMS (marketing)" value={lead.customer_sms_marketing_consent} />
+        {!lead.is_partial && <Row label="SMS (appt)" value={lead.customer_sms_appointment_consent} />}
+        {!lead.is_partial && <Row label="SMS (marketing)" value={lead.customer_sms_marketing_consent} />}
       </Section>
 
-      <Section title="Address">
-        <Row label="Street" value={[lead.address_line1, lead.address_line2].filter(Boolean).join(', ')} />
-        <Row label="City / State / ZIP" value={`${lead.address_city}, ${lead.address_state} ${lead.address_zip}`} />
-        <Row label="Property owner" value={lead.address_is_owner} />
-        <Row
-          label="Service area"
-          value={lead.address_in_service_area === null ? 'Unknown' : lead.address_in_service_area ? 'In area' : 'Outside area'}
-        />
-      </Section>
+      {(lead.address_line1 || lead.address_city || lead.address_zip) && (
+        <Section title="Address">
+          <Row label="Street" value={[lead.address_line1, lead.address_line2].filter(Boolean).join(', ')} />
+          {lead.address_city && (
+            <Row label="City / State / ZIP" value={[lead.address_city, lead.address_state, lead.address_zip].filter(Boolean).join(' ')} />
+          )}
+          <Row label="Property owner" value={lead.address_is_owner} />
+          <Row
+            label="Service area"
+            value={lead.address_in_service_area === null ? 'Unknown' : lead.address_in_service_area ? 'In area' : 'Outside area'}
+          />
+        </Section>
+      )}
 
       <Section title="Service Fusion">
         <Row label="Sync status" value={SYNC_LABELS[lead.sync_status] ?? lead.sync_status} />
