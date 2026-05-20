@@ -44,27 +44,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid widget key' }, { status: 401 })
   }
 
-  // Upsert a partial lead row keyed by session_id so duplicate submits are idempotent
+  // Plain insert — no upsert/conflict logic needed for partial leads
   const { data, error } = await db
     .from('scheduler_leads')
-    .upsert(
-      {
-        session_id,
-        is_partial: true,
-        lead_source: widget.lead_source ?? 'website',
-        widget_instance_id: widget.id,
-        customer_first_name: first_name.trim(),
-        customer_phone: mobile_phone.trim(),
-        address_zip: zip?.trim() || null,
-      },
-      { onConflict: 'session_id', ignoreDuplicates: false }
-    )
+    .insert({
+      session_id,
+      is_partial: true,
+      lead_source: widget.lead_source ?? 'website',
+      widget_instance_id: widget.id,
+      customer_first_name: first_name.trim(),
+      customer_phone: mobile_phone.trim(),
+      address_zip: zip?.trim() || null,
+    })
     .select('id')
     .single()
 
   if (error) {
-    console.error('[partial] upsert error:', error)
-    return NextResponse.json({ id: null })
+    console.error('[partial] insert error:', error.message, error.details)
+    return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
   return NextResponse.json({ id: (data as { id: string }).id })
