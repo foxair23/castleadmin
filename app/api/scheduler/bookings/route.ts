@@ -232,21 +232,46 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Fall back to insert if update didn't happen (no partial_lead_id or update failed)
+  // Fall back if no partial_lead_id or update failed.
+  // First try to find an existing partial lead by session_id (avoids unique constraint conflict).
+  if (!leadId && body.session_id) {
+    const { data: existing } = await db
+      .from('scheduler_leads')
+      .select('id')
+      .eq('session_id', body.session_id)
+      .eq('is_partial', true)
+      .maybeSingle()
+
+    if (existing) {
+      const { data, error } = await db
+        .from('scheduler_leads')
+        .update(leadRow)
+        .eq('id', (existing as { id: string }).id)
+        .select('id, appointment_date, appointment_window_start, appointment_window_end, address_in_service_area')
+        .single()
+
+      if (!error && data) {
+        leadData = data as unknown as typeof leadData
+        leadId = (data as { id: string }).id
+      }
+    }
+  }
+
+  // Final fallback: fresh insert
   if (!leadId) {
     const { data, error: insertErr } = await db
       .from('scheduler_leads')
-      .insert(leadRow)
+      .insert({ ...leadRow, session_id: null })
       .select('id, appointment_date, appointment_window_start, appointment_window_end, address_in_service_area')
       .single()
 
     if (insertErr || !data) {
-      console.error('[scheduler/bookings] insert error:', insertErr)
-      return NextResponse.json({ error: 'Failed to save booking' }, { status: 500, headers: cors })
+      console.error('[scheduler/bookings] insert error:', insertErr?.code, insertErr?.message, insertErr?.details)
+      return NextResponse.json({ error: insertErr?.message ?? 'Failed to save booking' }, { status: 500, headers: cors })
     }
 
     leadData = data as unknown as typeof leadData
-    leadId = data.id
+    leadId = (data as { id: string }).id
   }
 
   return NextResponse.json(

@@ -172,7 +172,9 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
       setError('A booking was already submitted recently with this contact info.');
     } else {
       setError(
-        `Something went wrong. Please try again or call us at ${config.office_phone}.`
+        result.error
+          ? `Error: ${result.error}`
+          : `Something went wrong. Please try again or call us at ${config.office_phone}.`
       );
     }
   }
