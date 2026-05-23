@@ -69,7 +69,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
         {
           fname: l.customer_first_name,
           lname: l.customer_last_name,
-          phones: [{ phone: l.customer_phone, type: 'mobile' }],
+          phones: [{ phone: l.customer_phone, type: 'Mobile' }],
           emails: [{ email: l.customer_email }],
         },
       ],
