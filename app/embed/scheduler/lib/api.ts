@@ -1,4 +1,4 @@
-import { BookingPayload, BookingResponse, PartialLeadPayload, SchedulerConfig } from './types';
+import { BookingPayload, BookingResponse, PartialLeadPayload, SchedulerConfig, SubmitResult } from './types';
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
   office_phone: '(800) 576-1397',
@@ -36,7 +36,7 @@ export async function savePartialLead(payload: PartialLeadPayload): Promise<stri
 export async function submitBooking(
   payload: BookingPayload,
   widgetKey: string
-): Promise<{ ok: true; data: BookingResponse } | { ok: false; status: number }> {
+): Promise<SubmitResult> {
   const res = await fetch('/api/scheduler/bookings', {
     method: 'POST',
     headers: {
@@ -51,5 +51,11 @@ export async function submitBooking(
     return { ok: true, data };
   }
 
-  return { ok: false, status: res.status };
+  let errorMessage = ''
+  try {
+    const body = await res.json()
+    errorMessage = (body as { error?: string }).error ?? ''
+  } catch { /* ignore */ }
+
+  return { ok: false, status: res.status, error: errorMessage };
 }

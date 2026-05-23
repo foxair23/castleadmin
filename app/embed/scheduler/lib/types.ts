@@ -117,3 +117,7 @@ export interface BookingResponse {
   appointment_window_end: string
   in_service_area: boolean
 }
+
+export type SubmitResult =
+  | { ok: true; data: BookingResponse }
+  | { ok: false; status: number; error: string }
