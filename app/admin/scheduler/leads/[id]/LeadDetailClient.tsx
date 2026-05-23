@@ -267,6 +267,15 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
         {lead.service_fusion_customer_id && <Row label="SF Customer ID" value={lead.service_fusion_customer_id} />}
         {lead.service_fusion_job_id && <Row label="SF Job ID" value={lead.service_fusion_job_id} />}
         {lead.synced_at && <Row label="Synced at" value={formatTs(lead.synced_at)} />}
+        {lead.sync_status === 'sync_failed' && (() => {
+          const attempts = lead.sync_attempts as { ok: boolean; error?: string; at: string }[]
+          const lastError = [...attempts].reverse().find(a => !a.ok)?.error
+          return lastError ? (
+            <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-700 font-mono whitespace-pre-wrap break-all">
+              {lastError}
+            </div>
+          ) : null
+        })()}
         {lead.sync_status === 'sync_failed' && lead.status === 'approved' && (
           <button
             onClick={() => {
