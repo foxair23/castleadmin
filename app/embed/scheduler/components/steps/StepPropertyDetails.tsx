@@ -1,11 +1,49 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FlowState } from '../../lib/types';
 
 interface Props {
   state: FlowState;
   onNext: (partial: Partial<FlowState>) => void;
+}
+
+// Minimal type shim for the Google Maps Places API loaded via script tag.
+declare global {
+  interface Window {
+    google?: {
+      maps?: {
+        places?: {
+          Autocomplete: new (
+            input: HTMLInputElement,
+            opts?: object
+          ) => {
+            addListener: (event: string, handler: () => void) => void
+            getPlace: () => {
+              address_components?: { long_name: string; short_name: string; types: string[] }[]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+function loadGoogleMapsScript(apiKey: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (window.google?.maps?.places) { resolve(); return }
+    const existing = document.getElementById('castle-gmaps')
+    if (existing) {
+      existing.addEventListener('load', () => resolve())
+      return
+    }
+    const script = document.createElement('script')
+    script.id = 'castle-gmaps'
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`
+    script.async = true
+    script.onload = () => resolve()
+    document.head.appendChild(script)
+  })
 }
 
 export default function StepPropertyDetails({ state, onNext }: Props) {
@@ -17,6 +55,41 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
   const [email, setEmail] = useState(state.customer_email);
   const [additionalNotes, setAdditionalNotes] = useState(state.additional_notes);
   const [errors, setErrors] = useState<{ address_line1?: string; city?: string; state?: string; zip?: string }>({});
+
+  const addressInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
+    if (!apiKey || typeof window === 'undefined') return
+
+    loadGoogleMapsScript(apiKey).then(() => {
+      if (!addressInputRef.current || !window.google?.maps?.places) return
+      const autocomplete = new window.google.maps.places.Autocomplete(addressInputRef.current, {
+        types: ['address'],
+        componentRestrictions: { country: 'us' },
+        fields: ['address_components'],
+      })
+      autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace()
+        if (!place.address_components) return
+
+        let streetNumber = '', route = '', locality = '', adminArea = '', postal = ''
+        for (const c of place.address_components) {
+          if (c.types.includes('street_number'))             streetNumber = c.long_name
+          if (c.types.includes('route'))                     route        = c.long_name
+          if (c.types.includes('locality'))                  locality     = c.long_name
+          if (c.types.includes('administrative_area_level_1')) adminArea  = c.short_name
+          if (c.types.includes('postal_code'))               postal       = c.long_name
+        }
+
+        setAddressLine1([streetNumber, route].filter(Boolean).join(' '))
+        setCity(locality)
+        setStateAbbr(adminArea)
+        setZip(postal)
+        setErrors({})
+      })
+    })
+  }, [])
 
   function validate(): boolean {
     const errs: typeof errors = {};
@@ -93,9 +166,10 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
           Street Address <span style={{ color: 'var(--color-primary)' }}>*</span>
         </label>
         <input
+          ref={addressInputRef}
           id="address-line1"
           type="text"
-          autoComplete="address-line1"
+          autoComplete="off"
           value={addressLine1}
           onChange={(e) => {
             setAddressLine1(e.target.value);
@@ -269,6 +343,9 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
       >
         Continue
       </button>
+
+      {/* Ensure Google's autocomplete dropdown renders above other elements */}
+      <style>{`.pac-container { z-index: 9999 !important; }`}</style>
     </div>
   );
 }
