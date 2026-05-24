@@ -32,15 +32,21 @@ export async function GET(req: NextRequest) {
   const perPage = req.nextUrl.searchParams.get('perPage') ?? '10'
 
   try {
-    // ── 1. Recent SF jobs ───────────────────────────────────────────────────
+    // ── 1. Recent SF jobs + sources ─────────────────────────────────────────
     const token = await getSfToken()
-    const sfResp = await fetch(
-      `${SF_BASE_URL}/jobs?per-page=${perPage}&page=1`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store' }
-    )
+    const [sfResp, srcResp] = await Promise.all([
+      fetch(`${SF_BASE_URL}/jobs?per-page=${perPage}&page=1&sort=-id`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store',
+      }),
+      fetch(`${SF_BASE_URL}/sources?per-page=50`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store',
+      }),
+    ])
     if (!sfResp.ok) throw new Error(`SF jobs API ${sfResp.status}: ${await sfResp.text()}`)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sfJson = await sfResp.json() as any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const srcJson = srcResp.ok ? (await srcResp.json() as any) : null
 
     // ── 2. Recent synced leads from our DB ──────────────────────────────────
     const db = serviceClient(
@@ -63,6 +69,7 @@ export async function GET(req: NextRequest) {
       sf_jobs: items,
       sf_meta: sfJson?._meta ?? null,
       first_job_field_names: firstJobFields,
+      sf_sources: srcJson?.items ?? [],
       our_leads: leads ?? [],
     })
   } catch (err: unknown) {
