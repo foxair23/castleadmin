@@ -122,7 +122,6 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       city: l.address_city,
       state_prov: l.address_state,
       postal_code: l.address_zip,
-      category: l.service_category,
       source: l.lead_source,
       description: descLines.join('\n'),
       start_date: l.appointment_date,
