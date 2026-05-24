@@ -143,7 +143,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
 
     // ── 3. Create job ───────────────────────────────────────────────────────
     const jobPayload = {
-      customer_id: parseInt(sfCustomerId, 10),
+      customer_name: parseInt(sfCustomerId, 10),
       contact_first_name: l.customer_first_name,
       contact_last_name: l.customer_last_name || '.',
       street_1: l.address_line1,
@@ -161,6 +161,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    console.log('[sf-sync] job payload:', JSON.stringify(jobPayload))
     const jobResp = (await sfPost('/jobs', jobPayload)) as any
     console.log('[sf-sync] job response:', JSON.stringify(jobResp))
     sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? jobResp?.data?.id ?? '')
