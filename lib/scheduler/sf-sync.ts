@@ -33,9 +33,6 @@ interface Lead {
   sync_attempts: unknown[]
 }
 
-function sfDateTime(date: string, time: string): string {
-  return `${date} ${time}:00`
-}
 
 export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
   const supabase = db()
@@ -105,13 +102,43 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     }
 
     // ── 2. Build description ───────────────────────────────────────────────
-    const diag = l.diagnostic_answers as { issues?: string[]; opener?: string; door_type?: string }
+    const diag = l.diagnostic_answers as {
+      can_open_close?: string
+      estimated_age?: string
+      replacement_type?: string
+      multiple_doors?: string
+      opener_need?: string
+      gate_type?: string
+    }
+
+    const serviceTypeLabel = l.service_type === 'garage_door' ? 'Garage Door' : 'Gate'
+    const serviceCategoryLabels: Record<string, string> = {
+      repairs_service: 'Repairs & Service',
+      door_panel_replacement: 'Door / Panel Replacement',
+      opener_service: 'Opener Service / Replacement',
+      gate_opener_service: 'Gate Opener Service / Replacement',
+      new_gate_replacement: 'New Gate / Gate Replacement',
+    }
+    const diagLabels: Record<string, Record<string, string>> = {
+      can_open_close:   { yes: 'Yes', no: 'No' },
+      estimated_age:    { less_than_8_years: 'Less than 8 years', '8_years_or_older': '8 years or older', not_sure: 'Not sure' },
+      replacement_type: { basic_functional: 'Basic & Functional', nicer_more_features: 'Nicer with More Features', not_sure: 'Not sure' },
+      multiple_doors:   { yes: 'Yes', no: 'No' },
+      opener_need:      { repair_existing: 'Repair existing', replace: 'Replace', add_opener: 'Add opener', not_sure: 'Not sure' },
+      gate_type:        { swing: 'Swing Gate', sliding: 'Sliding Gate', pedestrian: 'Pedestrian Gate', not_sure: 'Not sure' },
+    }
+
     const descLines: string[] = []
-    if (l.description) descLines.push(l.description)
-    if (diag.issues?.length) descLines.push(`Issues: ${diag.issues.join(', ')}`)
-    if (diag.opener) descLines.push(`Opener: ${diag.opener}`)
-    if (diag.door_type) descLines.push(`Door type: ${diag.door_type}`)
-    if (l.incentive_applied) descLines.push(`Incentive: ${l.incentive_applied}`)
+    descLines.push(`Service: ${serviceTypeLabel} — ${serviceCategoryLabels[l.service_category] ?? l.service_category}`)
+    if (diag.can_open_close)   descLines.push(`Can open/close: ${diagLabels.can_open_close[diag.can_open_close] ?? diag.can_open_close}`)
+    if (diag.estimated_age)    descLines.push(`Door age: ${diagLabels.estimated_age[diag.estimated_age] ?? diag.estimated_age}`)
+    if (diag.replacement_type) descLines.push(`Looking for: ${diagLabels.replacement_type[diag.replacement_type] ?? diag.replacement_type}`)
+    if (diag.multiple_doors)   descLines.push(`Multiple doors: ${diagLabels.multiple_doors[diag.multiple_doors] ?? diag.multiple_doors}`)
+    if (diag.opener_need)      descLines.push(`Opener need: ${diagLabels.opener_need[diag.opener_need] ?? diag.opener_need}`)
+    if (diag.gate_type)        descLines.push(`Gate type: ${diagLabels.gate_type[diag.gate_type] ?? diag.gate_type}`)
+    if (l.description)         descLines.push(`Notes: ${l.description}`)
+    if (l.incentive_applied)   descLines.push(`Incentive: ${l.incentive_applied}`)
+    descLines.push(`Lead source: ${l.lead_source}`)
     descLines.push(`Booking ID: ${l.id}`)
 
     // ── 3. Create job ───────────────────────────────────────────────────────
@@ -125,7 +152,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       state_prov: l.address_state,
       postal_code: l.address_zip,
       status: sfStatusName || sfStatusId,
-      source: l.lead_source,
+      source: 'Website',
       description: descLines.join('\n'),
       start_date: l.appointment_date,
       time_frame_promised_start: l.appointment_window_start,
@@ -135,9 +162,10 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const jobResp = (await sfPost('/jobs', jobPayload)) as any
-    sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? '')
+    console.log('[sf-sync] job response:', JSON.stringify(jobResp))
+    sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? jobResp?.data?.id ?? '')
     if (!sfJobId || sfJobId === 'undefined') {
-      throw new Error('No job ID returned from Service Fusion')
+      throw new Error(`No job ID returned from Service Fusion. Response: ${JSON.stringify(jobResp)}`)
     }
 
     // ── 4. Mark synced ──────────────────────────────────────────────────────
