@@ -71,6 +71,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
         {
           fname: l.customer_first_name,
           lname: l.customer_last_name || '.',
+          is_primary: true,
           phones: [{ phone: l.customer_phone, type: 'Mobile' }],
           ...(l.customer_email ? { emails: [{ email: l.customer_email }] } : {}),
         },
