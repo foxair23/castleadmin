@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runReferenceSync, runWeeklyReconcile } from '@/lib/sf-mirror/sync-engine'
 
-export const maxDuration = 800
+export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
   if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {

@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { runBackfill } from '@/lib/sf-mirror/sync-engine'
 
-export const maxDuration = 800
+export const maxDuration = 300
 
 export async function POST(req: NextRequest) {
   // Allow both CRON_SECRET (automated) and admin session (manual trigger)
