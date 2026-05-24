@@ -158,7 +158,6 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       time_frame_promised_start: l.appointment_window_start,
       time_frame_promised_end: l.appointment_window_end,
       ...(l.notes_internal ? { notes: l.notes_internal } : {}),
-      services: [{ service: 'Castle Service Call - basic service', multiplier: 1 }],
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
