@@ -1,5 +1,5 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { sfPost } from '@/lib/crm/service-fusion'
+import { sfPost, sfGet } from '@/lib/crm/service-fusion'
 
 function db() {
   return createServiceClient(
@@ -62,6 +62,15 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
   let sfJobId: string | null = null
 
   try {
+    // ── 0. Fetch a valid job status ID ──────────────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const statusesResp = (await sfGet('/job-statuses', { 'per-page': '50' })) as any
+    const statuses: { id: number; name: string }[] = statusesResp?.items ?? []
+    const openStatus = statuses.find(s =>
+      /pending|open|new|schedul/i.test(s.name)
+    ) ?? statuses[0]
+    if (!openStatus) throw new Error('No job statuses found in Service Fusion account')
+    const sfStatusId = openStatus.id
     // ── 1. Create customer ──────────────────────────────────────────────────
     const customerPayload = {
       customer_name: l.customer_last_name
@@ -122,6 +131,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       city: l.address_city,
       state_prov: l.address_state,
       postal_code: l.address_zip,
+      status: sfStatusId,
       source: l.lead_source,
       description: descLines.join('\n'),
       start_date: l.appointment_date,
