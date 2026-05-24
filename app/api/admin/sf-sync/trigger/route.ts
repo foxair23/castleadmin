@@ -1,0 +1,61 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
+import {
+  runReferenceSync,
+  runIncrementalSync,
+  runWeeklyReconcile,
+  runBackfill,
+} from '@/lib/sf-mirror/sync-engine'
+
+export const maxDuration = 300
+
+async function requireAdmin() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+
+  const adminClient = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+  const { data: profile } = await adminClient
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (profile?.role !== 'admin') return null
+  return user
+}
+
+export async function POST(req: NextRequest) {
+  const admin = await requireAdmin()
+  if (!admin) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json()
+  const { action, entity } = body as { action: string; entity?: string }
+
+  const t0 = Date.now()
+
+  try {
+    let counts: Record<string, number>
+
+    if (action === 'reference') {
+      counts = await runReferenceSync()
+    } else if (action === 'incremental') {
+      counts = await runIncrementalSync()
+    } else if (action === 'reconcile') {
+      counts = await runWeeklyReconcile()
+    } else if (action === 'backfill') {
+      counts = await runBackfill(entity)
+    } else {
+      return NextResponse.json({ ok: false, error: `Unknown action: ${action}`, ms: 0 }, { status: 400 })
+    }
+
+    return NextResponse.json({ ok: true, counts, ms: Date.now() - t0 })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ ok: false, error: message, ms: Date.now() - t0 }, { status: 500 })
+  }
+}
