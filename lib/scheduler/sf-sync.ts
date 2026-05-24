@@ -152,6 +152,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       state_prov: l.address_state,
       postal_code: l.address_zip,
       status: sfStatusName || sfStatusId,
+      source: 'Website',
       description: descLines.join('\n'),
       start_date: l.appointment_date,
       time_frame_promised_start: l.appointment_window_start,
