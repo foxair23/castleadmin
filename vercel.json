@@ -3,6 +3,14 @@
     {
       "path": "/api/admin/analytics/nightly",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/sf-sync-daily",
+      "schedule": "1 8 * * 1-6"
+    },
+    {
+      "path": "/api/cron/sf-sync-weekly",
+      "schedule": "1 8 * * 0"
     }
   ]
 }
