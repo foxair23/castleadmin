@@ -97,7 +97,7 @@ async function sfPost(path: string, body: unknown): Promise<unknown> {
   }
 }
 
-export { sfPost }
+export { sfPost, sfGet }
 
 async function sfGet(path: string, params?: Record<string, string>): Promise<unknown> {
   const token = await getToken()
