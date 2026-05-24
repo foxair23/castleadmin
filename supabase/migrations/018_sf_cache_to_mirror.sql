@@ -8,12 +8,18 @@
 -- changes to app/admin/dashboard or lib/analytics are needed.
 -- ============================================================
 
--- Drop old Phase 1 cache tables (CASCADE removes indexes and policies)
-drop table if exists public.sf_customers_cache CASCADE;
-drop table if exists public.sf_jobs_cache      CASCADE;
-drop table if exists public.sf_job_techs_cache CASCADE;
-drop table if exists public.sf_estimates_cache CASCADE;
-drop table if exists public.sf_invoices_cache  CASCADE;
+-- Drop old Phase 1 cache tables/views (handles both table and view in case of a
+-- partial prior run — DROP TABLE errors on views with 42809; DROP VIEW first).
+drop view  if exists public.sf_customers_cache  cascade;
+drop view  if exists public.sf_jobs_cache        cascade;
+drop view  if exists public.sf_job_techs_cache   cascade;
+drop view  if exists public.sf_estimates_cache   cascade;
+drop view  if exists public.sf_invoices_cache    cascade;
+drop table if exists public.sf_customers_cache   cascade;
+drop table if exists public.sf_jobs_cache        cascade;
+drop table if exists public.sf_job_techs_cache   cascade;
+drop table if exists public.sf_estimates_cache   cascade;
+drop table if exists public.sf_invoices_cache    cascade;
 
 -- ─────────────────────────────────────────────────────────────
 -- sf_jobs_cache
