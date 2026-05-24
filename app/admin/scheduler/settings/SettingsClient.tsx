@@ -81,6 +81,9 @@ export default function SettingsClient({ initialSettings: s }: Props) {
   const incentiveEnabled = useField(bool(s.incentive_banner_enabled, true))
   const incentiveText = useField(str(s.incentive_banner_text))
 
+  // Service Fusion
+  const autoSyncToSf = useField(bool(s.auto_sync_to_sf, false))
+
   // Legal copy
   const tcpaCopy = useField(str(s.tcpa_copy))
   const marketingCopy = useField(str(s.marketing_sms_copy))
@@ -392,6 +395,27 @@ export default function SettingsClient({ initialSettings: s }: Props) {
           </div>
         </div>
         <p className="text-xs text-gray-400 mt-3">One item per line.</p>
+      </Section>
+
+      <Section title="Service Fusion">
+        <div className="mb-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoSyncToSf.value}
+              onChange={e => {
+                autoSyncToSf.setValue(e.target.checked)
+                save('auto_sync_to_sf', e.target.checked, autoSyncToSf.markSaved)
+              }}
+              className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+            />
+            Auto-send new bookings to Service Fusion
+            {autoSyncToSf.saved && <span className="text-green-600 text-xs">Saved ✓</span>}
+          </label>
+          <p className="text-xs text-gray-400 mt-1 ml-6">
+            When enabled, completed bookings are automatically synced to SF without requiring admin approval first.
+          </p>
+        </div>
       </Section>
 
       <Section title="Legal Copy">

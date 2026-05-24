@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { syncLeadToServiceFusion } from '@/lib/scheduler/sf-sync'
 
 const ALLOWED_ORIGINS = [
   'https://schedule.castlegaragedoors.com',
@@ -272,6 +273,24 @@ export async function POST(req: NextRequest) {
 
     leadData = data as unknown as typeof leadData
     leadId = (data as { id: string }).id
+  }
+
+  // ── 7. Auto-sync to Service Fusion if enabled ─────────────────────────────
+  const { data: sfSetting } = await db
+    .from('scheduler_settings')
+    .select('value')
+    .eq('key', 'auto_sync_to_sf')
+    .maybeSingle()
+
+  if (sfSetting?.value === true) {
+    const syncLeadId = leadId!
+    after(async () => {
+      try {
+        await syncLeadToServiceFusion(syncLeadId)
+      } catch {
+        // sync_status already set to sync_failed inside syncLeadToServiceFusion
+      }
+    })
   }
 
   return NextResponse.json(
