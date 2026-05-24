@@ -30,11 +30,12 @@ declare global {
 }
 
 function loadGoogleMapsScript(apiKey: string): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     if (window.google?.maps?.places) { resolve(); return }
     const existing = document.getElementById('castle-gmaps')
     if (existing) {
       existing.addEventListener('load', () => resolve())
+      existing.addEventListener('error', reject)
       return
     }
     const script = document.createElement('script')
@@ -42,6 +43,7 @@ function loadGoogleMapsScript(apiKey: string): Promise<void> {
     script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`
     script.async = true
     script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Failed to load Google Maps script'))
     document.head.appendChild(script)
   })
 }
@@ -63,7 +65,10 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
     if (!apiKey || typeof window === 'undefined') return
 
     loadGoogleMapsScript(apiKey).then(() => {
-      if (!addressInputRef.current || !window.google?.maps?.places) return
+      if (!addressInputRef.current || !window.google?.maps?.places) {
+        console.error('[castle] Google Maps Places not available after script load')
+        return
+      }
       const autocomplete = new window.google.maps.places.Autocomplete(addressInputRef.current, {
         types: ['address'],
         componentRestrictions: { country: 'us' },
@@ -88,6 +93,8 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
         setZip(postal)
         setErrors({})
       })
+    }).catch((err: unknown) => {
+      console.error('[castle] Google Maps failed to load:', err)
     })
   }, [])
 
