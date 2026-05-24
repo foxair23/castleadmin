@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createClient as serviceClient } from '@supabase/supabase-js'
 import { sfGet } from '@/lib/crm/service-fusion'
 
 export const maxDuration = 30
@@ -13,38 +14,66 @@ export async function GET() {
 
   const results: Record<string, unknown> = {}
 
-  // Try known catalog-style endpoints
-  const endpoints = [
-    '/services',
-    '/price-book',
-    '/price-book-items',
-  ]
+  // Try fetching services off a recently synced job by ID
+  try {
+    const db = serviceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false } }
+    )
+    const { data: syncedLeads } = await db
+      .from('scheduler_leads')
+      .select('service_fusion_job_id')
+      .eq('sync_status', 'synced')
+      .not('service_fusion_job_id', 'is', null)
+      .order('synced_at', { ascending: false })
+      .limit(5)
 
-  for (const ep of endpoints) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const json = (await sfGet(ep, { 'per-page': '100' })) as any
-      results[ep] = json
-    } catch (err) {
-      results[ep] = { error: err instanceof Error ? err.message : String(err) }
+    const jobServiceResults: unknown[] = []
+    for (const lead of syncedLeads ?? []) {
+      if (!lead.service_fusion_job_id) continue
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const jobServices = (await sfGet(`/jobs/${lead.service_fusion_job_id}/services`, { 'per-page': '100' })) as any
+        jobServiceResults.push({ job_id: lead.service_fusion_job_id, data: jobServices })
+      } catch (err) {
+        jobServiceResults.push({ job_id: lead.service_fusion_job_id, error: err instanceof Error ? err.message : String(err) })
+      }
     }
+    results['job_services_by_id'] = jobServiceResults
+  } catch (err) {
+    results['job_services_by_id'] = { error: err instanceof Error ? err.message : String(err) }
   }
 
-  // Also pull services off the most recent job that has them
+  // Fetch all services via paginated /job-services endpoint
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recentJobs = (await sfGet('/jobs', { 'per-page': '20', page: '1', sort: '-id', expand: 'services' })) as any
-    const jobsWithServices = (recentJobs?.items ?? []).filter(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (j: any) => Array.isArray(j.services) && j.services.length > 0
-    )
-    results['recent_job_services'] = jobsWithServices.map((j: { id: unknown; number: unknown; services: unknown }) => ({
-      job_id: j.id,
-      job_number: j.number,
-      services: j.services,
-    }))
+    const json = (await sfGet('/job-services', { 'per-page': '200' })) as any
+    results['/job-services'] = json
   } catch (err) {
-    results['recent_job_services'] = { error: err instanceof Error ? err.message : String(err) }
+    results['/job-services'] = { error: err instanceof Error ? err.message : String(err) }
+  }
+
+  // Try paginated /jobs?expand=services to collect all unique service names
+  try {
+    const allServiceNames = new Set<string>()
+    for (let page = 1; page <= 5; page++) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const json = (await sfGet('/jobs', { 'per-page': '50', page: String(page), sort: '-id', expand: 'services' })) as any
+      const items: unknown[] = json?.items ?? []
+      if (items.length === 0) break
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const job of items as any[]) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const svc of (job.services ?? []) as any[]) {
+          if (svc.name) allServiceNames.add(svc.name)
+          if (svc.short_description) allServiceNames.add(svc.short_description)
+        }
+      }
+    }
+    results['service_names_from_jobs'] = Array.from(allServiceNames).sort()
+  } catch (err) {
+    results['service_names_from_jobs'] = { error: err instanceof Error ? err.message : String(err) }
   }
 
   return NextResponse.json(results)
