@@ -70,7 +70,8 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       /pending|open|new|schedul/i.test(s.name)
     ) ?? statuses[0]
     if (!openStatus) throw new Error('No job statuses found in Service Fusion account')
-    const sfStatusId = openStatus.id
+    const sfStatusId: number = openStatus.id
+    const sfStatusName: string = openStatus.name
     // ── 1. Create customer ──────────────────────────────────────────────────
     const customerPayload = {
       customer_name: l.customer_last_name
@@ -80,7 +81,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
         {
           fname: l.customer_first_name,
           lname: l.customer_last_name || '.',
-          is_primary: true,
+          is_primary: 1,
           phones: [{ phone: l.customer_phone, type: 'Mobile' }],
           ...(l.customer_email ? { emails: [{ email: l.customer_email }] } : {}),
         },
@@ -131,7 +132,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       city: l.address_city,
       state_prov: l.address_state,
       postal_code: l.address_zip,
-      status: sfStatusId,
+      status: sfStatusName || sfStatusId,
       source: l.lead_source,
       description: descLines.join('\n'),
       start_date: l.appointment_date,
