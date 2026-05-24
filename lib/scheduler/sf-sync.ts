@@ -125,8 +125,8 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       source: l.lead_source,
       description: descLines.join('\n'),
       start_date: l.appointment_date,
-      time_frame_promised_start: sfDateTime(l.appointment_date, l.appointment_window_start),
-      time_frame_promised_end: sfDateTime(l.appointment_date, l.appointment_window_end),
+      time_frame_promised_start: l.appointment_window_start,
+      time_frame_promised_end: l.appointment_window_end,
       custom_fields: customFields,
       ...(l.notes_internal ? { notes: l.notes_internal } : {}),
     }
