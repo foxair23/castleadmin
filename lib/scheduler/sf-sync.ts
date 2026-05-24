@@ -64,11 +64,13 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
   try {
     // ── 1. Create customer ──────────────────────────────────────────────────
     const customerPayload = {
-      customer_name: `${l.customer_first_name} ${l.customer_last_name}`,
+      customer_name: l.customer_last_name
+        ? `${l.customer_first_name} ${l.customer_last_name}`
+        : l.customer_first_name,
       contacts: [
         {
           fname: l.customer_first_name,
-          lname: l.customer_last_name,
+          lname: l.customer_last_name || '.',
           phones: [{ phone: l.customer_phone, type: 'Mobile' }],
           ...(l.customer_email ? { emails: [{ email: l.customer_email }] } : {}),
         },
@@ -113,7 +115,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     const jobPayload = {
       customer_name: parseInt(sfCustomerId, 10),
       contact_first_name: l.customer_first_name,
-      contact_last_name: l.customer_last_name,
+      contact_last_name: l.customer_last_name || '.',
       street_1: l.address_line1,
       ...(l.address_line2 ? { street_2: l.address_line2 } : {}),
       city: l.address_city,
