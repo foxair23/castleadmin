@@ -55,9 +55,14 @@ export async function GET(req: NextRequest) {
       .order('synced_at', { ascending: false })
       .limit(10)
 
+    // Show field names on the first job so we can see what SF actually uses
+    const items = sfJson?.items ?? []
+    const firstJobFields = items[0] ? Object.keys(items[0]) : []
+
     return NextResponse.json({
-      sf_jobs: sfJson?.items ?? [],
+      sf_jobs: items,
       sf_meta: sfJson?._meta ?? null,
+      first_job_field_names: firstJobFields,
       our_leads: leads ?? [],
     })
   } catch (err: unknown) {
