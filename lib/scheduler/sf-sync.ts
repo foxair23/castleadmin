@@ -115,14 +115,6 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     descLines.push(`Booking ID: ${l.id}`)
 
     // ── 3. Create job ───────────────────────────────────────────────────────
-    const customFields = [
-      { name: 'Booking ID', value: l.id },
-      { name: 'Lead Source', value: l.lead_source },
-      ...(diag.opener ? [{ name: 'Opener', value: diag.opener }] : []),
-      ...(diag.door_type ? [{ name: 'Door Type', value: diag.door_type }] : []),
-      ...(diag.issues ?? []).map((issue, i) => ({ name: `Issue ${i + 1}`, value: issue })),
-    ]
-
     const jobPayload = {
       customer_name: parseInt(sfCustomerId, 10),
       contact_first_name: l.customer_first_name,
@@ -138,7 +130,6 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       start_date: l.appointment_date,
       time_frame_promised_start: l.appointment_window_start,
       time_frame_promised_end: l.appointment_window_end,
-      custom_fields: customFields,
       ...(l.notes_internal ? { notes: l.notes_internal } : {}),
     }
 
