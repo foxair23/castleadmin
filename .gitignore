@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local reference docs
 *.pdf
+
+# Claude Code internal
+.claude/

@@ -50,6 +50,8 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                 <NavLink href="/admin/techs" current={pathname.startsWith('/admin/techs')}>Technicians</NavLink>
                 <NavLink href="/admin/scheduler" current={pathname.startsWith('/admin/scheduler')}>Scheduler</NavLink>
                 <NavLink href="/admin/sf" current={pathname.startsWith('/admin/sf')}>Integrations</NavLink>
+                <NavLink href="/admin/marketing" current={pathname.startsWith('/admin/marketing')}>Marketing</NavLink>
+                <NavLink href="/admin/mailchimp" current={pathname.startsWith('/admin/mailchimp')}>Mailchimp</NavLink>
               </>
             ) : (
               <>

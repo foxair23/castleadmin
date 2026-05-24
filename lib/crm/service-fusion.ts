@@ -70,7 +70,7 @@ async function fetchNewToken(): Promise<string> {
   return token
 }
 
-async function getToken(): Promise<string> {
+export async function getToken(): Promise<string> {
   return (await getCachedToken()) ?? (await fetchNewToken())
 }
 

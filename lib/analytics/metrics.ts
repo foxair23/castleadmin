@@ -375,9 +375,9 @@ export async function getAnnotations(db: SupabaseClient) {
 
 export async function getLastSyncInfo(db: SupabaseClient) {
   const { data } = await db
-    .from('analytics_sync_log')
-    .select('sync_type, status, completed_at, records_synced')
-    .eq('status', 'complete')
+    .from('sf_sync_runs')
+    .select('sync_type:run_type, status, completed_at, records_synced:records_upserted')
+    .eq('status', 'completed')
     .order('completed_at', { ascending: false })
     .limit(1)
 

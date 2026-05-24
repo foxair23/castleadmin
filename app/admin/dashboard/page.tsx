@@ -44,7 +44,7 @@ export default async function DashboardPage() {
     db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at').gte('observed_at', daysAgo(90)).order('observed_at'),
     db.from('dashboard_annotations').select('*').order('occurred_on'),
     db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('scheduled_at', today()).lte('scheduled_at', daysAgo(-7)),
-    db.from('analytics_sync_log').select('sync_type, status, completed_at, records_synced').eq('status', 'complete').order('completed_at', { ascending: false }).limit(1),
+    db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
   ])
 
   // Compute snapshot
