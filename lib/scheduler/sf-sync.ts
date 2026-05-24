@@ -143,7 +143,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
 
     // ── 3. Create job ───────────────────────────────────────────────────────
     const jobPayload = {
-      customer_name: parseInt(sfCustomerId, 10),
+      customer_id: parseInt(sfCustomerId, 10),
       contact_first_name: l.customer_first_name,
       contact_last_name: l.customer_last_name || '.',
       street_1: l.address_line1,
