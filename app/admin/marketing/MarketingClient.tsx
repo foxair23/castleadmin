@@ -38,6 +38,7 @@ const RECENCY_OPTIONS = [
   { value: '180:365', label: '6–12 months ago' },
   { value: '365:730', label: '1–2 years ago' },
   { value: '730:1825', label: '2–5 years ago' },
+  { value: 'custom', label: 'Custom range…' },
 ]
 
 export default function MarketingClient({
@@ -49,6 +50,8 @@ export default function MarketingClient({
 }) {
   // Filter state
   const [recency, setRecency] = useState('')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [outstandingOnly, setOutstandingOnly] = useState(false)
@@ -96,7 +99,12 @@ export default function MarketingClient({
     setFiltersApplied(true)
 
     const params = new URLSearchParams()
-    if (recency) params.set('recency', recency)
+    if (recency === 'custom') {
+      if (customFrom) params.set('date_from', customFrom)
+      if (customTo) params.set('date_to', customTo)
+    } else if (recency) {
+      params.set('recency', recency)
+    }
     if (selectedSources.size > 0) params.set('lead_sources', Array.from(selectedSources).join(','))
     if (selectedCategories.size > 0) params.set('job_categories', Array.from(selectedCategories).join(','))
     if (outstandingOnly) params.set('payment_filter', 'outstanding')
@@ -204,7 +212,7 @@ export default function MarketingClient({
 
             {/* Recency */}
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Recency</label>
+              <label className="block text-xs text-gray-400 mb-1">Last Service Date</label>
               <select
                 value={recency}
                 onChange={e => setRecency(e.target.value)}
@@ -214,6 +222,28 @@ export default function MarketingClient({
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+              {recency === 'custom' && (
+                <div className="mt-2 space-y-2">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-0.5">From</label>
+                    <input
+                      type="date"
+                      value={customFrom}
+                      onChange={e => setCustomFrom(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1.5 focus:outline-none focus:border-gray-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-0.5">To</label>
+                    <input
+                      type="date"
+                      value={customTo}
+                      onChange={e => setCustomTo(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1.5 focus:outline-none focus:border-gray-500"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Lead Source */}
