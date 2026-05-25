@@ -23,25 +23,49 @@ export async function fetchContactsForIds(db: SupabaseClient<any>, customerIds: 
       .in('id', customerIds)
       .eq('is_deleted', false),
     db.from('sf_customer_contacts')
-      .select('customer_id, first_name, last_name, is_primary, sf_contact_emails(email, is_primary), sf_contact_phones(phone, is_primary)')
+      .select('id, customer_id, first_name, last_name, is_primary')
       .in('customer_id', customerIds),
     db.from('sf_customer_locations')
       .select('customer_id, city, postal_code, is_primary')
       .in('customer_id', customerIds),
   ])
 
-  type RawContact = {
-    customer_id: string; first_name: string | null; last_name: string | null; is_primary: boolean
-    sf_contact_emails: { email: string | null; is_primary: boolean }[]
-    sf_contact_phones: { phone: string | null; is_primary: boolean }[]
-  }
+  type RawContact = { id: string; customer_id: string; first_name: string | null; last_name: string | null; is_primary: boolean }
   type RawLocation = { customer_id: string; city: string | null; postal_code: string | null; is_primary: boolean }
+
+  const contactIds = (contactsData ?? []).map((c: RawContact) => c.id)
+  const [{ data: emailsData }, { data: phonesData }] = await Promise.all([
+    contactIds.length > 0
+      ? db.from('sf_contact_emails').select('contact_id, email, is_primary').in('contact_id', contactIds)
+      : Promise.resolve({ data: [] }),
+    contactIds.length > 0
+      ? db.from('sf_contact_phones').select('contact_id, phone, is_primary').in('contact_id', contactIds)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  type RawEmail = { contact_id: string; email: string | null; is_primary: boolean }
+  type RawPhone = { contact_id: string; phone: string | null; is_primary: boolean }
+
+  const emailsByContact = new Map<string, RawEmail[]>()
+  for (const e of (emailsData ?? []) as RawEmail[]) {
+    const arr = emailsByContact.get(e.contact_id) ?? []
+    arr.push(e)
+    emailsByContact.set(e.contact_id, arr)
+  }
+  const phonesByContact = new Map<string, RawPhone[]>()
+  for (const p of (phonesData ?? []) as RawPhone[]) {
+    const arr = phonesByContact.get(p.contact_id) ?? []
+    arr.push(p)
+    phonesByContact.set(p.contact_id, arr)
+  }
 
   const contactMap = new Map<string, { first_name: string | null; last_name: string | null; email: string | null; phone: string | null }>()
   for (const c of (contactsData ?? []) as RawContact[]) {
     if (contactMap.has(c.customer_id) && !c.is_primary) continue
-    const email = c.sf_contact_emails?.find(e => e.is_primary)?.email ?? c.sf_contact_emails?.[0]?.email ?? null
-    const phone = c.sf_contact_phones?.find(p => p.is_primary)?.phone ?? c.sf_contact_phones?.[0]?.phone ?? null
+    const emails = emailsByContact.get(c.id) ?? []
+    const phones = phonesByContact.get(c.id) ?? []
+    const email = emails.find(e => e.is_primary)?.email ?? emails[0]?.email ?? null
+    const phone = phones.find(p => p.is_primary)?.phone ?? phones[0]?.phone ?? null
     contactMap.set(c.customer_id, { first_name: c.first_name ?? null, last_name: c.last_name ?? null, email, phone })
   }
 
