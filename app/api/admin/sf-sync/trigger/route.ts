@@ -33,12 +33,12 @@ export async function POST(req: NextRequest) {
   const admin = await requireAdmin()
   if (!admin) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
-  const body = await req.json()
-  const { action, entity } = body as { action: string; entity?: string }
-
   const t0 = Date.now()
 
   try {
+    const body = await req.json()
+    const { action, entity } = body as { action: string; entity?: string }
+
     let counts: Record<string, number>
 
     if (action === 'reference') {
