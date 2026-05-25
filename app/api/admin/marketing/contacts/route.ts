@@ -25,26 +25,69 @@ export interface ContactRow {
   account_balance: number | null
 }
 
+function parseDateRange(
+  recency: string | null,
+  dateFrom: string | null,
+  dateTo: string | null,
+): { from: string | null; to: string | null } {
+  if (dateFrom || dateTo) return { from: dateFrom, to: dateTo }
+  if (!recency) return { from: null, to: null }
+  if (recency.includes(':')) {
+    const [fromStr, toStr] = recency.split(':')
+    const fromDays = parseInt(fromStr, 10)
+    const toDays = parseInt(toStr, 10)
+    if (isNaN(fromDays) || isNaN(toDays)) return { from: null, to: null }
+    return {
+      from: new Date(Date.now() - toDays * 86_400_000).toISOString().slice(0, 10),
+      to: new Date(Date.now() - fromDays * 86_400_000).toISOString().slice(0, 10),
+    }
+  }
+  const days = parseInt(recency, 10)
+  if (isNaN(days)) return { from: null, to: null }
+  return { from: new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10), to: null }
+}
+
 export async function GET(req: NextRequest) {
   const admin = await requireAdmin()
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
-  const recency = searchParams.get('recency')            // "days" or "from:to" (days-ago range)
-  const dateFrom = searchParams.get('date_from')         // ISO date, custom range start (inclusive)
-  const dateTo = searchParams.get('date_to')             // ISO date, custom range end (inclusive)
-  const leadSources = searchParams.get('lead_sources')   // comma-separated source names
-  const jobCategories = searchParams.get('job_categories') // comma-separated category names
-  const paymentFilter = searchParams.get('payment_filter') // "outstanding"
+  const recency = searchParams.get('recency')
+  const dateFrom = searchParams.get('date_from')
+  const dateTo = searchParams.get('date_to')
+  const leadSources = searchParams.get('lead_sources')
+  const jobCategories = searchParams.get('job_categories')
+  const paymentFilter = searchParams.get('payment_filter')
 
   const db = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
+  const dateRange = parseDateRange(recency, dateFrom, dateTo)
+
+  // ── Date pre-filter via sf_jobs.closed_at ────────────────────────────────
+  // sf_customers.last_serviced_date is often null in the SF API response.
+  // Use the max closed_at from sf_jobs as the authoritative last service date.
+  let dateFilterCustomerIds: string[] | null = null
+  if (dateRange.from || dateRange.to) {
+    let jobQ = db
+      .from('sf_jobs')
+      .select('customer_id')
+      .eq('is_deleted', false)
+      .not('closed_at', 'is', null)
+      .not('customer_id', 'is', null)
+    if (dateRange.from) jobQ = jobQ.gte('closed_at', dateRange.from)
+    if (dateRange.to) jobQ = jobQ.lte('closed_at', dateRange.to + 'T23:59:59Z')
+
+    const { data: dateJobs } = await jobQ
+    dateFilterCustomerIds = [
+      ...new Set((dateJobs ?? []).map((j: { customer_id: string }) => j.customer_id)),
+    ]
+    if (dateFilterCustomerIds.length === 0) return NextResponse.json({ contacts: [] })
+  }
+
   // ── Job-category pre-filter ──────────────────────────────────────────────
-  // Get customer IDs that have jobs in the requested categories (done first
-  // so we can pass the ID list into the main customer query).
   let categoryCustomerIds: string[] | null = null
   if (jobCategories) {
     const cats = jobCategories.split(',').map(s => s.trim()).filter(Boolean)
@@ -78,26 +121,8 @@ export async function GET(req: NextRequest) {
     query = query.gt('account_balance', 0)
   }
 
-  if (dateFrom || dateTo) {
-    if (dateFrom) query = query.gte('last_serviced_date', dateFrom)
-    if (dateTo) query = query.lte('last_serviced_date', dateTo)
-  } else if (recency) {
-    if (recency.includes(':')) {
-      const [fromStr, toStr] = recency.split(':')
-      const fromDays = parseInt(fromStr, 10)
-      const toDays = parseInt(toStr, 10)
-      if (!isNaN(fromDays) && !isNaN(toDays)) {
-        const computedFrom = new Date(Date.now() - toDays * 86_400_000).toISOString().slice(0, 10)
-        const computedTo = new Date(Date.now() - fromDays * 86_400_000).toISOString().slice(0, 10)
-        query = query.gte('last_serviced_date', computedFrom).lte('last_serviced_date', computedTo)
-      }
-    } else {
-      const days = parseInt(recency, 10)
-      if (!isNaN(days)) {
-        const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-        query = query.gte('last_serviced_date', cutoff)
-      }
-    }
+  if (dateFilterCustomerIds) {
+    query = query.in('id', dateFilterCustomerIds)
   }
 
   if (categoryCustomerIds) {
@@ -110,8 +135,8 @@ export async function GET(req: NextRequest) {
   const customerIds = (customers ?? []).map((c: { id: string }) => c.id)
   if (customerIds.length === 0) return NextResponse.json({ contacts: [] })
 
-  // ── Contact & location enrichment ────────────────────────────────────────
-  const [{ data: contactsData }, { data: locationsData }] = await Promise.all([
+  // ── Contact, location, and last-service-date enrichment ─────────────────
+  const [{ data: contactsData }, { data: locationsData }, { data: jobDates }] = await Promise.all([
     db
       .from('sf_customer_contacts')
       .select('customer_id, first_name, last_name, is_primary, sf_contact_emails(email, is_primary), sf_contact_phones(phone, is_primary)')
@@ -120,9 +145,16 @@ export async function GET(req: NextRequest) {
       .from('sf_customer_locations')
       .select('customer_id, city, postal_code, is_primary')
       .in('customer_id', customerIds),
+    // Fetch the most recent closed job per customer for display
+    db
+      .from('sf_jobs')
+      .select('customer_id, closed_at')
+      .in('customer_id', customerIds)
+      .eq('is_deleted', false)
+      .not('closed_at', 'is', null)
+      .order('closed_at', { ascending: false }),
   ])
 
-  // Build per-customer maps: prefer primary contact/location, fall back to first
   type RawContact = {
     customer_id: string
     first_name: string | null
@@ -149,14 +181,20 @@ export async function GET(req: NextRequest) {
     locationMap.set(l.customer_id, { city: l.city ?? null, postal_code: l.postal_code ?? null })
   }
 
-  // ── Assemble contact rows ────────────────────────────────────────────────
+  // First closed_at per customer (already ordered desc) = most recent
+  const lastServiceMap = new Map<string, string>()
+  for (const j of (jobDates ?? []) as { customer_id: string; closed_at: string }[]) {
+    if (!lastServiceMap.has(j.customer_id)) {
+      lastServiceMap.set(j.customer_id, j.closed_at.slice(0, 10))
+    }
+  }
+
   type RawCustomer = { id: string; customer_name: string | null; referral_source: string | null; last_serviced_date: string | null; account_balance: number | null }
   const contacts: ContactRow[] = []
 
   for (const c of (customers ?? []) as RawCustomer[]) {
     const contact = contactMap.get(c.id)
     const location = locationMap.get(c.id)
-    // Only include customers with an email — Mailchimp requires it
     if (!contact?.email) continue
     contacts.push({
       customer_id: c.id,
@@ -168,7 +206,7 @@ export async function GET(req: NextRequest) {
       city: location?.city ?? null,
       postal_code: location?.postal_code ?? null,
       lead_source: c.referral_source ?? null,
-      last_serviced_date: c.last_serviced_date ?? null,
+      last_serviced_date: lastServiceMap.get(c.id) ?? c.last_serviced_date ?? null,
       account_balance: c.account_balance ?? null,
     })
   }
