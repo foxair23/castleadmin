@@ -149,7 +149,7 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const customerIds = (customers ?? []).map((c: { id: string }) => c.id)
-  if (customerIds.length === 0) return NextResponse.json({ contacts: [] })
+  if (customerIds.length === 0) return NextResponse.json({ contacts: [], _debug: { customers: 0 } })
 
   // ── Contact, location, and last-service-date enrichment ─────────────────
   // Use explicit separate queries instead of nested selects — PostgREST nested
@@ -250,5 +250,15 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  return NextResponse.json({ contacts })
+  return NextResponse.json({
+    contacts,
+    _debug: {
+      customers: customerIds.length,
+      contacts: (contactsData ?? []).length,
+      contactIds: contactIds.length,
+      emails: (emailsData ?? []).length,
+      phones: (phonesData ?? []).length,
+      withEmail: contacts.length,
+    },
+  })
 }
