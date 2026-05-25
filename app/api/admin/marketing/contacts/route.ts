@@ -151,6 +151,14 @@ export async function GET(req: NextRequest) {
   const customerIds = (customers ?? []).map((c: { id: string }) => c.id)
   if (customerIds.length === 0) return NextResponse.json({ contacts: [], _debug: { customers: 0 } })
 
+  // Temporarily inspect raw_data of first customer to see what SF returned
+  const { data: sampleCustomer } = await db
+    .from('sf_customers')
+    .select('id, raw_data')
+    .eq('is_deleted', false)
+    .limit(1)
+    .single()
+
   // ── Contact, location, and last-service-date enrichment ─────────────────
   // Use explicit separate queries instead of nested selects — PostgREST nested
   // selects can silently return empty arrays with the service role client.
@@ -250,6 +258,9 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawKeys = sampleCustomer?.raw_data ? Object.keys(sampleCustomer.raw_data as any) : []
+
   return NextResponse.json({
     contacts,
     _debug: {
@@ -259,6 +270,7 @@ export async function GET(req: NextRequest) {
       emails: (emailsData ?? []).length,
       phones: (phonesData ?? []).length,
       withEmail: contacts.length,
+      sampleRawKeys: rawKeys,
     },
   })
 }
