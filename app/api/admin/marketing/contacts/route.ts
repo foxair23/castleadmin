@@ -30,7 +30,9 @@ export async function GET(req: NextRequest) {
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
-  const recency = searchParams.get('recency')            // days
+  const recency = searchParams.get('recency')            // "days" or "from:to" (days-ago range)
+  const dateFrom = searchParams.get('date_from')         // ISO date, custom range start (inclusive)
+  const dateTo = searchParams.get('date_to')             // ISO date, custom range end (inclusive)
   const leadSources = searchParams.get('lead_sources')   // comma-separated source names
   const jobCategories = searchParams.get('job_categories') // comma-separated category names
   const paymentFilter = searchParams.get('payment_filter') // "outstanding"
@@ -76,11 +78,25 @@ export async function GET(req: NextRequest) {
     query = query.gt('account_balance', 0)
   }
 
-  if (recency) {
-    const days = parseInt(recency, 10)
-    if (!isNaN(days)) {
-      const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-      query = query.gte('last_serviced_date', cutoff)
+  if (dateFrom || dateTo) {
+    if (dateFrom) query = query.gte('last_serviced_date', dateFrom)
+    if (dateTo) query = query.lte('last_serviced_date', dateTo)
+  } else if (recency) {
+    if (recency.includes(':')) {
+      const [fromStr, toStr] = recency.split(':')
+      const fromDays = parseInt(fromStr, 10)
+      const toDays = parseInt(toStr, 10)
+      if (!isNaN(fromDays) && !isNaN(toDays)) {
+        const computedFrom = new Date(Date.now() - toDays * 86_400_000).toISOString().slice(0, 10)
+        const computedTo = new Date(Date.now() - fromDays * 86_400_000).toISOString().slice(0, 10)
+        query = query.gte('last_serviced_date', computedFrom).lte('last_serviced_date', computedTo)
+      }
+    } else {
+      const days = parseInt(recency, 10)
+      if (!isNaN(days)) {
+        const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+        query = query.gte('last_serviced_date', cutoff)
+      }
     }
   }
 

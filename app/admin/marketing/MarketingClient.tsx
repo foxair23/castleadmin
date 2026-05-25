@@ -33,8 +33,12 @@ const RECENCY_OPTIONS = [
   { value: '', label: 'All time' },
   { value: '30', label: 'Last 30 days' },
   { value: '90', label: 'Last 90 days' },
+  { value: '180', label: 'Last 6 months' },
   { value: '365', label: 'Last 12 months' },
-  { value: '730', label: 'Last 2 years' },
+  { value: '180:365', label: '6–12 months ago' },
+  { value: '365:730', label: '1–2 years ago' },
+  { value: '730:1825', label: '2–5 years ago' },
+  { value: 'custom', label: 'Custom range…' },
 ]
 
 export default function MarketingClient({
@@ -46,6 +50,8 @@ export default function MarketingClient({
 }) {
   // Filter state
   const [recency, setRecency] = useState('')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [outstandingOnly, setOutstandingOnly] = useState(false)
@@ -93,7 +99,12 @@ export default function MarketingClient({
     setFiltersApplied(true)
 
     const params = new URLSearchParams()
-    if (recency) params.set('recency', recency)
+    if (recency === 'custom') {
+      if (customFrom) params.set('date_from', customFrom)
+      if (customTo) params.set('date_to', customTo)
+    } else if (recency) {
+      params.set('recency', recency)
+    }
     if (selectedSources.size > 0) params.set('lead_sources', Array.from(selectedSources).join(','))
     if (selectedCategories.size > 0) params.set('job_categories', Array.from(selectedCategories).join(','))
     if (outstandingOnly) params.set('payment_filter', 'outstanding')
@@ -201,7 +212,7 @@ export default function MarketingClient({
 
             {/* Recency */}
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Recency</label>
+              <label className="block text-xs text-gray-400 mb-1">Last Service Date</label>
               <select
                 value={recency}
                 onChange={e => setRecency(e.target.value)}
@@ -211,6 +222,28 @@ export default function MarketingClient({
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+              {recency === 'custom' && (
+                <div className="mt-2 space-y-2">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-0.5">From</label>
+                    <input
+                      type="date"
+                      value={customFrom}
+                      onChange={e => setCustomFrom(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1.5 focus:outline-none focus:border-gray-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-0.5">To</label>
+                    <input
+                      type="date"
+                      value={customTo}
+                      onChange={e => setCustomTo(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1.5 focus:outline-none focus:border-gray-500"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Lead Source */}
@@ -219,11 +252,11 @@ export default function MarketingClient({
                 <label className="block text-xs text-gray-400 mb-1">Lead Source</label>
                 <div className="space-y-1 max-h-48 overflow-y-auto">
                   {leadSources.map(src => (
-                    <label key={src.id} className="flex items-center gap-2 cursor-pointer">
+                    <label key={src.name} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={selectedSources.has(src.id)}
-                        onChange={() => toggleSource(src.id)}
+                        checked={selectedSources.has(src.name)}
+                        onChange={() => toggleSource(src.name)}
                         className="accent-red-500"
                       />
                       <span className="text-sm text-gray-300">{src.name}</span>
@@ -239,11 +272,11 @@ export default function MarketingClient({
                 <label className="block text-xs text-gray-400 mb-1">Job Category</label>
                 <div className="space-y-1 max-h-48 overflow-y-auto">
                   {jobCategories.map(cat => (
-                    <label key={cat.id} className="flex items-center gap-2 cursor-pointer">
+                    <label key={cat.name} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={selectedCategories.has(cat.id)}
-                        onChange={() => toggleCategory(cat.id)}
+                        checked={selectedCategories.has(cat.name)}
+                        onChange={() => toggleCategory(cat.name)}
                         className="accent-red-500"
                       />
                       <span className="text-sm text-gray-300">{cat.name}</span>
