@@ -33,8 +33,11 @@ const RECENCY_OPTIONS = [
   { value: '', label: 'All time' },
   { value: '30', label: 'Last 30 days' },
   { value: '90', label: 'Last 90 days' },
+  { value: '180', label: 'Last 6 months' },
   { value: '365', label: 'Last 12 months' },
-  { value: '730', label: 'Last 2 years' },
+  { value: '180:365', label: '6–12 months ago' },
+  { value: '365:730', label: '1–2 years ago' },
+  { value: '730:1825', label: '2–5 years ago' },
 ]
 
 export default function MarketingClient({
@@ -219,11 +222,11 @@ export default function MarketingClient({
                 <label className="block text-xs text-gray-400 mb-1">Lead Source</label>
                 <div className="space-y-1 max-h-48 overflow-y-auto">
                   {leadSources.map(src => (
-                    <label key={src.id} className="flex items-center gap-2 cursor-pointer">
+                    <label key={src.name} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={selectedSources.has(src.id)}
-                        onChange={() => toggleSource(src.id)}
+                        checked={selectedSources.has(src.name)}
+                        onChange={() => toggleSource(src.name)}
                         className="accent-red-500"
                       />
                       <span className="text-sm text-gray-300">{src.name}</span>
@@ -239,11 +242,11 @@ export default function MarketingClient({
                 <label className="block text-xs text-gray-400 mb-1">Job Category</label>
                 <div className="space-y-1 max-h-48 overflow-y-auto">
                   {jobCategories.map(cat => (
-                    <label key={cat.id} className="flex items-center gap-2 cursor-pointer">
+                    <label key={cat.name} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={selectedCategories.has(cat.id)}
-                        onChange={() => toggleCategory(cat.id)}
+                        checked={selectedCategories.has(cat.name)}
+                        onChange={() => toggleCategory(cat.name)}
                         className="accent-red-500"
                       />
                       <span className="text-sm text-gray-300">{cat.name}</span>
