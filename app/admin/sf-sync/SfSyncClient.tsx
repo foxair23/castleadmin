@@ -103,6 +103,18 @@ export default function SfSyncClient({ runs, counts }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, entity }),
       })
+
+      if (!res.ok) {
+        const text = await res.text()
+        if (res.status === 504 || text.toLowerCase().includes('timed out') || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
+          setActionError('Timed out (300s Vercel limit). Progress was saved — click the same button again to resume from where it left off.')
+        } else {
+          setActionError(`Server error ${res.status}: ${text.slice(0, 300)}`)
+        }
+        router.refresh()
+        return
+      }
+
       const json = await res.json()
       if (!json.ok) {
         setActionError(json.error ?? 'Unknown error')
