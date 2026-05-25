@@ -16,25 +16,16 @@ export default async function MarketingPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  // Fetch distinct lead sources from customers + jobs
+  // Fetch lead sources from sf_sources and categories from sf_job_categories (mirror tables)
   const [
-    { data: customerSources },
-    { data: jobSources },
+    { data: sourcesData },
     { data: categoriesData },
   ] = await Promise.all([
-    db.from('sf_customers_cache').select('lead_source').not('lead_source', 'is', null),
-    db.from('sf_jobs_cache').select('lead_source').not('lead_source', 'is', null),
-    db.from('sf_job_categories_ref').select('id, name').order('name'),
+    db.from('sf_sources').select('id, name').eq('is_deleted', false).order('name'),
+    db.from('sf_job_categories').select('id, name').eq('is_deleted', false).order('name'),
   ])
 
-  const sourceSet = new Set<string>()
-  for (const row of customerSources ?? []) {
-    if (row.lead_source) sourceSet.add(row.lead_source)
-  }
-  for (const row of jobSources ?? []) {
-    if (row.lead_source) sourceSet.add(row.lead_source)
-  }
-  const leadSources = Array.from(sourceSet).sort().map(name => ({ id: name, name }))
+  const leadSources = (sourcesData ?? []).map((s: { id: string; name: string }) => ({ id: String(s.id), name: s.name }))
   const jobCategories = (categoriesData ?? []).map((c: { id: string; name: string }) => ({ id: String(c.id), name: c.name }))
 
   return (
