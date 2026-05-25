@@ -69,21 +69,37 @@ export async function GET(req: NextRequest) {
   // ── Date pre-filter via sf_jobs.closed_at ────────────────────────────────
   // sf_customers.last_serviced_date is often null in the SF API response.
   // Use the max closed_at from sf_jobs as the authoritative last service date.
+  // Only include customers whose MOST RECENT closed job falls in the range —
+  // not customers who had any job in the range but came back more recently.
   let dateFilterCustomerIds: string[] | null = null
   if (dateRange.from || dateRange.to) {
-    let jobQ = db
+    // Get the most recent closed job per customer
+    const { data: allClosedJobs } = await db
       .from('sf_jobs')
-      .select('customer_id')
+      .select('customer_id, closed_at')
       .eq('is_deleted', false)
       .not('closed_at', 'is', null)
       .not('customer_id', 'is', null)
-    if (dateRange.from) jobQ = jobQ.gte('closed_at', dateRange.from)
-    if (dateRange.to) jobQ = jobQ.lte('closed_at', dateRange.to + 'T23:59:59Z')
+      .order('closed_at', { ascending: false })
 
-    const { data: dateJobs } = await jobQ
-    dateFilterCustomerIds = [
-      ...new Set((dateJobs ?? []).map((j: { customer_id: string }) => j.customer_id)),
-    ]
+    // Find max closed_at per customer, then check if it falls in range
+    const maxByCustomer = new Map<string, string>()
+    for (const j of (allClosedJobs ?? []) as { customer_id: string; closed_at: string }[]) {
+      if (!maxByCustomer.has(j.customer_id)) {
+        maxByCustomer.set(j.customer_id, j.closed_at)
+      }
+    }
+
+    const rangeFrom = dateRange.from ? dateRange.from : null
+    const rangeTo = dateRange.to ? dateRange.to + 'T23:59:59Z' : null
+
+    dateFilterCustomerIds = []
+    for (const [customerId, maxDate] of maxByCustomer) {
+      if (rangeFrom && maxDate < rangeFrom) continue
+      if (rangeTo && maxDate > rangeTo) continue
+      dateFilterCustomerIds.push(customerId)
+    }
+
     if (dateFilterCustomerIds.length === 0) return NextResponse.json({ contacts: [] })
   }
 
