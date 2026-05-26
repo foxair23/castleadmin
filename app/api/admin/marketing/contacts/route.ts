@@ -259,7 +259,9 @@ export async function GET(req: NextRequest) {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawKeys = sampleCustomer?.raw_data ? Object.keys(sampleCustomer.raw_data as any) : []
+  const rawData = sampleCustomer?.raw_data as any
+  const rawKeys = rawData ? Object.keys(rawData) : []
+  const sampleContacts = rawData?.contacts ?? null
 
   return NextResponse.json({
     contacts,
@@ -271,6 +273,7 @@ export async function GET(req: NextRequest) {
       phones: (phonesData ?? []).length,
       withEmail: contacts.length,
       sampleRawKeys: rawKeys,
+      sampleContactsInRaw: sampleContacts,
     },
   })
 }
