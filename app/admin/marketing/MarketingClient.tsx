@@ -335,6 +335,7 @@ export default function MarketingClient({
             <>
               <div className="text-sm text-gray-400 mb-2">
                 Showing {contacts.length} contact{contacts.length !== 1 ? 's' : ''}
+                {contacts.length === 500 && <span className="ml-1 text-gray-500">(limit 500 — apply filters to narrow)</span>}
                 {selectedIds.size > 0 && (
                   <span className="ml-3 text-white font-medium">{selectedIds.size} selected</span>
                 )}
@@ -463,7 +464,7 @@ export default function MarketingClient({
           >
             <h2 className="text-lg font-semibold text-white mb-3">Confirm Push</h2>
             <p className="text-gray-300 text-sm mb-6">
-              Push <strong>{selectedIds.size}</strong> contact{selectedIds.size !== 1 ? 's' : ''} to Mailchimp with tag <strong>&apos;{tag}&apos;</strong>?
+              Push <strong>{selectedIds.size}</strong> selected contact{selectedIds.size !== 1 ? 's' : ''} to Mailchimp with tag <strong>&apos;{tag}&apos;</strong>? Only customers with an email address will be sent.
             </p>
             <div className="flex gap-3 justify-end">
               <button
