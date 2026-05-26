@@ -261,13 +261,20 @@ async function syncCustomerChildren(customers: Raw[]) {
   const supabase = db()
   const customerIds = customers.map(c => toStr(c.id)!)
 
-  // Contacts
-  const contacts: Raw[] = customers.flatMap(c => (c.contacts ?? []).map((ct: Raw) => ({ ...ct, _customer_id: toStr(c.id)! })))
+  // Contacts — SF contacts have no id field; generate a stable synthetic one
+  // from customer_id + position so child rows can reference it.
+  const contacts: Raw[] = customers.flatMap(c =>
+    (c.contacts ?? []).map((ct: Raw, i: number) => ({
+      ...ct,
+      _customer_id: toStr(c.id)!,
+      _contact_id: toStr(ct.id) ?? `${toStr(c.id)!}:${i}`,
+    }))
+  )
   if (contacts.length > 0 || customerIds.length > 0) {
     await supabase.from('sf_customer_contacts').delete().in('customer_id', customerIds)
     if (contacts.length > 0) {
       const contactRows = contacts.map(ct => ({
-        id: toStr(ct.id)!, customer_id: ct._customer_id,
+        id: ct._contact_id, customer_id: ct._customer_id,
         first_name: toStr(ct.fname ?? ct.first_name), last_name: toStr(ct.lname ?? ct.last_name),
         is_primary: toBool(ct.is_primary), raw_data: ct, sf_synced_at: nowIso(),
       }))
@@ -275,9 +282,9 @@ async function syncCustomerChildren(customers: Raw[]) {
 
       // Emails
       const emailRows = contacts.flatMap(ct =>
-        (ct.emails ?? []).map((e: Raw) => ({
-          contact_id: toStr(ct.id)!, email: toStr(e.email ?? e.address),
-          is_primary: toBool(e.is_primary), raw_data: e,
+        (ct.emails ?? []).map((e: Raw, ei: number) => ({
+          contact_id: ct._contact_id, email: toStr(e.email ?? e.address),
+          is_primary: toBool(e.is_primary) || ei === 0, raw_data: e,
         }))
       )
       if (emailRows.length > 0) await supabase.from('sf_contact_emails').insert(emailRows)
@@ -285,7 +292,7 @@ async function syncCustomerChildren(customers: Raw[]) {
       // Phones
       const phoneRows = contacts.flatMap(ct =>
         (ct.phones ?? []).map((p: Raw) => ({
-          contact_id: toStr(ct.id)!, phone: toStr(p.phone ?? p.number),
+          contact_id: ct._contact_id, phone: toStr(p.phone ?? p.number),
           type: toStr(p.type), is_primary: toBool(p.is_primary), raw_data: p,
         }))
       )
@@ -306,6 +313,36 @@ async function syncCustomerChildren(customers: Raw[]) {
     await supabase.from('sf_customer_locations').delete().in('customer_id', customerIds)
     if (locationRows.length > 0) await supabase.from('sf_customer_locations').insert(locationRows)
   }
+}
+
+// Re-populate sf_customer_contacts/emails/phones/locations from raw_data already
+// stored in sf_customers. No SF API calls — pure DB read→write.
+export async function reprocessCustomerChildren(): Promise<number> {
+  const supabase = db()
+  const BATCH = 100
+  let offset = 0
+  let total = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('sf_customers')
+      .select('raw_data')
+      .eq('is_deleted', false)
+      .range(offset, offset + BATCH - 1)
+
+    if (error) throw new Error(error.message)
+    if (!data || data.length === 0) break
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawItems = data.map((r: { raw_data: any }) => r.raw_data as Raw)
+    await syncCustomerChildren(rawItems)
+    total += rawItems.length
+
+    if (data.length < BATCH) break
+    offset += BATCH
+  }
+
+  return total
 }
 
 async function syncJobChildren(jobs: Raw[]) {

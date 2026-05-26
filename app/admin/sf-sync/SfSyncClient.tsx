@@ -153,6 +153,11 @@ export default function SfSyncClient({ runs, counts }: Props) {
             onClick={() => trigger('backfill')}
             variant="danger"
           />
+          <ActionButton
+            label="Re-sync Customer Contacts"
+            loading={inflight}
+            onClick={() => trigger('reprocess-children')}
+          />
         </div>
 
         {actionError && (
