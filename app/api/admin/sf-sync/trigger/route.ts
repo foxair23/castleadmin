@@ -6,6 +6,7 @@ import {
   runIncrementalSync,
   runWeeklyReconcile,
   runBackfill,
+  reprocessCustomerChildren,
 } from '@/lib/sf-mirror/sync-engine'
 
 export const maxDuration = 300
@@ -49,6 +50,9 @@ export async function POST(req: NextRequest) {
       counts = await runWeeklyReconcile()
     } else if (action === 'backfill') {
       counts = await runBackfill(entity)
+    } else if (action === 'reprocess-children') {
+      const n = await reprocessCustomerChildren()
+      counts = { customers_processed: n }
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}`, ms: 0 }, { status: 400 })
     }
