@@ -140,15 +140,13 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     }
     result.errors.push(...batchErrors)
 
-    // Apply tag to successfully upserted members in parallel
-    const successfulEmails = [
-      ...(data.new_members ?? []).map((m: { email_address: string }) => m.email_address),
-      ...(data.updated_members ?? []).map((m: { email_address: string }) => m.email_address),
-    ]
-
+    // Apply tag to every contact in the batch — not just new/updated ones.
+    // Mailchimp's batch import silently skips unchanged existing members (they
+    // don't appear in new_members or updated_members), so tagging only those
+    // would miss anyone whose data hadn't changed since the last push.
     await Promise.allSettled(
-      successfulEmails.map((email: string) =>
-        mcFetch(`/lists/${AUDIENCE_ID}/members/${md5Email(email)}/tags`, {
+      batch.map((c: MailchimpContact) =>
+        mcFetch(`/lists/${AUDIENCE_ID}/members/${md5Email(c.email)}/tags`, {
           method: 'POST',
           body: JSON.stringify({ tags: [{ name: tag, status: 'active' }] }),
         })
