@@ -66,45 +66,44 @@ export async function GET(req: NextRequest) {
 
   const dateRange = parseDateRange(recency, dateFrom, dateTo)
 
-  // ── Date pre-filter via sf_jobs.closed_at ────────────────────────────────
-  // sf_customers.last_serviced_date is often null in the SF API response.
-  // Use the max closed_at from sf_jobs as the authoritative last service date.
-  // Only include customers whose MOST RECENT closed job falls in the range —
-  // not customers who had any job in the range but came back more recently.
-  let dateFilterCustomerIds: string[] | null = null
+  // ── Date filter: customers whose MOST RECENT closed job falls in range ────
+  // Two-query set subtraction avoids fetching all jobs (PostgREST caps at 1000
+  // rows by default, which would miss older data entirely):
+  //   Set A = customers with any job closed in [from, to]
+  //   Set B = customers with any job closed AFTER to (came back more recently)
+  //   Result = A minus B
+  let dateFilterCustomerIds: Set<string> | null = null
   if (dateRange.from || dateRange.to) {
-    // Get the most recent closed job per customer
-    const { data: allClosedJobs } = await db
+    let inRangeQ = db
       .from('sf_jobs')
-      .select('customer_id, closed_at')
+      .select('customer_id')
       .eq('is_deleted', false)
       .not('closed_at', 'is', null)
       .not('customer_id', 'is', null)
-      .order('closed_at', { ascending: false })
+    if (dateRange.from) inRangeQ = inRangeQ.gte('closed_at', dateRange.from)
+    if (dateRange.to) inRangeQ = inRangeQ.lte('closed_at', dateRange.to + 'T23:59:59Z')
+    const { data: inRangeJobs } = await inRangeQ.limit(50000)
 
-    // Find max closed_at per customer, then check if it falls in range
-    const maxByCustomer = new Map<string, string>()
-    for (const j of (allClosedJobs ?? []) as { customer_id: string; closed_at: string }[]) {
-      if (!maxByCustomer.has(j.customer_id)) {
-        maxByCustomer.set(j.customer_id, j.closed_at)
-      }
+    const inRangeIds = new Set((inRangeJobs ?? []).map((j: { customer_id: string }) => j.customer_id))
+
+    if (dateRange.to) {
+      const { data: newerJobs } = await db
+        .from('sf_jobs')
+        .select('customer_id')
+        .eq('is_deleted', false)
+        .not('closed_at', 'is', null)
+        .not('customer_id', 'is', null)
+        .gt('closed_at', dateRange.to + 'T23:59:59Z')
+        .limit(50000)
+      for (const j of (newerJobs ?? []) as { customer_id: string }[]) inRangeIds.delete(j.customer_id)
     }
 
-    const rangeFrom = dateRange.from ? dateRange.from : null
-    const rangeTo = dateRange.to ? dateRange.to + 'T23:59:59Z' : null
-
-    dateFilterCustomerIds = []
-    for (const [customerId, maxDate] of maxByCustomer) {
-      if (rangeFrom && maxDate < rangeFrom) continue
-      if (rangeTo && maxDate > rangeTo) continue
-      dateFilterCustomerIds.push(customerId)
-    }
-
-    if (dateFilterCustomerIds.length === 0) return NextResponse.json({ contacts: [] })
+    dateFilterCustomerIds = inRangeIds
+    if (dateFilterCustomerIds.size === 0) return NextResponse.json({ contacts: [] })
   }
 
-  // ── Job-category pre-filter ──────────────────────────────────────────────
-  let categoryCustomerIds: string[] | null = null
+  // ── Job-category filter ───────────────────────────────────────────────────
+  let categoryCustomerIds: Set<string> | null = null
   if (jobCategories) {
     const cats = jobCategories.split(',').map(s => s.trim()).filter(Boolean)
     if (cats.length > 0) {
@@ -114,70 +113,49 @@ export async function GET(req: NextRequest) {
         .in('category', cats)
         .eq('is_deleted', false)
         .not('customer_id', 'is', null)
-
-      categoryCustomerIds = [
-        ...new Set((catJobs ?? []).map((j: { customer_id: string | null }) => j.customer_id as string)),
-      ]
-      if (categoryCustomerIds.length === 0) return NextResponse.json({ contacts: [] })
+        .limit(50000)
+      categoryCustomerIds = new Set((catJobs ?? []).map((j: { customer_id: string }) => j.customer_id))
+      if (categoryCustomerIds.size === 0) return NextResponse.json({ contacts: [] })
     }
   }
 
-  // ── Main customer query ──────────────────────────────────────────────────
+  // ── Customer query ────────────────────────────────────────────────────────
+  // Ordered by last_serviced_date desc so the 500-row limit returns the most
+  // recently active customers, not a random slice of the database.
   let query = db
     .from('sf_customers')
     .select('id, customer_name, referral_source, last_serviced_date, account_balance')
     .eq('is_deleted', false)
+    .order('last_serviced_date', { ascending: false, nullsFirst: false })
 
   if (leadSources) {
     const sources = leadSources.split(',').map(s => s.trim()).filter(Boolean)
     if (sources.length > 0) query = query.in('referral_source', sources)
   }
-
-  if (paymentFilter === 'outstanding') {
-    query = query.gt('account_balance', 0)
-  }
+  if (paymentFilter === 'outstanding') query = query.gt('account_balance', 0)
 
   if (dateFilterCustomerIds) {
-    query = query.in('id', dateFilterCustomerIds)
+    const ids = [...dateFilterCustomerIds]
+    query = query.in('id', ids.slice(0, 5000))
   }
-
   if (categoryCustomerIds) {
-    query = query.in('id', categoryCustomerIds)
+    const ids = [...categoryCustomerIds]
+    query = query.in('id', ids.slice(0, 5000))
   }
 
   const { data: customers, error } = await query.limit(500)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const customerIds = (customers ?? []).map((c: { id: string }) => c.id)
-  if (customerIds.length === 0) return NextResponse.json({ contacts: [], _debug: { customers: 0 } })
+  if (customerIds.length === 0) return NextResponse.json({ contacts: [] })
 
-  // Temporarily inspect raw_data of first customer to see what SF returned
-  const { data: sampleCustomer } = await db
-    .from('sf_customers')
-    .select('id, raw_data')
-    .eq('is_deleted', false)
-    .limit(1)
-    .single()
-
-  // ── Contact, location, and last-service-date enrichment ─────────────────
-  // Use explicit separate queries instead of nested selects — PostgREST nested
-  // selects can silently return empty arrays with the service role client.
+  // ── Enrich with contacts, locations, last service date ───────────────────
   const [{ data: contactsData }, { data: locationsData }, { data: jobDates }] = await Promise.all([
-    db
-      .from('sf_customer_contacts')
-      .select('id, customer_id, first_name, last_name, is_primary')
-      .in('customer_id', customerIds),
-    db
-      .from('sf_customer_locations')
-      .select('customer_id, city, postal_code, is_primary')
-      .in('customer_id', customerIds),
-    db
-      .from('sf_jobs')
-      .select('customer_id, closed_at')
-      .in('customer_id', customerIds)
-      .eq('is_deleted', false)
-      .not('closed_at', 'is', null)
-      .order('closed_at', { ascending: false }),
+    db.from('sf_customer_contacts').select('id, customer_id, first_name, last_name, is_primary').in('customer_id', customerIds),
+    db.from('sf_customer_locations').select('customer_id, city, postal_code, is_primary').in('customer_id', customerIds),
+    db.from('sf_jobs').select('customer_id, closed_at').in('customer_id', customerIds)
+      .eq('is_deleted', false).not('closed_at', 'is', null)
+      .order('closed_at', { ascending: false }).limit(10000),
   ])
 
   type RawContact = { id: string; customer_id: string; first_name: string | null; last_name: string | null; is_primary: boolean }
@@ -196,7 +174,6 @@ export async function GET(req: NextRequest) {
   type RawEmail = { contact_id: string; email: string | null; is_primary: boolean }
   type RawPhone = { contact_id: string; phone: string | null; is_primary: boolean }
 
-  // Group emails and phones by contact_id
   const emailsByContact = new Map<string, RawEmail[]>()
   for (const e of (emailsData ?? []) as RawEmail[]) {
     const arr = emailsByContact.get(e.contact_id) ?? []
@@ -228,12 +205,9 @@ export async function GET(req: NextRequest) {
     locationMap.set(l.customer_id, { city: l.city ?? null, postal_code: l.postal_code ?? null })
   }
 
-  // First closed_at per customer (already ordered desc) = most recent
   const lastServiceMap = new Map<string, string>()
   for (const j of (jobDates ?? []) as { customer_id: string; closed_at: string }[]) {
-    if (!lastServiceMap.has(j.customer_id)) {
-      lastServiceMap.set(j.customer_id, j.closed_at.slice(0, 10))
-    }
+    if (!lastServiceMap.has(j.customer_id)) lastServiceMap.set(j.customer_id, j.closed_at.slice(0, 10))
   }
 
   type RawCustomer = { id: string; customer_name: string | null; referral_source: string | null; last_serviced_date: string | null; account_balance: number | null }
@@ -242,14 +216,13 @@ export async function GET(req: NextRequest) {
   for (const c of (customers ?? []) as RawCustomer[]) {
     const contact = contactMap.get(c.id)
     const location = locationMap.get(c.id)
-    if (!contact?.email) continue
     contacts.push({
       customer_id: c.id,
       customer_name: c.customer_name ?? null,
-      email: contact.email,
-      first_name: contact.first_name,
-      last_name: contact.last_name,
-      phone: contact.phone ?? null,
+      email: contact?.email ?? null,
+      first_name: contact?.first_name ?? null,
+      last_name: contact?.last_name ?? null,
+      phone: contact?.phone ?? null,
       city: location?.city ?? null,
       postal_code: location?.postal_code ?? null,
       lead_source: c.referral_source ?? null,
@@ -258,22 +231,5 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawData = sampleCustomer?.raw_data as any
-  const rawKeys = rawData ? Object.keys(rawData) : []
-  const sampleContacts = rawData?.contacts ?? null
-
-  return NextResponse.json({
-    contacts,
-    _debug: {
-      customers: customerIds.length,
-      contacts: (contactsData ?? []).length,
-      contactIds: contactIds.length,
-      emails: (emailsData ?? []).length,
-      phones: (phonesData ?? []).length,
-      withEmail: contacts.length,
-      sampleRawKeys: rawKeys,
-      sampleContactsInRaw: sampleContacts,
-    },
-  })
+  return NextResponse.json({ contacts })
 }
