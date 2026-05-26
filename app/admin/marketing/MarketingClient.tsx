@@ -199,6 +199,7 @@ export default function MarketingClient({
 
   const allSelected = contacts.length > 0 && selectedIds.size === contacts.length
   const someSelected = selectedIds.size > 0
+  const selectedWithEmail = contacts.filter(c => selectedIds.has(c.customer_id) && c.email).length
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -463,9 +464,25 @@ export default function MarketingClient({
             onClick={e => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-white mb-3">Confirm Push</h2>
-            <p className="text-gray-300 text-sm mb-6">
-              Push <strong>{selectedIds.size}</strong> selected contact{selectedIds.size !== 1 ? 's' : ''} to Mailchimp with tag <strong>&apos;{tag}&apos;</strong>? Only customers with an email address will be sent.
+            <p className="text-gray-300 text-sm mb-2">
+              Push to Mailchimp with tag <strong>&apos;{tag}&apos;</strong>?
             </p>
+            <div className="bg-gray-800 rounded px-3 py-2 text-sm mb-6 space-y-1">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Selected</span>
+                <span className="text-white font-medium">{selectedIds.size}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Will be sent (have email)</span>
+                <span className="text-green-400 font-medium">{selectedWithEmail}</span>
+              </div>
+              {selectedIds.size - selectedWithEmail > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Skipped (no email)</span>
+                  <span className="text-gray-500">{selectedIds.size - selectedWithEmail}</span>
+                </div>
+              )}
+            </div>
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setShowConfirm(false)}
