@@ -144,7 +144,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               type="text"
               value={phone.value}
               onChange={e => phone.setValue(e.target.value)}
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
             <SaveButton
               onClick={() => save('office_phone', phone.value, phone.markSaved)}
@@ -179,7 +179,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                 value={disabledMsg.value}
                 onChange={e => disabledMsg.setValue(e.target.value)}
                 rows={2}
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
               />
               <SaveButton
                 onClick={() => save('scheduling_disabled_message', disabledMsg.value, disabledMsg.markSaved)}
@@ -199,7 +199,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               max={90}
               value={horizonDays.value}
               onChange={e => horizonDays.setValue(e.target.value)}
-              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
             <SaveButton
               onClick={() => save('scheduling_horizon_days', parseInt(horizonDays.value, 10), horizonDays.markSaved)}
@@ -246,7 +246,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               max={168}
               value={minNoticeHours.value}
               onChange={e => minNoticeHours.setValue(e.target.value)}
-              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
             <SaveButton
               onClick={() => save('min_notice_hours', parseInt(minNoticeHours.value, 10), minNoticeHours.markSaved)}
@@ -279,7 +279,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                   min={1}
                   value={maxJobsLimit.value}
                   onChange={e => maxJobsLimit.setValue(e.target.value)}
-                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
                 />
                 <SaveButton
                   onClick={() => save('max_jobs_per_day', parseInt(maxJobsLimit.value, 10), maxJobsLimit.markSaved)}
@@ -317,7 +317,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                   min={1}
                   value={maxWindowLimit.value}
                   onChange={e => maxWindowLimit.setValue(e.target.value)}
-                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
                 />
                 <SaveButton
                   onClick={() => save('max_bookings_per_window', parseInt(maxWindowLimit.value, 10), maxWindowLimit.markSaved)}
@@ -346,7 +346,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                   next[i] = { ...w, start: e.target.value }
                   setWindows(next)
                 }}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
               />
               <span className="text-gray-400 text-sm">–</span>
               <input
@@ -357,7 +357,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                   next[i] = { ...w, end: e.target.value }
                   setWindows(next)
                 }}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
               />
               <input
                 type="text"
@@ -368,7 +368,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                   setWindows(next)
                 }}
                 placeholder="Label"
-                className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
               />
               <button
                 type="button"
@@ -428,7 +428,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                 type="text"
                 value={incentiveText.value}
                 onChange={e => incentiveText.setValue(e.target.value)}
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
               />
               <SaveButton
                 onClick={() => save('incentive_banner_text', incentiveText.value, incentiveText.markSaved)}
@@ -448,7 +448,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               value={gdCategories.value}
               onChange={e => gdCategories.setValue(e.target.value)}
               rows={6}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
             />
             <SaveButton
               onClick={() => saveLines('garage_door_categories', gdCategories.value, gdCategories.markSaved)}
@@ -462,7 +462,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               value={gateCategories.value}
               onChange={e => gateCategories.setValue(e.target.value)}
               rows={6}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
             />
             <SaveButton
               onClick={() => saveLines('gate_categories', gateCategories.value, gateCategories.markSaved)}
@@ -476,7 +476,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               value={gdIssues.value}
               onChange={e => gdIssues.setValue(e.target.value)}
               rows={8}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
             />
             <SaveButton
               onClick={() => saveLines('garage_door_issues', gdIssues.value, gdIssues.markSaved)}
@@ -490,7 +490,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               value={gateIssues.value}
               onChange={e => gateIssues.setValue(e.target.value)}
               rows={8}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
             />
             <SaveButton
               onClick={() => saveLines('gate_issues', gateIssues.value, gateIssues.markSaved)}
@@ -530,7 +530,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
             value={tcpaCopy.value}
             onChange={e => tcpaCopy.setValue(e.target.value)}
             rows={3}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none mb-2"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none mb-2"
           />
           <SaveButton
             onClick={() => save('tcpa_copy', tcpaCopy.value, tcpaCopy.markSaved)}
@@ -544,7 +544,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
             value={marketingCopy.value}
             onChange={e => marketingCopy.setValue(e.target.value)}
             rows={2}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none mb-2"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none mb-2"
           />
           <SaveButton
             onClick={() => save('marketing_sms_copy', marketingCopy.value, marketingCopy.markSaved)}
