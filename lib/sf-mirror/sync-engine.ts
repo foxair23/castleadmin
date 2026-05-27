@@ -41,6 +41,15 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
+// SF sometimes stores names reversed: fname="Bourcy," lname="Susan"
+// Detect by comma at end of first name and swap.
+function normalizeContactName(fname: string | null, lname: string | null): { first: string | null; last: string | null } {
+  if (fname && fname.trimEnd().endsWith(',')) {
+    return { first: lname, last: fname.trimEnd().replace(/,$/, '').trim() || null }
+  }
+  return { first: fname, last: lname }
+}
+
 function hoursAgo(h: number): string {
   return new Date(Date.now() - h * 3_600_000).toISOString()
 }
@@ -273,11 +282,14 @@ async function syncCustomerChildren(customers: Raw[]) {
   if (contacts.length > 0 || customerIds.length > 0) {
     await supabase.from('sf_customer_contacts').delete().in('customer_id', customerIds)
     if (contacts.length > 0) {
-      const contactRows = contacts.map(ct => ({
-        id: ct._contact_id, customer_id: ct._customer_id,
-        first_name: toStr(ct.fname ?? ct.first_name), last_name: toStr(ct.lname ?? ct.last_name),
-        is_primary: toBool(ct.is_primary), raw_data: ct, sf_synced_at: nowIso(),
-      }))
+      const contactRows = contacts.map(ct => {
+        const { first, last } = normalizeContactName(toStr(ct.fname ?? ct.first_name), toStr(ct.lname ?? ct.last_name))
+        return {
+          id: ct._contact_id, customer_id: ct._customer_id,
+          first_name: first, last_name: last,
+          is_primary: toBool(ct.is_primary), raw_data: ct, sf_synced_at: nowIso(),
+        }
+      })
       await supabase.from('sf_customer_contacts').insert(contactRows)
 
       // Emails

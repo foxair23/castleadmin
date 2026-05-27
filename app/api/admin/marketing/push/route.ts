@@ -66,7 +66,15 @@ export async function fetchContactsForIds(db: SupabaseClient<any>, customerIds: 
     const phones = phonesByContact.get(c.id) ?? []
     const email = emails.find(e => e.is_primary)?.email ?? emails[0]?.email ?? null
     const phone = phones.find(p => p.is_primary)?.phone ?? phones[0]?.phone ?? null
-    contactMap.set(c.customer_id, { first_name: c.first_name ?? null, last_name: c.last_name ?? null, email, phone })
+    // Fix reversed names: SF sometimes stores fname="Bourcy," lname="Susan"
+    let firstName = c.first_name ?? null
+    let lastName = c.last_name ?? null
+    if (firstName && firstName.trimEnd().endsWith(',')) {
+      const tmp = lastName
+      lastName = firstName.trimEnd().replace(/,$/, '').trim() || null
+      firstName = tmp
+    }
+    contactMap.set(c.customer_id, { first_name: firstName, last_name: lastName, email, phone })
   }
 
   const locationMap = new Map<string, { city: string | null; postal_code: string | null }>()
