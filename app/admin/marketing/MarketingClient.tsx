@@ -200,6 +200,7 @@ export default function MarketingClient({
   const allSelected = contacts.length > 0 && selectedIds.size === contacts.length
   const someSelected = selectedIds.size > 0
   const selectedWithEmail = contacts.filter(c => selectedIds.has(c.customer_id) && c.email).length
+  const selectedSmsOnly = selectedIds.size - selectedWithEmail
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -473,13 +474,13 @@ export default function MarketingClient({
                 <span className="text-white font-medium">{selectedIds.size}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-400">Will be sent (have email)</span>
+                <span className="text-gray-400">Email contacts</span>
                 <span className="text-green-400 font-medium">{selectedWithEmail}</span>
               </div>
-              {selectedIds.size - selectedWithEmail > 0 && (
+              {selectedSmsOnly > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Skipped (no email)</span>
-                  <span className="text-gray-500">{selectedIds.size - selectedWithEmail}</span>
+                  <span className="text-gray-400">SMS only (no email, tagged)</span>
+                  <span className="text-yellow-400 font-medium">{selectedSmsOnly}</span>
                 </div>
               )}
             </div>

@@ -69,6 +69,7 @@ export interface MailchimpContact {
   lead_source: string | null
   last_serviced_date: string | null  // YYYY-MM-DD
   account_balance: number | null
+  sms_only?: boolean
 }
 
 export interface PushResult {
@@ -144,13 +145,16 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     // Mailchimp's batch import silently skips unchanged existing members (they
     // don't appear in new_members or updated_members), so tagging only those
     // would miss anyone whose data hadn't changed since the last push.
+    // SMS-only contacts (no real email) also get an "sms only" tag.
     await Promise.allSettled(
-      batch.map((c: MailchimpContact) =>
-        mcFetch(`/lists/${AUDIENCE_ID}/members/${md5Email(c.email)}/tags`, {
+      batch.map((c: MailchimpContact) => {
+        const tags: { name: string; status: string }[] = [{ name: tag, status: 'active' }]
+        if (c.sms_only) tags.push({ name: 'sms only', status: 'active' })
+        return mcFetch(`/lists/${AUDIENCE_ID}/members/${md5Email(c.email)}/tags`, {
           method: 'POST',
-          body: JSON.stringify({ tags: [{ name: tag, status: 'active' }] }),
+          body: JSON.stringify({ tags }),
         })
-      )
+      })
     )
   }
 

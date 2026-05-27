@@ -98,18 +98,23 @@ export async function fetchContactsForIds(db: SupabaseClient<any>, customerIds: 
 
   for (const c of (customers ?? []) as RawCustomer[]) {
     const contact = contactMap.get(c.id)
-    if (!contact?.email) continue  // Mailchimp requires an email
+    const realEmail = contact?.email ?? null
+    const smsOnly = !realEmail
+    // Contacts without an email get a stable placeholder so Mailchimp can store
+    // them. They are tagged "sms only" and should never receive email campaigns.
+    const email = realEmail ?? `sms.${c.id}@sms-only.invalid`
     const location = locationMap.get(c.id)
     contacts.push({
-      email: contact.email,
-      first_name: contact.first_name,
-      last_name: contact.last_name,
-      phone: contact.phone ?? null,
+      email,
+      first_name: contact?.first_name ?? null,
+      last_name: contact?.last_name ?? null,
+      phone: contact?.phone ?? null,
       city: location?.city ?? null,
       postal_code: location?.postal_code ?? null,
       lead_source: c.referral_source ?? null,
       last_serviced_date: c.last_serviced_date ?? null,
       account_balance: c.account_balance ?? null,
+      sms_only: smsOnly,
     })
   }
 
