@@ -79,8 +79,10 @@ export default function SettingsClient({ initialSettings: s }: Props) {
 
   // Capacity
   const minNoticeHours = useField(String(num(s.min_notice_hours, 24)))
-  const maxJobsPerDay = useField(String(num(s.max_jobs_per_day, 0)))
-  const maxBookingsPerWindow = useField(String(num(s.max_bookings_per_window, 0)))
+  const maxJobsEnabled = useField(num(s.max_jobs_per_day, 0) > 0)
+  const maxJobsLimit = useField(String(num(s.max_jobs_per_day, 0) > 0 ? num(s.max_jobs_per_day, 0) : 8))
+  const maxWindowEnabled = useField(num(s.max_bookings_per_window, 0) > 0)
+  const maxWindowLimit = useField(String(num(s.max_bookings_per_window, 0) > 0 ? num(s.max_bookings_per_window, 0) : 2))
 
   // Incentive
   const incentiveEnabled = useField(bool(s.incentive_banner_enabled, true))
@@ -256,41 +258,79 @@ export default function SettingsClient({ initialSettings: s }: Props) {
         </div>
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Max SF jobs per day</label>
-          <div className="flex gap-2 items-center">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer mb-2">
             <input
-              type="number"
-              min={0}
-              value={maxJobsPerDay.value}
-              onChange={e => maxJobsPerDay.setValue(e.target.value)}
-              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              type="checkbox"
+              checked={maxJobsEnabled.value}
+              onChange={e => {
+                maxJobsEnabled.setValue(e.target.checked)
+                save('max_jobs_per_day', e.target.checked ? parseInt(maxJobsLimit.value, 10) : 0, maxJobsEnabled.markSaved)
+              }}
+              className="rounded border-gray-300 text-red-600 focus:ring-red-500"
             />
-            <SaveButton
-              onClick={() => save('max_jobs_per_day', parseInt(maxJobsPerDay.value, 10), maxJobsPerDay.markSaved)}
-              disabled={isPending || maxJobsPerDay.value === ''}
-              saved={maxJobsPerDay.saved}
-            />
-          </div>
-          <p className="text-xs text-gray-400 mt-1">Block the whole day when this many jobs are already in Service Fusion. 0 = no limit.</p>
+            Limit daily SF jobs
+            {maxJobsEnabled.saved && <span className="text-green-600 text-xs">Saved ✓</span>}
+          </label>
+          {maxJobsEnabled.value && (
+            <div className="ml-6">
+              <div className="flex gap-2 items-center">
+                <input
+                  type="number"
+                  min={1}
+                  value={maxJobsLimit.value}
+                  onChange={e => maxJobsLimit.setValue(e.target.value)}
+                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                />
+                <SaveButton
+                  onClick={() => save('max_jobs_per_day', parseInt(maxJobsLimit.value, 10), maxJobsLimit.markSaved)}
+                  disabled={isPending || !maxJobsLimit.value}
+                  saved={maxJobsLimit.saved}
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Block the whole day in the scheduler when this many SF jobs are already on that date.</p>
+            </div>
+          )}
+          {!maxJobsEnabled.value && (
+            <p className="text-xs text-gray-400 ml-6">No daily limit — all dates remain open regardless of SF job count.</p>
+          )}
         </div>
 
         <div className="mb-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Max online bookings per time window</label>
-          <div className="flex gap-2 items-center">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer mb-2">
             <input
-              type="number"
-              min={0}
-              value={maxBookingsPerWindow.value}
-              onChange={e => maxBookingsPerWindow.setValue(e.target.value)}
-              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              type="checkbox"
+              checked={maxWindowEnabled.value}
+              onChange={e => {
+                maxWindowEnabled.setValue(e.target.checked)
+                save('max_bookings_per_window', e.target.checked ? parseInt(maxWindowLimit.value, 10) : 0, maxWindowEnabled.markSaved)
+              }}
+              className="rounded border-gray-300 text-red-600 focus:ring-red-500"
             />
-            <SaveButton
-              onClick={() => save('max_bookings_per_window', parseInt(maxBookingsPerWindow.value, 10), maxBookingsPerWindow.markSaved)}
-              disabled={isPending || maxBookingsPerWindow.value === ''}
-              saved={maxBookingsPerWindow.saved}
-            />
-          </div>
-          <p className="text-xs text-gray-400 mt-1">Max pending/approved online leads per AM or PM window per day. 0 = no limit.</p>
+            Limit online bookings per time window
+            {maxWindowEnabled.saved && <span className="text-green-600 text-xs">Saved ✓</span>}
+          </label>
+          {maxWindowEnabled.value && (
+            <div className="ml-6">
+              <div className="flex gap-2 items-center">
+                <input
+                  type="number"
+                  min={1}
+                  value={maxWindowLimit.value}
+                  onChange={e => maxWindowLimit.setValue(e.target.value)}
+                  className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                />
+                <SaveButton
+                  onClick={() => save('max_bookings_per_window', parseInt(maxWindowLimit.value, 10), maxWindowLimit.markSaved)}
+                  disabled={isPending || !maxWindowLimit.value}
+                  saved={maxWindowLimit.saved}
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Max pending/approved online leads per AM or PM window per day.</p>
+            </div>
+          )}
+          {!maxWindowEnabled.value && (
+            <p className="text-xs text-gray-400 ml-6">No per-window limit — customers can book any available window freely.</p>
+          )}
         </div>
       </Section>
 
