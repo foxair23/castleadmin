@@ -76,10 +76,13 @@ export async function fetchContactsForIds(db: SupabaseClient<any>, customerIds: 
     }
     const fix = (s: string | null) => {
       if (!s) return s
-      if (s === s.toUpperCase() && /[A-Z]/.test(s)) {
-        return s.replace(/\b\w+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase())
-      }
+      if (s !== s.toUpperCase() || !/[A-Z]/.test(s)) return s
       return s
+        .toLowerCase()
+        .replace(/\b\w/g, c => c.toUpperCase())
+        .replace(/\bMc([a-z])/g, (_, c) => `Mc${c.toUpperCase()}`)
+        .replace(/\bMac([bcdfghjklmnpqrstvwxyz])/g, (_, c) => `Mac${c.toUpperCase()}`)
+        .replace(/(?<=\S\s)(Van|Von|De|Di|La|Le|Du)\b/g, p => p.toLowerCase())
     }
     contactMap.set(c.customer_id, { first_name: fix(firstName), last_name: fix(lastName), email, phone })
   }
