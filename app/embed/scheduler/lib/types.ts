@@ -9,6 +9,16 @@ export interface TimeWindow {
   label: string
 }
 
+export interface WindowAvailability extends TimeWindow {
+  available: boolean
+  reason?: 'full' | 'too_soon'
+}
+
+export interface DateAvailability {
+  available: boolean
+  windows: WindowAvailability[]
+}
+
 export interface SchedulerConfig {
   office_phone: string
   time_windows: TimeWindow[]

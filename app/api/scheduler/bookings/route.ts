@@ -134,7 +134,74 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid appointment time window' }, { status: 400, headers: cors })
   }
 
-  // ── 3. Service area check ─────────────────────────────────────────────────
+  // ── 3. Capacity and min-notice validation ────────────────────────────────
+  const { data: capSettings } = await db
+    .from('scheduler_settings')
+    .select('key, value')
+    .in('key', ['min_notice_hours', 'max_jobs_per_day', 'max_bookings_per_window'])
+
+  const cap: Record<string, unknown> = {}
+  for (const r of capSettings ?? []) cap[r.key] = r.value
+
+  const minNoticeHours = Number(cap.min_notice_hours ?? 24)
+  const maxJobsPerDay  = Number(cap.max_jobs_per_day ?? 0)
+  const maxPerWindow   = Number(cap.max_bookings_per_window ?? 0)
+
+  // Min notice: window start on appointment_date must be ≥ minNoticeHours from now
+  if (minNoticeHours > 0) {
+    const [wHour, wMin] = body.appointment_window_start.split(':').map(Number)
+    // Interpret appointment date + window start as America/Los_Angeles wall clock time
+    const candidateUtc = new Date(`${body.appointment_date}T${body.appointment_window_start}:00`)
+    const laMs = new Date(candidateUtc.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })).getTime()
+    const offsetMs = candidateUtc.getTime() - laMs
+    const windowStartUtc = new Date(candidateUtc.getTime() + offsetMs)
+    void wHour; void wMin  // used implicitly via string parse above
+    const hoursUntil = (windowStartUtc.getTime() - Date.now()) / 3_600_000
+    if (hoursUntil < minNoticeHours) {
+      return NextResponse.json(
+        { error: `Appointments must be booked at least ${minNoticeHours} hour${minNoticeHours !== 1 ? 's' : ''} in advance.` },
+        { status: 422, headers: cors }
+      )
+    }
+  }
+
+  // Daily SF job cap
+  if (maxJobsPerDay > 0) {
+    const CLOSED_STATUSES = ['Cancelled', 'Closed', 'Complete', 'Completed']
+    const { count: sfCount } = await db
+      .from('sf_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('start_date', body.appointment_date)
+      .eq('is_deleted', false)
+      .not('status', 'in', `(${CLOSED_STATUSES.map(s => `"${s}"`).join(',')})`)
+
+    if ((sfCount ?? 0) >= maxJobsPerDay) {
+      return NextResponse.json(
+        { error: 'That date is fully booked. Please choose another date.' },
+        { status: 422, headers: cors }
+      )
+    }
+  }
+
+  // Per-window booking cap
+  if (maxPerWindow > 0) {
+    const { count: windowCount } = await db
+      .from('scheduler_leads')
+      .select('id', { count: 'exact', head: true })
+      .eq('appointment_date', body.appointment_date)
+      .eq('appointment_window_start', body.appointment_window_start)
+      .eq('is_partial', false)
+      .neq('status', 'rejected')
+
+    if ((windowCount ?? 0) >= maxPerWindow) {
+      return NextResponse.json(
+        { error: 'That time window is fully booked. Please choose another window.' },
+        { status: 422, headers: cors }
+      )
+    }
+  }
+
+  // ── 4. Service area check ─────────────────────────────────────────────────
   const incomingCity = body.address_city.trim()
   const incomingZip  = body.address_zip.trim()
 

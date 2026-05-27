@@ -1,4 +1,4 @@
-import { BookingPayload, BookingResponse, PartialLeadPayload, SchedulerConfig, SubmitResult } from './types';
+import { BookingPayload, BookingResponse, DateAvailability, PartialLeadPayload, SchedulerConfig, SubmitResult } from './types';
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
   office_phone: '(800) 576-1397',
@@ -17,6 +17,23 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   scheduling_disabled_message:
     'Online scheduling is temporarily unavailable. Please call us to book.',
 };
+
+export async function fetchAvailability(
+  from: string,
+  to: string,
+  widgetKey: string
+): Promise<Record<string, DateAvailability>> {
+  try {
+    const res = await fetch(`/api/scheduler/availability?from=${from}&to=${to}`, {
+      headers: { 'X-Castle-Widget-Key': widgetKey },
+    })
+    if (!res.ok) return {}
+    const data = await res.json() as { dates: Record<string, DateAvailability> }
+    return data.dates ?? {}
+  } catch {
+    return {}
+  }
+}
 
 export async function savePartialLead(payload: PartialLeadPayload): Promise<string | null> {
   try {
