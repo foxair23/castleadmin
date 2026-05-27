@@ -43,11 +43,25 @@ function nowIso(): string {
 
 // SF sometimes stores names reversed: fname="Bourcy," lname="Susan"
 // Detect by comma at end of first name and swap.
+// SF also sometimes stores names in ALL CAPS — convert to title case.
 function normalizeContactName(fname: string | null, lname: string | null): { first: string | null; last: string | null } {
-  if (fname && fname.trimEnd().endsWith(',')) {
-    return { first: lname, last: fname.trimEnd().replace(/,$/, '').trim() || null }
+  let first = fname
+  let last = lname
+  // Swap if reversed
+  if (first && first.trimEnd().endsWith(',')) {
+    const tmp = last
+    last = first.trimEnd().replace(/,$/, '').trim() || null
+    first = tmp
   }
-  return { first: fname, last: lname }
+  // Title-case if all caps
+  const fix = (s: string | null) => {
+    if (!s) return s
+    if (s === s.toUpperCase() && /[A-Z]/.test(s)) {
+      return s.replace(/\b\w+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase())
+    }
+    return s
+  }
+  return { first: fix(first), last: fix(last) }
 }
 
 function hoursAgo(h: number): string {
