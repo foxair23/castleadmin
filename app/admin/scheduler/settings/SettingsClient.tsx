@@ -77,6 +77,11 @@ export default function SettingsClient({ initialSettings: s }: Props) {
   const horizonDays = useField(String(num(s.scheduling_horizon_days, 14)))
   const availableDays = useField(numArr(s.available_days).length ? numArr(s.available_days) : [1, 2, 3, 4, 5, 6])
 
+  // Capacity
+  const minNoticeHours = useField(String(num(s.min_notice_hours, 24)))
+  const maxJobsPerDay = useField(String(num(s.max_jobs_per_day, 0)))
+  const maxBookingsPerWindow = useField(String(num(s.max_bookings_per_window, 0)))
+
   // Incentive
   const incentiveEnabled = useField(bool(s.incentive_banner_enabled, true))
   const incentiveText = useField(str(s.incentive_banner_text))
@@ -226,6 +231,66 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               saved={availableDays.saved}
             />
           </div>
+        </div>
+      </Section>
+
+      <Section title="Capacity &amp; Lead Time">
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Minimum notice (hours)</label>
+          <div className="flex gap-2 items-center">
+            <input
+              type="number"
+              min={0}
+              max={168}
+              value={minNoticeHours.value}
+              onChange={e => minNoticeHours.setValue(e.target.value)}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+            <SaveButton
+              onClick={() => save('min_notice_hours', parseInt(minNoticeHours.value, 10), minNoticeHours.markSaved)}
+              disabled={isPending || minNoticeHours.value === ''}
+              saved={minNoticeHours.saved}
+            />
+          </div>
+          <p className="text-xs text-gray-400 mt-1">How many hours in advance a customer must book. 0 = no restriction.</p>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Max SF jobs per day</label>
+          <div className="flex gap-2 items-center">
+            <input
+              type="number"
+              min={0}
+              value={maxJobsPerDay.value}
+              onChange={e => maxJobsPerDay.setValue(e.target.value)}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+            <SaveButton
+              onClick={() => save('max_jobs_per_day', parseInt(maxJobsPerDay.value, 10), maxJobsPerDay.markSaved)}
+              disabled={isPending || maxJobsPerDay.value === ''}
+              saved={maxJobsPerDay.saved}
+            />
+          </div>
+          <p className="text-xs text-gray-400 mt-1">Block the whole day when this many jobs are already in Service Fusion. 0 = no limit.</p>
+        </div>
+
+        <div className="mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Max online bookings per time window</label>
+          <div className="flex gap-2 items-center">
+            <input
+              type="number"
+              min={0}
+              value={maxBookingsPerWindow.value}
+              onChange={e => maxBookingsPerWindow.setValue(e.target.value)}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+            <SaveButton
+              onClick={() => save('max_bookings_per_window', parseInt(maxBookingsPerWindow.value, 10), maxBookingsPerWindow.markSaved)}
+              disabled={isPending || maxBookingsPerWindow.value === ''}
+              saved={maxBookingsPerWindow.saved}
+            />
+          </div>
+          <p className="text-xs text-gray-400 mt-1">Max pending/approved online leads per AM or PM window per day. 0 = no limit.</p>
         </div>
       </Section>
 

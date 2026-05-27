@@ -487,7 +487,7 @@ export default function FlowShell({ config, widgetKey }: Props) {
 
     // Step 9 — Schedule
     if (step === 9) {
-      return <StepSchedule state={state} config={config} onNext={handleNext} />;
+      return <StepSchedule state={state} config={config} widgetKey={widgetKey} onNext={handleNext} />;
     }
 
     // Step 10 — Property Details
