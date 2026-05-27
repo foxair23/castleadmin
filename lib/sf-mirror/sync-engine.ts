@@ -43,11 +43,40 @@ function nowIso(): string {
 
 // SF sometimes stores names reversed: fname="Bourcy," lname="Susan"
 // Detect by comma at end of first name and swap.
+// SF also sometimes stores names in ALL CAPS — convert to title case with
+// special-case handling for common surname prefixes.
+function toTitleCase(s: string): string {
+  return s
+    .toLowerCase()
+    // Capitalize first letter of every word (handles hyphenated names, O'Brien, D'Angelo too
+    // since apostrophe/hyphen are non-word chars creating a word boundary before the next letter)
+    .replace(/\b\w/g, c => c.toUpperCase())
+    // Mc prefix: McDonald, McAllister, McPherson
+    .replace(/\bMc([a-z])/g, (_, c) => `Mc${c.toUpperCase()}`)
+    // Mac prefix: MacKenzie, MacPherson — exclude vowels to avoid false positives
+    // like Macey → MacEy. Consonant-after-Mac is a reliable signal.
+    .replace(/\bMac([bcdfghjklmnpqrstvwxyz])/g, (_, c) => `Mac${c.toUpperCase()}`)
+    // Preserve common lowercase particles when mid-name: van, von, de, di, la, le, du
+    // Only lowercase them when not at the start of the full name.
+    .replace(/(?<=\S\s)(Van|Von|De|Di|La|Le|Du)\b/g, p => p.toLowerCase())
+}
+
 function normalizeContactName(fname: string | null, lname: string | null): { first: string | null; last: string | null } {
-  if (fname && fname.trimEnd().endsWith(',')) {
-    return { first: lname, last: fname.trimEnd().replace(/,$/, '').trim() || null }
+  let first = fname
+  let last = lname
+  // Swap if reversed
+  if (first && first.trimEnd().endsWith(',')) {
+    const tmp = last
+    last = first.trimEnd().replace(/,$/, '').trim() || null
+    first = tmp
   }
-  return { first: fname, last: lname }
+  // Title-case if all caps
+  const fix = (s: string | null) => {
+    if (!s) return s
+    if (s === s.toUpperCase() && /[A-Z]/.test(s)) return toTitleCase(s)
+    return s
+  }
+  return { first: fix(first), last: fix(last) }
 }
 
 function hoursAgo(h: number): string {
