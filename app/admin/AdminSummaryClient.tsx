@@ -14,6 +14,7 @@ interface WorkItem {
     base_rate: number
     additional_rate: number | null
     requires_quantity: boolean
+    requires_sale_amount: boolean
   } | null
 }
 
@@ -230,9 +231,11 @@ export default function AdminSummaryClient({
                                   {job.job_work_items.map(item => (
                                     <li key={item.id} className="flex justify-between text-xs text-gray-600">
                                       <span>
-                                        {item.custom_description
-                                          ? `Other: ${item.custom_description}`
-                                          : (item.job_types?.name ?? 'Unknown')}
+                                        {item.job_types?.requires_sale_amount && item.custom_description
+                                          ? `New Sale Commission (Sale: ${formatMoney(parseFloat(item.custom_description))})`
+                                          : item.custom_description
+                                            ? `Other: ${item.custom_description}`
+                                            : (item.job_types?.name ?? 'Unknown')}
                                         {!item.custom_description && item.job_types?.requires_quantity ? ` × ${item.quantity}` : ''}
                                       </span>
                                       <span className="font-medium ml-2">{formatMoney(item.calculated_pay)}</span>
