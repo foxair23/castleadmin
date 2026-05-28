@@ -45,6 +45,7 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
   const [form, setForm] = useState<FormState>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [deleteError, setDeleteError] = useState('')
 
   function startEdit(jt: JobType) {
     setEditingId(jt.id)
@@ -118,12 +119,19 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
 
   async function handleDelete(jt: JobType) {
     if (!confirm(`Delete "${jt.name}"? This cannot be undone.`)) return
+    setDeleteError('')
     const supabase = createClient()
     const { error: err } = await supabase.from('job_types').delete().eq('id', jt.id)
-    if (!err) {
-      setJobTypes(jts => jts.filter(j => j.id !== jt.id))
-      if (editingId === jt.id) setEditingId(null)
+    if (err) {
+      if (err.code === '23503') {
+        setDeleteError(`"${jt.name}" can't be deleted because it's referenced by existing pay records. Set it to Inactive instead.`)
+      } else {
+        setDeleteError(err.message)
+      }
+      return
     }
+    setJobTypes(jts => jts.filter(j => j.id !== jt.id))
+    if (editingId === jt.id) setEditingId(null)
   }
 
   async function handleToggleActive(jt: JobType) {
@@ -156,6 +164,13 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
         <div className="bg-white border border-red-200 rounded-lg p-4">
           <h2 className="text-sm font-semibold text-gray-800 mb-3">New Job Type</h2>
           <RateForm form={form} setForm={setForm} error={error} saving={saving} onSave={handleSave} onCancel={cancelEdit} />
+        </div>
+      )}
+
+      {deleteError && (
+        <div className="flex items-start justify-between gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+          <span>{deleteError}</span>
+          <button onClick={() => setDeleteError('')} className="text-red-400 hover:text-red-600 shrink-0">✕</button>
         </div>
       )}
 
