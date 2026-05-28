@@ -17,6 +17,7 @@ export interface CrmJob {
   scheduledDate: string  // YYYY-MM-DD
   status: 'assigned' | 'completed'
   statusLabel: string    // original status name from the CRM, for display
+  description: string | null
   items: CrmJobItem[]
 }
 

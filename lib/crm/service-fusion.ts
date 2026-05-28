@@ -178,7 +178,8 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
 
         if (!status) continue
 
-        const rawItems: any[] = job.items ?? []
+        // SF may return items under 'items' or 'line_items' depending on API version
+        const rawItems: any[] = job.items ?? job.line_items ?? []
         results.push({
           id: String(job.id),
           jobNumber: job.number ?? String(job.id),
@@ -186,11 +187,12 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
           scheduledDate: (job.start_date ?? fmt(weekStart)).slice(0, 10),
           status,
           statusLabel: statusStr,
+          description: job.description ?? null,
           items: rawItems.map(item => ({
-            name: item.name ?? item.product_name ?? null,
+            name: item.name ?? item.product_name ?? item.item_name ?? null,
             description: item.description ?? null,
             quantity: item.quantity != null ? parseFloat(String(item.quantity)) : null,
-            unit_price: item.unit_price ?? item.price ?? null,
+            unit_price: item.unit_price ?? item.price ?? item.rate ?? null,
           })),
         })
       }

@@ -16,6 +16,7 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   scheduling_enabled: true,
   scheduling_disabled_message:
     'Online scheduling is temporarily unavailable. Please call us to book.',
+  service_call_fee: 99,
 };
 
 export async function fetchAvailability(
