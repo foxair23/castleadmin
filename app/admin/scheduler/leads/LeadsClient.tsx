@@ -11,6 +11,7 @@ interface Lead {
   is_partial: boolean
   service_type: string | null
   service_category: string | null
+  quoted_fee: string | null
   customer_first_name: string
   customer_last_name: string | null
   customer_phone: string
@@ -156,6 +157,15 @@ export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) 
                         <>
                           <div>{lead.service_category}</div>
                           <span className="text-gray-400 text-xs capitalize">{lead.service_type?.replace(/_/g, ' ')}</span>
+                          {lead.quoted_fee && (
+                            <span className={`mt-0.5 inline-block text-xs font-medium px-1.5 py-0.5 rounded ${
+                              lead.quoted_fee === 'Free Estimate'
+                                ? 'bg-green-50 text-green-700'
+                                : 'bg-blue-50 text-blue-700'
+                            }`}>
+                              {lead.quoted_fee}
+                            </span>
+                          )}
                         </>
                       ) : (
                         <span className="text-gray-400 text-xs">—</span>

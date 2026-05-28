@@ -12,6 +12,7 @@ interface Lead {
   is_partial: boolean
   service_type: string | null
   service_category: string | null
+  quoted_fee: string | null
   diagnostic_answers: Record<string, unknown>
   customer_first_name: string
   customer_last_name: string | null
@@ -234,6 +235,7 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
           <Row label="Type" value={lead.service_type === 'garage_door' ? 'Garage Door' : 'Gate'} />
         )}
         <Row label="Category" value={lead.service_category} />
+        <Row label="Fee quoted" value={lead.quoted_fee} />
         {diag.issues && diag.issues.length > 0 && <Row label="Issues" value={diag.issues.join(', ')} />}
         {diag.opener && <Row label="Opener" value={diag.opener} />}
         {diag.door_type && <Row label="Door type" value={diag.door_type} />}
