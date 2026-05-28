@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
-import { approveLead, rejectLead, updateLeadNotes, retrySfSync } from '../actions'
+import { approveLead, rejectLead, updateLeadNotes, retrySfSync, updateLeadFee } from '../actions'
 
 interface Lead {
   id: string
@@ -121,6 +121,8 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
   const [rejectReason, setRejectReason] = useState('')
   const [notes, setNotes] = useState(lead.notes_internal)
   const [notesSaved, setNotesSaved] = useState(false)
+  const [fee, setFee] = useState(lead.quoted_fee ?? '')
+  const [feeSaved, setFeeSaved] = useState(false)
   const [actionError, setActionError] = useState('')
 
   const diag = lead.diagnostic_answers as {
@@ -235,7 +237,39 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
           <Row label="Type" value={lead.service_type === 'garage_door' ? 'Garage Door' : 'Gate'} />
         )}
         <Row label="Category" value={lead.service_category} />
-        <Row label="Fee quoted" value={lead.quoted_fee} />
+        <div className="flex gap-3 text-sm mb-1.5 items-center">
+          <span className="text-gray-500 w-40 shrink-0">Fee quoted</span>
+          <div className="flex gap-2 items-center flex-1">
+            <select
+              value={fee}
+              onChange={e => setFee(e.target.value)}
+              className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 flex-1"
+            >
+              <option value="">— not set —</option>
+              <option value="$99 Service Call Fee">$99 Service Call Fee</option>
+              <option value="Free Estimate">Free Estimate</option>
+            </select>
+            <button
+              type="button"
+              disabled={isPending || fee === (lead.quoted_fee ?? '')}
+              onClick={() => {
+                setActionError('')
+                startTransition(async () => {
+                  try {
+                    await updateLeadFee(lead.id, fee)
+                    setFeeSaved(true)
+                    setTimeout(() => setFeeSaved(false), 2000)
+                  } catch (e) {
+                    setActionError(e instanceof Error ? e.message : 'Failed to save fee')
+                  }
+                })
+              }}
+              className="px-3 py-1 bg-gray-800 text-white text-xs font-medium rounded-lg hover:bg-gray-700 disabled:opacity-40 transition-colors whitespace-nowrap"
+            >
+              {feeSaved ? 'Saved ✓' : 'Save'}
+            </button>
+          </div>
+        </div>
         {diag.issues && diag.issues.length > 0 && <Row label="Issues" value={diag.issues.join(', ')} />}
         {diag.opener && <Row label="Opener" value={diag.opener} />}
         {diag.door_type && <Row label="Door type" value={diag.door_type} />}
