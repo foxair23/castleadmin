@@ -61,6 +61,9 @@ export async function POST(req: NextRequest) {
 
     const now = new Date().toISOString()
 
+    // Log item counts so we can verify SF is returning items
+    console.log(`[sf-sync] fetched ${sfJobs.length} jobs. Item counts:`, sfJobs.map(j => `${j.id}:${j.items.length}`).join(', '))
+
     for (const sfJob of sfJobs) {
       const { data: existing } = await service
         .from('jobs')
@@ -70,10 +73,9 @@ export async function POST(req: NextRequest) {
         .maybeSingle()
 
       if (existing) {
-        // Update SF status + number only — never overwrite work items or notes the tech entered
         await service
           .from('jobs')
-          .update({ sf_status: sfJob.status, sf_job_number: sfJob.jobNumber, sf_last_synced_at: now })
+          .update({ sf_status: sfJob.status, sf_job_number: sfJob.jobNumber, sf_last_synced_at: now, sf_description: sfJob.description })
           .eq('id', existing.id)
         updated++
       } else {
@@ -89,13 +91,14 @@ export async function POST(req: NextRequest) {
           sf_job_number: sfJob.jobNumber,
           sf_status: sfJob.status,
           sf_last_synced_at: now,
+          sf_description: sfJob.description,
         })
         added++
       }
 
       // Refresh stored items for this SF job (delete + re-insert)
+      await service.from('sf_job_items').delete().eq('sf_job_id', sfJob.id)
       if (sfJob.items.length > 0) {
-        await service.from('sf_job_items').delete().eq('sf_job_id', sfJob.id)
         await service.from('sf_job_items').insert(
           sfJob.items.map(item => ({ sf_job_id: sfJob.id, ...item, sf_synced_at: now }))
         )

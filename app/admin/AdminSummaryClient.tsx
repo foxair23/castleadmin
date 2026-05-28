@@ -33,6 +33,7 @@ interface Job {
   source: string
   gas_paid: boolean
   sf_job_id: string | null
+  sf_description: string | null
   job_work_items: WorkItem[]
 }
 
@@ -240,6 +241,9 @@ export default function AdminSummaryClient({
                                     <p className="text-xs text-gray-500">{formatWorkDate(job.work_date)}</p>
                                     {job.notes && (
                                       <p className="text-xs text-gray-400 mt-0.5">Note: {job.notes}</p>
+                                    )}
+                                  {job.sf_description && (
+                                      <p className="text-xs text-gray-400 mt-0.5 italic">{job.sf_description}</p>
                                     )}
                                   </div>
                                   <p className="font-semibold text-gray-900 text-sm">{formatMoney(job.total_pay)}</p>

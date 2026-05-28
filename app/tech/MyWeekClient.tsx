@@ -37,6 +37,7 @@ interface Job {
   sf_status: string | null
   sf_job_number: string | null
   sf_job_id: string | null
+  sf_description: string | null
   gas_paid: boolean
   job_work_items: WorkItem[]
 }
@@ -313,6 +314,9 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
                         </div>
                         {job.notes && (
                           <p className="text-xs text-gray-500 mt-0.5">{job.notes}</p>
+                        )}
+                        {job.sf_description && (
+                          <p className="text-xs text-gray-400 mt-0.5 italic">{job.sf_description}</p>
                         )}
                         <ul className="mt-2 space-y-1">
                           {job.job_work_items.map(item => (
