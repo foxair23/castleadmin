@@ -29,6 +29,11 @@ const GD_SERVICES: ServiceOption[] = [
     label: 'Opener Service / Replacement',
     description: 'Repair or replace a garage door opener',
   },
+  {
+    value: 'annual_maintenance',
+    label: 'Annual Maintenance',
+    description: 'Tune-up, lubrication, safety inspection, and adjustments',
+  },
 ];
 
 const GATE_SERVICES: ServiceOption[] = [
@@ -46,6 +51,11 @@ const GATE_SERVICES: ServiceOption[] = [
     value: 'new_gate_replacement',
     label: 'New Gate / Gate Replacement',
     description: 'Install a brand new gate or replace an existing one',
+  },
+  {
+    value: 'annual_maintenance',
+    label: 'Annual Maintenance',
+    description: 'Tune-up, lubrication, safety inspection, and adjustments',
   },
 ];
 

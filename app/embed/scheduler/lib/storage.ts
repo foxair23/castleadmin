@@ -42,6 +42,7 @@ export const INITIAL_FLOW_STATE: FlowState = {
   address_zip: '',
   address_is_owner: true,
   customer_email: '',
+  customer_last_name: '',
   additional_notes: '',
 };
 

@@ -35,11 +35,16 @@ function stepToSection(step: number): number {
 }
 
 /**
+ * Some service types (annual_maintenance) have no diagnostic questions — skip steps 5-7.
  * Branches with only 2 questions skip step 7.
  * Step 7 is only present for:
  *   - GD Door/Panel Replacement
  *   - Gate Opener Service/Replacement
  */
+function hasAnyQuestions(state: FlowState): boolean {
+  return state.service_type !== 'annual_maintenance';
+}
+
 function hasThirdQuestion(state: FlowState): boolean {
   const cat = state.primary_category;
   const type = state.service_type;
@@ -52,6 +57,10 @@ function hasThirdQuestion(state: FlowState): boolean {
 function getNextStep(current: number, next: Partial<FlowState>, prevState: FlowState): number {
   const merged: FlowState = { ...prevState, ...next };
   const after = current + 1;
+  // Skip all question steps for service types with no diagnostic questions
+  if (after === 5 && !hasAnyQuestions(merged)) {
+    return 8;
+  }
   // Skip step 7 if the branch only has 2 questions
   if (after === 7 && !hasThirdQuestion(merged)) {
     return 8;
@@ -61,6 +70,10 @@ function getNextStep(current: number, next: Partial<FlowState>, prevState: FlowS
 
 function getPrevStep(current: number, state: FlowState): number {
   const before = current - 1;
+  // Skip all question steps going backwards for service types with no questions
+  if (before >= 5 && before <= 7 && !hasAnyQuestions(state)) {
+    return 4;
+  }
   // Skip step 7 going backwards if the branch only has 2 questions
   if (before === 7 && !hasThirdQuestion(state)) {
     return 6;
@@ -482,7 +495,7 @@ export default function FlowShell({ config, widgetKey }: Props) {
 
     // Step 8 — Optional Details
     if (step === 8) {
-      return <StepOptionalDetails state={state} onNext={handleNext} />;
+      return <StepOptionalDetails state={state} widgetKey={widgetKey} onNext={handleNext} />;
     }
 
     // Step 9 — Schedule

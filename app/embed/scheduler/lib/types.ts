@@ -73,6 +73,7 @@ export interface FlowState {
   address_zip: string
   address_is_owner: boolean
   customer_email: string
+  customer_last_name: string
   additional_notes: string
 }
 
@@ -82,6 +83,7 @@ export interface BookingPayload {
   session_id?: string
   // contact
   first_name: string
+  last_name?: string
   mobile_phone: string
   // service
   primary_category: PrimaryCategory
@@ -108,6 +110,7 @@ export interface BookingPayload {
   address_zip: string
   address_is_owner: boolean
   customer_email?: string
+  customer_last_name?: string
   additional_notes?: string
   // widget
   widget_key: string

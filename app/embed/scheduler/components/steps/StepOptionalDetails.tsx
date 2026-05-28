@@ -5,10 +5,11 @@ import { FlowState } from '../../lib/types';
 
 interface Props {
   state: FlowState;
+  widgetKey: string;
   onNext: (partial: Partial<FlowState>) => void;
 }
 
-export default function StepOptionalDetails({ state, onNext }: Props) {
+export default function StepOptionalDetails({ state, widgetKey, onNext }: Props) {
   const [note, setNote] = useState(state.optional_note);
   const [photoUrls, setPhotoUrls] = useState<string[]>(state.uploaded_photo_urls);
   const [uploading, setUploading] = useState(false);
@@ -25,19 +26,23 @@ export default function StepOptionalDetails({ state, onNext }: Props) {
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (files.length === 0) return;
+    if (!state.partial_lead_id) return; // can't upload without a lead record
     setUploading(true);
     try {
       const newUrls: string[] = [];
       for (const file of files) {
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('files', file);
+        formData.append('lead_id', state.partial_lead_id);
         const res = await fetch('/api/scheduler/uploads', {
           method: 'POST',
+          headers: { 'X-Castle-Widget-Key': widgetKey },
           body: formData,
         });
         if (res.ok) {
-          const data = await res.json() as { url: string };
-          newUrls.push(data.url);
+          const data = await res.json() as { uploads: { url: string }[] };
+          const url = data.uploads?.[0]?.url;
+          if (url) newUrls.push(url);
         }
       }
       setPhotoUrls((prev) => [...prev, ...newUrls]);
