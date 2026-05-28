@@ -136,23 +136,40 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
       >
         Request a Time
       </h2>
-      <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.625rem', fontSize: '0.95rem' }}>
-        Pick your preferred date and time window — we&apos;ll call you to confirm the appointment.
+      <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.875rem', fontSize: '0.95rem' }}>
+        Pick your <strong style={{ color: 'var(--color-primary)', fontWeight: 700 }}>preferred</strong> date and time window — we&apos;ll call you to confirm the appointment.
       </p>
-      <div
-        style={{
-          backgroundColor: '#FEF9EC',
-          border: '1.5px solid #F5C842',
-          borderRadius: 'var(--radius-card)',
-          padding: '0.625rem 0.875rem',
-          marginBottom: '1.25rem',
-          fontSize: '0.82rem',
-          color: '#856404',
-          lineHeight: 1.45,
-        }}
-      >
-        &#9432;&nbsp; This is a <strong>requested</strong> time window. A team member will follow up by phone to confirm your appointment before it is scheduled.
-      </div>
+
+      {state.service_type && (() => {
+        const FREE_ESTIMATE_TYPES = ['door_panel_replacement', 'new_gate_replacement']
+        const isFreeEstimate = FREE_ESTIMATE_TYPES.includes(state.service_type)
+        const fee = config.service_call_fee ?? 99
+        return (
+          <div
+            style={{
+              backgroundColor: '#F0FDF4',
+              border: '1.5px solid #86EFAC',
+              borderRadius: 'var(--radius-card)',
+              padding: '0.625rem 0.875rem',
+              marginBottom: '1.25rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+            }}
+          >
+            <div>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: '#15803D' }}>
+                {isFreeEstimate ? 'Free Estimate' : `$${fee} Service Call Fee`}
+              </p>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: '#166534', marginTop: '0.125rem' }}>
+                {isFreeEstimate
+                  ? 'No service call fee — this visit is a free estimate.'
+                  : `A $${fee} diagnostic fee applies to this service call.`}
+              </p>
+            </div>
+          </div>
+        )
+      })()}
 
       <p
         style={{
