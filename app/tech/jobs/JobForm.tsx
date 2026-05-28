@@ -46,6 +46,7 @@ interface Props {
   weekStart: string
   userId: string
   jobTypes: JobType[]
+  gasEligible?: boolean
   existingJob?: ExistingJob
   source?: string      // 'service_fusion' locks job_name and work_date
   sfJobId?: string     // SF internal ID, used to build the link
@@ -68,7 +69,9 @@ function makeWorkItemRow(jobType: JobType): WorkItemRow {
   }
 }
 
-export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob, source, sfJobId, sfJobNumber }: Props) {
+const GAS_AMOUNT = 20
+
+export default function JobForm({ mode, weekStart, userId, jobTypes, gasEligible, existingJob, source, sfJobId, sfJobNumber }: Props) {
   const fromSF = source === 'service_fusion'
   const router = useRouter()
   const weekEnd = getWeekEnd(weekStart)
@@ -87,6 +90,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
   const [workDate, setWorkDate] = useState(existingJob?.work_date ?? formatDate(new Date()))
   const [jobName, setJobName] = useState(existingJob?.job_name ?? '')
   const [notes, setNotes] = useState(existingJob?.notes ?? '')
+  const [gasPaid, setGasPaid] = useState<boolean>((existingJob as (ExistingJob & { gas_paid?: boolean }) | undefined)?.gas_paid ?? false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -171,7 +175,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
     setWorkItems(items => [...items, makeWorkItemRow(sortedJobTypes[0])])
   }
 
-  const totalPay = workItems.reduce((s, i) => s + i.calculated_pay, 0)
+  const totalPay = workItems.reduce((s, i) => s + i.calculated_pay, 0) + (gasPaid ? GAS_AMOUNT : 0)
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -227,6 +231,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             notes: notes.trim() || null,
             total_pay: totalPay,
             week_start_date: weekStart,
+            gas_paid: gasEligible ? gasPaid : false,
           })
           .select('id')
           .single()
@@ -246,6 +251,7 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             job_name: jobName.trim(),
             notes: notes.trim() || null,
             total_pay: totalPay,
+            gas_paid: gasEligible ? gasPaid : false,
           })
           .eq('id', existingJob.id)
 
@@ -458,6 +464,22 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, existingJob
             + Add another work item
           </button>
         </div>
+
+        {/* Gas reimbursement */}
+        {gasEligible && (
+          <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
+            <input
+              id="gas-paid"
+              type="checkbox"
+              checked={gasPaid}
+              onChange={e => setGasPaid(e.target.checked)}
+              className="w-4 h-4 accent-amber-500"
+            />
+            <label htmlFor="gas-paid" className="text-sm text-gray-700 cursor-pointer select-none">
+              Gas reimbursement — <span className="font-semibold">+{formatMoney(GAS_AMOUNT)}</span>
+            </label>
+          </div>
+        )}
 
         {/* Notes */}
         <div>

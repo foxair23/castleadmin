@@ -84,5 +84,18 @@ export async function PATCH(
     return NextResponse.json({ profile })
   }
 
+  // Handle gas eligibility toggle
+  if (typeof body.gas_eligible === 'boolean') {
+    const { data: profile, error } = await adminClient
+      .from('profiles')
+      .update({ gas_eligible: body.gas_eligible })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ profile })
+  }
+
   return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
 }

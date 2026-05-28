@@ -13,16 +13,28 @@ export default async function EditJobPage({
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: job } = await supabase
-    .from('jobs')
-    .select(`
-      id, work_date, job_name, notes, total_pay, week_start_date, source,
-      sf_job_id, sf_job_number,
-      job_work_items ( id, job_type_id, quantity, calculated_pay, custom_description )
-    `)
-    .eq('id', id)
-    .eq('tech_id', user.id)
-    .single()
+  const [{ data: job }, { data: profile }, { data: jobTypes }] = await Promise.all([
+    supabase
+      .from('jobs')
+      .select(`
+        id, work_date, job_name, notes, total_pay, week_start_date, source,
+        sf_job_id, sf_job_number, gas_paid,
+        job_work_items ( id, job_type_id, quantity, calculated_pay, custom_description )
+      `)
+      .eq('id', id)
+      .eq('tech_id', user.id)
+      .single(),
+    supabase
+      .from('profiles')
+      .select('gas_eligible')
+      .eq('id', user.id)
+      .single(),
+    supabase
+      .from('job_types')
+      .select('id, name, base_rate, additional_rate, requires_quantity, requires_sale_amount')
+      .eq('is_active', true)
+      .order('name'),
+  ])
 
   if (!job) redirect('/tech')
 
@@ -37,19 +49,13 @@ export default async function EditJobPage({
     redirect(`/tech?week=${job.week_start_date}`)
   }
 
-  // Load active job types
-  const { data: jobTypes } = await supabase
-    .from('job_types')
-    .select('id, name, base_rate, additional_rate, requires_quantity, requires_sale_amount')
-    .eq('is_active', true)
-    .order('name')
-
   return (
     <JobForm
       mode="edit"
       weekStart={job.week_start_date}
       userId={user.id}
       jobTypes={jobTypes ?? []}
+      gasEligible={profile?.gas_eligible ?? false}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       existingJob={job as any}
       source={job.source}

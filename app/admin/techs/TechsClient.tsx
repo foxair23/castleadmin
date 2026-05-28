@@ -11,6 +11,7 @@ interface Tech {
   is_active: boolean
   created_at: string
   weekly_bonus: number
+  gas_eligible: boolean
 }
 
 interface NewTechForm {
@@ -131,6 +132,22 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
     } else {
       const data = await res.json()
       setError(data.error ?? 'Failed to update bonus')
+    }
+  }
+
+  async function handleToggleGas(tech: Tech) {
+    setError('')
+    setSuccess('')
+    const res = await fetch(`/api/admin/techs/${tech.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gas_eligible: !tech.gas_eligible }),
+    })
+    if (res.ok) {
+      setTechs(ts => ts.map(t => t.id === tech.id ? { ...t, gas_eligible: !tech.gas_eligible } : t))
+    } else {
+      const data = await res.json()
+      setError(data.error ?? 'Failed to update gas eligibility')
     }
   }
 
@@ -269,6 +286,11 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                           +${tech.weekly_bonus.toFixed(0)}/wk
                         </span>
                       )}
+                      {tech.gas_eligible && (
+                        <span className="ml-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+                          ⛽ Gas
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-sm">{tech.email}</td>
                     <td className="px-4 py-3 text-center">
@@ -280,6 +302,12 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-3 text-xs">
+                        <button
+                          onClick={() => handleToggleGas(tech)}
+                          className={tech.gas_eligible ? 'text-amber-600 hover:underline' : 'text-gray-500 hover:underline'}
+                        >
+                          {tech.gas_eligible ? 'Gas: On' : 'Gas: Off'}
+                        </button>
                         <button
                           onClick={() => {
                             setBonusId(bonusId === tech.id ? null : tech.id)
