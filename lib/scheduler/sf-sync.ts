@@ -30,6 +30,7 @@ interface Lead {
   notes_internal: string
   lead_source: string
   incentive_applied: string | null
+  quoted_fee: string | null
   sync_attempts: unknown[]
 }
 
@@ -138,6 +139,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     if (diag.opener_need)      descLines.push(`Opener need: ${diagLabels.opener_need[diag.opener_need] ?? diag.opener_need}`)
     if (diag.gate_type)        descLines.push(`Gate type: ${diagLabels.gate_type[diag.gate_type] ?? diag.gate_type}`)
     if (l.description)         descLines.push(`Notes: ${l.description}`)
+    if (l.quoted_fee)          descLines.push(`Fee quoted: ${l.quoted_fee}`)
     if (l.incentive_applied)   descLines.push(`Incentive: ${l.incentive_applied}`)
     descLines.push(`Lead source: ${l.lead_source}`)
     descLines.push(`Booking ID: ${l.id}`)

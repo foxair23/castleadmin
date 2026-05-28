@@ -139,14 +139,20 @@ export async function POST(req: NextRequest) {
   const { data: capSettings } = await db
     .from('scheduler_settings')
     .select('key, value')
-    .in('key', ['min_notice_hours', 'max_jobs_per_day', 'max_bookings_per_window'])
+    .in('key', ['min_notice_hours', 'max_jobs_per_day', 'max_bookings_per_window', 'service_call_fee'])
 
   const cap: Record<string, unknown> = {}
   for (const r of capSettings ?? []) cap[r.key] = r.value
 
-  const minNoticeHours = Number(cap.min_notice_hours ?? 24)
-  const maxJobsPerDay  = Number(cap.max_jobs_per_day ?? 0)
-  const maxPerWindow   = Number(cap.max_bookings_per_window ?? 0)
+  const minNoticeHours  = Number(cap.min_notice_hours ?? 24)
+  const maxJobsPerDay   = Number(cap.max_jobs_per_day ?? 0)
+  const maxPerWindow    = Number(cap.max_bookings_per_window ?? 0)
+  const serviceCallFee  = Number(cap.service_call_fee ?? 99)
+
+  const FREE_ESTIMATE_TYPES = ['door_panel_replacement', 'new_gate_replacement']
+  const quotedFee = FREE_ESTIMATE_TYPES.includes(body.service_type)
+    ? 'Free Estimate'
+    : `$${serviceCallFee} Service Call Fee`
 
   // Min notice: window start on appointment_date must be ≥ minNoticeHours from now
   if (minNoticeHours > 0) {
@@ -282,6 +288,8 @@ export async function POST(req: NextRequest) {
     // Notes
     description:              body.optional_note?.trim() || null,
     additional_notes:         body.additional_notes?.trim() || null,
+    // Fee quoted to customer
+    quoted_fee:               quotedFee,
   }
 
   // ── 6. If partial_lead_id given, update that row; otherwise insert ────────
