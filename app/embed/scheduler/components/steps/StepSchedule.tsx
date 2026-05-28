@@ -122,7 +122,6 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
 
   // Too-soon windows are hidden entirely; full/unavailable windows stay visible (greyed)
   const visibleWindows = windowsForDate.filter((w) => w.reason !== 'too_soon');
-  const hasTooSoonWindows = windowsForDate.some((w) => !w.available && w.reason === 'too_soon');
 
   return (
     <div>
@@ -245,7 +244,7 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
       <div
         role="group"
         aria-label="Available time windows"
-        style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: errors.window ? '0.25rem' : hasTooSoonWindows ? '0.625rem' : '1.5rem' }}
+        style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: errors.window ? '0.25rem' : '0.625rem' }}
       >
         {visibleWindows.map((window) => {
           const isSelected =
@@ -299,14 +298,12 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
           );
         })}
       </div>
-      {hasTooSoonWindows && (
-        <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '1.5rem', lineHeight: 1.4 }}>
-          Need service sooner? Give us a call to see if we can accommodate —{' '}
-          <a href={`tel:${config.office_phone.replace(/\D/g, '')}`} style={{ color: 'var(--color-primary)', fontWeight: 600, textDecoration: 'none' }}>
-            {config.office_phone}
-          </a>
-        </p>
-      )}
+      <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '1.5rem', lineHeight: 1.4 }}>
+        Need service sooner? Give us a call to see if we can accommodate —{' '}
+        <a href={`tel:${config.office_phone.replace(/\D/g, '')}`} style={{ color: 'var(--color-primary)', fontWeight: 600, textDecoration: 'none' }}>
+          {config.office_phone}
+        </a>
+      </p>
       {errors.window && (
         <p role="alert" style={{ color: 'var(--color-primary)', fontSize: '0.8rem', marginTop: '-1rem', marginBottom: '1rem' }}>
           {errors.window}
