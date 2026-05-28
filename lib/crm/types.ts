@@ -3,6 +3,13 @@ export interface CrmTechnician {
   name: string
 }
 
+export interface CrmJobItem {
+  name: string | null
+  description: string | null
+  quantity: number | null
+  unit_price: number | null
+}
+
 export interface CrmJob {
   id: string
   jobNumber: string      // human-readable job number e.g. "10042"
@@ -10,6 +17,7 @@ export interface CrmJob {
   scheduledDate: string  // YYYY-MM-DD
   status: 'assigned' | 'completed'
   statusLabel: string    // original status name from the CRM, for display
+  items: CrmJobItem[]
 }
 
 export interface CrmProvider {
