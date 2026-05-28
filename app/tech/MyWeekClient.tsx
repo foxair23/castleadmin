@@ -31,6 +31,7 @@ interface Job {
   source: string
   sf_status: string | null
   sf_job_number: string | null
+  gas_paid: boolean
   job_work_items: WorkItem[]
 }
 
@@ -320,6 +321,12 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
                               <span className="font-medium ml-2">{formatMoney(item.calculated_pay)}</span>
                             </li>
                           ))}
+                          {job.gas_paid && (
+                            <li className="flex justify-between text-xs text-amber-700">
+                              <span>⛽ Gas reimbursement</span>
+                              <span className="font-medium ml-2">{formatMoney(20)}</span>
+                            </li>
+                          )}
                         </ul>
                       </div>
                       <div className="text-right shrink-0">

@@ -26,6 +26,7 @@ interface Job {
   notes: string | null
   total_pay: number
   source: string
+  gas_paid: boolean
   job_work_items: WorkItem[]
 }
 
@@ -241,6 +242,12 @@ export default function AdminSummaryClient({
                                       <span className="font-medium ml-2">{formatMoney(item.calculated_pay)}</span>
                                     </li>
                                   ))}
+                                  {job.gas_paid && (
+                                    <li className="flex justify-between text-xs text-amber-700">
+                                      <span>⛽ Gas reimbursement</span>
+                                      <span className="font-medium ml-2">{formatMoney(20)}</span>
+                                    </li>
+                                  )}
                                 </ul>
                               </div>
                             ))}

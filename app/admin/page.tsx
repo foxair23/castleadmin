@@ -28,7 +28,7 @@ export default async function AdminPage({
   const { data: jobs } = await supabase
     .from('jobs')
     .select(`
-      id, tech_id, work_date, job_name, notes, total_pay, source,
+      id, tech_id, work_date, job_name, notes, total_pay, source, gas_paid,
       job_work_items (
         id, quantity, calculated_pay, custom_description,
         job_types ( name, base_rate, additional_rate, requires_quantity, requires_sale_amount )
