@@ -198,10 +198,10 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
           margin: '0 0 0.5rem',
         }}
       >
-        Review your appointment
+        Review your request
       </h2>
       <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
-        Please confirm everything looks correct before booking.
+        Please confirm everything looks correct. We&apos;ll call you to confirm the appointment.
       </p>
 
       <SummaryCard title="Service">
@@ -277,7 +277,7 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
         <SummaryRow label="Property owner" value={state.address_is_owner ? 'Yes' : 'No'} />
       </SummaryCard>
 
-      <SummaryCard title="Appointment">
+      <SummaryCard title="Requested Time">
         {state.appointment_date && (
           <SummaryRow label="Date" value={formatDate(state.appointment_date)} />
         )}
@@ -287,7 +287,40 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
             value={formatWindow(state.appointment_window_start, state.appointment_window_end)}
           />
         )}
+        <SummaryRow label="Confirmation" value="We'll call you to confirm" />
       </SummaryCard>
+
+      {state.service_type && (() => {
+        const FREE_ESTIMATE_TYPES = ['door_panel_replacement', 'new_gate_replacement']
+        const isFreeEstimate = FREE_ESTIMATE_TYPES.includes(state.service_type)
+        const fee = config.service_call_fee ?? 99
+        return (
+          <div
+            style={{
+              backgroundColor: isFreeEstimate ? '#F0FDF4' : '#FEF9EC',
+              border: `1.5px solid ${isFreeEstimate ? '#86EFAC' : '#F5C842'}`,
+              borderRadius: 'var(--radius-card)',
+              padding: '0.875rem 1.25rem',
+              marginBottom: '0.875rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+            }}
+          >
+            <span style={{ fontSize: '1.1rem' }}>{isFreeEstimate ? '✓' : 'ℹ'}</span>
+            <div>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: isFreeEstimate ? '#15803D' : '#856404' }}>
+                {isFreeEstimate ? 'Free Estimate' : `$${fee} Service Call Fee`}
+              </p>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: isFreeEstimate ? '#166534' : '#92671A', marginTop: '0.125rem' }}>
+                {isFreeEstimate
+                  ? 'No service call fee — this visit is a free estimate.'
+                  : `A $${fee} diagnostic fee applies to this service call.`}
+              </p>
+            </div>
+          </div>
+        )
+      })()}
 
       {(state.optional_note || state.additional_notes) && (
         <SummaryCard title="Notes">
@@ -396,10 +429,10 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
             >
               <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
             </svg>
-            Submitting…
+            Requesting…
           </>
         ) : (
-          'Book Appointment'
+          'Request Appointment'
         )}
       </button>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

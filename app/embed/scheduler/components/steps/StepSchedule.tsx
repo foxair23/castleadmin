@@ -134,11 +134,25 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
           margin: '0 0 0.5rem',
         }}
       >
-        When works for you?
+        Request a Time
       </h2>
-      <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.25rem', fontSize: '0.95rem' }}>
-        Choose a date and time window for your appointment.
+      <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.625rem', fontSize: '0.95rem' }}>
+        Pick your preferred date and time window — we&apos;ll call you to confirm the appointment.
       </p>
+      <div
+        style={{
+          backgroundColor: '#FEF9EC',
+          border: '1.5px solid #F5C842',
+          borderRadius: 'var(--radius-card)',
+          padding: '0.625rem 0.875rem',
+          marginBottom: '1.25rem',
+          fontSize: '0.82rem',
+          color: '#856404',
+          lineHeight: 1.45,
+        }}
+      >
+        &#9432;&nbsp; This is a <strong>requested</strong> time window. A team member will follow up by phone to confirm your appointment before it is scheduled.
+      </div>
 
       <p
         style={{

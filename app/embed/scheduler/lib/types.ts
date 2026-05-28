@@ -30,6 +30,7 @@ export interface SchedulerConfig {
   marketing_sms_copy: string
   scheduling_enabled: boolean
   scheduling_disabled_message: string
+  service_call_fee: number
 }
 
 export interface FlowState {

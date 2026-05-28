@@ -88,6 +88,9 @@ export default function SettingsClient({ initialSettings: s }: Props) {
   const incentiveEnabled = useField(bool(s.incentive_banner_enabled, true))
   const incentiveText = useField(str(s.incentive_banner_text))
 
+  // Pricing
+  const serviceCallFee = useField(String(num(s.service_call_fee, 99)))
+
   // Service Fusion
   const autoSyncToSf = useField(bool(s.auto_sync_to_sf, false))
 
@@ -500,6 +503,30 @@ export default function SettingsClient({ initialSettings: s }: Props) {
           </div>
         </div>
         <p className="text-xs text-gray-400 mt-3">One item per line.</p>
+      </Section>
+
+      <Section title="Pricing">
+        <div className="mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Service call fee ($)</label>
+          <div className="flex gap-2 items-center">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={serviceCallFee.value}
+              onChange={e => serviceCallFee.setValue(e.target.value)}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+            <SaveButton
+              onClick={() => save('service_call_fee', parseInt(serviceCallFee.value, 10), serviceCallFee.markSaved)}
+              disabled={isPending || serviceCallFee.value === ''}
+              saved={serviceCallFee.saved}
+            />
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Shown to customers booking repairs or opener service. New door / gate replacements always show &quot;Free Estimate&quot;.
+          </p>
+        </div>
       </Section>
 
       <Section title="Service Fusion">
