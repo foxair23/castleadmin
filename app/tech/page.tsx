@@ -31,7 +31,7 @@ export default async function TechPage({
       .from('jobs')
       .select(`
         id, work_date, job_name, notes, total_pay, week_start_date,
-        source, sf_status, sf_job_number, gas_paid,
+        source, sf_status, sf_job_number, sf_job_id, gas_paid,
         job_work_items (
           id, quantity, calculated_pay, custom_description,
           job_types ( id, name, base_rate, additional_rate, requires_quantity, requires_sale_amount )
@@ -54,6 +54,30 @@ export default async function TechPage({
       .maybeSingle(),
   ])
 
+  // Fetch SF invoice line items for jobs that came from Service Fusion
+  const sfJobIds = (jobs ?? []).map(j => (j as { sf_job_id?: string | null }).sf_job_id).filter(Boolean) as string[]
+  let sfLineItems: Record<string, { name: string | null; quantity: number | null }[]> = {}
+  if (sfJobIds.length > 0) {
+    const { data: invoices } = await supabase
+      .from('sf_invoices')
+      .select('id, job_id')
+      .in('job_id', sfJobIds)
+    if (invoices && invoices.length > 0) {
+      const invoiceIds = invoices.map(i => i.id)
+      const { data: items } = await supabase
+        .from('sf_invoice_line_items')
+        .select('invoice_id, name, quantity')
+        .in('invoice_id', invoiceIds)
+      const invoiceToJobId = new Map(invoices.map(i => [i.id, i.job_id]))
+      for (const item of items ?? []) {
+        const sfJobId = invoiceToJobId.get(item.invoice_id)
+        if (!sfJobId) continue
+        if (!sfLineItems[sfJobId]) sfLineItems[sfJobId] = []
+        sfLineItems[sfJobId].push({ name: item.name, quantity: item.quantity })
+      }
+    }
+  }
+
   // Show nudge only when viewing current week and last week isn't submitted
   const showLastWeekNudge =
     selectedWeek === currentWeek && !lastWeekSubmission?.submitted_at
@@ -71,6 +95,7 @@ export default async function TechPage({
       weeklyBonus={(profile?.weekly_bonus as number | null) ?? 0}
       lastWeek={lastWeek}
       showLastWeekNudge={showLastWeekNudge}
+      sfLineItems={sfLineItems}
     />
   )
 }

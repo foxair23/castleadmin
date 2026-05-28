@@ -18,6 +18,11 @@ interface WorkItem {
   } | null
 }
 
+interface SFLineItem {
+  name: string | null
+  quantity: number | null
+}
+
 interface Job {
   id: string
   tech_id: string
@@ -27,6 +32,7 @@ interface Job {
   total_pay: number
   source: string
   gas_paid: boolean
+  sf_job_id: string | null
   job_work_items: WorkItem[]
 }
 
@@ -50,6 +56,7 @@ interface Props {
   techs: Tech[]
   jobs: Job[]
   submissions: Submission[]
+  sfLineItems: Record<string, SFLineItem[]>
 }
 
 export default function AdminSummaryClient({
@@ -59,6 +66,7 @@ export default function AdminSummaryClient({
   techs,
   jobs,
   submissions,
+  sfLineItems,
 }: Props) {
   const router = useRouter()
   const [expandedTech, setExpandedTech] = useState<string | null>(null)
@@ -257,6 +265,19 @@ export default function AdminSummaryClient({
                                     </li>
                                   )}
                                 </ul>
+                                {job.sf_job_id && sfLineItems[job.sf_job_id]?.length > 0 && (
+                                  <div className="mt-2 pt-2 border-t border-gray-200">
+                                    <p className="text-xs text-gray-400 font-medium mb-1">Products sold</p>
+                                    <ul className="space-y-0.5">
+                                      {sfLineItems[job.sf_job_id].map((item, i) => (
+                                        <li key={i} className="text-xs text-gray-500">
+                                          {item.name ?? 'Unknown product'}
+                                          {item.quantity != null && item.quantity !== 1 ? ` ×${item.quantity}` : ''}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>

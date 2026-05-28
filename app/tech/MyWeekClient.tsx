@@ -21,6 +21,11 @@ interface WorkItem {
   } | null
 }
 
+interface SFLineItem {
+  name: string | null
+  quantity: number | null
+}
+
 interface Job {
   id: string
   work_date: string
@@ -31,6 +36,7 @@ interface Job {
   source: string
   sf_status: string | null
   sf_job_number: string | null
+  sf_job_id: string | null
   gas_paid: boolean
   job_work_items: WorkItem[]
 }
@@ -46,9 +52,10 @@ interface Props {
   weeklyBonus: number
   lastWeek: string
   showLastWeekNudge: boolean
+  sfLineItems: Record<string, SFLineItem[]>
 }
 
-export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked, sfMapped, weeklyBonus, lastWeek, showLastWeekNudge }: Props) {
+export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, submittedAt, adminUnlocked, sfMapped, weeklyBonus, lastWeek, showLastWeekNudge, sfLineItems }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [unsubmitting, setUnsubmitting] = useState(false)
@@ -328,6 +335,19 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
                             </li>
                           )}
                         </ul>
+                        {job.sf_job_id && sfLineItems[job.sf_job_id]?.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-gray-100">
+                            <p className="text-xs text-gray-400 font-medium mb-1">Products sold</p>
+                            <ul className="space-y-0.5">
+                              {sfLineItems[job.sf_job_id].map((item, i) => (
+                                <li key={i} className="text-xs text-gray-500">
+                                  {item.name ?? 'Unknown product'}
+                                  {item.quantity != null && item.quantity !== 1 ? ` ×${item.quantity}` : ''}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-bold text-gray-900 text-sm">{formatMoney(job.total_pay)}</p>
