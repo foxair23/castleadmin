@@ -82,6 +82,20 @@ export async function retrySfSync(id: string) {
   revalidatePath(`/admin/scheduler/leads/${id}`)
 }
 
+export async function updateLeadFee(id: string, fee: string) {
+  const supabase = await createClient()
+  await getAdminUserId()
+
+  const { error } = await supabase
+    .from('scheduler_leads')
+    .update({ quoted_fee: fee || null })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+
+  revalidatePath(`/admin/scheduler/leads/${id}`)
+}
+
 export async function updateLeadNotes(id: string, notes: string) {
   const supabase = await createClient()
   await getAdminUserId()
