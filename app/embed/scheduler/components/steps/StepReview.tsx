@@ -45,6 +45,7 @@ function formatServiceType(cat: string | null, type: string | null): string {
     opener_service: 'Opener Service / Replacement',
     gate_opener_service: 'Gate Opener Service / Replacement',
     new_gate_replacement: 'New Gate / Gate Replacement',
+    annual_maintenance: 'Annual Maintenance',
   };
   return `${catLabel} — ${typeMap[type] ?? type}`;
 }
@@ -125,6 +126,7 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
       partial_lead_id: state.partial_lead_id ?? undefined,
       session_id: sessionId,
       first_name: state.first_name,
+      last_name: state.customer_last_name || undefined,
       mobile_phone: state.mobile_phone,
       primary_category: state.primary_category,
       service_type: state.service_type,
@@ -267,7 +269,10 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
       </SummaryCard>
 
       <SummaryCard title="Contact">
-        <SummaryRow label="Name" value={state.first_name} />
+        <SummaryRow
+          label="Name"
+          value={[state.first_name, state.customer_last_name].filter(Boolean).join(' ')}
+        />
         <SummaryRow label="Phone" value={formatPhoneDisplay(state.mobile_phone)} />
         {state.customer_email && <SummaryRow label="Email" value={state.customer_email} />}
       </SummaryCard>
@@ -297,27 +302,21 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
         return (
           <div
             style={{
-              backgroundColor: isFreeEstimate ? '#F0FDF4' : '#FEF9EC',
-              border: `1.5px solid ${isFreeEstimate ? '#86EFAC' : '#F5C842'}`,
+              backgroundColor: '#F0FDF4',
+              border: '1.5px solid #86EFAC',
               borderRadius: 'var(--radius-card)',
               padding: '0.875rem 1.25rem',
               marginBottom: '0.875rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
             }}
           >
-            <span style={{ fontSize: '1.1rem' }}>{isFreeEstimate ? '✓' : 'ℹ'}</span>
-            <div>
-              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: isFreeEstimate ? '#15803D' : '#856404' }}>
-                {isFreeEstimate ? 'Free Estimate' : `$${fee} Service Call Fee`}
-              </p>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: isFreeEstimate ? '#166534' : '#92671A', marginTop: '0.125rem' }}>
-                {isFreeEstimate
-                  ? 'No service call fee — this visit is a free estimate.'
-                  : `A $${fee} diagnostic fee applies to this service call.`}
-              </p>
-            </div>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: '#15803D' }}>
+              {isFreeEstimate ? 'Free Estimate' : `$${fee} Service Call Fee`}
+            </p>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#166534', marginTop: '0.25rem' }}>
+              {isFreeEstimate
+                ? 'No service call fee — this visit is a free estimate.'
+                : `Covers the technician visit, inspection, diagnosis, and simple adjustments. If repairs require parts or additional labor, we'll provide upfront pricing before any work begins.`}
+            </p>
           </div>
         )
       })()}

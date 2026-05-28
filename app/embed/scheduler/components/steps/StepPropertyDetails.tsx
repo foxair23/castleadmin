@@ -49,6 +49,8 @@ function loadGoogleMapsScript(apiKey: string): Promise<void> {
 }
 
 export default function StepPropertyDetails({ state, onNext }: Props) {
+  const [firstName, setFirstName] = useState(state.first_name);
+  const [lastName, setLastName] = useState(state.customer_last_name);
   const [addressLine1, setAddressLine1] = useState(state.address_line1);
   const [city, setCity] = useState(state.address_city);
   const [stateAbbr, setStateAbbr] = useState(state.address_state || 'CA');
@@ -111,6 +113,8 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
   function handleSubmit() {
     if (!validate()) return;
     onNext({
+      first_name: firstName.trim(),
+      customer_last_name: lastName.trim(),
       address_line1: addressLine1.trim(),
       address_city: city.trim(),
       address_state: stateAbbr.trim(),
@@ -167,6 +171,34 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
       <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
         We&apos;ll use this address for your appointment.
       </p>
+
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+        <div style={{ flex: 1 }}>
+          <label htmlFor="first-name" style={labelStyle}>First Name</label>
+          <input
+            id="first-name"
+            type="text"
+            autoComplete="given-name"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            style={inputStyle(false)}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label htmlFor="last-name" style={labelStyle}>
+            Last Name <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>(optional)</span>
+          </label>
+          <input
+            id="last-name"
+            type="text"
+            autoComplete="family-name"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            placeholder="Smith"
+            style={inputStyle(false)}
+          />
+        </div>
+      </div>
 
       <div style={fieldStyle}>
         <label htmlFor="address-line1" style={labelStyle}>

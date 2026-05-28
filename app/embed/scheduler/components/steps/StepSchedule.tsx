@@ -164,7 +164,7 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
               <p style={{ margin: 0, fontSize: '0.8rem', color: '#166534', marginTop: '0.125rem' }}>
                 {isFreeEstimate
                   ? 'No service call fee — this visit is a free estimate.'
-                  : `A $${fee} diagnostic fee applies to this service call.`}
+                  : `Covers the technician visit, inspection, diagnosis, and simple adjustments. If repairs require parts or additional labor, we'll provide upfront pricing before any work begins.`}
               </p>
             </div>
           </div>

@@ -118,6 +118,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       opener_service: 'Opener Service / Replacement',
       gate_opener_service: 'Gate Opener Service / Replacement',
       new_gate_replacement: 'New Gate / Gate Replacement',
+      annual_maintenance: 'Annual Maintenance',
     }
     const diagLabels: Record<string, Record<string, string>> = {
       can_open_close:   { yes: 'Yes', no: 'No' },

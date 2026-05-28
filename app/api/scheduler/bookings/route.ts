@@ -38,8 +38,9 @@ interface BookingPayload {
   // Partial lead linkage
   partial_lead_id?: string
   session_id?: string
-  // Contact (captured in step 2)
+  // Contact (captured in step 2, last name in step 6)
   first_name: string
+  last_name?: string
   mobile_phone: string
   // Service
   primary_category: 'garage_door' | 'gate'
@@ -263,6 +264,7 @@ export async function POST(req: NextRequest) {
     diagnostic_answers:       body.answers ?? {},
     // Customer
     customer_first_name:      body.first_name.trim(),
+    customer_last_name:       body.last_name?.trim() || null,
     customer_phone:           body.mobile_phone.trim(),
     customer_email:           body.customer_email?.trim().toLowerCase() || null,
     // Address
