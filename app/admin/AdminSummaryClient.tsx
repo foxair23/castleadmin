@@ -86,8 +86,10 @@ export default function AdminSummaryClient({
   }
 
   const bonusById = new Map(techs.map(t => [t.id, t.weekly_bonus ?? 0]))
-  const grandTotal = jobs.reduce((s, j) => s + j.total_pay, 0) +
+  const grandGas = jobs.reduce((s, j) => s + (j.gas_paid ? 20 : 0), 0)
+  const grandEarnings = jobs.reduce((s, j) => s + j.total_pay - (j.gas_paid ? 20 : 0), 0) +
     techs.reduce((s, t) => s + (t.weekly_bonus ?? 0), 0)
+  const grandTotal = grandEarnings + grandGas
 
   function techStatus(techId: string) {
     const sub = submissionMap.get(techId)
@@ -139,7 +141,8 @@ export default function AdminSummaryClient({
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">Submitted</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-600">Jobs</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Total Pay</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-600">Earnings</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">Gas</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">Unlock</th>
                 <th className="w-8 px-2"></th>
               </tr>
@@ -148,7 +151,9 @@ export default function AdminSummaryClient({
               {techs.map(tech => {
                 const techJobs = jobsByTech.get(tech.id) ?? []
                 const bonus = bonusById.get(tech.id) ?? 0
-                const techTotal = techJobs.reduce((s, j) => s + j.total_pay, 0) + bonus
+                const techGas = techJobs.reduce((s, j) => s + (j.gas_paid ? 20 : 0), 0)
+                const techEarnings = techJobs.reduce((s, j) => s + j.total_pay - (j.gas_paid ? 20 : 0), 0) + bonus
+                const techTotal = techEarnings + techGas
                 const sub = submissionMap.get(tech.id)
                 const isUnlocked = sub?.admin_unlocked === true && !sub?.submitted_at
                 const status = techStatus(tech.id)
@@ -181,7 +186,10 @@ export default function AdminSummaryClient({
                       </td>
                       <td className="px-4 py-3 text-center text-gray-700">{techJobs.length}</td>
                       <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                        {formatMoney(techTotal)}
+                        {formatMoney(techEarnings)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-amber-700 hidden sm:table-cell">
+                        {techGas > 0 ? formatMoney(techGas) : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-4 py-3 text-center hidden sm:table-cell" onClick={e => e.stopPropagation()}>
                         {deadlinePassed && (
@@ -205,7 +213,7 @@ export default function AdminSummaryClient({
 
                     {isExpanded && (techJobs.length > 0 || bonus > 0) && (
                       <tr key={`${tech.id}-detail`}>
-                        <td colSpan={7} className="bg-gray-50 px-4 py-3">
+                        <td colSpan={8} className="bg-gray-50 px-4 py-3">
                           <div className="space-y-4 ml-2">
                             {bonus > 0 && (
                               <div className="border-l-2 border-purple-300 pl-3 flex justify-between items-center">
@@ -262,7 +270,10 @@ export default function AdminSummaryClient({
             <tfoot>
               <tr className="bg-gray-50 border-t-2 border-gray-200">
                 <td colSpan={4} className="px-4 py-3 font-bold text-gray-900">Grand Total</td>
-                <td className="px-4 py-3 text-right font-bold text-gray-900 text-base">{formatMoney(grandTotal)}</td>
+                <td className="px-4 py-3 text-right font-bold text-gray-900 text-base">{formatMoney(grandEarnings)}</td>
+                <td className="px-4 py-3 text-right font-bold text-amber-700 text-base hidden sm:table-cell">
+                  {grandGas > 0 ? formatMoney(grandGas) : <span className="text-gray-300">—</span>}
+                </td>
                 <td></td>
                 <td></td>
               </tr>
