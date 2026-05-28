@@ -92,6 +92,14 @@ export async function POST(req: NextRequest) {
         })
         added++
       }
+
+      // Refresh stored items for this SF job (delete + re-insert)
+      if (sfJob.items.length > 0) {
+        await service.from('sf_job_items').delete().eq('sf_job_id', sfJob.id)
+        await service.from('sf_job_items').insert(
+          sfJob.items.map(item => ({ sf_job_id: sfJob.id, ...item, sf_synced_at: now }))
+        )
+      }
     }
   } catch (err: unknown) {
     errorMessage = err instanceof Error ? err.message : 'Sync failed'

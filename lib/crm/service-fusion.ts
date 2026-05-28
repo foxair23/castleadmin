@@ -153,7 +153,7 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
       const json = (await sfGet('/jobs', {
         'filters[start_date][gte]': fmt(weekStart),
         'filters[start_date][lte]': fmt(weekEnd),
-        expand: 'techs_assigned',
+        expand: 'techs_assigned,items',
         'per-page': '50',
         page: String(page),
       })) as any
@@ -178,6 +178,7 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
 
         if (!status) continue
 
+        const rawItems: any[] = job.items ?? []
         results.push({
           id: String(job.id),
           jobNumber: job.number ?? String(job.id),
@@ -185,6 +186,12 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
           scheduledDate: (job.start_date ?? fmt(weekStart)).slice(0, 10),
           status,
           statusLabel: statusStr,
+          items: rawItems.map(item => ({
+            name: item.name ?? item.product_name ?? null,
+            description: item.description ?? null,
+            quantity: item.quantity != null ? parseFloat(String(item.quantity)) : null,
+            unit_price: item.unit_price ?? item.price ?? null,
+          })),
         })
       }
 
