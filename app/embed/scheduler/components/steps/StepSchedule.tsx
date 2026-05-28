@@ -137,7 +137,7 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
         Request a Time
       </h2>
       <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.875rem', fontSize: '0.95rem' }}>
-        Pick your <strong style={{ color: 'var(--color-primary)', fontWeight: 700 }}>preferred</strong> date and time window — we&apos;ll call you to confirm the appointment.
+        Pick your <strong style={{ color: 'var(--color-primary)', fontWeight: 700 }}>preferred</strong>{' '}date and time window — we&apos;ll call you to confirm the appointment.
       </p>
 
       {state.service_type && (() => {
