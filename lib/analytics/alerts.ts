@@ -285,7 +285,79 @@ export async function getFollowUpJobs(): Promise<FollowUpJobsResult> {
   return { items }
 }
 
-// ── Alert 5 — Customers Overdue Past Payment Terms ────────────────────────────
+// ── Alert 6 — Closed Won Sales Leads Awaiting SF Job ─────────────────────────
+
+export interface AwaitingSfJobLead {
+  id: string
+  customer_name: string | null
+  customer_id: string
+  account_number: string | null
+  tag_name: string | null
+  assigned_rep_name: string | null
+  closed_at: string
+  days_waiting: number
+}
+
+export interface AwaitingSfJobResult {
+  items: AwaitingSfJobLead[]
+}
+
+export async function getAwaitingSfJob(): Promise<AwaitingSfJobResult> {
+  const db = getAdminClient()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: leads } = await (db as any)
+    .from('sales_leads')
+    .select('id, customer_id, tag_name, assigned_to_user_id, closed_at')
+    .eq('closed_outcome', 'won')
+    .eq('sf_job_created', false)
+    .not('closed_at', 'is', null)
+    .order('closed_at', { ascending: true })
+    .limit(100)
+
+  const rows = (leads ?? []) as {
+    id: string
+    customer_id: string
+    tag_name: string | null
+    assigned_to_user_id: string | null
+    closed_at: string
+  }[]
+
+  if (rows.length === 0) return { items: [] }
+
+  const customerIds = [...new Set(rows.map(r => r.customer_id))]
+  const assigneeIds = [...new Set(rows.map(r => r.assigned_to_user_id).filter(Boolean) as string[])]
+
+  const [customersRes, assigneesRes] = await Promise.all([
+    db.from('sf_customers').select('id, customer_name, account_number').in('id', customerIds),
+    assigneeIds.length
+      ? db.from('profiles').select('id, full_name').in('id', assigneeIds)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const customerMap = new Map(
+    (customersRes.data ?? []).map((c: { id: string; customer_name: string | null; account_number: string | null }) => [c.id, c])
+  )
+  const assigneeMap = new Map(
+    (assigneesRes.data ?? []).map((p: { id: string; full_name: string }) => [p.id, p.full_name])
+  )
+
+  const items: AwaitingSfJobLead[] = rows.map(r => {
+    const customer = customerMap.get(r.customer_id)
+    return {
+      id: r.id,
+      customer_id: r.customer_id,
+      customer_name: customer?.customer_name ?? null,
+      account_number: customer?.account_number ?? null,
+      tag_name: r.tag_name,
+      assigned_rep_name: r.assigned_to_user_id ? (assigneeMap.get(r.assigned_to_user_id) ?? null) : null,
+      closed_at: r.closed_at,
+      days_waiting: daysBetween(r.closed_at),
+    }
+  })
+
+  return { items }
+}
 
 export interface OverdueCustomer {
   id: string

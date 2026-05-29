@@ -15,9 +15,11 @@ create index if not exists idx_sf_job_items_job on public.sf_job_items(sf_job_id
 
 alter table public.sf_job_items enable row level security;
 
+drop policy if exists "admin_all_sf_job_items" on public.sf_job_items;
 create policy "admin_all_sf_job_items" on public.sf_job_items
   for all using (public.is_admin());
 
+drop policy if exists "authenticated_read_sf_job_items" on public.sf_job_items;
 create policy "authenticated_read_sf_job_items" on public.sf_job_items
   for select using (auth.role() = 'authenticated');
 

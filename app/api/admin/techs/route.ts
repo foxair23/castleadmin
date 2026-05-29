@@ -21,10 +21,11 @@ export async function POST(req: NextRequest) {
   const admin = await requireAdmin()
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { full_name, email, password } = await req.json()
+  const { full_name, email, password, role: rawRole } = await req.json()
   if (!full_name || !email || !password) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
+  const role = rawRole === 'sales' ? 'sales' : 'technician'
 
   // Use the Supabase Admin client (service role) to create a new auth user
   const adminClient = createAdminClient(
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     .insert({
       id: authData.user.id,
       full_name,
-      role: 'technician',
+      role,
       is_active: true,
     })
     .select()

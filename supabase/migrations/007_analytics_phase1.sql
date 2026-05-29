@@ -208,37 +208,46 @@ alter table public.dashboard_annotations    enable row level security;
 alter table public.analytics_sync_log       enable row level security;
 
 -- sf_customers_cache — admin only
+drop policy if exists "admin_all_sf_customers_cache" on public.sf_customers_cache;
 create policy "admin_all_sf_customers_cache" on public.sf_customers_cache
   for all using (public.is_admin());
 
 -- sf_jobs_cache — admin only
+drop policy if exists "admin_all_sf_jobs_cache" on public.sf_jobs_cache;
 create policy "admin_all_sf_jobs_cache" on public.sf_jobs_cache
   for all using (public.is_admin());
 
 -- sf_job_techs_cache — admin only
+drop policy if exists "admin_all_sf_job_techs_cache" on public.sf_job_techs_cache;
 create policy "admin_all_sf_job_techs_cache" on public.sf_job_techs_cache
   for all using (public.is_admin());
 
 -- sf_job_schedule_history — admin only
+drop policy if exists "admin_all_sf_job_schedule_history" on public.sf_job_schedule_history;
 create policy "admin_all_sf_job_schedule_history" on public.sf_job_schedule_history
   for all using (public.is_admin());
 
 -- sf_job_status_history — admin only
+drop policy if exists "admin_all_sf_job_status_history" on public.sf_job_status_history;
 create policy "admin_all_sf_job_status_history" on public.sf_job_status_history
   for all using (public.is_admin());
 
 -- sf_estimates_cache — admin only
+drop policy if exists "admin_all_sf_estimates_cache" on public.sf_estimates_cache;
 create policy "admin_all_sf_estimates_cache" on public.sf_estimates_cache
   for all using (public.is_admin());
 
 -- sf_invoices_cache — admin only
+drop policy if exists "admin_all_sf_invoices_cache" on public.sf_invoices_cache;
 create policy "admin_all_sf_invoices_cache" on public.sf_invoices_cache
   for all using (public.is_admin());
 
 -- dashboard_annotations — admins full access; techs may select
+drop policy if exists "admin_all_dashboard_annotations" on public.dashboard_annotations;
 create policy "admin_all_dashboard_annotations" on public.dashboard_annotations
   for all using (public.is_admin());
 
+drop policy if exists "tech_select_dashboard_annotations" on public.dashboard_annotations;
 create policy "tech_select_dashboard_annotations" on public.dashboard_annotations
   for select using (
     exists (
@@ -248,5 +257,6 @@ create policy "tech_select_dashboard_annotations" on public.dashboard_annotation
   );
 
 -- analytics_sync_log — admin only
+drop policy if exists "admin_all_analytics_sync_log" on public.analytics_sync_log;
 create policy "admin_all_analytics_sync_log" on public.analytics_sync_log
   for all using (public.is_admin());

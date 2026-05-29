@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import type {
   UnpaidJob,
   UnpaidJobsResult,
@@ -13,6 +14,8 @@ import type {
   FollowUpJobsResult,
   OverdueCustomer,
   OverdueCustomersResult,
+  AwaitingSfJobLead,
+  AwaitingSfJobResult,
 } from '@/lib/analytics/alerts'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -307,6 +310,55 @@ function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
 
 // ── Section wrapper ───────────────────────────────────────────────────────────
 
+// ── Alert 6 — Closed Won Awaiting SF Job ─────────────────────────────────────
+
+function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
+  const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="account_number" label="Account #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="tag_name" label="Tag" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="assigned_rep_name" label="Rep" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="closed_at" label="Won" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="days_waiting" label="Days waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-4 py-2" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {sorted.map(l => (
+            <tr key={l.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 font-medium text-gray-900">{l.customer_name ?? '—'}</td>
+              <td className="px-4 py-2 font-mono text-xs text-gray-600">{l.account_number ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-600">
+                {l.tag_name
+                  ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{l.tag_name}</span>
+                  : <span className="text-gray-400">—</span>
+                }
+              </td>
+              <td className="px-4 py-2 text-gray-600">{l.assigned_rep_name ?? <span className="text-gray-400">Unassigned</span>}</td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(l.closed_at)}</td>
+              <td className="px-4 py-2"><AgingPill days={l.days_waiting} /></td>
+              <td className="px-4 py-2 text-right">
+                <Link
+                  href={`/sales/${l.id}`}
+                  className="text-xs text-red-600 hover:text-red-800 font-medium whitespace-nowrap"
+                >
+                  View lead →
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function AlertSection({
   title,
   count,
@@ -340,6 +392,7 @@ interface Props {
   staleEstimates: StaleEstimatesResult
   followUpJobs: FollowUpJobsResult
   overdueCustomers: OverdueCustomersResult
+  awaitingSfJob: AwaitingSfJobResult
 }
 
 export default function ActionItemsClient({
@@ -348,6 +401,7 @@ export default function ActionItemsClient({
   staleEstimates,
   followUpJobs,
   overdueCustomers,
+  awaitingSfJob,
 }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -357,7 +411,8 @@ export default function ActionItemsClient({
     uninvoicedJobs.items.length +
     staleEstimates.items.length +
     followUpJobs.items.length +
-    overdueCustomers.items.length
+    overdueCustomers.items.length +
+    awaitingSfJob.items.length
 
   function handleRefresh() {
     startTransition(() => {
@@ -477,6 +532,18 @@ export default function ActionItemsClient({
           <AllClear />
         ) : (
           <OverdueCustomersTable items={overdueCustomers.items} />
+        )}
+      </AlertSection>
+
+      {/* Alert 6 — Closed Won Awaiting SF Job */}
+      <AlertSection
+        title="Closed Won — Awaiting SF Job"
+        count={awaitingSfJob.items.length}
+      >
+        {awaitingSfJob.items.length === 0 ? (
+          <AllClear />
+        ) : (
+          <AwaitingSfJobTable items={awaitingSfJob.items} />
         )}
       </AlertSection>
     </div>

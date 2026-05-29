@@ -15,6 +15,8 @@ export default async function RootPage() {
 
   if (profile?.role === 'admin') {
     redirect('/admin')
+  } else if (profile?.role === 'sales') {
+    redirect('/sales')
   } else {
     redirect('/tech')
   }
