@@ -54,6 +54,7 @@ export async function POST() {
     return NextResponse.json({
       ok: true,
       campaignsSynced: result.campaignsSynced,
+      totalOpeners: result.totalOpeners,
       newOpeners: result.newOpeners,
       newClickers: result.newClickers,
       unmatchedEmails: result.unmatchedEmails,

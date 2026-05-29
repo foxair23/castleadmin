@@ -21,7 +21,8 @@ function db() {
 
 export interface SalesSyncResult {
   campaignsSynced: number
-  newOpeners: number
+  totalOpeners: number   // raw opener count from Mailchimp before any resolution
+  newOpeners: number     // new sales_leads created (matched to SF customer, first time)
   newClickers: number
   unmatchedEmails: number  // openers whose email didn't resolve to an SF customer
 }
@@ -87,7 +88,7 @@ async function syncOneCampaign(
   supabase: ReturnType<typeof db>,
   campaign: McRawCampaign,
   segmentIdToTag: Map<number, string>
-): Promise<{ newOpeners: number; newClickers: number; unmatchedEmails: number }> {
+): Promise<{ totalOpeners: number; newOpeners: number; newClickers: number; unmatchedEmails: number }> {
   const campaignId = campaign.id
   const now = new Date().toISOString()
 
@@ -119,8 +120,10 @@ async function syncOneCampaign(
       { onConflict: 'mailchimp_campaign_id' }
     )
 
+  console.log(`[sales-sync] campaign ${campaignId}: ${openers.length} openers, ${clickers.length} clickers from Mailchimp`)
+
   if (openers.length === 0 && clickers.length === 0) {
-    return { newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
+    return { totalOpeners: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
   }
 
   // Resolve all emails to customer IDs in one pass
@@ -164,8 +167,10 @@ async function syncOneCampaign(
 
   const unmatchedEmails = engagementRows.filter(r => !r.customer_id).length
 
+  console.log(`[sales-sync] campaign ${campaignId}: ${openers.length - unmatchedEmails} resolved to SF customers, ${unmatchedEmails} unmatched`)
+
   if (matchedCustomerIds.length === 0) {
-    return { newOpeners: 0, newClickers: 0, unmatchedEmails }
+    return { totalOpeners: openers.length, newOpeners: 0, newClickers: 0, unmatchedEmails }
   }
 
   const { data: existingLeads } = await supabase
@@ -231,7 +236,7 @@ async function syncOneCampaign(
     }
   }
 
-  return { newOpeners, newClickers, unmatchedEmails }
+  return { totalOpeners: openers.length, newOpeners, newClickers, unmatchedEmails }
 }
 
 export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<SalesSyncResult> {
@@ -252,6 +257,7 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
     c => !audienceId || c.recipients?.list_id === audienceId
   )
 
+  let grandTotalOpeners = 0
   let totalNewOpeners = 0
   let totalNewClickers = 0
   let totalUnmatched = 0
@@ -261,7 +267,8 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   try {
     // Process campaigns sequentially to avoid overwhelming Mailchimp rate limits
     for (const campaign of relevant) {
-      const { newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, segmentIdToTag)
+      const { totalOpeners, newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, segmentIdToTag)
+      grandTotalOpeners += totalOpeners
       totalNewOpeners += newOpeners
       totalNewClickers += newClickers
       totalUnmatched += unmatchedEmails
@@ -286,6 +293,7 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
 
   return {
     campaignsSynced,
+    totalOpeners: grandTotalOpeners,
     newOpeners: totalNewOpeners,
     newClickers: totalNewClickers,
     unmatchedEmails: totalUnmatched,

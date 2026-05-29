@@ -115,10 +115,13 @@ export default function SalesLeadsClient({
         setSyncMessage(data.error ?? 'Sync failed')
       } else {
         setSyncStatus('done')
-        let msg = `Synced ${data.campaignsSynced} campaign${data.campaignsSynced !== 1 ? 's' : ''} · ${data.newOpeners} new lead${data.newOpeners !== 1 ? 's' : ''}`
-        if (data.newClickers > 0) msg += ` (${data.newClickers} clicked)`
-        if (data.unmatchedEmails > 0) msg += ` · ${data.unmatchedEmails} unmatched email${data.unmatchedEmails !== 1 ? 's' : ''} — link them in Sales Admin`
-        setSyncMessage(msg)
+        const parts = [`Synced ${data.campaignsSynced} campaign${data.campaignsSynced !== 1 ? 's' : ''}`]
+        parts.push(`${data.totalOpeners ?? 0} opener${(data.totalOpeners ?? 0) !== 1 ? 's' : ''} from Mailchimp`)
+        if (data.unmatchedEmails > 0) {
+          parts.push(`${data.unmatchedEmails} unmatched (link in Sales Admin)`)
+        }
+        parts.push(`${data.newOpeners} new lead${data.newOpeners !== 1 ? 's' : ''} created`)
+        setSyncMessage(parts.join(' · '))
         startTransition(() => router.refresh())
       }
     } catch {
