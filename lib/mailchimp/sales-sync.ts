@@ -4,6 +4,7 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
   listCampaigns,
+  listAudienceTags,
   getCampaignOpeners,
   getCampaignClickers,
   getCampaignReport,
@@ -23,15 +24,6 @@ export interface SalesSyncResult {
   newOpeners: number
   newClickers: number
   unmatchedEmails: number  // openers whose email didn't resolve to an SF customer
-}
-
-// Extract the Castle-push tag from a campaign's segment_text.
-// Mailchimp returns segment_text like "Tag: spring-tune-up" for tag-targeted
-// campaigns. We strip the prefix and match against known push-log tags.
-function parseTagFromSegmentText(segmentText: string | null | undefined): string | null {
-  if (!segmentText) return null
-  const match = segmentText.match(/^Tag:\s*(.+)$/i)
-  return match ? match[1].trim() : null
 }
 
 // Build a map of email → sf_customers.id by joining sf_customer_contacts.
@@ -65,17 +57,41 @@ async function resolveEmailsToCustomerIds(
   return map
 }
 
+// Resolve a campaign's tag name from its segment_opts.
+// Mailchimp represents tags as static segments. When a campaign targets a tag,
+// segment_opts.conditions contains a StaticSegment condition whose value is the
+// segment ID. We map that ID back to the tag name via segmentIdToTag.
+function resolveTagName(
+  campaign: McRawCampaign,
+  segmentIdToTag: Map<number, string>
+): string | null {
+  const opts = campaign.recipients?.segment_opts
+  if (!opts) return null
+
+  // saved_segment_id is set when the campaign targeted a saved/static segment
+  if (opts.saved_segment_id && opts.saved_segment_id > 0) {
+    return segmentIdToTag.get(opts.saved_segment_id) ?? null
+  }
+
+  // Fall back to conditions array
+  const conditions = opts.conditions ?? []
+  for (const c of conditions) {
+    if (c.condition_type === 'StaticSegment' && typeof c.value === 'number') {
+      return segmentIdToTag.get(c.value) ?? null
+    }
+  }
+  return null
+}
+
 async function syncOneCampaign(
   supabase: ReturnType<typeof db>,
   campaign: McRawCampaign,
-  knownTags: Set<string>
+  segmentIdToTag: Map<number, string>
 ): Promise<{ newOpeners: number; newClickers: number; unmatchedEmails: number }> {
   const campaignId = campaign.id
   const now = new Date().toISOString()
 
-  // Determine tag_name: prefer parsed segment text if it matches a known push tag
-  const parsedTag = parseTagFromSegmentText(campaign.recipients?.segment_text)
-  const tagName = parsedTag && knownTags.has(parsedTag) ? parsedTag : parsedTag
+  const tagName = resolveTagName(campaign, segmentIdToTag)
 
   // Fetch engagement and report summary in parallel
   const [openers, clickers, report] = await Promise.all([
@@ -222,11 +238,11 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   const supabase = db()
   const now = new Date().toISOString()
 
-  // Collect known Castle-push tags from the push log for tag detection
-  const { data: pushLogTags } = await supabase
-    .from('mailchimp_push_log')
-    .select('tag')
-  const knownTags = new Set((pushLogTags ?? []).map(r => r.tag as string))
+  // Fetch all audience tags (static segments) to resolve campaign segment IDs → tag names.
+  // Mailchimp represents tags as static segments; campaigns store the segment ID in
+  // segment_opts, not the tag name, so we need this lookup table.
+  const audienceTags = await listAudienceTags()
+  const segmentIdToTag = new Map(audienceTags.map(t => [t.id, t.name]))
 
   const campaigns = await listCampaigns()
 
@@ -245,7 +261,7 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   try {
     // Process campaigns sequentially to avoid overwhelming Mailchimp rate limits
     for (const campaign of relevant) {
-      const { newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, knownTags)
+      const { newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, segmentIdToTag)
       totalNewOpeners += newOpeners
       totalNewClickers += newClickers
       totalUnmatched += unmatchedEmails

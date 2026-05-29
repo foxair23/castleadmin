@@ -46,7 +46,17 @@ export interface McRawCampaign {
   }
   recipients: {
     list_id: string
-    segment_text?: string // human-readable description of the segment/tag used
+    segment_text?: string
+    segment_opts?: {
+      saved_segment_id?: number
+      match?: string
+      conditions?: Array<{
+        condition_type: string
+        field?: string
+        op?: string
+        value?: number | string | string[]
+      }>
+    }
   }
   report_summary?: {
     opens: number
@@ -98,6 +108,7 @@ const CAMPAIGN_FIELDS = [
   'campaigns.settings.from_name',
   'campaigns.recipients.list_id',
   'campaigns.recipients.segment_text',
+  'campaigns.recipients.segment_opts',
   'campaigns.report_summary',
   'total_items',
 ].join(',')
@@ -245,4 +256,28 @@ export async function getCampaignClickers(campaignId: string): Promise<McRawClic
   }
 
   return Array.from(totals.entries()).map(([email_address, clicks]) => ({ email_address, clicks }))
+}
+
+// ─────────────────────────────────────────────────────────────
+// Audience tags (static segments)
+// Mailchimp represents tags as static segments. Fetching all of them
+// lets us map a campaign's segment_opts.conditions[].value (segment ID)
+// back to a human-readable tag name.
+// ─────────────────────────────────────────────────────────────
+
+export interface McAudienceTag {
+  id: number
+  name: string
+}
+
+export async function listAudienceTags(): Promise<McAudienceTag[]> {
+  if (!isConfigured()) return []
+  const res = await mcGet(`/lists/${AUDIENCE_ID}/segments`, {
+    type: 'static',
+    count: 1000,
+    fields: 'segments.id,segments.name,total_items',
+  })
+  if (!res.ok) return []
+  const data = await res.json() as { segments: McAudienceTag[] }
+  return data.segments ?? []
 }
