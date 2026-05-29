@@ -158,33 +158,55 @@ export async function getCampaignReport(campaignId: string): Promise<McRawReport
 // Open detail — who opened (Mailchimp's filtered unique openers)
 // ─────────────────────────────────────────────────────────────
 
+// email-activity returns per-member activity for everyone who had any interaction
+// with the campaign (open, click, bounce, unsubscribe), including archived/cleaned
+// members that open-details excludes. We filter client-side for action === 'open'.
+interface McEmailActivity {
+  email_address: string
+  activity: Array<{ action: string; timestamp: string }>
+}
+
 export async function getCampaignOpeners(campaignId: string): Promise<McRawOpener[]> {
   if (!isConfigured()) return []
 
   const PAGE = 1000
-  const results: McRawOpener[] = []
+  const openerMap = new Map<string, McRawOpener>()
   let offset = 0
+  let totalSeen = 0
 
   while (true) {
-    // No fields filter — Mailchimp silently empties the members array when the
-    // fields param over-restricts a collection response.
-    const res = await mcGet(`/reports/${campaignId}/open-details`, {
+    const res = await mcGet(`/reports/${campaignId}/email-activity`, {
       count: PAGE,
       offset,
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
-      console.error(`[mailchimp] open-details ${campaignId} HTTP ${res.status}: ${body}`)
+      console.error(`[mailchimp] email-activity ${campaignId} HTTP ${res.status}: ${body}`)
       break
     }
-    const data = await res.json() as { members: McRawOpener[]; total_items: number }
-    console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${data.members?.length ?? 0} members, total_items=${data.total_items}`)
-    results.push(...(data.members ?? []))
-    if (results.length >= (data.total_items ?? 0)) break
+    const data = await res.json() as { emails: McEmailActivity[]; total_items: number }
+    const emails = data.emails ?? []
+    console.log(`[mailchimp] email-activity ${campaignId} offset=${offset}: ${emails.length} members, total_items=${data.total_items}`)
+
+    for (const member of emails) {
+      const opens = member.activity.filter(a => a.action === 'open')
+      if (opens.length === 0) continue
+      const timestamps = opens.map(o => o.timestamp).sort()
+      openerMap.set(member.email_address, {
+        email_address: member.email_address,
+        opens_count: opens.length,
+        first_open: timestamps[0],
+        last_open: timestamps[timestamps.length - 1],
+      })
+    }
+
+    totalSeen += emails.length
+    if (totalSeen >= (data.total_items ?? 0)) break
     offset += PAGE
   }
 
-  return results
+  console.log(`[mailchimp] email-activity ${campaignId}: ${openerMap.size} unique openers`)
+  return Array.from(openerMap.values())
 }
 
 // ─────────────────────────────────────────────────────────────
