@@ -148,24 +148,18 @@ export async function listCampaigns(): Promise<McRawCampaign[]> {
 
 export async function getCampaignReport(campaignId: string): Promise<McRawReport | null> {
   if (!isConfigured()) return null
-  const res = await mcGet(`/reports/${campaignId}`, {
-    fields: 'id,emails_sent,opens,clicks',
-  })
-  if (!res.ok) return null
+  const res = await mcGet(`/reports/${campaignId}`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    console.error(`[mailchimp] report ${campaignId} HTTP ${res.status}: ${body}`)
+    return null
+  }
   return res.json() as Promise<McRawReport>
 }
 
 // ─────────────────────────────────────────────────────────────
 // Open detail — who opened (Mailchimp's filtered unique openers)
 // ─────────────────────────────────────────────────────────────
-
-const OPENER_FIELDS = [
-  'members.email_address',
-  'members.opens_count',
-  'members.first_open',
-  'members.last_open',
-  'total_items',
-].join(',')
 
 export async function getCampaignOpeners(campaignId: string): Promise<McRawOpener[]> {
   if (!isConfigured()) return []
@@ -175,15 +169,21 @@ export async function getCampaignOpeners(campaignId: string): Promise<McRawOpene
   let offset = 0
 
   while (true) {
+    // No fields filter — Mailchimp silently empties the members array when the
+    // fields param over-restricts a collection response.
     const res = await mcGet(`/reports/${campaignId}/open-details`, {
       count: PAGE,
       offset,
-      fields: OPENER_FIELDS,
     })
-    if (!res.ok) break
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.error(`[mailchimp] open-details ${campaignId} HTTP ${res.status}: ${body}`)
+      break
+    }
     const data = await res.json() as { members: McRawOpener[]; total_items: number }
+    console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${data.members?.length ?? 0} members, total_items=${data.total_items}`)
     results.push(...(data.members ?? []))
-    if (results.length >= data.total_items) break
+    if (results.length >= (data.total_items ?? 0)) break
     offset += PAGE
   }
 
@@ -209,11 +209,13 @@ interface McClickMember {
 }
 
 async function getClickUrls(campaignId: string): Promise<McClickUrl[]> {
-  const res = await mcGet(`/reports/${campaignId}/click-details`, {
-    fields: 'urls_clicked.id,urls_clicked.url,urls_clicked.total_clicks,urls_clicked.unique_clicks',
-    count: 1000,
-  })
-  if (!res.ok) return []
+  // No fields filter — see getCampaignOpeners for why we avoid fields on collections.
+  const res = await mcGet(`/reports/${campaignId}/click-details`, { count: 1000 })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    console.error(`[mailchimp] click-details ${campaignId} HTTP ${res.status}: ${body}`)
+    return []
+  }
   const data = await res.json() as { urls_clicked: McClickUrl[] }
   return data.urls_clicked ?? []
 }
