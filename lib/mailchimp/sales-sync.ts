@@ -22,6 +22,7 @@ export interface SalesSyncResult {
   campaignsSynced: number
   newOpeners: number
   newClickers: number
+  unmatchedEmails: number  // openers whose email didn't resolve to an SF customer
 }
 
 // Extract the Castle-push tag from a campaign's segment_text.
@@ -34,7 +35,9 @@ function parseTagFromSegmentText(segmentText: string | null | undefined): string
 }
 
 // Build a map of email → sf_customers.id by joining sf_customer_contacts.
-// We chunk the email list to stay under Supabase's IN-clause limit.
+// We chunk the email list and use ilike for case-insensitive matching because
+// SF may store emails with mixed case (e.g. "John@Gmail.com") while Mailchimp
+// normalizes to lowercase — a case-sensitive IN would miss them entirely.
 async function resolveEmailsToCustomerIds(
   supabase: ReturnType<typeof db>,
   emails: string[]
@@ -42,13 +45,17 @@ async function resolveEmailsToCustomerIds(
   const map = new Map<string, string>()
   if (emails.length === 0) return map
 
-  const CHUNK = 500
+  const CHUNK = 200  // smaller chunks because OR-ilike expands the query
   for (let i = 0; i < emails.length; i += CHUNK) {
-    const chunk = emails.slice(i, i + CHUNK).map(e => e.toLowerCase())
+    const chunk = emails.slice(i, i + CHUNK)
+    // Build OR filter with ilike so matching is case-insensitive
+    const orFilter = chunk
+      .map(e => `email.ilike.${e.replace(/[%_]/g, '\\$&')}`)
+      .join(',')
     const { data } = await supabase
       .from('sf_customer_contacts')
       .select('customer_id, email')
-      .in('email', chunk)
+      .or(orFilter)
     for (const row of data ?? []) {
       if (row.email && row.customer_id) {
         map.set(row.email.toLowerCase(), row.customer_id)
@@ -62,7 +69,7 @@ async function syncOneCampaign(
   supabase: ReturnType<typeof db>,
   campaign: McRawCampaign,
   knownTags: Set<string>
-): Promise<{ newOpeners: number; newClickers: number }> {
+): Promise<{ newOpeners: number; newClickers: number; unmatchedEmails: number }> {
   const campaignId = campaign.id
   const now = new Date().toISOString()
 
@@ -97,7 +104,7 @@ async function syncOneCampaign(
     )
 
   if (openers.length === 0 && clickers.length === 0) {
-    return { newOpeners: 0, newClickers: 0 }
+    return { newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
   }
 
   // Resolve all emails to customer IDs in one pass
@@ -139,8 +146,10 @@ async function syncOneCampaign(
     new Set(engagementRows.map(r => r.customer_id).filter(Boolean) as string[])
   )
 
+  const unmatchedEmails = engagementRows.filter(r => !r.customer_id).length
+
   if (matchedCustomerIds.length === 0) {
-    return { newOpeners: 0, newClickers: 0 }
+    return { newOpeners: 0, newClickers: 0, unmatchedEmails }
   }
 
   const { data: existingLeads } = await supabase
@@ -206,7 +215,7 @@ async function syncOneCampaign(
     }
   }
 
-  return { newOpeners, newClickers }
+  return { newOpeners, newClickers, unmatchedEmails }
 }
 
 export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<SalesSyncResult> {
@@ -229,15 +238,17 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
 
   let totalNewOpeners = 0
   let totalNewClickers = 0
+  let totalUnmatched = 0
   let campaignsSynced = 0
   let syncError: string | null = null
 
   try {
     // Process campaigns sequentially to avoid overwhelming Mailchimp rate limits
     for (const campaign of relevant) {
-      const { newOpeners, newClickers } = await syncOneCampaign(supabase, campaign, knownTags)
+      const { newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, knownTags)
       totalNewOpeners += newOpeners
       totalNewClickers += newClickers
+      totalUnmatched += unmatchedEmails
       campaignsSynced++
     }
   } catch (err: unknown) {
@@ -261,5 +272,6 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
     campaignsSynced,
     newOpeners: totalNewOpeners,
     newClickers: totalNewClickers,
+    unmatchedEmails: totalUnmatched,
   }
 }
