@@ -8,6 +8,9 @@ export interface SalesLead {
   id: string
   customer_id: string
   customer_name: string
+  account_number: string | null
+  last_serviced_date: string | null
+  phone: string | null
   customer_city: string | null
   customer_state: string | null
   mailchimp_campaign_id: string
@@ -235,9 +238,26 @@ export default function SalesLeadsClient({
                       >
                         {lead.customer_name}
                       </Link>
+                      {lead.account_number && (
+                        <div className="text-xs text-gray-400">#{lead.account_number}</div>
+                      )}
                       {(lead.customer_city || lead.customer_state) && (
                         <div className="text-xs text-gray-400">
                           {[lead.customer_city, lead.customer_state].filter(Boolean).join(', ')}
+                        </div>
+                      )}
+                      {lead.phone && (
+                        <a
+                          href={`tel:${lead.phone}`}
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          {lead.phone}
+                        </a>
+                      )}
+                      {lead.last_serviced_date && (
+                        <div className="text-xs text-gray-400">
+                          Last service: {new Date(lead.last_serviced_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         </div>
                       )}
                     </td>

@@ -5,6 +5,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
   listCampaigns,
   listAudienceTags,
+  listTagMembers,
   getCampaignOpeners,
   getCampaignClickers,
   getCampaignReport,
@@ -98,11 +99,13 @@ function resolveTagName(
 async function syncOneCampaign(
   supabase: ReturnType<typeof db>,
   campaign: McRawCampaign,
-  segmentIdToTag: Map<number, string>
+  segmentIdToTag: Map<number, string>,
+  emailToTagName: Map<string, string>
 ): Promise<{ totalOpeners: number; newOpeners: number; newClickers: number; unmatchedEmails: number }> {
   const campaignId = campaign.id
   const now = new Date().toISOString()
 
+  // Campaign-level tag (from segment_opts — null when sent to whole audience)
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
   // Fetch engagement and report summary in parallel
@@ -229,16 +232,11 @@ async function syncOneCampaign(
 
   const existingByCustomer = new Map(existingLeads?.map(l => [l.customer_id, l]) ?? [])
 
-  // Look up standing tag assignments for auto-assignment
-  let autoAssignUserId: string | null = null
-  if (tagName) {
-    const { data: tagRule } = await supabase
-      .from('mc_tag_assignments')
-      .select('assigned_to_user_id')
-      .eq('tag_name', tagName)
-      .single()
-    autoAssignUserId = tagRule?.assigned_to_user_id ?? null
-  }
+  // Pre-fetch all tag→assignee rules so we can auto-assign per lead based on their tag
+  const { data: tagRules } = await supabase
+    .from('mc_tag_assignments')
+    .select('tag_name, assigned_to_user_id')
+  const tagAssignmentMap = new Map(tagRules?.map(r => [r.tag_name, r.assigned_to_user_id]) ?? [])
 
   let newOpeners = 0
   let newClickers = 0
@@ -246,6 +244,11 @@ async function syncOneCampaign(
   for (const row of engagementRows) {
     if (!row.customer_id) continue
     const existing = existingByCustomer.get(row.customer_id)
+
+    // Per-email tag: use the Mailchimp member tag the customer was pushed with.
+    // Falls back to the campaign-level segment tag (which may be null for whole-audience sends).
+    const leadTagName = emailToTagName.get(row.email) ?? tagName
+    const autoAssignUserId = leadTagName ? (tagAssignmentMap.get(leadTagName) ?? null) : null
 
     if (!existing) {
       // New lead
@@ -255,7 +258,7 @@ async function syncOneCampaign(
       await supabase.from('sales_leads').insert({
         customer_id: row.customer_id,
         mailchimp_campaign_id: campaignId,
-        tag_name: tagName,
+        tag_name: leadTagName,
         status: 'New',
         assigned_to_user_id: autoAssignUserId,
         assigned_at: autoAssignUserId ? now : null,
@@ -291,11 +294,28 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   const supabase = db()
   const now = new Date().toISOString()
 
-  // Fetch all audience tags (static segments) to resolve campaign segment IDs → tag names.
-  // Mailchimp represents tags as static segments; campaigns store the segment ID in
-  // segment_opts, not the tag name, so we need this lookup table.
+  // Fetch all audience tags (static segments).
+  // Used for two purposes:
+  //   1. segmentIdToTag: resolve campaign segment_opts ID → tag name (for segment-targeted campaigns)
+  //   2. emailToTagName: map each member's email to their Mailchimp tag (for whole-audience campaigns)
   const audienceTags = await listAudienceTags()
   const segmentIdToTag = new Map(audienceTags.map(t => [t.id, t.name]))
+
+  // Build email → tag name from Mailchimp member tags.
+  // This is the primary tag source for leads: when a campaign is sent to the whole
+  // audience, each opener/clicker is tagged with whatever tag they were pushed with,
+  // not the campaign's segment target (which is absent for whole-audience sends).
+  const emailToTagName = new Map<string, string>()
+  for (const tag of audienceTags) {
+    const members = await listTagMembers(tag.id)
+    console.log(`[sales-sync] tag "${tag.name}" (${tag.id}): ${members.length} members`)
+    for (const email of members) {
+      if (!emailToTagName.has(email)) {
+        emailToTagName.set(email, tag.name)
+      }
+    }
+  }
+  console.log(`[sales-sync] emailToTagName: ${emailToTagName.size} total tagged members`)
 
   const campaigns = await listCampaigns()
 
@@ -315,7 +335,7 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   try {
     // Process campaigns sequentially to avoid overwhelming Mailchimp rate limits
     for (const campaign of relevant) {
-      const { totalOpeners, newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, segmentIdToTag)
+      const { totalOpeners, newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, segmentIdToTag, emailToTagName)
       grandTotalOpeners += totalOpeners
       totalNewOpeners += newOpeners
       totalNewClickers += newClickers

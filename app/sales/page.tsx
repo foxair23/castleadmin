@@ -58,12 +58,25 @@ export default async function SalesPage() {
     { auth: { persistSession: false } }
   )
 
-  const [customersRes, campaignsRes, assigneesRes, lastCallsRes] = await Promise.all([
+  const [customersRes, locationsRes, contactsRes, campaignsRes, assigneesRes, lastCallsRes] = await Promise.all([
     customerIds.length
       ? adminDb
           .from('sf_customers')
-          .select('id, first_name, last_name, city, state_prov')
+          .select('id, customer_name, account_number, last_serviced_date')
           .in('id', customerIds)
+      : Promise.resolve({ data: [] }),
+    customerIds.length
+      ? adminDb
+          .from('sf_customer_locations')
+          .select('customer_id, city, state_prov, is_primary')
+          .in('customer_id', customerIds)
+      : Promise.resolve({ data: [] }),
+    customerIds.length
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? (adminDb as any)
+          .from('sf_customer_contacts')
+          .select('customer_id, is_primary, sf_contact_phones(phone, type, is_primary)')
+          .in('customer_id', customerIds)
       : Promise.resolve({ data: [] }),
     campaignIds.length
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -91,6 +104,25 @@ export default async function SalesPage() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const customerMap = new Map((customersRes.data ?? []).map((c: any) => [c.id, c]))
+
+  // Primary location per customer (primary flag preferred, else first)
+  const locationMap = new Map<string, { city: string | null; state_prov: string | null }>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const loc of (locationsRes.data ?? []) as any[]) {
+    if (!locationMap.has(loc.customer_id) || loc.is_primary) {
+      locationMap.set(loc.customer_id, { city: loc.city, state_prov: loc.state_prov })
+    }
+  }
+
+  // Primary phone per customer (first phone from primary contact, else any)
+  const phoneMap = new Map<string, string>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const contact of (contactsRes.data ?? []) as any[]) {
+    if (phoneMap.has(contact.customer_id) && !contact.is_primary) continue
+    const phones: { phone: string; is_primary: boolean }[] = contact.sf_contact_phones ?? []
+    const primary = phones.find(p => p.is_primary) ?? phones[0]
+    if (primary?.phone) phoneMap.set(contact.customer_id, primary.phone)
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const campaignMap = new Map((campaignsRes.data ?? []).map((c: any) => [c.mailchimp_campaign_id, c]))
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,14 +148,16 @@ export default async function SalesPage() {
       ? Math.floor((Date.now() - new Date(l.created_at).getTime()) / 86_400_000)
       : null
 
+    const location = locationMap.get(l.customer_id)
     return {
       id: l.id,
       customer_id: l.customer_id,
-      customer_name: customer
-        ? [customer.first_name, customer.last_name].filter(Boolean).join(' ')
-        : l.customer_id,
-      customer_city: customer?.city ?? null,
-      customer_state: customer?.state_prov ?? null,
+      customer_name: customer?.customer_name ?? l.customer_id,
+      account_number: customer?.account_number ?? null,
+      last_serviced_date: customer?.last_serviced_date ?? null,
+      phone: phoneMap.get(l.customer_id) ?? null,
+      customer_city: location?.city ?? null,
+      customer_state: location?.state_prov ?? null,
       mailchimp_campaign_id: l.mailchimp_campaign_id,
       campaign_subject: campaign?.subject ?? null,
       tag_name: l.tag_name ?? campaign?.tag_name ?? null,
