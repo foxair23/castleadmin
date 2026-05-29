@@ -6,6 +6,7 @@ import {
   getStaleEstimates,
   getFollowUpJobs,
   getOverdueCustomers,
+  getAwaitingSfJob,
 } from '@/lib/analytics/alerts'
 import ActionItemsClient from './ActionItemsClient'
 
@@ -22,13 +23,14 @@ export default async function ActionItemsPage() {
 
   if (profile?.role !== 'admin') redirect('/admin')
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, overdueCustomers] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, overdueCustomers, awaitingSfJob] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
       getStaleEstimates(),
       getFollowUpJobs(),
       getOverdueCustomers(),
+      getAwaitingSfJob(),
     ])
 
   return (
@@ -38,6 +40,7 @@ export default async function ActionItemsPage() {
       staleEstimates={staleEstimates}
       followUpJobs={followUpJobs}
       overdueCustomers={overdueCustomers}
+      awaitingSfJob={awaitingSfJob}
     />
   )
 }
