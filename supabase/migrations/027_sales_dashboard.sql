@@ -217,15 +217,18 @@ alter table public.mc_sync_runs           enable row level security;
 
 create policy "admin_all_mc_campaigns"           on public.mc_campaigns           for all using (public.is_admin());
 create policy "admin_all_mc_tag_assignments"     on public.mc_tag_assignments     for all using (public.is_admin());
+drop policy if exists "admin_all_mc_campaign_engagement" on public.mc_campaign_engagement;
 create policy "admin_all_mc_campaign_engagement" on public.mc_campaign_engagement for all using (public.is_admin());
 create policy "admin_all_mc_sync_runs"           on public.mc_sync_runs           for all using (public.is_admin());
 
 -- Sales users can read Mailchimp data to support the sync button and engagement panels
 create policy "sales_select_mc_campaigns"           on public.mc_campaigns           for select using (public.is_sales());
+drop policy if exists "sales_select_mc_campaign_engagement" on public.mc_campaign_engagement;
 create policy "sales_select_mc_campaign_engagement" on public.mc_campaign_engagement for select using (public.is_sales());
 create policy "sales_select_mc_sync_runs"           on public.mc_sync_runs           for select using (public.is_sales());
 
 -- Sales users can insert sync run records (triggered by their sync button press)
+drop policy if exists "sales_insert_mc_sync_runs" on public.mc_sync_runs;
 create policy "sales_insert_mc_sync_runs" on public.mc_sync_runs for insert with check (public.is_sales());
 
 
@@ -233,21 +236,28 @@ create policy "sales_insert_mc_sync_runs" on public.mc_sync_runs for insert with
 alter table public.sales_pipeline_statuses  enable row level security;
 alter table public.sales_call_dispositions  enable row level security;
 
+drop policy if exists "admin_all_sales_pipeline_statuses" on public.sales_pipeline_statuses;
 create policy "admin_all_sales_pipeline_statuses" on public.sales_pipeline_statuses for all using (public.is_admin());
+drop policy if exists "admin_all_sales_call_dispositions" on public.sales_call_dispositions;
 create policy "admin_all_sales_call_dispositions" on public.sales_call_dispositions for all using (public.is_admin());
 
+drop policy if exists "sales_select_sales_pipeline_statuses" on public.sales_pipeline_statuses;
 create policy "sales_select_sales_pipeline_statuses" on public.sales_pipeline_statuses for select using (public.is_sales());
+drop policy if exists "sales_select_sales_call_dispositions" on public.sales_call_dispositions;
 create policy "sales_select_sales_call_dispositions" on public.sales_call_dispositions for select using (public.is_sales());
 
 
 -- Sales leads: admin sees all; sales sees only their own
 alter table public.sales_leads enable row level security;
 
+drop policy if exists "admin_all_sales_leads" on public.sales_leads;
 create policy "admin_all_sales_leads" on public.sales_leads for all using (public.is_admin());
 
+drop policy if exists "sales_select_own_leads" on public.sales_leads;
 create policy "sales_select_own_leads" on public.sales_leads
   for select using (public.is_sales() and assigned_to_user_id = auth.uid());
 
+drop policy if exists "sales_update_own_leads" on public.sales_leads;
 create policy "sales_update_own_leads" on public.sales_leads
   for update using (public.is_sales() and assigned_to_user_id = auth.uid());
 
@@ -255,8 +265,10 @@ create policy "sales_update_own_leads" on public.sales_leads
 -- Sales calls: admin sees all; sales sees calls on their assigned leads
 alter table public.sales_calls enable row level security;
 
+drop policy if exists "admin_all_sales_calls" on public.sales_calls;
 create policy "admin_all_sales_calls" on public.sales_calls for all using (public.is_admin());
 
+drop policy if exists "sales_select_calls_on_own_leads" on public.sales_calls;
 create policy "sales_select_calls_on_own_leads" on public.sales_calls
   for select using (
     public.is_sales() and exists (
@@ -265,6 +277,7 @@ create policy "sales_select_calls_on_own_leads" on public.sales_calls
     )
   );
 
+drop policy if exists "sales_insert_calls_on_own_leads" on public.sales_calls;
 create policy "sales_insert_calls_on_own_leads" on public.sales_calls
   for insert with check (
     public.is_sales() and exists (
@@ -277,8 +290,10 @@ create policy "sales_insert_calls_on_own_leads" on public.sales_calls
 -- Sales notes: admin sees all; sales sees notes on their assigned leads
 alter table public.sales_notes enable row level security;
 
+drop policy if exists "admin_all_sales_notes" on public.sales_notes;
 create policy "admin_all_sales_notes" on public.sales_notes for all using (public.is_admin());
 
+drop policy if exists "sales_select_notes_on_own_leads" on public.sales_notes;
 create policy "sales_select_notes_on_own_leads" on public.sales_notes
   for select using (
     public.is_sales() and exists (
@@ -287,6 +302,7 @@ create policy "sales_select_notes_on_own_leads" on public.sales_notes
     )
   );
 
+drop policy if exists "sales_insert_notes_on_own_leads" on public.sales_notes;
 create policy "sales_insert_notes_on_own_leads" on public.sales_notes
   for insert with check (
     public.is_sales() and exists (
@@ -299,8 +315,10 @@ create policy "sales_insert_notes_on_own_leads" on public.sales_notes
 -- Status history: admin sees all; sales sees history on their assigned leads
 alter table public.sales_status_history enable row level security;
 
+drop policy if exists "admin_all_sales_status_history" on public.sales_status_history;
 create policy "admin_all_sales_status_history" on public.sales_status_history for all using (public.is_admin());
 
+drop policy if exists "sales_select_history_on_own_leads" on public.sales_status_history;
 create policy "sales_select_history_on_own_leads" on public.sales_status_history
   for select using (
     public.is_sales() and exists (
@@ -309,6 +327,7 @@ create policy "sales_select_history_on_own_leads" on public.sales_status_history
     )
   );
 
+drop policy if exists "sales_insert_history_on_own_leads" on public.sales_status_history;
 create policy "sales_insert_history_on_own_leads" on public.sales_status_history
   for insert with check (
     public.is_sales() and exists (

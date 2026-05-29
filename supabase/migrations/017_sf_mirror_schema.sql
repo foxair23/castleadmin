@@ -537,7 +537,9 @@ create policy "admin_all_sf_customers"          on public.sf_customers          
 create policy "admin_all_sf_customer_contacts"  on public.sf_customer_contacts  for all using (public.is_admin());
 create policy "admin_all_sf_contact_emails"     on public.sf_contact_emails     for all using (public.is_admin());
 create policy "admin_all_sf_contact_phones"     on public.sf_contact_phones     for all using (public.is_admin());
+drop policy if exists "admin_all_sf_customer_locations" on public.sf_customer_locations;
 create policy "admin_all_sf_customer_locations" on public.sf_customer_locations for all using (public.is_admin());
+drop policy if exists "admin_all_sf_customer_equipment" on public.sf_customer_equipment;
 create policy "admin_all_sf_customer_equipment" on public.sf_customer_equipment for all using (public.is_admin());
 create policy "admin_all_sf_job_statuses"       on public.sf_job_statuses       for all using (public.is_admin());
 create policy "admin_all_sf_job_categories"     on public.sf_job_categories     for all using (public.is_admin());
@@ -549,6 +551,7 @@ create policy "admin_all_sf_job_techs"          on public.sf_job_techs          
 create policy "admin_all_sf_job_payments"       on public.sf_job_payments       for all using (public.is_admin());
 create policy "admin_all_sf_estimates"          on public.sf_estimates          for all using (public.is_admin());
 create policy "admin_all_sf_invoices"           on public.sf_invoices           for all using (public.is_admin());
+drop policy if exists "admin_all_sf_invoice_line_items" on public.sf_invoice_line_items;
 create policy "admin_all_sf_invoice_line_items" on public.sf_invoice_line_items for all using (public.is_admin());
 create policy "admin_all_sf_sync_runs"          on public.sf_sync_runs          for all using (public.is_admin());
 create policy "admin_all_mailchimp_push_log"    on public.mailchimp_push_log    for all using (public.is_admin());
