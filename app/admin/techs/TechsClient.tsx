@@ -18,12 +18,13 @@ interface NewTechForm {
   full_name: string
   email: string
   password: string
+  role: 'technician' | 'sales'
 }
 
 export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) {
   const [techs, setTechs] = useState(initialTechs)
   const [showNewForm, setShowNewForm] = useState(false)
-  const [form, setForm] = useState<NewTechForm>({ full_name: '', email: '', password: '' })
+  const [form, setForm] = useState<NewTechForm>({ full_name: '', email: '', password: '', role: 'technician' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -57,17 +58,18 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
         full_name: form.full_name.trim(),
         email: form.email.trim(),
         password: form.password,
+        role: form.role,
       }),
     })
 
     const data = await res.json()
     if (!res.ok) {
-      setError(data.error ?? 'Failed to create technician')
+      setError(data.error ?? `Failed to create ${form.role === 'sales' ? 'sales user' : 'technician'}`)
     } else {
       setTechs(t => [...t, data.profile].sort((a, b) => a.full_name.localeCompare(b.full_name)))
-      setForm({ full_name: '', email: '', password: '' })
+      setForm({ full_name: '', email: '', password: '', role: 'technician' })
       setShowNewForm(false)
-      setSuccess(`Technician "${data.profile.full_name}" created successfully.`)
+      setSuccess(`${form.role === 'sales' ? 'Sales user' : 'Technician'} "${data.profile.full_name}" created successfully.`)
     }
     setSaving(false)
   }
@@ -177,12 +179,12 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-900">Technicians</h1>
+        <h1 className="text-xl font-bold text-gray-900">Manage Users</h1>
         <button
           onClick={() => { setShowNewForm(true); setError(''); setSuccess('') }}
           className="bg-red-600 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
         >
-          + Add Technician
+          + Add User
         </button>
       </div>
 
@@ -203,8 +205,19 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
           onSubmit={handleCreateTech}
           className="bg-white border border-red-200 rounded-lg p-4 space-y-3"
         >
-          <h2 className="text-sm font-semibold text-gray-800">New Technician</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <h2 className="text-sm font-semibold text-gray-800">New User</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+              <select
+                value={form.role}
+                onChange={e => setForm({ ...form, role: e.target.value as 'technician' | 'sales' })}
+                className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-full focus:outline-none focus:ring-2 focus:ring-red-400"
+              >
+                <option value="technician">Technician</option>
+                <option value="sales">Sales</option>
+              </select>
+            </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Full Name</label>
               <input
@@ -250,13 +263,13 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
               disabled={saving}
               className="bg-red-600 text-white rounded px-3 py-1.5 text-sm hover:bg-red-600 disabled:opacity-60"
             >
-              {saving ? 'Creating…' : 'Create Technician'}
+              {saving ? 'Creating…' : `Create ${form.role === 'sales' ? 'Sales User' : 'Technician'}`}
             </button>
           </div>
         </form>
       )}
 
-      {/* Techs table */}
+      {/* Users table */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -264,6 +277,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Email</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Role</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-600">Status</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -271,8 +285,8 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
             <tbody className="divide-y divide-gray-100">
               {techs.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="text-center py-8 text-gray-400 text-sm">
-                    No technicians yet. Add one above.
+                  <td colSpan={5} className="text-center py-8 text-gray-400 text-sm">
+                    No users yet. Add one above.
                   </td>
                 </tr>
               )}
@@ -281,18 +295,27 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                   <tr key={tech.id} className={tech.is_active ? '' : 'opacity-50'}>
                     <td className="px-4 py-3 font-medium text-gray-900">
                       {tech.full_name}
-                      {tech.weekly_bonus > 0 && (
+                      {tech.role === 'technician' && tech.weekly_bonus > 0 && (
                         <span className="ml-2 text-xs text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded font-medium">
                           +${tech.weekly_bonus.toFixed(0)}/wk
                         </span>
                       )}
-                      {tech.gas_eligible && (
+                      {tech.role === 'technician' && tech.gas_eligible && (
                         <span className="ml-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
                           ⛽ Gas
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-sm">{tech.email}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                        tech.role === 'sales'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {tech.role === 'sales' ? 'Sales' : 'Technician'}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
                         tech.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
@@ -302,24 +325,28 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-3 text-xs">
-                        <button
-                          onClick={() => handleToggleGas(tech)}
-                          className={tech.gas_eligible ? 'text-amber-600 hover:underline' : 'text-gray-500 hover:underline'}
-                        >
-                          {tech.gas_eligible ? 'Gas: On' : 'Gas: Off'}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setBonusId(bonusId === tech.id ? null : tech.id)
-                            setBonusForm(f => ({ ...f, [tech.id]: String(tech.weekly_bonus) }))
-                            setEmailingId(null)
-                            setResetingId(null)
-                            setError('')
-                          }}
-                          className="text-purple-600 hover:underline"
-                        >
-                          Set Bonus
-                        </button>
+                        {tech.role === 'technician' && (
+                          <button
+                            onClick={() => handleToggleGas(tech)}
+                            className={tech.gas_eligible ? 'text-amber-600 hover:underline' : 'text-gray-500 hover:underline'}
+                          >
+                            {tech.gas_eligible ? 'Gas: On' : 'Gas: Off'}
+                          </button>
+                        )}
+                        {tech.role === 'technician' && (
+                          <button
+                            onClick={() => {
+                              setBonusId(bonusId === tech.id ? null : tech.id)
+                              setBonusForm(f => ({ ...f, [tech.id]: String(tech.weekly_bonus) }))
+                              setEmailingId(null)
+                              setResetingId(null)
+                              setError('')
+                            }}
+                            className="text-purple-600 hover:underline"
+                          >
+                            Set Bonus
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             setEmailingId(emailingId === tech.id ? null : tech.id)
