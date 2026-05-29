@@ -99,19 +99,11 @@ export interface McRawClicker {
 // Campaign listing
 // ─────────────────────────────────────────────────────────────
 
-const CAMPAIGN_FIELDS = [
-  'campaigns.id',
-  'campaigns.type',
-  'campaigns.send_time',
-  'campaigns.emails_sent',
-  'campaigns.settings',
-  'campaigns.recipients',  // fetch full object — sub-field filtering strips segment_opts
-  'campaigns.report_summary',
-  'total_items',
-].join(',')
-
 // Returns all sent campaigns for the configured audience, newest first.
 // Paginates internally (Mailchimp max 1000/page).
+// No `fields` filter — Mailchimp silently strips nested objects like
+// recipients.segment_opts when any field filter is present, even when the
+// parent object (recipients) is requested as a whole.
 export async function listCampaigns(): Promise<McRawCampaign[]> {
   if (!isConfigured()) return []
 
@@ -125,13 +117,17 @@ export async function listCampaigns(): Promise<McRawCampaign[]> {
       status: 'sent',
       count: PAGE,
       offset,
-      fields: CAMPAIGN_FIELDS,
       sort_field: 'send_time',
       sort_dir: 'DESC',
     })
     if (!res.ok) break
     const data = await res.json() as { campaigns: McRawCampaign[]; total_items: number }
-    results.push(...(data.campaigns ?? []))
+    const page = data.campaigns ?? []
+    console.log(`[mailchimp] listCampaigns offset=${offset}: ${page.length} campaigns, total_items=${data.total_items}`)
+    if (page.length > 0) {
+      console.log(`[mailchimp] listCampaigns first campaign recipients:`, JSON.stringify(page[0].recipients))
+    }
+    results.push(...page)
     if (results.length >= data.total_items) break
     offset += PAGE
   }
@@ -293,12 +289,19 @@ export interface McAudienceTag {
 
 export async function listAudienceTags(): Promise<McAudienceTag[]> {
   if (!isConfigured()) return []
+  // No fields filter — avoids Mailchimp silently omitting data.
+  // type=static returns tags (Mailchimp tags are static segments in the API).
   const res = await mcGet(`/lists/${AUDIENCE_ID}/segments`, {
     type: 'static',
     count: 1000,
-    fields: 'segments.id,segments.name,total_items',
   })
-  if (!res.ok) return []
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    console.error(`[mailchimp] listAudienceTags HTTP ${res.status}: ${body}`)
+    return []
+  }
   const data = await res.json() as { segments: McAudienceTag[] }
-  return data.segments ?? []
+  const tags = data.segments ?? []
+  console.log(`[mailchimp] listAudienceTags: ${tags.length} tags:`, JSON.stringify(tags.map(t => ({ id: t.id, name: t.name }))))
+  return tags
 }
