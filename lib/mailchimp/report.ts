@@ -104,11 +104,8 @@ const CAMPAIGN_FIELDS = [
   'campaigns.type',
   'campaigns.send_time',
   'campaigns.emails_sent',
-  'campaigns.settings.subject_line',
-  'campaigns.settings.from_name',
-  'campaigns.recipients.list_id',
-  'campaigns.recipients.segment_text',
-  'campaigns.recipients.segment_opts',
+  'campaigns.settings',
+  'campaigns.recipients',  // fetch full object — sub-field filtering strips segment_opts
   'campaigns.report_summary',
   'total_items',
 ].join(',')
