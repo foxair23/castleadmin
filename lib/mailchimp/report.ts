@@ -305,3 +305,30 @@ export async function listAudienceTags(): Promise<McAudienceTag[]> {
   console.log(`[mailchimp] listAudienceTags: ${tags.length} tags:`, JSON.stringify(tags.map(t => ({ id: t.id, name: t.name }))))
   return tags
 }
+
+// Fetch all member email addresses belonging to a Mailchimp tag (static segment).
+// Used to build an email → tag_name map so leads are tagged with the member's
+// Mailchimp tag regardless of which segment the campaign was sent to.
+export async function listTagMembers(tagId: number): Promise<string[]> {
+  if (!isConfigured()) return []
+  const PAGE = 1000
+  const emails: string[] = []
+  let offset = 0
+  while (true) {
+    const res = await mcGet(`/lists/${AUDIENCE_ID}/segments/${tagId}/members`, {
+      count: PAGE,
+      offset,
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.error(`[mailchimp] listTagMembers tag=${tagId} HTTP ${res.status}: ${body}`)
+      break
+    }
+    const data = await res.json() as { members: Array<{ email_address: string }>; total_items: number }
+    const members = data.members ?? []
+    emails.push(...members.map(m => m.email_address.toLowerCase()))
+    if (emails.length >= (data.total_items ?? 0)) break
+    offset += PAGE
+  }
+  return emails
+}
