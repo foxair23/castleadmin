@@ -64,10 +64,11 @@ export default async function AdminSalesPage() {
       .eq('is_active', true)
       .order('full_name'),
 
-    // Distinct tags from sales_leads (for bulk assign filter)
+    // Distinct tags from both mc_campaigns and sales_leads (for bulk assign filter).
+    // mc_campaigns gives tags even before any leads are created.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (database as any)
-      .from('sales_leads')
+      .from('mc_campaigns')
       .select('tag_name')
       .not('tag_name', 'is', null),
 
