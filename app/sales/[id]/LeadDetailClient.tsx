@@ -243,7 +243,7 @@ function LogCallModal({
               type="datetime-local"
               value={calledAt}
               onChange={e => setCalledAt(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
           <div>
@@ -251,7 +251,7 @@ function LogCallModal({
             <select
               value={disposition}
               onChange={e => setDisposition(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             >
               <option value="">— select —</option>
               {dispositions.map(d => (
@@ -267,7 +267,7 @@ function LogCallModal({
               value={duration}
               onChange={e => setDuration(e.target.value)}
               placeholder="e.g. 5"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
           <div>
@@ -276,7 +276,7 @@ function LogCallModal({
               value={notes}
               onChange={e => setNotes(e.target.value)}
               rows={3}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
               placeholder="What happened on this call?"
             />
           </div>
@@ -332,7 +332,7 @@ function AddNoteModal({ leadId, onClose }: { leadId: string; onClose: () => void
             onChange={e => setBody(e.target.value)}
             rows={5}
             autoFocus
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
             placeholder="Add a note about this lead…"
           />
         </div>
@@ -445,7 +445,7 @@ export default function LeadDetailClient({
                 onChange={handleStatusChange}
                 disabled={statusPending}
                 defaultValue=""
-                className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60"
+                className="text-sm text-gray-900 border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60"
               >
                 <option value="" disabled>Change status…</option>
                 {pipelineStatuses.map(s => (

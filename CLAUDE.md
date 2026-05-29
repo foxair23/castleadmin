@@ -57,6 +57,11 @@ RLS policies, triggers, and seeds the 9 initial job types.
 - Submitted week totals are frozen — rate changes don't retroactively recalculate
 - Techs cannot self-register; admin creates accounts via Manage Technicians
 
+## UI Rules
+- **Always add `text-gray-900` to every `<input>`, `<select>`, and `<textarea>`.**
+  Without it, typed text inherits the page's muted color and becomes unreadable on
+  a white background. This has caused bugs before — don't skip it.
+
 ## Auth Flow
 - Admin creates technician accounts (email + temp password, shared manually)
 - Login via Supabase email/password auth

@@ -96,7 +96,7 @@ function InlineRename({
       onChange={e => setVal(e.target.value)}
       onBlur={() => { setEditing(false); if (val.trim() && val !== initialValue) onSave(val) }}
       onKeyDown={e => { if (e.key === 'Enter') { setEditing(false); if (val.trim()) onSave(val) } if (e.key === 'Escape') { setVal(initialValue); setEditing(false) } }}
-      className="border border-gray-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 w-48"
+      className="border border-gray-300 rounded px-2 py-0.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 w-48"
     />
   )
 }
@@ -239,7 +239,7 @@ function EditableList({
           onChange={e => setNewName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
           placeholder={placeholder}
-          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
         />
         <button
           onClick={handleAdd}
@@ -332,7 +332,7 @@ function AssignTab({
           <select
             value={campaignId}
             onChange={e => setCampaignId(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             <option value="">All campaigns</option>
             {campaigns.map(c => (
@@ -347,7 +347,7 @@ function AssignTab({
           <select
             value={tagName}
             onChange={e => setTagName(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             <option value="">All tags</option>
             {tags.map(t => <option key={t} value={t}>{t}</option>)}
@@ -358,7 +358,7 @@ function AssignTab({
           <select
             value={assigneeId}
             onChange={e => setAssigneeId(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             <option value="">— select rep —</option>
             {reps.map(r => (
@@ -421,7 +421,7 @@ function UnmatchedRow({ eng }: { eng: UnmatchedEngagement }) {
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
           placeholder="Search customer by name or account #…"
-          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
         />
         <button
           onClick={handleSearch}
