@@ -45,16 +45,19 @@ async function resolveEmailsToCustomerIds(
     const orFilter = chunk
       .map(e => `email.ilike.${e.replace(/[%_]/g, '\\$&')}`)
       .join(',')
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('sf_customer_contacts')
       .select('customer_id, email')
       .or(orFilter)
+    if (error) console.error('[sales-sync] sf_customer_contacts query error:', error)
+    console.log(`[sales-sync] email chunk ${i}–${i + chunk.length}: queried ${chunk.length} emails, got ${data?.length ?? 0} matches`)
     for (const row of data ?? []) {
       if (row.email && row.customer_id) {
         map.set(row.email.toLowerCase(), row.customer_id)
       }
     }
   }
+  console.log(`[sales-sync] total emails resolved: ${map.size} of ${emails.length}`)
   return map
 }
 
@@ -67,20 +70,28 @@ function resolveTagName(
   segmentIdToTag: Map<number, string>
 ): string | null {
   const opts = campaign.recipients?.segment_opts
+  console.log(`[sales-sync] campaign ${campaign.id} segment_opts:`, JSON.stringify(opts))
+
   if (!opts) return null
 
   // saved_segment_id is set when the campaign targeted a saved/static segment
   if (opts.saved_segment_id && opts.saved_segment_id > 0) {
-    return segmentIdToTag.get(opts.saved_segment_id) ?? null
+    const tag = segmentIdToTag.get(opts.saved_segment_id) ?? null
+    console.log(`[sales-sync] campaign ${campaign.id} saved_segment_id=${opts.saved_segment_id} → tag=${tag}`)
+    return tag
   }
 
   // Fall back to conditions array
   const conditions = opts.conditions ?? []
   for (const c of conditions) {
     if (c.condition_type === 'StaticSegment' && typeof c.value === 'number') {
-      return segmentIdToTag.get(c.value) ?? null
+      const tag = segmentIdToTag.get(c.value) ?? null
+      console.log(`[sales-sync] campaign ${campaign.id} StaticSegment value=${c.value} → tag=${tag}`)
+      return tag
     }
   }
+
+  console.log(`[sales-sync] campaign ${campaign.id} no tag resolved. segmentIdToTag keys: ${JSON.stringify([...segmentIdToTag.keys()])}`)
   return null
 }
 
