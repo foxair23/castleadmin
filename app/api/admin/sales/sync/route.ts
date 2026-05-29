@@ -51,7 +51,13 @@ export async function POST() {
 
   try {
     const result = await runMailchimpSalesSync(user.id)
-    return NextResponse.json({ ok: true, ...result })
+    return NextResponse.json({
+      ok: true,
+      campaignsSynced: result.campaignsSynced,
+      newOpeners: result.newOpeners,
+      newClickers: result.newClickers,
+      unmatchedEmails: result.unmatchedEmails,
+    })
   } catch (err: unknown) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Sync failed' },

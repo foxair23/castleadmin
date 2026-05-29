@@ -32,15 +32,17 @@ export default async function SalesPage() {
     : supabase
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: rawLeads } = await (db as any)
+  const { data: rawLeads, error: leadsError } = await (db as any)
     .from('sales_leads')
     .select(
       'id, customer_id, mailchimp_campaign_id, tag_name, status, ' +
       'assigned_to_user_id, created_at, first_opened_at, last_opened_at, ' +
       'open_count, click_count, last_activity_at, closed_outcome, sf_job_created'
     )
-    .order('last_activity_at', { ascending: true })
+    .order('last_activity_at', { ascending: false })
     .limit(500)
+
+  if (leadsError) console.error('[sales/page] sales_leads query error:', leadsError)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const leads: any[] = rawLeads ?? []

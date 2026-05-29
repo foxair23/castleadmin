@@ -115,9 +115,10 @@ export default function SalesLeadsClient({
         setSyncMessage(data.error ?? 'Sync failed')
       } else {
         setSyncStatus('done')
-        setSyncMessage(
-          `Synced ${data.campaignsSynced} campaign${data.campaignsSynced !== 1 ? 's' : ''} · ${data.newOpeners} new opener${data.newOpeners !== 1 ? 's' : ''} · ${data.newClickers} new clicker${data.newClickers !== 1 ? 's' : ''}`
-        )
+        let msg = `Synced ${data.campaignsSynced} campaign${data.campaignsSynced !== 1 ? 's' : ''} · ${data.newOpeners} new lead${data.newOpeners !== 1 ? 's' : ''}`
+        if (data.newClickers > 0) msg += ` (${data.newClickers} clicked)`
+        if (data.unmatchedEmails > 0) msg += ` · ${data.unmatchedEmails} unmatched email${data.unmatchedEmails !== 1 ? 's' : ''} — link them in Sales Admin`
+        setSyncMessage(msg)
         startTransition(() => router.refresh())
       }
     } catch {
