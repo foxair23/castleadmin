@@ -123,8 +123,13 @@ async function syncOneCampaign(
         send_time: campaign.send_time || null,
         tag_name: tagName,
         total_recipients: campaign.emails_sent ?? report?.emails_sent ?? null,
-        total_opens: report?.opens?.unique_opens ?? campaign.report_summary?.unique_opens ?? null,
-        total_clicks: report?.clicks?.clicks_total ?? campaign.report_summary?.clicks ?? null,
+        // Use actual unique opener count from email-activity as the most accurate source.
+        // Fall back to report unique_opens when openers haven't been fetched yet.
+        total_opens: openers.length > 0
+          ? openers.length
+          : (report?.opens?.unique_opens ?? campaign.report_summary?.unique_opens ?? null),
+        // unique_clicks = distinct people who clicked; clicks_total counts repeated clicks by same person.
+        total_clicks: report?.clicks?.unique_clicks ?? campaign.report_summary?.unique_clicks ?? null,
         is_tracked: true,
         last_synced_at: now,
       },
