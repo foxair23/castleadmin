@@ -215,16 +215,21 @@ alter table public.mc_tag_assignments     enable row level security;
 alter table public.mc_campaign_engagement enable row level security;
 alter table public.mc_sync_runs           enable row level security;
 
+drop policy if exists "admin_all_mc_campaigns" on public.mc_campaigns;
 create policy "admin_all_mc_campaigns"           on public.mc_campaigns           for all using (public.is_admin());
+drop policy if exists "admin_all_mc_tag_assignments" on public.mc_tag_assignments;
 create policy "admin_all_mc_tag_assignments"     on public.mc_tag_assignments     for all using (public.is_admin());
 drop policy if exists "admin_all_mc_campaign_engagement" on public.mc_campaign_engagement;
 create policy "admin_all_mc_campaign_engagement" on public.mc_campaign_engagement for all using (public.is_admin());
+drop policy if exists "admin_all_mc_sync_runs" on public.mc_sync_runs;
 create policy "admin_all_mc_sync_runs"           on public.mc_sync_runs           for all using (public.is_admin());
 
 -- Sales users can read Mailchimp data to support the sync button and engagement panels
+drop policy if exists "sales_select_mc_campaigns" on public.mc_campaigns;
 create policy "sales_select_mc_campaigns"           on public.mc_campaigns           for select using (public.is_sales());
 drop policy if exists "sales_select_mc_campaign_engagement" on public.mc_campaign_engagement;
 create policy "sales_select_mc_campaign_engagement" on public.mc_campaign_engagement for select using (public.is_sales());
+drop policy if exists "sales_select_mc_sync_runs" on public.mc_sync_runs;
 create policy "sales_select_mc_sync_runs"           on public.mc_sync_runs           for select using (public.is_sales());
 
 -- Sales users can insert sync run records (triggered by their sync button press)
