@@ -6,7 +6,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 interface NavbarProps {
-  role: 'admin' | 'technician'
+  role: 'admin' | 'technician' | 'sales'
   fullName: string
 }
 
@@ -54,6 +54,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                 <NavLink href="/admin/action-items" current={pathname.startsWith('/admin/action-items')}>Action Items</NavLink>
                 <NavLink href="/admin/marketing" current={pathname.startsWith('/admin/marketing')}>Marketing</NavLink>
                 <NavLink href="/admin/mailchimp" current={pathname.startsWith('/admin/mailchimp')}>Mailchimp</NavLink>
+                <NavLink href="/sales" current={pathname.startsWith('/sales')}>Sales</NavLink>
               </>
             ) : (
               <>
