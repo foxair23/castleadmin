@@ -548,13 +548,8 @@ interface IncrementalEntityConfig {
 }
 
 const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
-  {
-    entity: 'customers', path: '/customers', table: 'sf_customers',
-    // SF /customers does not support updated_date filtering — sync all each run
-    expand: 'contacts,contacts.phones,contacts.emails,locations',
-    mapper: mapCustomer,
-    afterUpsert: syncCustomerChildren,
-  },
+  // Customers are NOT included here — 23k+ records with no date filter support
+  // would exceed Vercel's 300s limit. Use "Run Full Backfill" to refresh customers.
   {
     entity: 'jobs', path: '/jobs', table: 'sf_jobs',
     filterKey: 'filters[updated_date][gte]',
