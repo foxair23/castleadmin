@@ -30,7 +30,7 @@ export default async function AdminSalesPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (database as any)
       .from('mc_campaigns')
-      .select('mailchimp_campaign_id, subject, tag_name, send_time, total_recipients, total_opens, total_clicks, is_tracked, last_synced_at, assigned_to_user_id')
+      .select('mailchimp_campaign_id, subject, tag_name, send_time, total_recipients, total_opens, total_clicks, is_tracked, last_synced_at, assigned_to_user_id, openers_only')
       .order('send_time', { ascending: false })
       .limit(50),
 

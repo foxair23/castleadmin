@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import {
-  toggleCampaignTracked, saveCampaignAssignment,
+  toggleCampaignTracked, saveCampaignAssignment, toggleCampaignOpenersOnly,
   addPipelineStatus, renamePipelineStatus, deletePipelineStatus, movePipelineStatus,
   addCallDisposition, renameCallDisposition, deleteCallDisposition,
   linkEngagementToCustomer, dismissEngagement, searchCustomers,
@@ -22,6 +22,7 @@ interface Campaign {
   is_tracked: boolean
   last_synced_at: string | null
   assigned_to_user_id: string | null
+  openers_only: boolean
 }
 
 interface PipelineStatus { id: string; name: string; sort_order: number; is_active: boolean }
@@ -156,6 +157,7 @@ function CampaignsTab({
             <th className="pb-2 font-medium pr-4 text-right">Opens</th>
             <th className="pb-2 font-medium pr-4 text-right">Clicks</th>
             <th className="pb-2 font-medium pr-4">Assigned rep</th>
+            <th className="pb-2 font-medium pr-4 text-center">Openers only</th>
             <th className="pb-2 font-medium">Tracked</th>
           </tr>
         </thead>
@@ -189,6 +191,17 @@ function CampaignsTab({
                           <span className="text-xs text-green-700">{resultByCampaign[c.mailchimp_campaign_id]}</span>
                         )}
                   </div>
+                </td>
+                <td className="py-2 pr-4 text-center">
+                  <input
+                    type="checkbox"
+                    checked={c.openers_only ?? false}
+                    onChange={e => startTransition(async () => {
+                      await toggleCampaignOpenersOnly(c.mailchimp_campaign_id, e.target.checked)
+                    })}
+                    title="When checked, only confirmed openers are assigned to the rep (not all recipients)"
+                    className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer"
+                  />
                 </td>
                 <td className="py-2">
                   <button
