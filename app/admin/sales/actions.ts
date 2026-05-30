@@ -229,9 +229,8 @@ export async function saveTagAssignment(tagName: string, userId: string | null) 
       { onConflict: 'tag_name' }
     )
 
-  // Retroactively (re)assign all existing leads with this tag to the rep.
-  // We assign every lead carrying the tag (including currently-unassigned ones);
-  // re-stamping a lead already assigned to this rep is harmless.
+  // Retroactively (re)assign every existing lead carrying this tag to the rep.
+  // Includes currently-unassigned leads; re-stamping an already-correct lead is harmless.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: leads } = await (database as any)
     .from('sales_leads')
