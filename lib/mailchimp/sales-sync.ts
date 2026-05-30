@@ -141,6 +141,16 @@ async function syncOneCampaign(
     getCampaignReport(campaignId),
   ])
 
+  // Diagnostic: compare the API's aggregate open count (report summary) against
+  // the per-member open-details count. If the report shows opens but open-details
+  // returns 0, Mailchimp is exposing only an aggregate (MPP) figure with no
+  // per-person detail available via the API.
+  console.log(
+    `[sales-sync] campaign ${campaignId} report: unique_opens=${report?.opens?.unique_opens ?? 'n/a'} ` +
+    `opens_total=${report?.opens?.opens_total ?? 'n/a'} emails_sent=${report?.emails_sent ?? 'n/a'} ` +
+    `| open-details members=${openers.length}`
+  )
+
   // Upsert mc_campaigns row
   await supabase
     .from('mc_campaigns')
