@@ -247,8 +247,13 @@ export async function getCampaignSentTo(campaignId: string): Promise<McRawActivi
     const data = await res.json() as { sent_to?: McSentToMember[]; members?: McSentToMember[]; total_items: number }
     const members = data.sent_to ?? data.members ?? []
     console.log(`[mailchimp] sent-to ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}, keys=${Object.keys(data).join(',')}`)
-    if (members.length === 0 && offset === 0) {
-      console.log(`[mailchimp] sent-to ${campaignId} full response: ${JSON.stringify(data).slice(0, 1000)}`)
+    if (offset === 0) {
+      if (members.length === 0) {
+        console.log(`[mailchimp] sent-to ${campaignId} full response: ${JSON.stringify(data).slice(0, 1000)}`)
+      } else {
+        console.log(`[mailchimp] sent-to ${campaignId} first member keys: ${Object.keys(members[0]).join(',')}`)
+        console.log(`[mailchimp] sent-to ${campaignId} first member: ${JSON.stringify(members[0]).slice(0, 500)}`)
+      }
     }
 
     for (const m of members) {

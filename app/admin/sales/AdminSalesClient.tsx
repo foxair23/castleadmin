@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import {
-  toggleCampaignTracked,
+  toggleCampaignTracked, saveCampaignAssignment,
   addPipelineStatus, renamePipelineStatus, deletePipelineStatus, movePipelineStatus,
   addCallDisposition, renameCallDisposition, deleteCallDisposition,
   linkEngagementToCustomer, dismissEngagement, searchCustomers,
@@ -21,6 +21,7 @@ interface Campaign {
   total_clicks: number | null
   is_tracked: boolean
   last_synced_at: string | null
+  assigned_to_user_id: string | null
 }
 
 interface PipelineStatus { id: string; name: string; sort_order: number; is_active: boolean }
@@ -46,8 +47,9 @@ interface Props {
   reps: Rep[]
   tags: string[]
   statusUsageCounts: Record<string, number>
-  tagAssignments: Record<string, string>   // tag_name → user_id
+  tagAssignments: Record<string, string>        // tag_name → user_id
   campaignsByTag: Record<string, Campaign[]>
+  campaignAssignments: Record<string, string>   // campaign_id → user_id
 }
 
 type Tab = 'campaigns' | 'pipeline' | 'tags' | 'unmatched'
@@ -105,12 +107,37 @@ function InlineRename({
 
 // ─── Campaigns tab ────────────────────────────────────────────────────────────
 
-function CampaignsTab({ campaigns }: { campaigns: Campaign[] }) {
+function CampaignsTab({
+  campaigns,
+  reps,
+  campaignAssignments,
+}: {
+  campaigns: Campaign[]
+  reps: Rep[]
+  campaignAssignments: Record<string, string>
+}) {
   const [, startTransition] = useTransition()
+  const [localAssignments, setLocalAssignments] = useState<Record<string, string>>({ ...campaignAssignments })
+  const [savingCampaign, setSavingCampaign] = useState<string | null>(null)
+  const [resultByCampaign, setResultByCampaign] = useState<Record<string, string>>({})
 
   function toggle(id: string, current: boolean) {
+    startTransition(async () => { await toggleCampaignTracked(id, !current) })
+  }
+
+  function handleAssign(campaignId: string, userId: string) {
+    setLocalAssignments(prev => ({ ...prev, [campaignId]: userId }))
+    setResultByCampaign(prev => ({ ...prev, [campaignId]: '' }))
+    setSavingCampaign(campaignId)
     startTransition(async () => {
-      await toggleCampaignTracked(id, !current)
+      const res = await saveCampaignAssignment(campaignId, userId || null)
+      setResultByCampaign(prev => ({
+        ...prev,
+        [campaignId]: userId
+          ? `${res.assigned} lead${res.assigned !== 1 ? 's' : ''} assigned`
+          : 'unassigned',
+      }))
+      setSavingCampaign(null)
     })
   }
 
@@ -124,44 +151,60 @@ function CampaignsTab({ campaigns }: { campaigns: Campaign[] }) {
         <thead>
           <tr className="text-left text-gray-500 border-b border-gray-100">
             <th className="pb-2 font-medium pr-4">Subject</th>
-            <th className="pb-2 font-medium pr-4">Tag</th>
             <th className="pb-2 font-medium pr-4">Sent</th>
             <th className="pb-2 font-medium pr-4 text-right">Recipients</th>
             <th className="pb-2 font-medium pr-4 text-right">Opens</th>
             <th className="pb-2 font-medium pr-4 text-right">Clicks</th>
-            <th className="pb-2 font-medium pr-4">Last synced</th>
+            <th className="pb-2 font-medium pr-4">Assigned rep</th>
             <th className="pb-2 font-medium">Tracked</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
-          {campaigns.map(c => (
-            <tr key={c.mailchimp_campaign_id} className="hover:bg-gray-50">
-              <td className="py-2 pr-4 text-gray-900 max-w-[220px] truncate">{c.subject ?? '—'}</td>
-              <td className="py-2 pr-4">
-                {c.tag_name
-                  ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{c.tag_name}</span>
-                  : <span className="text-gray-400 text-xs">—</span>
-                }
-              </td>
-              <td className="py-2 pr-4 text-gray-600 whitespace-nowrap">{fmtDate(c.send_time)}</td>
-              <td className="py-2 pr-4 text-right text-gray-700">{c.total_recipients ?? '—'}</td>
-              <td className="py-2 pr-4 text-right text-gray-700">{c.total_opens ?? '—'}</td>
-              <td className="py-2 pr-4 text-right text-gray-700">{c.total_clicks ?? '—'}</td>
-              <td className="py-2 pr-4 text-gray-500 whitespace-nowrap text-xs">{fmtDate(c.last_synced_at)}</td>
-              <td className="py-2">
-                <button
-                  onClick={() => toggle(c.mailchimp_campaign_id, c.is_tracked)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                    c.is_tracked
-                      ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                  }`}
-                >
-                  {c.is_tracked ? 'Tracked' : 'Untracked'}
-                </button>
-              </td>
-            </tr>
-          ))}
+          {campaigns.map(c => {
+            const assignedUserId = localAssignments[c.mailchimp_campaign_id] ?? ''
+            const isSaving = savingCampaign === c.mailchimp_campaign_id
+            return (
+              <tr key={c.mailchimp_campaign_id} className="hover:bg-gray-50">
+                <td className="py-2 pr-4 text-gray-900 max-w-[240px] truncate">{c.subject ?? '—'}</td>
+                <td className="py-2 pr-4 text-gray-600 whitespace-nowrap">{fmtDate(c.send_time)}</td>
+                <td className="py-2 pr-4 text-right text-gray-700">{c.total_recipients ?? '—'}</td>
+                <td className="py-2 pr-4 text-right text-gray-700">{c.total_opens ?? '—'}</td>
+                <td className="py-2 pr-4 text-right text-gray-700">{c.total_clicks ?? '—'}</td>
+                <td className="py-2 pr-4">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={assignedUserId}
+                      onChange={e => handleAssign(c.mailchimp_campaign_id, e.target.value)}
+                      disabled={isSaving}
+                      className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60"
+                    >
+                      <option value="">— unassigned —</option>
+                      {reps.map(r => (
+                        <option key={r.id} value={r.id}>{r.full_name}</option>
+                      ))}
+                    </select>
+                    {isSaving
+                      ? <span className="text-xs text-gray-400">Saving…</span>
+                      : resultByCampaign[c.mailchimp_campaign_id] && (
+                          <span className="text-xs text-green-700">{resultByCampaign[c.mailchimp_campaign_id]}</span>
+                        )}
+                  </div>
+                </td>
+                <td className="py-2">
+                  <button
+                    onClick={() => toggle(c.mailchimp_campaign_id, c.is_tracked)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                      c.is_tracked
+                        ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    {c.is_tracked ? 'Tracked' : 'Untracked'}
+                  </button>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -497,6 +540,7 @@ export default function AdminSalesClient({
   statusUsageCounts,
   tagAssignments,
   campaignsByTag,
+  campaignAssignments,
 }: Props) {
   const [tab, setTab] = useState<Tab>('campaigns')
 
@@ -540,7 +584,7 @@ export default function AdminSalesClient({
         ))}
       </div>
 
-      {tab === 'campaigns' && <CampaignsTab campaigns={campaigns} />}
+      {tab === 'campaigns' && <CampaignsTab campaigns={campaigns} reps={reps} campaignAssignments={campaignAssignments} />}
       {tab === 'pipeline'  && (
         <PipelineTab
           pipelineStatuses={pipelineStatuses}
