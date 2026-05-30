@@ -219,6 +219,58 @@ export async function getCampaignActivity(campaignId: string): Promise<McRawActi
   return results
 }
 
+// open-details returns Mailchimp's processed opener list — the SAME data shown
+// in the dashboard "Opened" report and its CSV export, INCLUDING Apple MPP opens.
+// This is the source of truth for "who opened".
+//
+// (email-activity, by contrast, omits MPP-generated open events, so for a
+// privacy-protected campaign it reports 0 openers even when the dashboard shows
+// 100+. That mismatch is why we resolve openers from open-details instead.)
+interface McOpenDetailMember {
+  email_address: string
+  opens_count: number
+  opens?: Array<{ timestamp: string }>
+}
+
+export async function getCampaignOpenDetails(campaignId: string): Promise<McRawActivity[]> {
+  if (!isConfigured()) return []
+
+  const PAGE = 1000
+  const results: McRawActivity[] = []
+  let offset = 0
+  let totalSeen = 0
+
+  while (true) {
+    const res = await mcGet(`/reports/${campaignId}/open-details`, { count: PAGE, offset })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.error(`[mailchimp] open-details ${campaignId} HTTP ${res.status}: ${body}`)
+      break
+    }
+    const data = await res.json() as { members: McOpenDetailMember[]; total_items: number }
+    const members = data.members ?? []
+    console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}`)
+
+    for (const m of members) {
+      const ts = (m.opens ?? []).map(o => o.timestamp).sort()
+      results.push({
+        email_address: m.email_address,
+        opens_count: m.opens_count ?? ts.length,
+        clicks_count: 0,
+        first_open: ts[0] ?? null,
+        last_open: ts[ts.length - 1] ?? null,
+      })
+    }
+
+    totalSeen += members.length
+    if (totalSeen >= (data.total_items ?? 0)) break
+    offset += PAGE
+  }
+
+  console.log(`[mailchimp] open-details ${campaignId}: ${results.length} openers`)
+  return results
+}
+
 // Kept for backward compatibility — delegates to getCampaignActivity and filters.
 export async function getCampaignOpeners(campaignId: string): Promise<McRawOpener[]> {
   const activity = await getCampaignActivity(campaignId)
