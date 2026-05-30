@@ -80,7 +80,10 @@ function normalizeContactName(fname: string | null, lname: string | null): { fir
 }
 
 function hoursAgo(h: number): string {
-  return new Date(Date.now() - h * 3_600_000).toISOString()
+  const d = new Date(Date.now() - h * 3_600_000)
+  // SF API expects 'YYYY-MM-DD HH:mm:ss' — full ISO-8601 with T/Z is rejected
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
 }
 
 // Chunk an array into sub-arrays of at most `size` elements.
