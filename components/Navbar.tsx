@@ -44,17 +44,18 @@ export default function Navbar({ role, fullName }: NavbarProps) {
           <div className="order-3 sm:order-2 flex items-center gap-6 w-full sm:w-auto pb-2 sm:py-3 overflow-x-auto">
             {isAdmin ? (
               <>
-                <NavLink href="/admin" current={pathname === '/admin'}>Summary</NavLink>
+                <NavLink href="/admin" current={pathname === '/admin'}>Weekly PW</NavLink>
                 <NavLink href="/admin/dashboard" current={pathname.startsWith('/admin/dashboard')}>Dashboard</NavLink>
                 <NavLink href="/admin/rates" current={pathname.startsWith('/admin/rates')}>Pay Rates</NavLink>
-                <NavLink href="/admin/techs" current={pathname.startsWith('/admin/techs')}>Technicians</NavLink>
+                <NavLink href="/admin/techs" current={pathname.startsWith('/admin/techs')}>Users</NavLink>
                 <NavLink href="/admin/scheduler" current={pathname.startsWith('/admin/scheduler')}>Scheduler</NavLink>
-                <NavLink href="/admin/sf" current={pathname.startsWith('/admin/sf') && !pathname.startsWith('/admin/sf-sync')}>Integrations</NavLink>
-                <NavLink href="/admin/sf-sync" current={pathname.startsWith('/admin/sf-sync')}>SF Sync</NavLink>
                 <NavLink href="/admin/action-items" current={pathname.startsWith('/admin/action-items')}>Action Items</NavLink>
                 <NavLink href="/admin/marketing" current={pathname.startsWith('/admin/marketing')}>Marketing</NavLink>
-                <NavLink href="/admin/mailchimp" current={pathname.startsWith('/admin/mailchimp')}>Mailchimp</NavLink>
-                <NavLink href="/sales" current={pathname.startsWith('/sales') && !pathname.startsWith('/admin')}>Sales</NavLink>
+                <NavLink href="/admin/integrations" current={
+                  pathname.startsWith('/admin/integrations') ||
+                  pathname.startsWith('/admin/sf') ||
+                  pathname.startsWith('/admin/mailchimp')
+                }>Integrations</NavLink>
                 <NavLink href="/admin/sales" current={pathname.startsWith('/admin/sales')}>Sales Admin</NavLink>
               </>
             ) : (
