@@ -9,6 +9,7 @@ import {
   getCampaignSentTo,
   getCampaignOpenDetails,
   getCampaignActivity,
+  getCampaignSubReports,
   getCampaignClickers,
   getCampaignReport,
   type McRawCampaign,
@@ -133,26 +134,29 @@ async function syncOneCampaign(
   // Campaign-level tag (from segment_opts — null when sent to whole audience)
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
-  // Fetch all opener sources and recipients in parallel.
-  // Strategy (per Mailchimp docs recommendation):
-  //   1. sent-to      → full recipient list (all 282), used as the lead list
-  //   2. email-activity → filter action==='open' for confirmed openers
-  //   3. open-details → alternative confirmed opener source
-  // We layer them: sent-to gives us every lead; email-activity + open-details
-  // tell us who specifically opened so we can set open_count > 0 on those leads.
-  const [sentTo, activityAll, openDetails, clickers, report] = await Promise.all([
-    getCampaignSentTo(campaignId),
-    getCampaignActivity(campaignId),
-    getCampaignOpenDetails(campaignId),
-    getCampaignClickers(campaignId),
-    getCampaignReport(campaignId),
-  ])
+  // A/B test / multivariate campaigns: the parent campaign coordinates the send
+  // but per-member activity (opens, clicks) lives on child campaigns.
+  // Fetch child IDs first, then pull all data in parallel.
+  const childIds = await getCampaignSubReports(campaignId)
 
-  // Build a confirmed-opener map from email-activity + open-details.
-  // email-activity is the primary source per Mailchimp's recommendation;
-  // open-details is additive in case email-activity misses MPP-attributed opens.
+  const [sentTo, activityAll, openDetails, clickers, report, childActivityArrays, childOpenDetailArrays] =
+    await Promise.all([
+      getCampaignSentTo(campaignId),
+      getCampaignActivity(campaignId),
+      getCampaignOpenDetails(campaignId),
+      getCampaignClickers(campaignId),
+      getCampaignReport(campaignId),
+      Promise.all(childIds.map(id => getCampaignActivity(id))),
+      Promise.all(childIds.map(id => getCampaignOpenDetails(id))),
+    ])
+
+  // Flatten child data into the parent arrays
+  const allActivity = [...activityAll, ...childActivityArrays.flat()]
+  const allOpenDetails = [...openDetails, ...childOpenDetailArrays.flat()]
+
+  // Build confirmed-opener map from all sources (parent + children).
   const confirmedOpenerMap = new Map<string, { opens_count: number; first_open: string | null; last_open: string | null }>()
-  for (const a of [...activityAll, ...openDetails]) {
+  for (const a of [...allActivity, ...allOpenDetails]) {
     if (a.opens_count > 0) {
       const key = a.email_address.toLowerCase()
       const existing = confirmedOpenerMap.get(key)
@@ -161,7 +165,7 @@ async function syncOneCampaign(
       }
     }
   }
-  console.log(`[sales-sync] campaign ${campaignId}: ${sentTo.length} recipients (sent-to), ${confirmedOpenerMap.size} confirmed openers (email-activity: ${activityAll.filter(a => a.opens_count > 0).length}, open-details: ${openDetails.filter(a => a.opens_count > 0).length})`)
+  console.log(`[sales-sync] campaign ${campaignId}: ${sentTo.length} recipients (sent-to), ${childIds.length} child campaigns, ${confirmedOpenerMap.size} confirmed openers`)
 
   // Upsert mc_campaigns row
   await supabase
@@ -186,7 +190,7 @@ async function syncOneCampaign(
 
   // Build engagement map: all recipients from sent-to, with open data overlaid
   // from the confirmed-opener map where available.
-  const recipients = sentTo.length > 0 ? sentTo : [...activityAll, ...openDetails]
+  const recipients = sentTo.length > 0 ? sentTo : [...allActivity, ...allOpenDetails]
   console.log(`[sales-sync] campaign ${campaignId}: building leads from ${recipients.length} recipients`)
 
   const engagementMap = new Map<string, {
