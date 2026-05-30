@@ -7,6 +7,7 @@ import {
   listAudienceTags,
   listTagMembers,
   getCampaignOpenDetails,
+  checkEmailsForCampaignOpens,
   getCampaignClickers,
   getCampaignReport,
   type McRawCampaign,
@@ -132,24 +133,24 @@ async function syncOneCampaign(
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
   // Fetch the opener list, clickers, and report in parallel.
-  // openers come from open-details (Mailchimp's processed list, matches the
-  // dashboard/CSV and includes Apple MPP opens) — NOT email-activity, which
-  // strips MPP opens and would report zero for privacy-protected campaigns.
-  const [openers, clickers, report] = await Promise.all([
-    getCampaignOpenDetails(campaignId),
-    getCampaignClickers(campaignId),
-    getCampaignReport(campaignId),
+  // open-details is the primary source; it matches the Mailchimp dashboard "Opened"
+  // report and includes Apple MPP opens. If the bulk list endpoint returns 0 (which
+  // can happen for MPP-heavy campaigns), fall back to the per-subscriber endpoint
+  // GET /reports/{id}/open-details/{subscriber_hash} for each tagged member.
+  const [[bulkOpeners, clickers, report], taggedEmails] = await Promise.all([
+    Promise.all([
+      getCampaignOpenDetails(campaignId),
+      getCampaignClickers(campaignId),
+      getCampaignReport(campaignId),
+    ]),
+    Promise.resolve(Array.from(emailToTagName.keys())),
   ])
 
-  // Diagnostic: compare the API's aggregate open count (report summary) against
-  // the per-member open-details count. If the report shows opens but open-details
-  // returns 0, Mailchimp is exposing only an aggregate (MPP) figure with no
-  // per-person detail available via the API.
-  console.log(
-    `[sales-sync] campaign ${campaignId} report: unique_opens=${report?.opens?.unique_opens ?? 'n/a'} ` +
-    `opens_total=${report?.opens?.opens_total ?? 'n/a'} emails_sent=${report?.emails_sent ?? 'n/a'} ` +
-    `| open-details members=${openers.length}`
-  )
+  let openers = bulkOpeners
+  if (openers.length === 0 && taggedEmails.length > 0) {
+    console.log(`[sales-sync] campaign ${campaignId}: bulk open-details returned 0, falling back to per-subscriber checks for ${taggedEmails.length} tagged members`)
+    openers = await checkEmailsForCampaignOpens(campaignId, taggedEmails)
+  }
 
   // Upsert mc_campaigns row
   await supabase
