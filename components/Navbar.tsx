@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter, usePathname } from 'next/navigation'
@@ -13,6 +14,8 @@ interface NavbarProps {
 export default function Navbar({ role, fullName }: NavbarProps) {
   const router = useRouter()
   const pathname = usePathname()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsRef = useRef<HTMLDivElement>(null)
 
   async function handleSignOut() {
     const supabase = createClient()
@@ -21,7 +24,25 @@ export default function Navbar({ role, fullName }: NavbarProps) {
     router.refresh()
   }
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
   const isAdmin = role === 'admin'
+
+  const isSettingsActive =
+    pathname.startsWith('/admin/rates') ||
+    pathname.startsWith('/admin/techs') ||
+    pathname.startsWith('/admin/integrations') ||
+    pathname.startsWith('/admin/sf') ||
+    pathname.startsWith('/admin/mailchimp')
 
   return (
     <nav className="bg-gray-950 text-white border-b border-gray-800">
@@ -46,16 +67,9 @@ export default function Navbar({ role, fullName }: NavbarProps) {
               <>
                 <NavLink href="/admin" current={pathname === '/admin'}>Weekly PW</NavLink>
                 <NavLink href="/admin/dashboard" current={pathname.startsWith('/admin/dashboard')}>Dashboard</NavLink>
-                <NavLink href="/admin/rates" current={pathname.startsWith('/admin/rates')}>Pay Rates</NavLink>
-                <NavLink href="/admin/techs" current={pathname.startsWith('/admin/techs')}>Users</NavLink>
                 <NavLink href="/admin/scheduler" current={pathname.startsWith('/admin/scheduler')}>Scheduler</NavLink>
                 <NavLink href="/admin/action-items" current={pathname.startsWith('/admin/action-items')}>Action Items</NavLink>
                 <NavLink href="/admin/marketing" current={pathname.startsWith('/admin/marketing')}>Marketing</NavLink>
-                <NavLink href="/admin/integrations" current={
-                  pathname.startsWith('/admin/integrations') ||
-                  pathname.startsWith('/admin/sf') ||
-                  pathname.startsWith('/admin/mailchimp')
-                }>Integrations</NavLink>
                 <NavLink href="/admin/sales" current={pathname.startsWith('/admin/sales')}>Sales Admin</NavLink>
               </>
             ) : (
@@ -66,9 +80,55 @@ export default function Navbar({ role, fullName }: NavbarProps) {
             )}
           </div>
 
-          {/* Name + sign out — order-2 (row 1 with logo) on narrow, order-3 on wide */}
-          <div className="order-2 sm:order-3 ml-auto flex items-center gap-4 text-sm py-3 shrink-0">
+          {/* Name + settings gear + sign out */}
+          <div className="order-2 sm:order-3 ml-auto flex items-center gap-3 text-sm py-3 shrink-0">
             <span className="text-gray-400 truncate max-w-[160px]">{fullName}</span>
+
+            {isAdmin && (
+              <div className="relative" ref={settingsRef}>
+                <button
+                  onClick={() => setSettingsOpen(o => !o)}
+                  title="Settings"
+                  className={`transition-colors ${isSettingsActive || settingsOpen ? 'text-white' : 'text-gray-400 hover:text-white'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+
+                {settingsOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-44 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 py-1">
+                    <DropdownLink
+                      href="/admin/techs"
+                      active={pathname.startsWith('/admin/techs')}
+                      onClick={() => setSettingsOpen(false)}
+                    >
+                      Users
+                    </DropdownLink>
+                    <DropdownLink
+                      href="/admin/integrations"
+                      active={
+                        pathname.startsWith('/admin/integrations') ||
+                        pathname.startsWith('/admin/sf') ||
+                        pathname.startsWith('/admin/mailchimp')
+                      }
+                      onClick={() => setSettingsOpen(false)}
+                    >
+                      Integrations
+                    </DropdownLink>
+                    <DropdownLink
+                      href="/admin/rates"
+                      active={pathname.startsWith('/admin/rates')}
+                      onClick={() => setSettingsOpen(false)}
+                    >
+                      Pay Rates
+                    </DropdownLink>
+                  </div>
+                )}
+              </div>
+            )}
+
             <button
               onClick={handleSignOut}
               className="text-gray-400 hover:text-white transition-colors whitespace-nowrap"
@@ -91,6 +151,20 @@ function NavLink({ href, current, children }: { href: string; current: boolean; 
         current
           ? 'text-white [box-shadow:0_2px_0_0_#ef4444]'
           : 'text-gray-400 hover:text-white'
+      }`}
+    >
+      {children}
+    </Link>
+  )
+}
+
+function DropdownLink({ href, active, onClick, children }: { href: string; active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className={`flex items-center px-4 py-2 text-sm transition-colors ${
+        active ? 'text-white bg-gray-800' : 'text-gray-300 hover:text-white hover:bg-gray-800'
       }`}
     >
       {children}
