@@ -28,10 +28,12 @@ export interface SalesSyncResult {
   unmatchedEmails: number  // openers whose email didn't resolve to an SF customer
 }
 
-// Build a map of email → sf_customers.id by joining sf_customer_contacts.
-// We chunk the email list and use ilike for case-insensitive matching because
-// SF may store emails with mixed case (e.g. "John@Gmail.com") while Mailchimp
-// normalizes to lowercase — a case-sensitive IN would miss them entirely.
+// Build a map of email → sf_customers.id.
+// Emails live in sf_contact_emails (not sf_customer_contacts).
+// We look up sf_contact_emails first to get the contact_id, then join to
+// sf_customer_contacts to get customer_id.
+// ilike matching is required because SF may store emails with mixed case while
+// Mailchimp normalizes to lowercase.
 async function resolveEmailsToCustomerIds(
   supabase: ReturnType<typeof db>,
   emails: string[]
@@ -46,17 +48,38 @@ async function resolveEmailsToCustomerIds(
     const orFilter = chunk
       .map(e => `email.ilike.${e.replace(/[%_]/g, '\\$&')}`)
       .join(',')
-    const { data, error } = await supabase
-      .from('sf_customer_contacts')
-      .select('customer_id, email')
+
+    // Step 1: find contact_ids for these emails
+    const { data: emailRows, error: emailErr } = await supabase
+      .from('sf_contact_emails')
+      .select('contact_id, email')
       .or(orFilter)
-    if (error) console.error('[sales-sync] sf_customer_contacts query error:', error)
-    console.log(`[sales-sync] email chunk ${i}–${i + chunk.length}: queried ${chunk.length} emails, got ${data?.length ?? 0} matches`)
-    for (const row of data ?? []) {
-      if (row.email && row.customer_id) {
-        map.set(row.email.toLowerCase(), row.customer_id)
+    if (emailErr) console.error('[sales-sync] sf_contact_emails query error:', emailErr)
+
+    const contactRows = emailRows ?? []
+    if (contactRows.length === 0) {
+      console.log(`[sales-sync] email chunk ${i}–${i + chunk.length}: 0 matches in sf_contact_emails`)
+      continue
+    }
+
+    // Step 2: resolve contact_id → customer_id
+    const contactIds = [...new Set(contactRows.map(r => r.contact_id).filter(Boolean))]
+    const { data: contactRows2, error: contactErr } = await supabase
+      .from('sf_customer_contacts')
+      .select('id, customer_id')
+      .in('id', contactIds)
+    if (contactErr) console.error('[sales-sync] sf_customer_contacts query error:', contactErr)
+
+    const contactIdToCustomer = new Map((contactRows2 ?? []).map(c => [c.id, c.customer_id]))
+
+    for (const row of contactRows) {
+      if (row.email && row.contact_id) {
+        const customerId = contactIdToCustomer.get(row.contact_id)
+        if (customerId) map.set(row.email.toLowerCase(), customerId)
       }
     }
+
+    console.log(`[sales-sync] email chunk ${i}–${i + chunk.length}: queried ${chunk.length} emails, got ${contactRows.length} email matches, ${map.size} total resolved so far`)
   }
   console.log(`[sales-sync] total emails resolved: ${map.size} of ${emails.length}`)
   return map
