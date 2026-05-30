@@ -287,8 +287,8 @@ function RunRow({
             )}
           </div>
           {(run.status === 'failed' || run.status === 'partial') && run.error_message && (
-            <div className="text-red-500 truncate max-w-xs" title={run.error_message}>
-              {run.error_message.slice(0, 80)}{run.error_message.length > 80 ? '…' : ''}
+            <div className="text-red-500 break-all max-w-xs" title={run.error_message}>
+              {run.error_message.slice(0, 300)}{run.error_message.length > 300 ? '…' : ''}
             </div>
           )}
         </div>
