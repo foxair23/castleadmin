@@ -7,7 +7,6 @@ import {
   listAudienceTags,
   listTagMembers,
   getCampaignOpenDetails,
-  checkEmailsForCampaignOpens,
   getCampaignClickers,
   getCampaignReport,
   type McRawCampaign,
@@ -133,24 +132,15 @@ async function syncOneCampaign(
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
   // Fetch the opener list, clickers, and report in parallel.
-  // open-details is the primary source; it matches the Mailchimp dashboard "Opened"
-  // report and includes Apple MPP opens. If the bulk list endpoint returns 0 (which
-  // can happen for MPP-heavy campaigns), fall back to the per-subscriber endpoint
-  // GET /reports/{id}/open-details/{subscriber_hash} for each tagged member.
-  const [[bulkOpeners, clickers, report], taggedEmails] = await Promise.all([
-    Promise.all([
-      getCampaignOpenDetails(campaignId),
-      getCampaignClickers(campaignId),
-      getCampaignReport(campaignId),
-    ]),
-    Promise.resolve(Array.from(emailToTagName.keys())),
+  // open-details is Mailchimp's processed opener list. NOTE: for Apple-MPP-heavy
+  // campaigns Mailchimp reports aggregate opens in the campaign report but returns
+  // no per-person opener data via the API (open-details/email-activity both return
+  // 0). For those campaigns, use the CSV import path instead.
+  const [openers, clickers, report] = await Promise.all([
+    getCampaignOpenDetails(campaignId),
+    getCampaignClickers(campaignId),
+    getCampaignReport(campaignId),
   ])
-
-  let openers = bulkOpeners
-  if (openers.length === 0 && taggedEmails.length > 0) {
-    console.log(`[sales-sync] campaign ${campaignId}: bulk open-details returned 0, falling back to per-subscriber checks for ${taggedEmails.length} tagged members`)
-    openers = await checkEmailsForCampaignOpens(campaignId, taggedEmails)
-  }
 
   // Upsert mc_campaigns row
   await supabase

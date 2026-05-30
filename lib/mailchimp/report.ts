@@ -1,8 +1,6 @@
 // Server-side only — never import this in client components
 // All calls are read-only GETs against the Mailchimp Marketing API.
 
-import crypto from 'crypto'
-
 const API_KEY = process.env.MAILCHIMP_API_KEY ?? ''
 const AUDIENCE_ID = process.env.MAILCHIMP_AUDIENCE_ID ?? ''
 const SERVER_PREFIX = process.env.MAILCHIMP_SERVER_PREFIX ?? ''
@@ -249,13 +247,8 @@ export async function getCampaignOpenDetails(campaignId: string): Promise<McRawA
       console.error(`[mailchimp] open-details ${campaignId} HTTP ${res.status}: ${body}`)
       break
     }
-    const raw = await res.json()
-    const data = raw as { members: McOpenDetailMember[]; total_items: number }
+    const data = await res.json() as { members: McOpenDetailMember[]; total_items: number }
     const members = data.members ?? []
-    // Log full raw response on first page when members=0 so we can see every field Mailchimp returns
-    if (offset === 0 && members.length === 0) {
-      console.log(`[mailchimp] open-details ${campaignId} raw response:`, JSON.stringify(raw))
-    }
     console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}`)
 
     for (const m of members) {
@@ -276,63 +269,6 @@ export async function getCampaignOpenDetails(campaignId: string): Promise<McRawA
 
   console.log(`[mailchimp] open-details ${campaignId}: ${results.length} openers`)
   return results
-}
-
-// Check whether a specific subscriber opened a campaign, using the per-subscriber
-// open-details endpoint: GET /reports/{campaign_id}/open-details/{subscriber_hash}
-// The subscriber_hash is the MD5 of the lowercase email address.
-// Used as a fallback when the bulk open-details list returns 0 (e.g. MPP campaigns).
-export async function getSubscriberOpenDetail(
-  campaignId: string,
-  email: string
-): Promise<McRawActivity | null> {
-  if (!isConfigured()) return null
-  const hash = crypto.createHash('md5').update(email.toLowerCase()).digest('hex')
-  const res = await mcGet(`/reports/${campaignId}/open-details/${hash}`)
-  if (!res.ok) {
-    if (res.status === 404) return null  // subscriber didn't open (or isn't in campaign)
-    const body = await res.text().catch(() => '')
-    console.error(`[mailchimp] open-details/${hash} ${campaignId} HTTP ${res.status}: ${body}`)
-    return null
-  }
-  const data = await res.json() as {
-    email_address: string
-    opens_count: number
-    opens?: Array<{ timestamp: string }>
-  }
-  if (!data.opens_count) return null
-  const ts = (data.opens ?? []).map(o => o.timestamp).sort()
-  return {
-    email_address: data.email_address,
-    opens_count: data.opens_count,
-    clicks_count: 0,
-    first_open: ts[0] ?? null,
-    last_open: ts[ts.length - 1] ?? null,
-  }
-}
-
-// Check a batch of emails against the per-subscriber open-details endpoint.
-// Runs up to 10 requests concurrently (Mailchimp's recommended max).
-// Returns only the subscribers who actually opened.
-export async function checkEmailsForCampaignOpens(
-  campaignId: string,
-  emails: string[]
-): Promise<McRawActivity[]> {
-  if (!isConfigured() || emails.length === 0) return []
-
-  const CONCURRENCY = 10
-  const openers: McRawActivity[] = []
-
-  for (let i = 0; i < emails.length; i += CONCURRENCY) {
-    const batch = emails.slice(i, i + CONCURRENCY)
-    const results = await Promise.all(batch.map(e => getSubscriberOpenDetail(campaignId, e)))
-    for (const r of results) {
-      if (r) openers.push(r)
-    }
-  }
-
-  console.log(`[mailchimp] per-subscriber open check ${campaignId}: ${openers.length} openers out of ${emails.length} checked`)
-  return openers
 }
 
 // Kept for backward compatibility — delegates to getCampaignActivity and filters.
