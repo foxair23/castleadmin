@@ -5,7 +5,6 @@ import {
   toggleCampaignTracked,
   addPipelineStatus, renamePipelineStatus, deletePipelineStatus, movePipelineStatus,
   addCallDisposition, renameCallDisposition, deleteCallDisposition,
-  bulkAssignLeads,
   linkEngagementToCustomer, dismissEngagement, searchCustomers,
   saveTagAssignment,
 } from './actions'
@@ -51,7 +50,7 @@ interface Props {
   campaignsByTag: Record<string, Campaign[]>
 }
 
-type Tab = 'campaigns' | 'pipeline' | 'assign' | 'tags' | 'unmatched'
+type Tab = 'campaigns' | 'pipeline' | 'tags' | 'unmatched'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -295,95 +294,6 @@ function PipelineTab({
   )
 }
 
-// ─── Bulk assign tab ──────────────────────────────────────────────────────────
-
-function AssignTab({
-  campaigns,
-  reps,
-  tags,
-}: {
-  campaigns: Campaign[]
-  reps: Rep[]
-  tags: string[]
-}) {
-  const [campaignId, setCampaignId] = useState('')
-  const [tagName, setTagName] = useState('')
-  const [assigneeId, setAssigneeId] = useState('')
-  const [result, setResult] = useState<string | null>(null)
-  const [pending, startTransition] = useTransition()
-
-  function handleAssign() {
-    if (!assigneeId) return
-    setResult(null)
-    startTransition(async () => {
-      const res = await bulkAssignLeads(assigneeId, {
-        campaignId: campaignId || undefined,
-        tagName: tagName || undefined,
-      })
-      setResult(`Assigned ${res.assigned} lead${res.assigned !== 1 ? 's' : ''}.`)
-    })
-  }
-
-  return (
-    <Section title="Bulk assign unassigned leads">
-      <p className="text-sm text-gray-500 mb-4">
-        Assigns all currently <strong>unassigned</strong> leads matching the filters to the selected rep.
-      </p>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Campaign (optional)</label>
-          <select
-            value={campaignId}
-            onChange={e => setCampaignId(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
-          >
-            <option value="">All campaigns</option>
-            {campaigns.map(c => (
-              <option key={c.mailchimp_campaign_id} value={c.mailchimp_campaign_id}>
-                {c.subject ?? c.mailchimp_campaign_id}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Tag (optional)</label>
-          <select
-            value={tagName}
-            onChange={e => setTagName(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
-          >
-            <option value="">All tags</option>
-            {tags.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Assign to <span className="text-red-500">*</span></label>
-          <select
-            value={assigneeId}
-            onChange={e => setAssigneeId(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
-          >
-            <option value="">— select rep —</option>
-            {reps.map(r => (
-              <option key={r.id} value={r.id}>{r.full_name} ({r.role})</option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <div className="flex items-center gap-4">
-        <button
-          onClick={handleAssign}
-          disabled={!assigneeId || pending}
-          className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
-        >
-          {pending ? 'Assigning…' : 'Assign leads'}
-        </button>
-        {result && <span className="text-sm text-green-700 font-medium">{result}</span>}
-      </div>
-    </Section>
-  )
-}
-
 // ─── Unmatched engagements tab ────────────────────────────────────────────────
 
 function UnmatchedRow({ eng }: { eng: UnmatchedEngagement }) {
@@ -487,13 +397,21 @@ function TagsTab({
 }) {
   const [pending, startTransition] = useTransition()
   const [saving, setSaving] = useState<string | null>(null)
+  const [resultByTag, setResultByTag] = useState<Record<string, string>>({})
   const [localAssignments, setLocalAssignments] = useState<Record<string, string>>({ ...tagAssignments })
 
   function handleChange(tagName: string, userId: string) {
     setLocalAssignments(prev => ({ ...prev, [tagName]: userId }))
+    setResultByTag(prev => ({ ...prev, [tagName]: '' }))
     setSaving(tagName)
     startTransition(async () => {
-      await saveTagAssignment(tagName, userId || null)
+      const res = await saveTagAssignment(tagName, userId || null)
+      setResultByTag(prev => ({
+        ...prev,
+        [tagName]: userId
+          ? `${res.assigned} lead${res.assigned !== 1 ? 's' : ''} assigned`
+          : 'rule removed',
+      }))
       setSaving(null)
     })
   }
@@ -552,7 +470,9 @@ function TagsTab({
                           <option key={r.id} value={r.id}>{r.full_name} ({r.role})</option>
                         ))}
                       </select>
-                      {isSaving && <span className="text-xs text-gray-400">Saving…</span>}
+                      {isSaving
+                        ? <span className="text-xs text-gray-400">Saving…</span>
+                        : resultByTag[tag] && <span className="text-xs text-green-700">{resultByTag[tag]}</span>}
                     </div>
                   </td>
                 </tr>
@@ -584,7 +504,6 @@ export default function AdminSalesClient({
     { key: 'campaigns', label: `Campaigns (${campaigns.length})` },
     { key: 'pipeline',  label: 'Pipeline Config' },
     { key: 'tags',      label: `Tag Assignments (${tags.length})` },
-    { key: 'assign',    label: 'Bulk Assign' },
     { key: 'unmatched', label: `Unmatched (${unmatched.length})` },
   ]
 
@@ -637,7 +556,6 @@ export default function AdminSalesClient({
           campaignsByTag={campaignsByTag}
         />
       )}
-      {tab === 'assign'    && <AssignTab campaigns={campaigns} reps={reps} tags={tags} />}
       {tab === 'unmatched' && <UnmatchedTab unmatched={unmatched} />}
     </div>
   )

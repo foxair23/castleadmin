@@ -133,45 +133,6 @@ export async function deleteCallDisposition(id: string) {
   revalidatePath('/admin/sales')
 }
 
-// ─── Bulk assignment ──────────────────────────────────────────────────────────
-
-export async function bulkAssignLeads(
-  assigneeUserId: string,
-  filters: { campaignId?: string; tagName?: string; status?: string }
-) {
-  const adminId = await requireAdmin()
-  const database = db()
-  const now = new Date().toISOString()
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let query = (database as any)
-    .from('sales_leads')
-    .select('id')
-    .is('assigned_to_user_id', null) // only unassigned leads
-
-  if (filters.campaignId) query = query.eq('mailchimp_campaign_id', filters.campaignId)
-  if (filters.tagName)    query = query.eq('tag_name', filters.tagName)
-  if (filters.status)     query = query.eq('status', filters.status)
-
-  const { data: leads } = await query
-  const ids = ((leads ?? []) as { id: string }[]).map(l => l.id)
-  if (ids.length === 0) return { assigned: 0 }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (database as any)
-    .from('sales_leads')
-    .update({
-      assigned_to_user_id: assigneeUserId,
-      assigned_at: now,
-      assigned_by_user_id: adminId,
-    })
-    .in('id', ids)
-
-  revalidatePath('/admin/sales')
-  revalidatePath('/sales')
-  return { assigned: ids.length }
-}
-
 // ─── Unmatched engagements ────────────────────────────────────────────────────
 
 export async function linkEngagementToCustomer(engagementId: string, customerId: string) {
@@ -240,23 +201,54 @@ export async function dismissEngagement(engagementId: string) {
 // ─── Tag assignments ──────────────────────────────────────────────────────────
 
 // Upsert or delete a standing tag → rep assignment rule.
-// Passing userId=null removes the rule (unassigns the tag).
+// Passing userId=null removes the rule (future leads won't auto-assign);
+// existing leads keep their current assignment.
+// When a rep is chosen, the rule is saved AND every existing lead carrying
+// that tag is (re)assigned to the rep immediately — this is the sole
+// assignment mechanism, so "this tag belongs to this rep" must apply to
+// leads that already exist, not just future syncs.
 export async function saveTagAssignment(tagName: string, userId: string | null) {
   const adminId = await requireAdmin()
   const database = db()
-  if (userId) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (database as any)
-      .from('mc_tag_assignments')
-      .upsert(
-        { tag_name: tagName, assigned_to_user_id: userId, assigned_by_user_id: adminId, updated_at: new Date().toISOString() },
-        { onConflict: 'tag_name' }
-      )
-  } else {
+  const now = new Date().toISOString()
+
+  if (!userId) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (database as any).from('mc_tag_assignments').delete().eq('tag_name', tagName)
+    revalidatePath('/admin/sales')
+    revalidatePath('/sales')
+    return { assigned: 0 }
   }
+
+  // Save the standing rule (used to auto-assign future synced leads)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (database as any)
+    .from('mc_tag_assignments')
+    .upsert(
+      { tag_name: tagName, assigned_to_user_id: userId, assigned_by_user_id: adminId, updated_at: now },
+      { onConflict: 'tag_name' }
+    )
+
+  // Retroactively (re)assign every existing lead carrying this tag to the rep.
+  // Includes currently-unassigned leads; re-stamping an already-correct lead is harmless.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: leads } = await (database as any)
+    .from('sales_leads')
+    .select('id')
+    .eq('tag_name', tagName)
+
+  const ids = ((leads ?? []) as { id: string }[]).map(l => l.id)
+  if (ids.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (database as any)
+      .from('sales_leads')
+      .update({ assigned_to_user_id: userId, assigned_at: now, assigned_by_user_id: adminId })
+      .in('id', ids)
+  }
+
   revalidatePath('/admin/sales')
+  revalidatePath('/sales')
+  return { assigned: ids.length }
 }
 
 export async function searchCustomers(query: string) {

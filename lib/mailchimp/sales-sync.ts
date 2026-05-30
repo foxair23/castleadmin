@@ -6,7 +6,7 @@ import {
   listCampaigns,
   listAudienceTags,
   listTagMembers,
-  getCampaignActivity,
+  getCampaignOpenDetails,
   getCampaignClickers,
   getCampaignReport,
   type McRawCampaign,
@@ -131,9 +131,12 @@ async function syncOneCampaign(
   // Campaign-level tag (from segment_opts — null when sent to whole audience)
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
-  // Fetch all recipient activity and report in parallel
-  const [allActivity, clickers, report] = await Promise.all([
-    getCampaignActivity(campaignId),
+  // Fetch the opener list, clickers, and report in parallel.
+  // openers come from open-details (Mailchimp's processed list, matches the
+  // dashboard/CSV and includes Apple MPP opens) — NOT email-activity, which
+  // strips MPP opens and would report zero for privacy-protected campaigns.
+  const [openers, clickers, report] = await Promise.all([
+    getCampaignOpenDetails(campaignId),
     getCampaignClickers(campaignId),
     getCampaignReport(campaignId),
   ])
@@ -159,17 +162,15 @@ async function syncOneCampaign(
       { onConflict: 'mailchimp_campaign_id' }
     )
 
-  const taggedCount = allActivity.filter(a => emailToTagName.has(a.email_address.toLowerCase())).length
-  console.log(`[sales-sync] campaign ${campaignId}: ${allActivity.length} recipients, ${taggedCount} tagged, ${clickers.length} clickers`)
+  console.log(`[sales-sync] campaign ${campaignId}: ${openers.length} openers, ${clickers.length} clickers`)
 
-  if (allActivity.length === 0 && clickers.length === 0) {
+  if (openers.length === 0 && clickers.length === 0) {
     return { totalOpeners: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
   }
 
-  // Build engagement map:
-  // - Tagged members: always included regardless of engagement
-  //   (the tag signals "I pushed this contact for follow-up")
-  // - Untagged members: only included if they opened or clicked
+  // Build engagement map from people who actually engaged:
+  // every opener (from open-details) plus any clicker. These become the leads
+  // reps follow up on — the campaign's tag is still attached to each lead below.
   const engagementMap = new Map<string, {
     first_opened_at: string | null
     last_opened_at: string | null
@@ -177,10 +178,8 @@ async function syncOneCampaign(
     click_count: number
   }>()
 
-  for (const a of allActivity) {
+  for (const a of openers) {
     const email = a.email_address.toLowerCase()
-    const isTagged = emailToTagName.has(email)
-    if (!isTagged && a.opens_count === 0 && a.clicks_count === 0) continue
     engagementMap.set(email, {
       first_opened_at: a.first_open,
       last_opened_at: a.last_open,
