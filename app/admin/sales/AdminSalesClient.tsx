@@ -52,7 +52,7 @@ interface Props {
   campaignAssignments: Record<string, string>   // campaign_id → user_id
 }
 
-type Tab = 'campaigns' | 'pipeline' | 'tags' | 'unmatched'
+type Tab = 'campaigns' | 'pipeline' | 'unmatched'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -547,7 +547,6 @@ export default function AdminSalesClient({
   const tabs: { key: Tab; label: string }[] = [
     { key: 'campaigns', label: `Campaigns (${campaigns.length})` },
     { key: 'pipeline',  label: 'Pipeline Config' },
-    { key: 'tags',      label: `Tag Assignments (${tags.length})` },
     { key: 'unmatched', label: `Unmatched (${unmatched.length})` },
   ]
 
@@ -590,14 +589,6 @@ export default function AdminSalesClient({
           pipelineStatuses={pipelineStatuses}
           callDispositions={callDispositions}
           statusUsageCounts={statusUsageCounts}
-        />
-      )}
-      {tab === 'tags'      && (
-        <TagsTab
-          tags={tags}
-          reps={reps}
-          tagAssignments={tagAssignments}
-          campaignsByTag={campaignsByTag}
         />
       )}
       {tab === 'unmatched' && <UnmatchedTab unmatched={unmatched} />}

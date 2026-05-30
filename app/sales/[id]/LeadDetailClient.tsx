@@ -496,7 +496,6 @@ export default function LeadDetailClient({
                     <CopyButton value={customer.account_number} />
                   </div>
                 )}
-                <div className="text-xs text-gray-500">SF Customer ID: {customer.id}<CopyButton value={customer.id} /></div>
                 <button
                   onClick={handleMarkSfCreated}
                   disabled={sfPending}
