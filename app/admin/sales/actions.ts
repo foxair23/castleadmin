@@ -70,10 +70,13 @@ export async function saveCampaignAssignment(campaignId: string, userId: string 
     revalidatePath('/sales')
     return { assigned: count ?? 0 }
   } else {
+    // Deleting leads (not just nullifying assignment) so the rep's dashboard
+    // is fully cleared. On the next sync with openers_only checked, only
+    // confirmed openers will be recreated.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (database as any)
       .from('sales_leads')
-      .update({ assigned_to_user_id: null, assigned_at: null, assigned_by_user_id: null })
+      .delete()
       .eq('mailchimp_campaign_id', campaignId)
     revalidatePath('/admin/sales')
     revalidatePath('/sales')

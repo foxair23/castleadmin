@@ -77,9 +77,25 @@ export default function SalesLeadsClient({
   const router = useRouter()
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [tagFilter, setTagFilter] = useState<string>('all')
+  const [sortField, setSortField] = useState<'customer_name' | 'status' | 'open_count' | 'last_activity_at' | 'days_since_created'>('last_activity_at')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
   const [syncMessage, setSyncMessage] = useState('')
   const [, startTransition] = useTransition()
+
+  function handleSort(field: typeof sortField) {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('asc')
+    }
+  }
+
+  function SortIcon({ field }: { field: typeof sortField }) {
+    if (sortField !== field) return <span className="ml-1 text-gray-300">↕</span>
+    return <span className="ml-1 text-red-500">{sortDir === 'asc' ? '↑' : '↓'}</span>
+  }
 
   const allTags = [...new Set(initialLeads.map(l => l.tag_name).filter(Boolean) as string[])].sort()
 
@@ -96,6 +112,17 @@ export default function SalesLeadsClient({
   const visible = initialLeads
     .filter(l => filter === 'all' || l.status === filter)
     .filter(l => tagFilter === 'all' || l.tag_name === tagFilter)
+    .sort((a, b) => {
+      let cmp = 0
+      switch (sortField) {
+        case 'customer_name': cmp = (a.customer_name ?? '').localeCompare(b.customer_name ?? ''); break
+        case 'status':        cmp = a.status.localeCompare(b.status); break
+        case 'open_count':    cmp = a.open_count - b.open_count; break
+        case 'last_activity_at': cmp = (a.days_since_activity ?? 9999) - (b.days_since_activity ?? 9999); break
+        case 'days_since_created': cmp = (a.days_since_created ?? 9999) - (b.days_since_created ?? 9999); break
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
 
   const tabs: { key: StatusFilter; label: string }[] = [
     { key: 'all',          label: `All (${counts.all})` },
@@ -217,14 +244,30 @@ export default function SalesLeadsClient({
           <table className="w-full text-sm min-w-[760px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Customer</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">
+                  <button onClick={() => handleSort('customer_name')} className="flex items-center hover:text-gray-900">
+                    Customer<SortIcon field="customer_name" />
+                  </button>
+                </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Campaign / Tag</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">
+                  <button onClick={() => handleSort('status')} className="flex items-center hover:text-gray-900">
+                    Status<SortIcon field="status" />
+                  </button>
+                </th>
                 {isAdmin && (
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Assigned to</th>
                 )}
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Engagement</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Last activity</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">
+                  <button onClick={() => handleSort('open_count')} className="flex items-center hover:text-gray-900">
+                    Engagement<SortIcon field="open_count" />
+                  </button>
+                </th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">
+                  <button onClick={() => handleSort('last_activity_at')} className="flex items-center hover:text-gray-900">
+                    Last activity<SortIcon field="last_activity_at" />
+                  </button>
+                </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Last call</th>
               </tr>
             </thead>
