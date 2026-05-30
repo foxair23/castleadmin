@@ -41,7 +41,6 @@ export default async function SalesPage() {
     )
     // Reps only work engaged leads — anyone who opened or clicked.
     // (Guards against stale non-engaged leads left by earlier sync logic.)
-    .or('open_count.gt.0,click_count.gt.0')
     .order('last_activity_at', { ascending: false })
     .limit(500)
 

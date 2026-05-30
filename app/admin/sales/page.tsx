@@ -30,7 +30,7 @@ export default async function AdminSalesPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (database as any)
       .from('mc_campaigns')
-      .select('mailchimp_campaign_id, subject, tag_name, send_time, total_recipients, total_opens, total_clicks, is_tracked, last_synced_at')
+      .select('mailchimp_campaign_id, subject, tag_name, send_time, total_recipients, total_opens, total_clicks, is_tracked, last_synced_at, assigned_to_user_id')
       .order('send_time', { ascending: false })
       .limit(50),
 
@@ -124,6 +124,13 @@ export default async function AdminSalesPage() {
     campaign_subject: campaignMap.get(e.mailchimp_campaign_id) ?? null,
   }))
 
+  // Build campaign assignment map: campaignId → assigned_to_user_id
+  const campaignAssignments: Record<string, string> = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const c of (campaignsRes.data ?? []) as any[]) {
+    if (c.assigned_to_user_id) campaignAssignments[c.mailchimp_campaign_id] = c.assigned_to_user_id
+  }
+
   return (
     <AdminSalesClient
       campaigns={(campaignsRes.data ?? []) as any[]}
@@ -135,6 +142,7 @@ export default async function AdminSalesPage() {
       statusUsageCounts={statusUsageCounts}
       tagAssignments={tagAssignments}
       campaignsByTag={Object.fromEntries(campaignsByTag)}
+      campaignAssignments={campaignAssignments}
     />
   )
 }

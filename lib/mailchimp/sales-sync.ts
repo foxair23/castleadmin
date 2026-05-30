@@ -263,11 +263,15 @@ async function syncOneCampaign(
 
   const existingByCustomer = new Map(existingLeads?.map(l => [l.customer_id, l]) ?? [])
 
-  // Pre-fetch all tag→assignee rules so we can auto-assign per lead based on their tag
-  const { data: tagRules } = await supabase
-    .from('mc_tag_assignments')
-    .select('tag_name, assigned_to_user_id')
-  const tagAssignmentMap = new Map(tagRules?.map(r => [r.tag_name, r.assigned_to_user_id]) ?? [])
+  // Use the campaign-level assigned rep (set by admin in the Campaigns tab).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: campaignRow } = await (supabase as any)
+    .from('mc_campaigns')
+    .select('assigned_to_user_id')
+    .eq('mailchimp_campaign_id', campaignId)
+    .single()
+  const campaignAssignedUserId: string | null = (campaignRow as any)?.assigned_to_user_id ?? null
+  console.log(`[sales-sync] campaign ${campaignId}: assigned rep = ${campaignAssignedUserId ?? 'none'}`)
 
   let newOpeners = 0
   let newClickers = 0
@@ -276,10 +280,8 @@ async function syncOneCampaign(
     if (!row.customer_id) continue
     const existing = existingByCustomer.get(row.customer_id)
 
-    // Per-email tag: use the Mailchimp member tag the customer was pushed with.
-    // Falls back to the campaign-level segment tag (which may be null for whole-audience sends).
     const leadTagName = emailToTagName.get(row.email) ?? tagName
-    const autoAssignUserId = leadTagName ? (tagAssignmentMap.get(leadTagName) ?? null) : null
+    const autoAssignUserId = campaignAssignedUserId
 
     if (!existing) {
       // New lead

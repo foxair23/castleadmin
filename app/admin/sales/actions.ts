@@ -38,6 +38,39 @@ export async function toggleCampaignTracked(mailchimpCampaignId: string, isTrack
   revalidatePath('/admin/sales')
 }
 
+export async function saveCampaignAssignment(campaignId: string, userId: string | null) {
+  const adminId = await requireAdmin()
+  const database = db()
+  const now = new Date().toISOString()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (database as any)
+    .from('mc_campaigns')
+    .update({ assigned_to_user_id: userId })
+    .eq('mailchimp_campaign_id', campaignId)
+
+  if (userId) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { count } = await (database as any)
+      .from('sales_leads')
+      .update({ assigned_to_user_id: userId, assigned_at: now, assigned_by_user_id: adminId })
+      .eq('mailchimp_campaign_id', campaignId)
+      .select('id', { count: 'exact', head: true })
+    revalidatePath('/admin/sales')
+    revalidatePath('/sales')
+    return { assigned: count ?? 0 }
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (database as any)
+      .from('sales_leads')
+      .update({ assigned_to_user_id: null, assigned_at: null, assigned_by_user_id: null })
+      .eq('mailchimp_campaign_id', campaignId)
+    revalidatePath('/admin/sales')
+    revalidatePath('/sales')
+    return { assigned: 0 }
+  }
+}
+
 // ─── Pipeline statuses ────────────────────────────────────────────────────────
 
 export async function addPipelineStatus(name: string) {
