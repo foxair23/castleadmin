@@ -81,9 +81,9 @@ function normalizeContactName(fname: string | null, lname: string | null): { fir
 
 function hoursAgo(h: number): string {
   const d = new Date(Date.now() - h * 3_600_000)
-  // SF API expects 'YYYY-MM-DD HH:mm:ss' — full ISO-8601 with T/Z is rejected
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+  // SF API expects ISO-8601 with explicit timezone offset (Y-m-d\TH:i:sP format)
+  // e.g. '2026-05-28T08:00:00+00:00' — not 'Z' suffix, not space-separated
+  return d.toISOString().slice(0, 19) + '+00:00'
 }
 
 // Chunk an array into sub-arrays of at most `size` elements.
@@ -541,7 +541,7 @@ interface IncrementalEntityConfig {
   entity: string
   path: string
   table: string
-  filterKey: string   // e.g. 'filters[updated_date][gte]'
+  filterKey?: string  // omit for entities that don't support date filtering (e.g. customers)
   expand?: string
   mapper: (r: Raw) => unknown
   afterUpsert?: (items: Raw[]) => Promise<void>
@@ -550,7 +550,7 @@ interface IncrementalEntityConfig {
 const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
   {
     entity: 'customers', path: '/customers', table: 'sf_customers',
-    filterKey: 'filters[updated_date][gte]',
+    // SF /customers does not support updated_date filtering — sync all each run
     expand: 'contacts,contacts.phones,contacts.emails,locations',
     mapper: mapCustomer,
     afterUpsert: syncCustomerChildren,
@@ -590,7 +590,8 @@ export async function runIncrementalSync(): Promise<Record<string, number>> {
     const handle = await startRun('incremental', cfg.entity)
     let fetched = 0, upserted = 0, pages = 0
     try {
-      const params: Record<string, string> = { [cfg.filterKey]: cutoff }
+      const params: Record<string, string> = {}
+      if (cfg.filterKey) params[cfg.filterKey] = cutoff
       if (cfg.expand) params['expand'] = cfg.expand
 
       const allItems: Raw[] = []
