@@ -247,8 +247,13 @@ export async function getCampaignOpenDetails(campaignId: string): Promise<McRawA
       console.error(`[mailchimp] open-details ${campaignId} HTTP ${res.status}: ${body}`)
       break
     }
-    const data = await res.json() as { members: McOpenDetailMember[]; total_items: number }
+    const raw = await res.json()
+    const data = raw as { members: McOpenDetailMember[]; total_items: number }
     const members = data.members ?? []
+    // Log full raw response on first page when members=0 so we can see every field Mailchimp returns
+    if (offset === 0 && members.length === 0) {
+      console.log(`[mailchimp] open-details ${campaignId} raw response:`, JSON.stringify(raw))
+    }
     console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}`)
 
     for (const m of members) {
