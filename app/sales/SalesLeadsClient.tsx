@@ -230,14 +230,15 @@ export default function SalesLeadsClient({
                   ? (DISPOSITION_COLORS[lead.last_call_disposition] ?? { bg: 'bg-gray-100', text: 'text-gray-600' })
                   : null
                 return (
-                  <tr key={lead.id} className="hover:bg-gray-50">
+                  <tr
+                    key={lead.id}
+                    onClick={() => router.push(`/sales/${lead.id}`)}
+                    className="hover:bg-red-50 cursor-pointer transition-colors"
+                  >
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/sales/${lead.id}`}
-                        className="font-medium text-gray-900 hover:text-red-600"
-                      >
+                      <span className="font-medium text-gray-900">
                         {lead.customer_name}
-                      </Link>
+                      </span>
                       {lead.account_number && (
                         <div className="text-xs text-gray-400">#{lead.account_number}</div>
                       )}
