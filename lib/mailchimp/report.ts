@@ -150,6 +150,22 @@ export async function getCampaignReport(campaignId: string): Promise<McRawReport
   return res.json() as Promise<McRawReport>
 }
 
+// Returns child campaign IDs for A/B test and multivariate campaigns.
+// Per-member activity (opens, clicks) lives on child campaigns, not the parent.
+export async function getCampaignSubReports(campaignId: string): Promise<string[]> {
+  if (!isConfigured()) return []
+  const res = await mcGet(`/reports/${campaignId}/sub-reports`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    console.error(`[mailchimp] sub-reports ${campaignId} HTTP ${res.status}: ${body}`)
+    return []
+  }
+  const data = await res.json() as { reports?: Array<{ id: string }>; total_items: number }
+  const ids = (data.reports ?? []).map(r => r.id)
+  console.log(`[mailchimp] sub-reports ${campaignId}: ${ids.length} children: ${JSON.stringify(ids)}`)
+  return ids
+}
+
 // ─────────────────────────────────────────────────────────────
 // Open detail — who opened (Mailchimp's filtered unique openers)
 // ─────────────────────────────────────────────────────────────
