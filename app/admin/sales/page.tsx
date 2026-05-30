@@ -24,6 +24,7 @@ export default async function AdminSalesPage() {
     repsRes,
     tagsRes,
     leadCountsRes,
+    tagAssignmentsRes,
   ] = await Promise.all([
     // All campaigns, newest first
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -76,15 +77,36 @@ export default async function AdminSalesPage() {
     (database as any)
       .from('sales_leads')
       .select('status'),
+
+    // Standing tag → rep assignment rules
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (database as any)
+      .from('mc_tag_assignments')
+      .select('tag_name, assigned_to_user_id'),
   ])
 
-  // Compute distinct tags
-  const allTagNames = [
-    ...new Set(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ((tagsRes.data ?? []) as any[]).map((r: any) => r.tag_name as string).filter(Boolean)
-    ),
-  ].sort()
+  // Compute distinct tags from both sales_leads and mc_campaigns
+  const tagsFromLeads = ((tagsRes.data ?? []) as any[]).map((r: any) => r.tag_name as string).filter(Boolean)
+  const tagsFromCampaigns = ((campaignsRes.data ?? []) as any[]).map((c: any) => c.tag_name as string).filter(Boolean)
+  const allTagNames = [...new Set([...tagsFromLeads, ...tagsFromCampaigns])].sort()
+
+  // Build campaigns grouped by tag_name
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const campaignsByTag = new Map<string, any[]>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const c of (campaignsRes.data ?? []) as any[]) {
+    if (!c.tag_name) continue
+    const arr = campaignsByTag.get(c.tag_name) ?? []
+    arr.push(c)
+    campaignsByTag.set(c.tag_name, arr)
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tagAssignments: Record<string, string> = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const row of (tagAssignmentsRes.data ?? []) as any[]) {
+    tagAssignments[row.tag_name] = row.assigned_to_user_id
+  }
 
   // Build status usage counts
   const statusUsageCounts: Record<string, number> = {}
@@ -111,6 +133,8 @@ export default async function AdminSalesPage() {
       reps={(repsRes.data ?? []) as any[]}
       tags={allTagNames}
       statusUsageCounts={statusUsageCounts}
+      tagAssignments={tagAssignments}
+      campaignsByTag={Object.fromEntries(campaignsByTag)}
     />
   )
 }
