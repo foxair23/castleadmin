@@ -119,7 +119,12 @@ export default function SalesLeadsClient({
       } else {
         setSyncStatus('done')
         const parts = [`Synced ${data.campaignsSynced} campaign${data.campaignsSynced !== 1 ? 's' : ''}`]
-        parts.push(`${data.totalOpeners ?? 0} opener${(data.totalOpeners ?? 0) !== 1 ? 's' : ''} from Mailchimp`)
+        if ((data.totalOpeners ?? 0) > 0) {
+          parts.push(`${data.totalOpeners} confirmed opener${data.totalOpeners !== 1 ? 's' : ''}`)
+        }
+        if ((data.totalLeads ?? 0) > (data.totalOpeners ?? 0)) {
+          parts.push(`${data.totalLeads} total leads`)
+        }
         if (data.unmatchedEmails > 0) {
           parts.push(`${data.unmatchedEmails} unmatched (link in Sales Admin)`)
         }

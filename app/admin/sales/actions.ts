@@ -38,6 +38,16 @@ export async function toggleCampaignTracked(mailchimpCampaignId: string, isTrack
   revalidatePath('/admin/sales')
 }
 
+export async function toggleCampaignOpenersOnly(mailchimpCampaignId: string, openersOnly: boolean) {
+  await requireAdmin()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (db() as any)
+    .from('mc_campaigns')
+    .update({ openers_only: openersOnly })
+    .eq('mailchimp_campaign_id', mailchimpCampaignId)
+  revalidatePath('/admin/sales')
+}
+
 export async function saveCampaignAssignment(campaignId: string, userId: string | null) {
   const adminId = await requireAdmin()
   const database = db()

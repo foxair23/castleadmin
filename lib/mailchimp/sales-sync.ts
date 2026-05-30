@@ -25,10 +25,11 @@ function db() {
 
 export interface SalesSyncResult {
   campaignsSynced: number
-  totalOpeners: number   // raw opener count from Mailchimp before any resolution
+  totalOpeners: number   // confirmed openers (open_count > 0) across all child campaigns
+  totalLeads: number     // total leads in the engagement map (may exceed openers when openers_only=false)
   newOpeners: number     // new sales_leads created (matched to SF customer, first time)
   newClickers: number
-  unmatchedEmails: number  // openers whose email didn't resolve to an SF customer
+  unmatchedEmails: number
 }
 
 // Build a map of email → sf_customers.id.
@@ -127,7 +128,7 @@ async function syncOneCampaign(
   campaign: McRawCampaign,
   segmentIdToTag: Map<number, string>,
   emailToTagName: Map<string, string>
-): Promise<{ totalOpeners: number; newOpeners: number; newClickers: number; unmatchedEmails: number }> {
+): Promise<{ totalOpeners: number; totalLeads: number; newOpeners: number; newClickers: number; unmatchedEmails: number }> {
   const campaignId = campaign.id
   const now = new Date().toISOString()
 
@@ -136,21 +137,34 @@ async function syncOneCampaign(
 
   // A/B test / multivariate campaigns: the parent campaign coordinates the send
   // but per-member activity (opens, clicks) lives on child campaigns.
-  // Fetch child IDs first, then pull all data in parallel.
+  // Fetch child IDs first, then fetch all parent data in parallel,
+  // then fetch child data sequentially (one child at a time) to stay under
+  // Mailchimp's 10 simultaneous connection limit.
   const childIds = await getCampaignSubReports(campaignId)
 
-  const [sentTo, activityAll, openDetails, clickers, report, childActivityArrays, childOpenDetailArrays] =
-    await Promise.all([
-      getCampaignSentTo(campaignId),
-      getCampaignActivity(campaignId),
-      getCampaignOpenDetails(campaignId),
-      getCampaignClickers(campaignId),
-      getCampaignReport(campaignId),
-      Promise.all(childIds.map(id => getCampaignActivity(id))),
-      Promise.all(childIds.map(id => getCampaignOpenDetails(id))),
-    ])
+  const [sentTo, activityAll, openDetails, clickers, report] = await Promise.all([
+    getCampaignSentTo(campaignId),
+    getCampaignActivity(campaignId),
+    getCampaignOpenDetails(campaignId),
+    getCampaignClickers(campaignId),
+    getCampaignReport(campaignId),
+  ])
 
-  // Flatten child data into the parent arrays
+  // Fetch each child's opener data sequentially to avoid rate limits.
+  // Within each child we still fire email-activity + open-details in parallel
+  // (only 2 concurrent requests, well within the 10-connection limit).
+  const childActivityArrays: typeof activityAll[] = []
+  const childOpenDetailArrays: typeof openDetails[] = []
+  for (const childId of childIds) {
+    const [childActivity, childOpenDetails] = await Promise.all([
+      getCampaignActivity(childId),
+      getCampaignOpenDetails(childId),
+    ])
+    childActivityArrays.push(childActivity)
+    childOpenDetailArrays.push(childOpenDetails)
+  }
+
+  // Flatten child data into parent arrays
   const allActivity = [...activityAll, ...childActivityArrays.flat()]
   const allOpenDetails = [...openDetails, ...childOpenDetailArrays.flat()]
 
@@ -188,6 +202,17 @@ async function syncOneCampaign(
       { onConflict: 'mailchimp_campaign_id' }
     )
 
+  // Fetch campaign settings (assigned rep + openers_only flag) before building leads.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: campaignRow } = await (supabase as any)
+    .from('mc_campaigns')
+    .select('assigned_to_user_id, openers_only')
+    .eq('mailchimp_campaign_id', campaignId)
+    .single()
+  const campaignAssignedUserId: string | null = (campaignRow as any)?.assigned_to_user_id ?? null
+  const openersOnly: boolean = (campaignRow as any)?.openers_only ?? false
+  console.log(`[sales-sync] campaign ${campaignId}: assigned rep = ${campaignAssignedUserId ?? 'none'}, openers_only = ${openersOnly}`)
+
   // Build engagement map: all recipients from sent-to, with open data overlaid
   // from the confirmed-opener map where available.
   const recipients = sentTo.length > 0 ? sentTo : [...allActivity, ...allOpenDetails]
@@ -202,6 +227,8 @@ async function syncOneCampaign(
 
   for (const a of recipients) {
     const email = a.email_address.toLowerCase()
+    // When openers_only is set, skip anyone not in the confirmed-opener map
+    if (openersOnly && !confirmedOpenerMap.has(email)) continue
     const confirmed = confirmedOpenerMap.get(email)
     engagementMap.set(email, {
       first_opened_at: confirmed?.first_open ?? a.first_open,
@@ -217,23 +244,24 @@ async function syncOneCampaign(
     const existing = engagementMap.get(email)
     if (existing) {
       existing.click_count = Math.max(existing.click_count, c.clicks)
-    } else {
+    } else if (!openersOnly) {
       engagementMap.set(email, { first_opened_at: null, last_opened_at: null, open_count: 0, click_count: c.clicks })
     }
   }
 
-  // Tag-based leads: add every tagged audience member as a lead even when the
-  // open-details API returns no data (e.g. data retention expired, MPP filtering).
-  // Members already in the map keep their engagement data; new entries get 0 opens.
-  for (const [email] of emailToTagName) {
-    if (!engagementMap.has(email)) {
-      engagementMap.set(email, { first_opened_at: null, last_opened_at: null, open_count: 0, click_count: 0 })
+  // Tag-based leads: when openers_only is false, add all tagged members as leads
+  // so reps have the full audience to work from even without confirmed open data.
+  if (!openersOnly) {
+    for (const [email] of emailToTagName) {
+      if (!engagementMap.has(email)) {
+        engagementMap.set(email, { first_opened_at: null, last_opened_at: null, open_count: 0, click_count: 0 })
+      }
     }
   }
-  console.log(`[sales-sync] campaign ${campaignId}: ${engagementMap.size} total leads after tag merge (${confirmedOpenerMap.size} confirmed openers)`)
+  console.log(`[sales-sync] campaign ${campaignId}: ${engagementMap.size} total leads (${confirmedOpenerMap.size} confirmed openers, openers_only=${openersOnly})`)
 
   if (engagementMap.size === 0) {
-    return { totalOpeners: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
+    return { totalOpeners: 0, totalLeads: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
   }
 
   // Resolve all emails to customer IDs in one pass
@@ -275,7 +303,7 @@ async function syncOneCampaign(
   console.log(`[sales-sync] campaign ${campaignId}: ${matchedCustomerIds.length} resolved to SF customers, ${unmatchedEmails} unmatched`)
 
   if (matchedCustomerIds.length === 0) {
-    return { totalOpeners: engagementMap.size, newOpeners: 0, newClickers: 0, unmatchedEmails }
+    return { totalOpeners: confirmedOpenerMap.size, totalLeads: engagementMap.size, newOpeners: 0, newClickers: 0, unmatchedEmails }
   }
 
   const { data: existingLeads } = await supabase
@@ -285,16 +313,6 @@ async function syncOneCampaign(
     .in('customer_id', matchedCustomerIds)
 
   const existingByCustomer = new Map(existingLeads?.map(l => [l.customer_id, l]) ?? [])
-
-  // Use the campaign-level assigned rep (set by admin in the Campaigns tab).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: campaignRow } = await (supabase as any)
-    .from('mc_campaigns')
-    .select('assigned_to_user_id')
-    .eq('mailchimp_campaign_id', campaignId)
-    .single()
-  const campaignAssignedUserId: string | null = (campaignRow as any)?.assigned_to_user_id ?? null
-  console.log(`[sales-sync] campaign ${campaignId}: assigned rep = ${campaignAssignedUserId ?? 'none'}`)
 
   let newOpeners = 0
   let newClickers = 0
@@ -343,7 +361,7 @@ async function syncOneCampaign(
     }
   }
 
-  return { totalOpeners: engagementMap.size, newOpeners, newClickers, unmatchedEmails }
+  return { totalOpeners: confirmedOpenerMap.size, totalLeads: engagementMap.size, newOpeners, newClickers, unmatchedEmails }
 }
 
 export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<SalesSyncResult> {
@@ -382,6 +400,7 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   )
 
   let grandTotalOpeners = 0
+  let grandTotalLeads = 0
   let totalNewOpeners = 0
   let totalNewClickers = 0
   let totalUnmatched = 0
@@ -391,8 +410,9 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   try {
     // Process campaigns sequentially to avoid overwhelming Mailchimp rate limits
     for (const campaign of relevant) {
-      const { totalOpeners, newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, segmentIdToTag, emailToTagName)
+      const { totalOpeners, totalLeads, newOpeners, newClickers, unmatchedEmails } = await syncOneCampaign(supabase, campaign, segmentIdToTag, emailToTagName)
       grandTotalOpeners += totalOpeners
+      grandTotalLeads += totalLeads
       totalNewOpeners += newOpeners
       totalNewClickers += newClickers
       totalUnmatched += unmatchedEmails
@@ -418,6 +438,7 @@ export async function runMailchimpSalesSync(triggeredByUserId: string): Promise<
   return {
     campaignsSynced,
     totalOpeners: grandTotalOpeners,
+    totalLeads: grandTotalLeads,
     newOpeners: totalNewOpeners,
     newClickers: totalNewClickers,
     unmatchedEmails: totalUnmatched,
