@@ -6,7 +6,7 @@ import {
   listCampaigns,
   listAudienceTags,
   listTagMembers,
-  getCampaignOpeners,
+  getCampaignActivity,
   getCampaignClickers,
   getCampaignReport,
   type McRawCampaign,
@@ -108,9 +108,9 @@ async function syncOneCampaign(
   // Campaign-level tag (from segment_opts — null when sent to whole audience)
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
-  // Fetch engagement and report summary in parallel
-  const [openers, clickers, report] = await Promise.all([
-    getCampaignOpeners(campaignId),
+  // Fetch all recipient activity and report in parallel
+  const [allActivity, clickers, report] = await Promise.all([
+    getCampaignActivity(campaignId),
     getCampaignClickers(campaignId),
     getCampaignReport(campaignId),
   ])
@@ -126,11 +126,7 @@ async function syncOneCampaign(
         send_time: campaign.send_time || null,
         tag_name: tagName,
         total_recipients: campaign.emails_sent ?? report?.emails_sent ?? null,
-        // Use the report's unique_opens (Mailchimp's authoritative stat).
-        // openers.length can be 0 when all opens are MPP-filtered by Mailchimp.
         total_opens: report?.opens?.unique_opens ?? campaign.report_summary?.unique_opens ?? null,
-        // clickers.length = distinct email addresses that clicked (from click-details).
-        // More reliable than report fields which may count bot clicks.
         total_clicks: clickers.length > 0
           ? clickers.length
           : (report?.clicks?.unique_clicks ?? campaign.report_summary?.unique_clicks ?? null),
@@ -140,15 +136,17 @@ async function syncOneCampaign(
       { onConflict: 'mailchimp_campaign_id' }
     )
 
-  console.log(`[sales-sync] campaign ${campaignId}: ${openers.length} openers, ${clickers.length} clickers from Mailchimp`)
+  const taggedCount = allActivity.filter(a => emailToTagName.has(a.email_address.toLowerCase())).length
+  console.log(`[sales-sync] campaign ${campaignId}: ${allActivity.length} recipients, ${taggedCount} tagged, ${clickers.length} clickers`)
 
-  if (openers.length === 0 && clickers.length === 0) {
+  if (allActivity.length === 0 && clickers.length === 0) {
     return { totalOpeners: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
   }
 
-  // Build engagement map: merge openers + clickers so that people who clicked but
-  // whose open was filtered by Mailchimp (e.g. Apple MPP) still get a lead.
-  // A click implies a real open even when email-activity shows no open action.
+  // Build engagement map:
+  // - Tagged members: always included regardless of engagement
+  //   (the tag signals "I pushed this contact for follow-up")
+  // - Untagged members: only included if they opened or clicked
   const engagementMap = new Map<string, {
     first_opened_at: string | null
     last_opened_at: string | null
@@ -156,29 +154,26 @@ async function syncOneCampaign(
     click_count: number
   }>()
 
-  for (const o of openers) {
-    const email = o.email_address.toLowerCase()
+  for (const a of allActivity) {
+    const email = a.email_address.toLowerCase()
+    const isTagged = emailToTagName.has(email)
+    if (!isTagged && a.opens_count === 0 && a.clicks_count === 0) continue
     engagementMap.set(email, {
-      first_opened_at: o.first_open || null,
-      last_opened_at: o.last_open || o.first_open || null,
-      open_count: o.opens_count,
-      click_count: 0,
+      first_opened_at: a.first_open,
+      last_opened_at: a.last_open,
+      open_count: a.opens_count,
+      click_count: a.clicks_count,
     })
   }
 
+  // Merge click-details for any clickers not already in the map
   for (const c of clickers) {
     const email = c.email_address.toLowerCase()
     const existing = engagementMap.get(email)
     if (existing) {
-      existing.click_count = c.clicks
+      existing.click_count = Math.max(existing.click_count, c.clicks)
     } else {
-      // Click-only: Mailchimp filtered the open (MPP) but the click is real
-      engagementMap.set(email, {
-        first_opened_at: null,
-        last_opened_at: null,
-        open_count: 0,
-        click_count: c.clicks,
-      })
+      engagementMap.set(email, { first_opened_at: null, last_opened_at: null, open_count: 0, click_count: c.clicks })
     }
   }
 
@@ -221,7 +216,7 @@ async function syncOneCampaign(
   console.log(`[sales-sync] campaign ${campaignId}: ${matchedCustomerIds.length} resolved to SF customers, ${unmatchedEmails} unmatched`)
 
   if (matchedCustomerIds.length === 0) {
-    return { totalOpeners: openers.length, newOpeners: 0, newClickers: 0, unmatchedEmails }
+    return { totalOpeners: engagementMap.size, newOpeners: 0, newClickers: 0, unmatchedEmails }
   }
 
   const { data: existingLeads } = await supabase

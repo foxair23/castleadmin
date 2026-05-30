@@ -162,11 +162,23 @@ interface McEmailActivity {
   activity: Array<{ action: string; timestamp: string }>
 }
 
-export async function getCampaignOpeners(campaignId: string): Promise<McRawOpener[]> {
+// Returns ALL campaign recipients with their open+click activity.
+// Unlike the old open-details endpoint, email-activity includes archived/cleaned
+// members. We do NOT filter to openers here — the caller decides inclusion logic
+// (e.g. include tagged members regardless of opens).
+export interface McRawActivity {
+  email_address: string
+  opens_count: number
+  clicks_count: number
+  first_open: string | null
+  last_open: string | null
+}
+
+export async function getCampaignActivity(campaignId: string): Promise<McRawActivity[]> {
   if (!isConfigured()) return []
 
   const PAGE = 1000
-  const openerMap = new Map<string, McRawOpener>()
+  const results: McRawActivity[] = []
   let offset = 0
   let totalSeen = 0
 
@@ -186,13 +198,14 @@ export async function getCampaignOpeners(campaignId: string): Promise<McRawOpene
 
     for (const member of emails) {
       const opens = member.activity.filter(a => a.action === 'open')
-      if (opens.length === 0) continue
-      const timestamps = opens.map(o => o.timestamp).sort()
-      openerMap.set(member.email_address, {
+      const clicks = member.activity.filter(a => a.action === 'click')
+      const openTs = opens.map(o => o.timestamp).sort()
+      results.push({
         email_address: member.email_address,
         opens_count: opens.length,
-        first_open: timestamps[0],
-        last_open: timestamps[timestamps.length - 1],
+        clicks_count: clicks.length,
+        first_open: openTs[0] ?? null,
+        last_open: openTs[openTs.length - 1] ?? null,
       })
     }
 
@@ -201,8 +214,22 @@ export async function getCampaignOpeners(campaignId: string): Promise<McRawOpene
     offset += PAGE
   }
 
-  console.log(`[mailchimp] email-activity ${campaignId}: ${openerMap.size} unique openers`)
-  return Array.from(openerMap.values())
+  const openerCount = results.filter(r => r.opens_count > 0).length
+  console.log(`[mailchimp] email-activity ${campaignId}: ${results.length} recipients, ${openerCount} openers`)
+  return results
+}
+
+// Kept for backward compatibility — delegates to getCampaignActivity and filters.
+export async function getCampaignOpeners(campaignId: string): Promise<McRawOpener[]> {
+  const activity = await getCampaignActivity(campaignId)
+  return activity
+    .filter(a => a.opens_count > 0)
+    .map(a => ({
+      email_address: a.email_address,
+      opens_count: a.opens_count,
+      first_open: a.first_open!,
+      last_open: a.last_open ?? undefined,
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────
