@@ -247,9 +247,10 @@ export async function getCampaignOpenDetails(campaignId: string): Promise<McRawA
       console.error(`[mailchimp] open-details ${campaignId} HTTP ${res.status}: ${body}`)
       break
     }
-    const data = await res.json() as { members: McOpenDetailMember[]; total_items: number }
-    const members = data.members ?? []
-    console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}`)
+    const data = await res.json() as { open_details?: McOpenDetailMember[]; members?: McOpenDetailMember[]; total_items: number }
+    // Mailchimp API returns the array as `open_details` (not `members`)
+    const members = data.open_details ?? data.members ?? []
+    console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}, keys=${Object.keys(data).join(',')}`)
 
     for (const m of members) {
       const ts = (m.opens ?? []).map(o => o.timestamp).sort()
@@ -263,7 +264,9 @@ export async function getCampaignOpenDetails(campaignId: string): Promise<McRawA
     }
 
     totalSeen += members.length
-    if (totalSeen >= (data.total_items ?? 0)) break
+    // Stop when: no records returned, fewer than a full page (last page), or count met
+    if (members.length < PAGE) break
+    if (data.total_items && totalSeen >= data.total_items) break
     offset += PAGE
   }
 
