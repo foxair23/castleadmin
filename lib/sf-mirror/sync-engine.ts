@@ -567,17 +567,17 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
   },
   {
     entity: 'estimates', path: '/estimates', table: 'sf_estimates',
-    filterKey: 'filters[updated_date][gte]',
+    // SF /estimates does not support updated_date filtering — sync all each run
     mapper: mapEstimate,
   },
   {
     entity: 'invoices', path: '/invoices', table: 'sf_invoices',
-    filterKey: 'filters[updated_date][gte]',
+    // SF /invoices does not support updated_date filtering — sync all each run
     mapper: (r) => mapInvoice(r),
   },
   {
     entity: 'calendar_tasks', path: '/calendar-tasks', table: 'sf_calendar_tasks',
-    filterKey: 'filters[start_date][gte]',   // calendar-tasks has no updated_date filter
+    // SF /calendar-tasks does not support start_date filtering — sync all each run
     mapper: mapCalendarTask,
   },
 ]
