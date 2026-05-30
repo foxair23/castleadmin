@@ -219,6 +219,58 @@ export async function getCampaignActivity(campaignId: string): Promise<McRawActi
   return results
 }
 
+// sent-to returns every recipient of the campaign with their engagement counts.
+// Unlike open-details (which returns only openers and is subject to short data
+// retention), sent-to is the full delivery report and typically retains data longer.
+// Each member includes open_count, click_count, and last_open.
+interface McSentToMember {
+  email_address: string
+  open_count: number
+  click_count: number
+  last_open?: string | null
+}
+
+export async function getCampaignSentTo(campaignId: string): Promise<McRawActivity[]> {
+  if (!isConfigured()) return []
+
+  const PAGE = 1000
+  const results: McRawActivity[] = []
+  let offset = 0
+
+  while (true) {
+    const res = await mcGet(`/reports/${campaignId}/sent-to`, { count: PAGE, offset })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.error(`[mailchimp] sent-to ${campaignId} HTTP ${res.status}: ${body}`)
+      break
+    }
+    const data = await res.json() as { sent_to?: McSentToMember[]; members?: McSentToMember[]; total_items: number }
+    const members = data.sent_to ?? data.members ?? []
+    console.log(`[mailchimp] sent-to ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}, keys=${Object.keys(data).join(',')}`)
+    if (members.length === 0 && offset === 0) {
+      console.log(`[mailchimp] sent-to ${campaignId} full response: ${JSON.stringify(data).slice(0, 1000)}`)
+    }
+
+    for (const m of members) {
+      results.push({
+        email_address: m.email_address,
+        opens_count: m.open_count ?? 0,
+        clicks_count: m.click_count ?? 0,
+        first_open: m.last_open ?? null,
+        last_open: m.last_open ?? null,
+      })
+    }
+
+    if (members.length < PAGE) break
+    if (data.total_items && results.length >= data.total_items) break
+    offset += PAGE
+  }
+
+  const openerCount = results.filter(r => r.opens_count > 0).length
+  console.log(`[mailchimp] sent-to ${campaignId}: ${results.length} recipients, ${openerCount} openers`)
+  return results
+}
+
 // open-details returns Mailchimp's processed opener list — the SAME data shown
 // in the dashboard "Opened" report and its CSV export, INCLUDING Apple MPP opens.
 // This is the source of truth for "who opened".

@@ -6,6 +6,7 @@ import {
   listCampaigns,
   listAudienceTags,
   listTagMembers,
+  getCampaignSentTo,
   getCampaignOpenDetails,
   getCampaignClickers,
   getCampaignReport,
@@ -131,16 +132,20 @@ async function syncOneCampaign(
   // Campaign-level tag (from segment_opts — null when sent to whole audience)
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
-  // Fetch the opener list, clickers, and report in parallel.
-  // open-details is Mailchimp's processed opener list. NOTE: for Apple-MPP-heavy
-  // campaigns Mailchimp reports aggregate opens in the campaign report but returns
-  // no per-person opener data via the API (open-details/email-activity both return
-  // 0). For those campaigns, use the CSV import path instead.
-  const [openers, clickers, report] = await Promise.all([
+  // sent-to returns all 282 recipients with per-member open_count/click_count.
+  // It has longer data retention than open-details. If it returns recipients with
+  // open counts, use those directly. Fall back to open-details if sent-to is empty.
+  const [sentTo, openDetails, clickers, report] = await Promise.all([
+    getCampaignSentTo(campaignId),
     getCampaignOpenDetails(campaignId),
     getCampaignClickers(campaignId),
     getCampaignReport(campaignId),
   ])
+
+  // Prefer sent-to (has all recipients + engagement counts). Fall back to
+  // open-details (openers only) if sent-to comes back empty.
+  const openers = sentTo.length > 0 ? sentTo : openDetails
+  console.log(`[sales-sync] campaign ${campaignId}: using ${sentTo.length > 0 ? 'sent-to' : 'open-details'} as opener source (${openers.filter(o => o.opens_count > 0).length} openers out of ${openers.length} recipients)`)
 
   // Upsert mc_campaigns row
   await supabase
