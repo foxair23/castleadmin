@@ -306,6 +306,14 @@ async function syncOneCampaign(
     return { totalOpeners: confirmedOpenerMap.size, totalLeads: engagementMap.size, newOpeners: 0, newClickers: 0, unmatchedEmails }
   }
 
+  // Don't create leads unless a rep is assigned to this campaign.
+  // Engagement data is still recorded in mc_campaign_engagement so it's
+  // ready when the admin assigns a rep and triggers a re-sync.
+  if (!campaignAssignedUserId) {
+    console.log(`[sales-sync] campaign ${campaignId}: no assigned rep — skipping lead creation`)
+    return { totalOpeners: confirmedOpenerMap.size, totalLeads: engagementMap.size, newOpeners: 0, newClickers: 0, unmatchedEmails }
+  }
+
   const { data: existingLeads } = await supabase
     .from('sales_leads')
     .select('id, customer_id, open_count, click_count')
