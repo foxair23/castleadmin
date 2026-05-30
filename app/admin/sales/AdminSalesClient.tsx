@@ -7,6 +7,7 @@ import {
   addCallDisposition, renameCallDisposition, deleteCallDisposition,
   bulkAssignLeads,
   linkEngagementToCustomer, dismissEngagement, searchCustomers,
+  saveTagAssignment,
 } from './actions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -46,9 +47,11 @@ interface Props {
   reps: Rep[]
   tags: string[]
   statusUsageCounts: Record<string, number>
+  tagAssignments: Record<string, string>   // tag_name → user_id
+  campaignsByTag: Record<string, Campaign[]>
 }
 
-type Tab = 'campaigns' | 'pipeline' | 'assign' | 'unmatched'
+type Tab = 'campaigns' | 'pipeline' | 'assign' | 'tags' | 'unmatched'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -469,6 +472,99 @@ function UnmatchedTab({ unmatched }: { unmatched: UnmatchedEngagement[] }) {
   )
 }
 
+// ─── Tag assignments tab ──────────────────────────────────────────────────────
+
+function TagsTab({
+  tags,
+  reps,
+  tagAssignments,
+  campaignsByTag,
+}: {
+  tags: string[]
+  reps: Rep[]
+  tagAssignments: Record<string, string>
+  campaignsByTag: Record<string, Campaign[]>
+}) {
+  const [pending, startTransition] = useTransition()
+  const [saving, setSaving] = useState<string | null>(null)
+  const [localAssignments, setLocalAssignments] = useState<Record<string, string>>({ ...tagAssignments })
+
+  function handleChange(tagName: string, userId: string) {
+    setLocalAssignments(prev => ({ ...prev, [tagName]: userId }))
+    setSaving(tagName)
+    startTransition(async () => {
+      await saveTagAssignment(tagName, userId || null)
+      setSaving(null)
+    })
+  }
+
+  if (tags.length === 0) {
+    return <p className="text-sm text-gray-400 py-4">No tags found — sync from Mailchimp first.</p>
+  }
+
+  return (
+    <Section title="Tag → rep assignments">
+      <p className="text-sm text-gray-500 mb-4">
+        When a lead is created for a tagged contact, it is automatically assigned to the rep configured here.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-500 border-b border-gray-100">
+              <th className="pb-2 font-medium pr-6">Tag</th>
+              <th className="pb-2 font-medium pr-6">Campaigns</th>
+              <th className="pb-2 font-medium">Assigned rep</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {tags.map(tag => {
+              const campaigns = campaignsByTag[tag] ?? []
+              const assignedUserId = localAssignments[tag] ?? ''
+              const isSaving = saving === tag && pending
+              return (
+                <tr key={tag} className="hover:bg-gray-50">
+                  <td className="py-3 pr-6">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
+                      {tag}
+                    </span>
+                  </td>
+                  <td className="py-3 pr-6 text-gray-500 text-xs">
+                    {campaigns.length === 0
+                      ? <span className="text-gray-300">—</span>
+                      : campaigns.map(c => (
+                          <div key={c.mailchimp_campaign_id} className="truncate max-w-[280px]" title={c.subject ?? undefined}>
+                            {c.subject ?? c.mailchimp_campaign_id}
+                            {c.send_time && <span className="ml-1 text-gray-400">({fmtDate(c.send_time)})</span>}
+                          </div>
+                        ))
+                    }
+                  </td>
+                  <td className="py-3">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={assignedUserId}
+                        onChange={e => handleChange(tag, e.target.value)}
+                        disabled={isSaving}
+                        className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60"
+                      >
+                        <option value="">— unassigned —</option>
+                        {reps.map(r => (
+                          <option key={r.id} value={r.id}>{r.full_name} ({r.role})</option>
+                        ))}
+                      </select>
+                      {isSaving && <span className="text-xs text-gray-400">Saving…</span>}
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+  )
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function AdminSalesClient({
@@ -479,12 +575,15 @@ export default function AdminSalesClient({
   reps,
   tags,
   statusUsageCounts,
+  tagAssignments,
+  campaignsByTag,
 }: Props) {
   const [tab, setTab] = useState<Tab>('campaigns')
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'campaigns', label: `Campaigns (${campaigns.length})` },
     { key: 'pipeline',  label: 'Pipeline Config' },
+    { key: 'tags',      label: `Tag Assignments (${tags.length})` },
     { key: 'assign',    label: 'Bulk Assign' },
     { key: 'unmatched', label: `Unmatched (${unmatched.length})` },
   ]
@@ -528,6 +627,14 @@ export default function AdminSalesClient({
           pipelineStatuses={pipelineStatuses}
           callDispositions={callDispositions}
           statusUsageCounts={statusUsageCounts}
+        />
+      )}
+      {tab === 'tags'      && (
+        <TagsTab
+          tags={tags}
+          reps={reps}
+          tagAssignments={tagAssignments}
+          campaignsByTag={campaignsByTag}
         />
       )}
       {tab === 'assign'    && <AssignTab campaigns={campaigns} reps={reps} tags={tags} />}

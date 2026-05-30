@@ -237,6 +237,28 @@ export async function dismissEngagement(engagementId: string) {
   revalidatePath('/admin/sales')
 }
 
+// ─── Tag assignments ──────────────────────────────────────────────────────────
+
+// Upsert or delete a standing tag → rep assignment rule.
+// Passing userId=null removes the rule (unassigns the tag).
+export async function saveTagAssignment(tagName: string, userId: string | null) {
+  const adminId = await requireAdmin()
+  const database = db()
+  if (userId) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (database as any)
+      .from('mc_tag_assignments')
+      .upsert(
+        { tag_name: tagName, assigned_to_user_id: userId, assigned_by_user_id: adminId, updated_at: new Date().toISOString() },
+        { onConflict: 'tag_name' }
+      )
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (database as any).from('mc_tag_assignments').delete().eq('tag_name', tagName)
+  }
+  revalidatePath('/admin/sales')
+}
+
 export async function searchCustomers(query: string) {
   await requireAdmin()
   const q = query.trim()

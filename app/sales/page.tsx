@@ -39,6 +39,7 @@ export default async function SalesPage() {
       'assigned_to_user_id, created_at, first_opened_at, last_opened_at, ' +
       'open_count, click_count, last_activity_at, closed_outcome, sf_job_created'
     )
+    .gt('open_count', 0)
     .order('last_activity_at', { ascending: false })
     .limit(500)
 
