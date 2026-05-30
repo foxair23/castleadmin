@@ -251,6 +251,10 @@ export async function getCampaignOpenDetails(campaignId: string): Promise<McRawA
     // Mailchimp API returns the array as `open_details` (not `members`)
     const members = data.open_details ?? data.members ?? []
     console.log(`[mailchimp] open-details ${campaignId} offset=${offset}: ${members.length} members, total_items=${data.total_items}, keys=${Object.keys(data).join(',')}`)
+    if (members.length === 0 && offset === 0) {
+      // Log full response to diagnose why Mailchimp returns no openers (plan limits, data retention, permissions, etc.)
+      console.log(`[mailchimp] open-details ${campaignId} full response: ${JSON.stringify(data).slice(0, 1000)}`)
+    }
 
     for (const m of members) {
       const ts = (m.opens ?? []).map(o => o.timestamp).sort()

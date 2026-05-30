@@ -165,13 +165,7 @@ async function syncOneCampaign(
 
   console.log(`[sales-sync] campaign ${campaignId}: ${openers.length} openers, ${clickers.length} clickers`)
 
-  if (openers.length === 0 && clickers.length === 0) {
-    return { totalOpeners: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
-  }
-
-  // Build engagement map from people who actually engaged:
-  // every opener (from open-details) plus any clicker. These become the leads
-  // reps follow up on — the campaign's tag is still attached to each lead below.
+  // Build engagement map: start with confirmed openers and clickers from the API.
   const engagementMap = new Map<string, {
     first_opened_at: string | null
     last_opened_at: string | null
@@ -198,6 +192,20 @@ async function syncOneCampaign(
     } else {
       engagementMap.set(email, { first_opened_at: null, last_opened_at: null, open_count: 0, click_count: c.clicks })
     }
+  }
+
+  // Tag-based leads: add every tagged audience member as a lead even when the
+  // open-details API returns no data (e.g. data retention expired, MPP filtering).
+  // Members already in the map keep their engagement data; new entries get 0 opens.
+  for (const [email] of emailToTagName) {
+    if (!engagementMap.has(email)) {
+      engagementMap.set(email, { first_opened_at: null, last_opened_at: null, open_count: 0, click_count: 0 })
+    }
+  }
+  console.log(`[sales-sync] campaign ${campaignId}: ${engagementMap.size} total leads after tag merge (${openers.length} confirmed openers)`)
+
+  if (engagementMap.size === 0) {
+    return { totalOpeners: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }
   }
 
   // Resolve all emails to customer IDs in one pass
