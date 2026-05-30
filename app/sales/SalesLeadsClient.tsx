@@ -61,10 +61,18 @@ function Badge({ label, bg, text }: { label: string; bg: string; text: string })
   )
 }
 
-function AgingDot({ days }: { days: number | null }) {
-  if (days === null) return <span className="text-gray-400 text-xs">—</span>
+function AgingDate({ dateStr, days }: { dateStr: string | null; days: number | null }) {
+  if (!dateStr || days === null) return <span className="text-gray-400 text-xs">—</span>
   const color = days >= 14 ? 'text-red-600' : days >= 7 ? 'text-yellow-600' : 'text-gray-600'
-  return <span className={`text-xs font-medium ${color}`}>{days}d</span>
+  const d = new Date(dateStr)
+  const formatted = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  return (
+    <span className={`text-xs font-medium ${color}`}>
+      {formatted}
+      <span className="block text-gray-400 font-normal">{time} · {days}d ago</span>
+    </span>
+  )
 }
 
 export default function SalesLeadsClient({
@@ -265,7 +273,7 @@ export default function SalesLeadsClient({
                 </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">
                   <button onClick={() => handleSort('last_activity_at')} className="flex items-center hover:text-gray-900">
-                    Last activity<SortIcon field="last_activity_at" />
+                    Last email activity<SortIcon field="last_activity_at" />
                   </button>
                 </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Last call</th>
@@ -342,7 +350,7 @@ export default function SalesLeadsClient({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <AgingDot days={lead.days_since_activity} />
+                      <AgingDate dateStr={lead.last_activity_at} days={lead.days_since_activity} />
                     </td>
                     <td className="px-4 py-3">
                       {dc ? (

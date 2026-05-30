@@ -41,10 +41,10 @@ export default function SalesNav({ role, fullName }: SalesNavProps) {
 
           {role === 'admin' && (
             <Link
-              href="/admin"
+              href="/admin/sales"
               className="text-sm text-gray-400 hover:text-white transition-colors ml-2"
             >
-              ← Admin
+              ← Sales Admin
             </Link>
           )}
 
