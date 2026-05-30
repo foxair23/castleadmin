@@ -8,6 +8,7 @@ import {
   listTagMembers,
   getCampaignSentTo,
   getCampaignOpenDetails,
+  getCampaignActivity,
   getCampaignClickers,
   getCampaignReport,
   type McRawCampaign,
@@ -132,20 +133,35 @@ async function syncOneCampaign(
   // Campaign-level tag (from segment_opts — null when sent to whole audience)
   const tagName = resolveTagName(campaign, segmentIdToTag)
 
-  // sent-to returns all 282 recipients with per-member open_count/click_count.
-  // It has longer data retention than open-details. If it returns recipients with
-  // open counts, use those directly. Fall back to open-details if sent-to is empty.
-  const [sentTo, openDetails, clickers, report] = await Promise.all([
+  // Fetch all opener sources and recipients in parallel.
+  // Strategy (per Mailchimp docs recommendation):
+  //   1. sent-to      → full recipient list (all 282), used as the lead list
+  //   2. email-activity → filter action==='open' for confirmed openers
+  //   3. open-details → alternative confirmed opener source
+  // We layer them: sent-to gives us every lead; email-activity + open-details
+  // tell us who specifically opened so we can set open_count > 0 on those leads.
+  const [sentTo, activityAll, openDetails, clickers, report] = await Promise.all([
     getCampaignSentTo(campaignId),
+    getCampaignActivity(campaignId),
     getCampaignOpenDetails(campaignId),
     getCampaignClickers(campaignId),
     getCampaignReport(campaignId),
   ])
 
-  // Prefer sent-to (has all recipients + engagement counts). Fall back to
-  // open-details (openers only) if sent-to comes back empty.
-  const openers = sentTo.length > 0 ? sentTo : openDetails
-  console.log(`[sales-sync] campaign ${campaignId}: using ${sentTo.length > 0 ? 'sent-to' : 'open-details'} as opener source (${openers.filter(o => o.opens_count > 0).length} openers out of ${openers.length} recipients)`)
+  // Build a confirmed-opener map from email-activity + open-details.
+  // email-activity is the primary source per Mailchimp's recommendation;
+  // open-details is additive in case email-activity misses MPP-attributed opens.
+  const confirmedOpenerMap = new Map<string, { opens_count: number; first_open: string | null; last_open: string | null }>()
+  for (const a of [...activityAll, ...openDetails]) {
+    if (a.opens_count > 0) {
+      const key = a.email_address.toLowerCase()
+      const existing = confirmedOpenerMap.get(key)
+      if (!existing || a.opens_count > existing.opens_count) {
+        confirmedOpenerMap.set(key, { opens_count: a.opens_count, first_open: a.first_open, last_open: a.last_open })
+      }
+    }
+  }
+  console.log(`[sales-sync] campaign ${campaignId}: ${sentTo.length} recipients (sent-to), ${confirmedOpenerMap.size} confirmed openers (email-activity: ${activityAll.filter(a => a.opens_count > 0).length}, open-details: ${openDetails.filter(a => a.opens_count > 0).length})`)
 
   // Upsert mc_campaigns row
   await supabase
@@ -168,9 +184,11 @@ async function syncOneCampaign(
       { onConflict: 'mailchimp_campaign_id' }
     )
 
-  console.log(`[sales-sync] campaign ${campaignId}: ${openers.length} openers, ${clickers.length} clickers`)
+  // Build engagement map: all recipients from sent-to, with open data overlaid
+  // from the confirmed-opener map where available.
+  const recipients = sentTo.length > 0 ? sentTo : [...activityAll, ...openDetails]
+  console.log(`[sales-sync] campaign ${campaignId}: building leads from ${recipients.length} recipients`)
 
-  // Build engagement map: start with confirmed openers and clickers from the API.
   const engagementMap = new Map<string, {
     first_opened_at: string | null
     last_opened_at: string | null
@@ -178,12 +196,13 @@ async function syncOneCampaign(
     click_count: number
   }>()
 
-  for (const a of openers) {
+  for (const a of recipients) {
     const email = a.email_address.toLowerCase()
+    const confirmed = confirmedOpenerMap.get(email)
     engagementMap.set(email, {
-      first_opened_at: a.first_open,
-      last_opened_at: a.last_open,
-      open_count: a.opens_count,
+      first_opened_at: confirmed?.first_open ?? a.first_open,
+      last_opened_at: confirmed?.last_open ?? a.last_open,
+      open_count: confirmed?.opens_count ?? a.opens_count,
       click_count: a.clicks_count,
     })
   }
@@ -207,7 +226,7 @@ async function syncOneCampaign(
       engagementMap.set(email, { first_opened_at: null, last_opened_at: null, open_count: 0, click_count: 0 })
     }
   }
-  console.log(`[sales-sync] campaign ${campaignId}: ${engagementMap.size} total leads after tag merge (${openers.length} confirmed openers)`)
+  console.log(`[sales-sync] campaign ${campaignId}: ${engagementMap.size} total leads after tag merge (${confirmedOpenerMap.size} confirmed openers)`)
 
   if (engagementMap.size === 0) {
     return { totalOpeners: 0, newOpeners: 0, newClickers: 0, unmatchedEmails: 0 }

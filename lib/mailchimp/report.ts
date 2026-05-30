@@ -194,7 +194,10 @@ export async function getCampaignActivity(campaignId: string): Promise<McRawActi
     }
     const data = await res.json() as { emails: McEmailActivity[]; total_items: number }
     const emails = data.emails ?? []
-    console.log(`[mailchimp] email-activity ${campaignId} offset=${offset}: ${emails.length} members, total_items=${data.total_items}`)
+    console.log(`[mailchimp] email-activity ${campaignId} offset=${offset}: ${emails.length} members, total_items=${data.total_items}, keys=${Object.keys(data).join(',')}`)
+    if (offset === 0 && emails.length > 0) {
+      console.log(`[mailchimp] email-activity ${campaignId} first member: ${JSON.stringify(emails[0]).slice(0, 500)}`)
+    }
 
     for (const member of emails) {
       const opens = member.activity.filter(a => a.action === 'open')
