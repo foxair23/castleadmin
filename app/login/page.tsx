@@ -39,7 +39,7 @@ export default function LoginPage() {
             className="object-contain"
             priority
           />
-          <p className="text-gray-400 mt-3 text-sm tracking-wide uppercase">Piecework Payroll</p>
+          <p className="text-gray-400 mt-3 text-sm tracking-wide uppercase">Operations Portal</p>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">

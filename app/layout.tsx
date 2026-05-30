@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Castle Payroll",
-  description: "Piecework payroll tracker for Castle Garage Doors & Gates",
+  description: "Operations portal for Castle Garage Doors & Gates",
 };
 
 export const viewport: Viewport = {
