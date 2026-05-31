@@ -85,33 +85,50 @@ export default function SfSyncClient({ runs, counts }: Props) {
 
     for (let i = 0; i < SYNC_STEPS.length; i++) {
       const step = SYNC_STEPS[i]
-      setProgress(`Syncing ${step.label} (${i + 1}/${SYNC_STEPS.length})…`)
-      try {
-        const res = await fetch('/api/admin/sf-sync/trigger', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: step.action, entity: step.entity }),
-        })
-        const text = await res.text()
-        if (res.status === 504 || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
-          setSyncResult({ ok: false, message: `Timed out on ${step.label}. Other steps completed. Try again to retry.` })
+      const MAX_RETRIES = 5
+      let attempt = 0
+      let succeeded = false
+
+      while (!succeeded) {
+        if (attempt > 0) {
+          setProgress(`Retrying ${step.label} (attempt ${attempt + 1})…`)
+        } else {
+          setProgress(`Syncing ${step.label} (${i + 1}/${SYNC_STEPS.length})…`)
+        }
+
+        if (attempt >= MAX_RETRIES) {
+          setSyncResult({ ok: false, message: `${step.label} failed after ${MAX_RETRIES} attempts. Check sync status for details.` })
           setSyncing(false)
           setProgress(null)
           router.refresh()
           return
         }
-        if (!res.ok) {
-          setSyncResult({ ok: false, message: `Error on ${step.label}: ${text.slice(0, 150)}` })
-          setSyncing(false)
-          setProgress(null)
-          router.refresh()
-          return
+
+        try {
+          const res = await fetch('/api/admin/sf-sync/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: step.action, entity: step.entity }),
+          })
+          const text = await res.text()
+
+          if (res.status === 504 || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
+            // Timed out — retry this step automatically
+            attempt++
+            continue
+          }
+          if (!res.ok) {
+            setSyncResult({ ok: false, message: `Error on ${step.label}: ${text.slice(0, 150)}` })
+            setSyncing(false)
+            setProgress(null)
+            router.refresh()
+            return
+          }
+          succeeded = true
+        } catch (err) {
+          // Network error — retry
+          attempt++
         }
-      } catch (err) {
-        setSyncResult({ ok: false, message: `Network error on ${step.label}: ${err instanceof Error ? err.message : 'failed'}` })
-        setSyncing(false)
-        setProgress(null)
-        return
       }
     }
 
