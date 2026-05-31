@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
 interface SyncRun {
@@ -77,6 +77,14 @@ export default function SfSyncClient({ runs, counts }: Props) {
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [health, setHealth] = useState<{ stale: boolean; staleEntities: string[]; errors: string[] } | null>(null)
+
+  useEffect(() => {
+    fetch('/api/admin/sf-sync/health')
+      .then(r => r.json())
+      .then(setHealth)
+      .catch(() => {})
+  }, [runs])
 
   async function handleSyncNow() {
     setSyncing(true)
@@ -179,10 +187,25 @@ export default function SfSyncClient({ runs, counts }: Props) {
             disabled={syncing}
             className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
           >
+            {!syncing && health?.stale && (
+              <span className="h-2 w-2 rounded-full bg-yellow-400" />
+            )}
             {syncing ? <><Spinner /> Syncing…</> : 'Sync Now'}
           </button>
         </div>
       </div>
+
+      {health?.stale && !syncing && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 flex gap-3">
+          <span className="text-yellow-500 mt-0.5 shrink-0">⚠</span>
+          <div className="text-sm text-yellow-800 space-y-1">
+            <p className="font-medium">Sync overdue — {health.staleEntities.join(', ')} {health.staleEntities.length === 1 ? 'has' : 'have'} not synced in over 30 hours.</p>
+            {health.errors.map((e, i) => (
+              <p key={i} className="text-yellow-700 font-mono text-xs break-all">{e}</p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Mirror Record Counts */}
       <section>
@@ -213,14 +236,14 @@ export default function SfSyncClient({ runs, counts }: Props) {
               <div key={entity} className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
                 <span className="font-medium text-gray-800 capitalize text-sm">{entity.replace(/_/g, ' ')}</span>
                 {run ? (
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <StatusBadge status={run.status} />
-                    <span>{relativeTime(run.started_at)}</span>
-                    <span className="text-gray-400">{run.records_upserted.toLocaleString()} rows</span>
+                  <div className="text-right">
+                    <div className="flex items-center justify-end gap-2 text-xs text-gray-500">
+                      <StatusBadge status={run.status} />
+                      <span>{relativeTime(run.started_at)}</span>
+                      <span className="text-gray-400">{run.records_upserted.toLocaleString()} rows</span>
+                    </div>
                     {(run.status === 'failed' || run.status === 'partial') && run.error_message && (
-                      <span className="text-red-500 max-w-xs truncate" title={run.error_message}>
-                        {run.error_message.slice(0, 60)}{run.error_message.length > 60 ? '…' : ''}
-                      </span>
+                      <p className="text-xs text-red-500 mt-1 break-all text-left">{run.error_message}</p>
                     )}
                   </div>
                 ) : (
