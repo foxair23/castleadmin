@@ -30,7 +30,7 @@ const COUNT_LABELS: Record<string, string> = {
   sf_customer_equipment: 'Equipment',
 }
 
-const SYNC_ENTITIES = ['jobs', 'estimates', 'invoices', 'calendar_tasks']
+const SYNC_ENTITIES = ['jobs', 'estimates', 'invoices', 'calendar_tasks'] as const
 const REFERENCE_ENTITIES = ['job_statuses', 'job_categories', 'payment_types', 'sources', 'techs']
 
 function relativeTime(isoStr: string): string {
@@ -66,34 +66,59 @@ function Spinner() {
   )
 }
 
+// Steps: reference tables, then one per incremental entity
+const SYNC_STEPS: { label: string; action: string; entity?: string }[] = [
+  { label: 'reference tables', action: 'reference' },
+  ...SYNC_ENTITIES.map(e => ({ label: e.replace(/_/g, ' '), action: 'sync-entity', entity: e })),
+]
+
 export default function SfSyncClient({ runs, counts }: Props) {
   const router = useRouter()
   const [syncing, setSyncing] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   async function handleSyncNow() {
     setSyncing(true)
     setSyncResult(null)
-    try {
-      const res = await fetch('/api/admin/sf-sync/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'sync-now' }),
-      })
-      const text = await res.text()
-      if (res.status === 504 || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
-        setSyncResult({ ok: false, message: 'Timed out — sync may have partially completed. Refresh to check status.' })
-      } else if (!res.ok) {
-        setSyncResult({ ok: false, message: `Error ${res.status}: ${text.slice(0, 200)}` })
-      } else {
-        setSyncResult({ ok: true, message: 'Sync completed successfully.' })
-        router.refresh()
+    setProgress(null)
+
+    for (let i = 0; i < SYNC_STEPS.length; i++) {
+      const step = SYNC_STEPS[i]
+      setProgress(`Syncing ${step.label} (${i + 1}/${SYNC_STEPS.length})…`)
+      try {
+        const res = await fetch('/api/admin/sf-sync/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: step.action, entity: step.entity }),
+        })
+        const text = await res.text()
+        if (res.status === 504 || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
+          setSyncResult({ ok: false, message: `Timed out on ${step.label}. Other steps completed. Try again to retry.` })
+          setSyncing(false)
+          setProgress(null)
+          router.refresh()
+          return
+        }
+        if (!res.ok) {
+          setSyncResult({ ok: false, message: `Error on ${step.label}: ${text.slice(0, 150)}` })
+          setSyncing(false)
+          setProgress(null)
+          router.refresh()
+          return
+        }
+      } catch (err) {
+        setSyncResult({ ok: false, message: `Network error on ${step.label}: ${err instanceof Error ? err.message : 'failed'}` })
+        setSyncing(false)
+        setProgress(null)
+        return
       }
-    } catch (err) {
-      setSyncResult({ ok: false, message: err instanceof Error ? err.message : 'Request failed' })
-    } finally {
-      setSyncing(false)
     }
+
+    setSyncResult({ ok: true, message: 'All done.' })
+    setSyncing(false)
+    setProgress(null)
+    router.refresh()
   }
 
   // Build lookup: entity -> run_type -> latest run
@@ -124,7 +149,10 @@ export default function SfSyncClient({ runs, counts }: Props) {
           )}
         </div>
         <div className="flex items-center gap-3">
-          {syncResult && (
+          {progress && (
+            <span className="text-sm text-gray-500">{progress}</span>
+          )}
+          {!syncing && syncResult && (
             <span className={`text-sm ${syncResult.ok ? 'text-green-700' : 'text-red-600'}`}>
               {syncResult.message}
             </span>
