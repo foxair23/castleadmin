@@ -577,41 +577,53 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
   },
 ]
 
-export async function runIncrementalSync(): Promise<Record<string, number>> {
+async function runIncrementalSyncForConfig(cfg: IncrementalEntityConfig): Promise<number> {
   const cutoff = hoursAgo(48)
+  const handle = await startRun('incremental', cfg.entity)
+  let fetched = 0, upserted = 0, pages = 0
+  try {
+    const params: Record<string, string> = {}
+    if (cfg.filterKey) params[cfg.filterKey] = cutoff
+    if (cfg.expand) params['expand'] = cfg.expand
+
+    const allItems: Raw[] = []
+    for await (const { items, page } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
+      allItems.push(...items)
+      fetched += items.length
+      pages = page
+      await updateRunProgress(handle, page, fetched, upserted)
+    }
+
+    for (const batchItems of chunk(allItems, BATCH_SIZE)) {
+      const rows = batchItems.map(cfg.mapper)
+      upserted += await batchUpsert(cfg.table, rows)
+      if (cfg.afterUpsert) await cfg.afterUpsert(batchItems)
+    }
+
+    await completeRun(handle, fetched, upserted, pages)
+    return upserted
+  } catch (e) {
+    await failRun(handle, String(e))
+    throw e
+  }
+}
+
+// Sync a single entity by name — used by the UI to avoid per-call timeouts.
+export async function runIncrementalSyncForEntity(entity: string): Promise<number> {
+  const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entity)
+  if (!cfg) throw new Error(`Unknown entity: ${entity}`)
+  return runIncrementalSyncForConfig(cfg)
+}
+
+export async function runIncrementalSync(): Promise<Record<string, number>> {
   const counts: Record<string, number> = {}
-
   for (const cfg of INCREMENTAL_ENTITIES) {
-    const handle = await startRun('incremental', cfg.entity)
-    let fetched = 0, upserted = 0, pages = 0
     try {
-      const params: Record<string, string> = {}
-      if (cfg.filterKey) params[cfg.filterKey] = cutoff
-      if (cfg.expand) params['expand'] = cfg.expand
-
-      const allItems: Raw[] = []
-      for await (const { items, page } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
-        allItems.push(...items)
-        fetched += items.length
-        pages = page
-        await updateRunProgress(handle, page, fetched, upserted)
-      }
-
-      // Upsert in batches
-      for (const batchItems of chunk(allItems, BATCH_SIZE)) {
-        const rows = batchItems.map(cfg.mapper)
-        upserted += await batchUpsert(cfg.table, rows)
-        if (cfg.afterUpsert) await cfg.afterUpsert(batchItems)
-      }
-
-      await completeRun(handle, fetched, upserted, pages)
-      counts[cfg.entity] = upserted
-    } catch (e) {
-      await failRun(handle, String(e))
+      counts[cfg.entity] = await runIncrementalSyncForConfig(cfg)
+    } catch {
       counts[cfg.entity] = -1
     }
   }
-
   return counts
 }
 

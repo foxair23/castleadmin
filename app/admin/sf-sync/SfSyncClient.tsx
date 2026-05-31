@@ -30,7 +30,7 @@ const COUNT_LABELS: Record<string, string> = {
   sf_customer_equipment: 'Equipment',
 }
 
-const INCREMENTAL_ENTITIES = ['customers', 'jobs', 'estimates', 'invoices', 'calendar_tasks']
+const SYNC_ENTITIES = ['jobs', 'estimates', 'invoices', 'calendar_tasks'] as const
 const REFERENCE_ENTITIES = ['job_statuses', 'job_categories', 'payment_types', 'sources', 'techs']
 
 function relativeTime(isoStr: string): string {
@@ -41,20 +41,15 @@ function relativeTime(isoStr: string): string {
   if (mins < 60) return `${mins}m ago`
   const hours = Math.floor(mins / 60)
   if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
+  return `${Math.floor(hours / 24)}d ago`
 }
 
 function StatusBadge({ status }: { status: string }) {
   const classes =
-    status === 'completed'
-      ? 'bg-green-100 text-green-700'
-      : status === 'running' || status === 'partial'
-      ? 'bg-yellow-100 text-yellow-700'
-      : status === 'failed'
-      ? 'bg-red-100 text-red-700'
-      : 'bg-gray-100 text-gray-500'
-
+    status === 'completed' ? 'bg-green-100 text-green-700' :
+    status === 'running' || status === 'partial' ? 'bg-yellow-100 text-yellow-700' :
+    status === 'failed' ? 'bg-red-100 text-red-700' :
+    'bg-gray-100 text-gray-500'
   return (
     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${classes}`}>
       {status}
@@ -64,68 +59,83 @@ function StatusBadge({ status }: { status: string }) {
 
 function Spinner() {
   return (
-    <svg
-      className="animate-spin h-4 w-4 inline-block"
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-    >
+    <svg className="animate-spin h-4 w-4 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-      />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   )
 }
 
+// Steps: reference tables, then one per incremental entity
+const SYNC_STEPS: { label: string; action: string; entity?: string }[] = [
+  { label: 'reference tables', action: 'reference' },
+  ...SYNC_ENTITIES.map(e => ({ label: e.replace(/_/g, ' '), action: 'sync-entity', entity: e })),
+]
+
 export default function SfSyncClient({ runs, counts }: Props) {
   const router = useRouter()
-  const [inflight, setInflight] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
 
-  async function trigger(action: string, entity?: string) {
-    if (inflight) return
-    if (action === 'backfill') {
-      const msg = entity
-        ? `This will page through all SF data for "${entity}". Continue?`
-        : 'This will page through all SF data. Continue?'
-      if (!confirm(msg)) return
-    }
+  async function handleSyncNow() {
+    setSyncing(true)
+    setSyncResult(null)
+    setProgress(null)
 
-    setInflight(true)
-    setActionError(null)
+    for (let i = 0; i < SYNC_STEPS.length; i++) {
+      const step = SYNC_STEPS[i]
+      const MAX_RETRIES = 5
+      let attempt = 0
+      let succeeded = false
 
-    try {
-      const res = await fetch('/api/admin/sf-sync/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, entity }),
-      })
-
-      if (!res.ok) {
-        const text = await res.text()
-        if (res.status === 504 || text.toLowerCase().includes('timed out') || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
-          setActionError('Timed out (300s Vercel limit). Progress was saved — click the same button again to resume from where it left off.')
+      while (!succeeded) {
+        if (attempt > 0) {
+          setProgress(`Retrying ${step.label} (attempt ${attempt + 1})…`)
         } else {
-          setActionError(`Server error ${res.status}: ${text.slice(0, 300)}`)
+          setProgress(`Syncing ${step.label} (${i + 1}/${SYNC_STEPS.length})…`)
         }
-        router.refresh()
-        return
-      }
 
-      const json = await res.json()
-      if (!json.ok) {
-        setActionError(json.error ?? 'Unknown error')
-      } else {
-        router.refresh()
+        if (attempt >= MAX_RETRIES) {
+          setSyncResult({ ok: false, message: `${step.label} failed after ${MAX_RETRIES} attempts. Check sync status for details.` })
+          setSyncing(false)
+          setProgress(null)
+          router.refresh()
+          return
+        }
+
+        try {
+          const res = await fetch('/api/admin/sf-sync/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: step.action, entity: step.entity }),
+          })
+          const text = await res.text()
+
+          if (res.status === 504 || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
+            // Timed out — retry this step automatically
+            attempt++
+            continue
+          }
+          if (!res.ok) {
+            setSyncResult({ ok: false, message: `Error on ${step.label}: ${text.slice(0, 150)}` })
+            setSyncing(false)
+            setProgress(null)
+            router.refresh()
+            return
+          }
+          succeeded = true
+        } catch (err) {
+          // Network error — retry
+          attempt++
+        }
       }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Request failed')
-    } finally {
-      setInflight(false)
     }
+
+    setSyncResult({ ok: true, message: 'All done.' })
+    setSyncing(false)
+    setProgress(null)
+    router.refresh()
   }
 
   // Build lookup: entity -> run_type -> latest run
@@ -137,37 +147,44 @@ export default function SfSyncClient({ runs, counts }: Props) {
     }
   }
 
+  // Last successful incremental run across all entities
+  const lastSync = SYNC_ENTITIES
+    .map(e => latestByEntityAndType[e]?.['incremental'])
+    .filter(r => r?.status === 'completed')
+    .sort((a, b) => new Date(b!.started_at).getTime() - new Date(a!.started_at).getTime())[0]
+
   return (
     <div className="space-y-8">
-      {/* Header + actions */}
-      <div className="space-y-3">
-        <h1 className="text-xl font-bold text-gray-900">Service Fusion Sync</h1>
-
-        <div className="flex flex-wrap gap-2">
-          <ActionButton label="Run Reference Sync" loading={inflight} onClick={() => trigger('reference')} />
-          <ActionButton label="Run Incremental Sync" loading={inflight} onClick={() => trigger('incremental')} />
-          <ActionButton label="Run Weekly Reconcile" loading={inflight} onClick={() => trigger('reconcile')} />
-          <ActionButton
-            label="Run Full Backfill"
-            loading={inflight}
-            onClick={() => trigger('backfill')}
-            variant="danger"
-          />
-          <ActionButton
-            label="Re-sync Customer Contacts"
-            loading={inflight}
-            onClick={() => trigger('reprocess-children')}
-          />
+      {/* Header + Sync Now */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Service Fusion Sync</h1>
+          {lastSync && (
+            <p className="text-sm text-gray-500 mt-0.5">
+              Last synced {relativeTime(lastSync.started_at)} · runs automatically every morning
+            </p>
+          )}
         </div>
-
-        {actionError && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-            {actionError}
-          </p>
-        )}
+        <div className="flex items-center gap-3">
+          {progress && (
+            <span className="text-sm text-gray-500">{progress}</span>
+          )}
+          {!syncing && syncResult && (
+            <span className={`text-sm ${syncResult.ok ? 'text-green-700' : 'text-red-600'}`}>
+              {syncResult.message}
+            </span>
+          )}
+          <button
+            onClick={handleSyncNow}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
+          >
+            {syncing ? <><Spinner /> Syncing…</> : 'Sync Now'}
+          </button>
+        </div>
       </div>
 
-      {/* Section 1: Mirror Record Counts */}
+      {/* Mirror Record Counts */}
       <section>
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
           Mirror Record Counts
@@ -184,47 +201,38 @@ export default function SfSyncClient({ runs, counts }: Props) {
         </div>
       </section>
 
-      {/* Section 2: Sync Status by Entity */}
+      {/* Sync Status by Entity */}
       <section>
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
           Sync Status by Entity
         </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {INCREMENTAL_ENTITIES.map(entity => {
-            const byType = latestByEntityAndType[entity] ?? {}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
+          {SYNC_ENTITIES.map(entity => {
+            const run = latestByEntityAndType[entity]?.['incremental']
             return (
-              <div key={entity} className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-800 capitalize">
-                    {entity.replace(/_/g, ' ')}
-                  </h3>
-                  <ActionButton
-                    label="Backfill"
-                    size="sm"
-                    loading={inflight}
-                    onClick={() => trigger('backfill', entity)}
-                    variant="danger"
-                  />
-                </div>
-
-                {(['incremental', 'backfill', 'reconcile'] as const).map(type => {
-                  const run = byType[type]
-                  if (!run) {
-                    return (
-                      <RunRow key={type} type={type} empty />
-                    )
-                  }
-                  return (
-                    <RunRow key={type} type={type} run={run} />
-                  )
-                })}
+              <div key={entity} className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
+                <span className="font-medium text-gray-800 capitalize text-sm">{entity.replace(/_/g, ' ')}</span>
+                {run ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <StatusBadge status={run.status} />
+                    <span>{relativeTime(run.started_at)}</span>
+                    <span className="text-gray-400">{run.records_upserted.toLocaleString()} rows</span>
+                    {(run.status === 'failed' || run.status === 'partial') && run.error_message && (
+                      <span className="text-red-500 max-w-xs truncate" title={run.error_message}>
+                        {run.error_message.slice(0, 60)}{run.error_message.length > 60 ? '…' : ''}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs text-gray-400">never synced</span>
+                )}
               </div>
             )
           })}
         </div>
       </section>
 
-      {/* Section 3: Reference Tables */}
+      {/* Reference Tables */}
       <section>
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
           Reference Tables
@@ -250,80 +258,5 @@ export default function SfSyncClient({ runs, counts }: Props) {
         </div>
       </section>
     </div>
-  )
-}
-
-function RunRow({
-  type,
-  run,
-  empty,
-}: {
-  type: string
-  run?: SyncRun
-  empty?: boolean
-}) {
-  return (
-    <div className="text-xs space-y-0.5">
-      <div className="flex items-center gap-2">
-        <span className="text-gray-400 w-20 capitalize">{type}</span>
-        {empty || !run ? (
-          <span className="text-gray-300">—</span>
-        ) : (
-          <>
-            <StatusBadge status={run.status} />
-            <span className="text-gray-500">{relativeTime(run.started_at)}</span>
-          </>
-        )}
-      </div>
-      {run && (
-        <div className="pl-22 space-y-0.5" style={{ paddingLeft: '5.5rem' }}>
-          <div className="text-gray-500">
-            {run.records_upserted.toLocaleString()} upserted
-            {type === 'backfill' && run.pages_fetched > 0 && (
-              <span className="ml-1">
-                · {run.pages_fetched} pages
-                {run.last_page != null ? ` (last: ${run.last_page})` : ''}
-              </span>
-            )}
-          </div>
-          {(run.status === 'failed' || run.status === 'partial') && run.error_message && (
-            <div className="text-red-500 break-all max-w-xs" title={run.error_message}>
-              {run.error_message.slice(0, 300)}{run.error_message.length > 300 ? '…' : ''}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ActionButton({
-  label,
-  loading,
-  onClick,
-  variant = 'default',
-  size = 'md',
-}: {
-  label: string
-  loading: boolean
-  onClick: () => void
-  variant?: 'default' | 'danger'
-  size?: 'md' | 'sm'
-}) {
-  const base =
-    size === 'sm'
-      ? 'text-xs px-2 py-1 rounded font-medium transition-colors disabled:opacity-50 flex items-center gap-1'
-      : 'text-sm px-3 py-1.5 rounded-md font-medium transition-colors disabled:opacity-50 flex items-center gap-1.5'
-
-  const color =
-    variant === 'danger'
-      ? 'bg-red-600 hover:bg-red-700 text-white'
-      : 'bg-gray-800 hover:bg-gray-900 text-white'
-
-  return (
-    <button disabled={loading} onClick={onClick} className={`${base} ${color}`}>
-      {loading && <Spinner />}
-      {label}
-    </button>
   )
 }
