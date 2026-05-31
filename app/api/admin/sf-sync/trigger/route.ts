@@ -42,7 +42,14 @@ export async function POST(req: NextRequest) {
 
     let counts: Record<string, number>
 
-    if (action === 'reference') {
+    if (action === 'sync-now') {
+      // Reference + incremental — same as the daily cron
+      const [refCounts, incrCounts] = await Promise.all([
+        runReferenceSync(),
+        runIncrementalSync(),
+      ])
+      counts = { ...refCounts, ...incrCounts }
+    } else if (action === 'reference') {
       counts = await runReferenceSync()
     } else if (action === 'incremental') {
       counts = await runIncrementalSync()
