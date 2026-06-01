@@ -33,7 +33,7 @@ export default async function TechPage({
         id, work_date, job_name, notes, total_pay, week_start_date,
         source, sf_status, sf_job_number, sf_job_id, sf_description, gas_paid,
         job_work_items (
-          id, quantity, calculated_pay, custom_description,
+          id, quantity, calculated_pay, custom_description, job_type_name,
           job_types ( id, name, base_rate, additional_rate, requires_quantity, requires_sale_amount )
         )
       `)

@@ -34,47 +34,14 @@ export async function GET(
   return NextResponse.json({ count: count ?? 0 })
 }
 
-// DELETE /api/admin/rates/[id] — force-delete, removing referenced work items and recalculating job totals
+// DELETE /api/admin/rates/[id] — delete job_type; ON DELETE SET NULL preserves work items
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!await requireAdmin()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
-  const admin = db()
-
-  // Find jobs that will be affected
-  const { data: affectedItems } = await admin
-    .from('job_work_items')
-    .select('job_id, calculated_pay')
-    .eq('job_type_id', id)
-
-  const affectedJobIds = [...new Set((affectedItems ?? []).map(i => i.job_id))]
-
-  // Delete the work items
-  await admin.from('job_work_items').delete().eq('job_type_id', id)
-
-  // Recalculate total_pay on each affected job
-  if (affectedJobIds.length > 0) {
-    const { data: remaining } = await admin
-      .from('job_work_items')
-      .select('job_id, calculated_pay')
-      .in('job_id', affectedJobIds)
-
-    const totals: Record<string, number> = {}
-    for (const jobId of affectedJobIds) totals[jobId] = 0
-    for (const item of remaining ?? []) totals[item.job_id] += Number(item.calculated_pay)
-
-    await Promise.all(
-      Object.entries(totals).map(([jobId, total]) =>
-        admin.from('jobs').update({ total_pay: total }).eq('id', jobId)
-      )
-    )
-  }
-
-  // Now delete the job type
-  const { error } = await admin.from('job_types').delete().eq('id', id)
+  const { error } = await db().from('job_types').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  return NextResponse.json({ ok: true, removedItems: affectedItems?.length ?? 0 })
+  return NextResponse.json({ ok: true })
 }
