@@ -13,7 +13,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     .eq('id', user.id)
     .single()
 
-  if (!profile || !profile.is_active) redirect('/login')
+  if (!profile || !profile.is_active) {
+    await supabase.auth.signOut()
+    redirect('/login')
+  }
   if (profile.role !== 'admin') redirect('/tech')
 
   return (

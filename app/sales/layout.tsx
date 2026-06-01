@@ -13,7 +13,10 @@ export default async function SalesLayout({ children }: { children: React.ReactN
     .eq('id', user.id)
     .single()
 
-  if (!profile?.is_active) redirect('/login')
+  if (!profile?.is_active) {
+    await supabase.auth.signOut()
+    redirect('/login')
+  }
   if (!['admin', 'sales'].includes(profile.role ?? '')) redirect('/login')
 
   return (

@@ -21,6 +21,10 @@ interface WorkItemRow {
   calculated_pay: number
   custom_description: string
   custom_amount: string  // string so the input is controlled cleanly
+  job_type_name: string
+  locked_base_rate: number
+  locked_additional_rate: number | null
+  locked_requires_quantity: boolean
 }
 
 interface ExistingWorkItem {
@@ -29,6 +33,10 @@ interface ExistingWorkItem {
   quantity: number
   calculated_pay: number
   custom_description: string | null
+  job_type_name: string | null
+  locked_base_rate: number | null
+  locked_additional_rate: number | null
+  locked_requires_quantity: boolean | null
 }
 
 interface ExistingJob {
@@ -66,6 +74,10 @@ function makeWorkItemRow(jobType: JobType): WorkItemRow {
     calculated_pay: calculateItemPay(jobType.base_rate, jobType.additional_rate, jobType.requires_quantity, 1),
     custom_description: '',
     custom_amount: '',
+    job_type_name: jobType.name,
+    locked_base_rate: jobType.base_rate,
+    locked_additional_rate: jobType.additional_rate,
+    locked_requires_quantity: jobType.requires_quantity,
   }
 }
 
@@ -97,8 +109,9 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, gasEligible
   const [workItems, setWorkItems] = useState<WorkItemRow[]>(() => {
     if (existingJob && existingJob.job_work_items.length > 0) {
       return existingJob.job_work_items.map(item => {
+        const jt = jobTypes.find(j => j.id === item.job_type_id)
         const isOther = item.job_type_id === otherTypeId
-        const isSaleCommission = jobTypes.find(jt => jt.id === item.job_type_id)?.requires_sale_amount ?? false
+        const isSaleCommission = jt?.requires_sale_amount ?? false
         return {
           tempId: newTempId(),
           job_type_id: item.job_type_id,
@@ -106,6 +119,10 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, gasEligible
           calculated_pay: item.calculated_pay,
           custom_description: item.custom_description ?? '',
           custom_amount: (isOther || isSaleCommission) ? String(item.calculated_pay) : '',
+          job_type_name: item.job_type_name ?? jt?.name ?? '',
+          locked_base_rate: item.locked_base_rate ?? jt?.base_rate ?? 0,
+          locked_additional_rate: item.locked_additional_rate ?? jt?.additional_rate ?? null,
+          locked_requires_quantity: item.locked_requires_quantity ?? jt?.requires_quantity ?? false,
         }
       })
     }
@@ -130,15 +147,22 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, gasEligible
   function updateItemType(tempId: string, jobTypeId: string) {
     setWorkItems(items => items.map(item => {
       if (item.tempId !== tempId) return item
-      if (isOtherType(jobTypeId) || isSaleCommissionType(jobTypeId)) {
-        return { ...item, job_type_id: jobTypeId, calculated_pay: 0, custom_amount: '', custom_description: '' }
+      const jt = getJobType(jobTypeId)
+      const locked = {
+        job_type_name: jt?.name ?? '',
+        locked_base_rate: jt?.base_rate ?? 0,
+        locked_additional_rate: jt?.additional_rate ?? null,
+        locked_requires_quantity: jt?.requires_quantity ?? false,
       }
-      const jt = getJobType(jobTypeId)!
+      if (isOtherType(jobTypeId) || isSaleCommissionType(jobTypeId)) {
+        return { ...item, job_type_id: jobTypeId, calculated_pay: 0, custom_amount: '', custom_description: '', ...locked }
+      }
       return {
         ...item,
+        ...locked,
         job_type_id: jobTypeId,
         quantity: 1,
-        calculated_pay: calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, 1),
+        calculated_pay: calculateItemPay(jt!.base_rate, jt!.additional_rate, jt!.requires_quantity, 1),
         custom_description: '',
         custom_amount: '',
       }
@@ -148,8 +172,17 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, gasEligible
   function updateItemQty(tempId: string, quantity: number) {
     setWorkItems(items => items.map(item => {
       if (item.tempId !== tempId) return item
-      const jt = getJobType(item.job_type_id)!
-      return { ...item, quantity, calculated_pay: calculateItemPay(jt.base_rate, jt.additional_rate, jt.requires_quantity, quantity) }
+      const jt = getJobType(item.job_type_id)
+      return {
+        ...item,
+        quantity,
+        calculated_pay: calculateItemPay(
+          item.locked_base_rate ?? jt?.base_rate ?? 0,
+          item.locked_additional_rate ?? jt?.additional_rate ?? null,
+          item.locked_requires_quantity ?? jt?.requires_quantity ?? false,
+          quantity,
+        ),
+      }
     }))
   }
 
@@ -216,6 +249,10 @@ export default function JobForm({ mode, weekStart, userId, jobTypes, gasEligible
         job_type_id: i.job_type_id,
         quantity: i.quantity,
         calculated_pay: i.calculated_pay,
+        job_type_name: i.job_type_name || null,
+        locked_base_rate: i.locked_base_rate,
+        locked_additional_rate: i.locked_additional_rate,
+        locked_requires_quantity: i.locked_requires_quantity,
         custom_description: (isOtherType(i.job_type_id) || isSaleCommissionType(i.job_type_id))
           ? i.custom_description.trim()
           : null,

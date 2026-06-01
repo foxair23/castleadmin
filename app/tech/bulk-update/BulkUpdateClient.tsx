@@ -129,6 +129,10 @@ export default function BulkUpdateClient({ selectedWeek, jobs, jobTypes, isLocke
           quantity: 1,
           calculated_pay,
           custom_description: null,
+          job_type_name: jt.name,
+          locked_base_rate: jt.base_rate,
+          locked_additional_rate: jt.additional_rate,
+          locked_requires_quantity: jt.requires_quantity,
         })
         if (itemErr) throw new Error(itemErr.message)
 

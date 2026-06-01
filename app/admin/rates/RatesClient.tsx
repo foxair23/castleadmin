@@ -120,14 +120,27 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
   async function handleDelete(jt: JobType) {
     if (!confirm(`Delete "${jt.name}"? This cannot be undone.`)) return
     setDeleteError('')
-    const supabase = createClient()
-    const { error: err } = await supabase.from('job_types').delete().eq('id', jt.id)
-    if (err) {
-      if (err.code === '23503') {
-        setDeleteError(`"${jt.name}" can't be deleted because it's referenced by existing pay records. Set it to Inactive instead.`)
-      } else {
-        setDeleteError(err.message)
-      }
+
+    // Check for referenced pay records
+    let refCount = 0
+    try {
+      const res = await fetch(`/api/admin/rates/${jt.id}`)
+      if (res.ok) refCount = (await res.json()).count ?? 0
+    } catch { /* ignore, proceed */ }
+
+    if (refCount > 0) {
+      const proceed = confirm(
+        `Warning: "${jt.name}" is used in ${refCount} pay line item${refCount === 1 ? '' : 's'} across historical records.\n\n` +
+        `Deleting it will permanently remove those line items and recalculate the affected job totals.\n\n` +
+        `This cannot be undone. Proceed?`
+      )
+      if (!proceed) return
+    }
+
+    const res = await fetch(`/api/admin/rates/${jt.id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setDeleteError(body.error ?? 'Delete failed.')
       return
     }
     setJobTypes(jts => jts.filter(j => j.id !== jt.id))

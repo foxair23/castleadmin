@@ -11,6 +11,7 @@ interface WorkItem {
   quantity: number
   calculated_pay: number
   custom_description: string | null
+  job_type_name: string | null
   job_types: {
     id: string
     name: string
@@ -326,7 +327,7 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
                                   ? `New Sale Commission (Sale: ${formatMoney(parseFloat(item.custom_description))})`
                                   : item.custom_description
                                     ? `Other: ${item.custom_description}`
-                                    : (item.job_types?.name ?? 'Unknown')}
+                                    : (item.job_types?.name ?? item.job_type_name ?? 'Unknown')}
                                 {!item.custom_description && item.job_types?.requires_quantity ? ` × ${item.quantity}` : ''}
                               </span>
                               <span className="font-medium ml-2">{formatMoney(item.calculated_pay)}</span>
