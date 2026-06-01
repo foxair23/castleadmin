@@ -130,9 +130,8 @@ export default function RatesClient({ initialJobTypes }: { initialJobTypes: JobT
 
     if (refCount > 0) {
       const proceed = confirm(
-        `Warning: "${jt.name}" is used in ${refCount} pay line item${refCount === 1 ? '' : 's'} across historical records.\n\n` +
-        `Deleting it will permanently remove those line items and recalculate the affected job totals.\n\n` +
-        `This cannot be undone. Proceed?`
+        `Warning: "${jt.name}" is used in ${refCount} historical pay record${refCount === 1 ? '' : 's'}.\n\n` +
+        `Those records will keep their pay amounts — the rate name will just show as deleted. This cannot be undone. Proceed?`
       )
       if (!proceed) return
     }
