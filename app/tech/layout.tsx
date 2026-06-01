@@ -13,7 +13,10 @@ export default async function TechLayout({ children }: { children: React.ReactNo
     .eq('id', user.id)
     .single()
 
-  if (!profile || !profile.is_active) redirect('/login')
+  if (!profile || !profile.is_active) {
+    await supabase.auth.signOut()
+    redirect('/login')
+  }
   if (profile.role !== 'technician') redirect('/admin')
 
   return (
