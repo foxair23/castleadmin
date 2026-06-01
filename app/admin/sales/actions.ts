@@ -48,7 +48,7 @@ export async function toggleCampaignOpenersOnly(mailchimpCampaignId: string, ope
   revalidatePath('/admin/sales')
 }
 
-export async function saveCampaignAssignment(campaignId: string, userId: string | null) {
+export async function saveCampaignAssignment(campaignId: string, userId: string | null, moveExisting = true) {
   const adminId = await requireAdmin()
   const database = db()
   const now = new Date().toISOString()
@@ -60,15 +60,19 @@ export async function saveCampaignAssignment(campaignId: string, userId: string 
     .eq('mailchimp_campaign_id', campaignId)
 
   if (userId) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { count } = await (database as any)
-      .from('sales_leads')
-      .update({ assigned_to_user_id: userId, assigned_at: now, assigned_by_user_id: adminId })
-      .eq('mailchimp_campaign_id', campaignId)
-      .select('id', { count: 'exact', head: true })
+    let count = 0
+    if (moveExisting) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await (database as any)
+        .from('sales_leads')
+        .update({ assigned_to_user_id: userId, assigned_at: now, assigned_by_user_id: adminId })
+        .eq('mailchimp_campaign_id', campaignId)
+        .select('id', { count: 'exact', head: true })
+      count = result.count ?? 0
+    }
     revalidatePath('/admin/sales')
     revalidatePath('/sales')
-    return { assigned: count ?? 0 }
+    return { assigned: count }
   } else {
     // Deleting leads (not just nullifying assignment) so the rep's dashboard
     // is fully cleared. On the next sync with openers_only checked, only

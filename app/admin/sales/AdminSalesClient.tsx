@@ -121,25 +121,45 @@ function CampaignsTab({
   const [localAssignments, setLocalAssignments] = useState<Record<string, string>>({ ...campaignAssignments })
   const [savingCampaign, setSavingCampaign] = useState<string | null>(null)
   const [resultByCampaign, setResultByCampaign] = useState<Record<string, string>>({})
+  const [pendingReassign, setPendingReassign] = useState<{
+    campaignId: string
+    newUserId: string
+    previousUserId: string
+  } | null>(null)
 
   function toggle(id: string, current: boolean) {
     startTransition(async () => { await toggleCampaignTracked(id, !current) })
   }
 
-  function handleAssign(campaignId: string, userId: string) {
+  function doAssign(campaignId: string, userId: string, moveExisting: boolean) {
+    setPendingReassign(null)
     setLocalAssignments(prev => ({ ...prev, [campaignId]: userId }))
     setResultByCampaign(prev => ({ ...prev, [campaignId]: '' }))
     setSavingCampaign(campaignId)
     startTransition(async () => {
-      const res = await saveCampaignAssignment(campaignId, userId || null)
+      const res = await saveCampaignAssignment(campaignId, userId || null, moveExisting)
       setResultByCampaign(prev => ({
         ...prev,
         [campaignId]: userId
-          ? `${res.assigned} lead${res.assigned !== 1 ? 's' : ''} assigned`
+          ? moveExisting
+            ? `${res.assigned} lead${res.assigned !== 1 ? 's' : ''} moved`
+            : 'assigned — new leads only'
           : 'unassigned',
       }))
       setSavingCampaign(null)
     })
+  }
+
+  function handleAssign(campaignId: string, userId: string) {
+    const previousUserId = localAssignments[campaignId] ?? ''
+    // If switching from one rep to another, ask what to do with existing leads
+    if (userId && previousUserId && userId !== previousUserId) {
+      setLocalAssignments(prev => ({ ...prev, [campaignId]: userId }))
+      setResultByCampaign(prev => ({ ...prev, [campaignId]: '' }))
+      setPendingReassign({ campaignId, newUserId: userId, previousUserId })
+      return
+    }
+    doAssign(campaignId, userId, true)
   }
 
   if (campaigns.length === 0) {
@@ -173,23 +193,51 @@ function CampaignsTab({
                 <td className="py-2 pr-4 text-right text-gray-700">{c.total_opens ?? '—'}</td>
                 <td className="py-2 pr-4 text-right text-gray-700">{c.total_clicks ?? '—'}</td>
                 <td className="py-2 pr-4">
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={assignedUserId}
-                      onChange={e => handleAssign(c.mailchimp_campaign_id, e.target.value)}
-                      disabled={isSaving}
-                      className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60"
-                    >
-                      <option value="">— unassigned —</option>
-                      {reps.map(r => (
-                        <option key={r.id} value={r.id}>{r.full_name}</option>
-                      ))}
-                    </select>
-                    {isSaving
-                      ? <span className="text-xs text-gray-400">Saving…</span>
-                      : resultByCampaign[c.mailchimp_campaign_id] && (
-                          <span className="text-xs text-green-700">{resultByCampaign[c.mailchimp_campaign_id]}</span>
-                        )}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={assignedUserId}
+                        onChange={e => handleAssign(c.mailchimp_campaign_id, e.target.value)}
+                        disabled={isSaving || pendingReassign?.campaignId === c.mailchimp_campaign_id}
+                        className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60"
+                      >
+                        <option value="">— unassigned —</option>
+                        {reps.map(r => (
+                          <option key={r.id} value={r.id}>{r.full_name}</option>
+                        ))}
+                      </select>
+                      {isSaving
+                        ? <span className="text-xs text-gray-400">Saving…</span>
+                        : resultByCampaign[c.mailchimp_campaign_id] && (
+                            <span className="text-xs text-green-700">{resultByCampaign[c.mailchimp_campaign_id]}</span>
+                          )}
+                    </div>
+                    {pendingReassign?.campaignId === c.mailchimp_campaign_id && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs text-gray-600">Move existing leads too?</span>
+                        <button
+                          onClick={() => doAssign(pendingReassign.campaignId, pendingReassign.newUserId, true)}
+                          className="text-xs px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
+                        >
+                          Move all
+                        </button>
+                        <button
+                          onClick={() => doAssign(pendingReassign.campaignId, pendingReassign.newUserId, false)}
+                          className="text-xs px-2 py-0.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                        >
+                          New leads only
+                        </button>
+                        <button
+                          onClick={() => {
+                            setLocalAssignments(prev => ({ ...prev, [c.mailchimp_campaign_id]: pendingReassign.previousUserId }))
+                            setPendingReassign(null)
+                          }}
+                          className="text-xs text-gray-400 hover:text-gray-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </td>
                 <td className="py-2 pr-4 text-center">
