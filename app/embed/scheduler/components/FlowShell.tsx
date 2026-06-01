@@ -533,31 +533,6 @@ export default function FlowShell({ config, widgetKey }: Props) {
       }}
     >
       <div style={{ maxWidth: '520px', margin: '0 auto' }}>
-        <header style={{ textAlign: 'center', padding: '1.25rem 0 0.25rem' }}>
-          <p
-            style={{
-              fontFamily: 'var(--font-heading)',
-              fontWeight: 700,
-              fontSize: '1.1rem',
-              color: 'var(--color-primary)',
-              margin: 0,
-              letterSpacing: '-0.01em',
-            }}
-          >
-            Castle Garage Doors & Gates
-          </p>
-          <p
-            style={{
-              fontFamily: 'var(--font-body)',
-              fontSize: '0.8rem',
-              color: 'var(--color-text-muted)',
-              margin: '0.125rem 0 0',
-            }}
-          >
-            Online Booking
-          </p>
-        </header>
-
         <ProgressBar
           currentSection={currentSection}
           totalSections={SECTION_LABELS.length}
