@@ -67,7 +67,7 @@ export async function saveCampaignAssignment(campaignId: string, userId: string 
         .from('sales_leads')
         .update({ assigned_to_user_id: userId, assigned_at: now, assigned_by_user_id: adminId })
         .eq('mailchimp_campaign_id', campaignId)
-        .select('id', { count: 'exact', head: true })
+        .select('id', { count: 'exact' })
       count = result.count ?? 0
     }
     revalidatePath('/admin/sales')
