@@ -337,22 +337,26 @@ async function syncOneCampaign(
       newOpeners++
       if (row.click_count > 0) newClickers++
 
-      await supabase.from('sales_leads').insert({
-        customer_id: row.customer_id,
-        mailchimp_campaign_id: campaignId,
-        tag_name: leadTagName,
-        status: 'New',
-        assigned_to_user_id: autoAssignUserId,
-        assigned_at: autoAssignUserId ? now : null,
-        first_opened_at: row.first_opened_at,
-        last_opened_at: row.last_opened_at,
-        open_count: row.open_count,
-        first_clicked_at: row.click_count > 0 ? row.last_synced_at : null,
-        click_count: row.click_count,
-        last_activity_at: row.last_opened_at ?? now,
-      })
+      await supabase.from('sales_leads').upsert(
+        {
+          customer_id: row.customer_id,
+          mailchimp_campaign_id: campaignId,
+          tag_name: leadTagName,
+          status: 'New',
+          assigned_to_user_id: autoAssignUserId,
+          assigned_at: autoAssignUserId ? now : null,
+          first_opened_at: row.first_opened_at,
+          last_opened_at: row.last_opened_at,
+          open_count: row.open_count,
+          first_clicked_at: row.click_count > 0 ? row.last_synced_at : null,
+          click_count: row.click_count,
+          last_activity_at: row.last_opened_at ?? now,
+          deleted_at: null,
+        },
+        { onConflict: 'customer_id,mailchimp_campaign_id' }
+      )
     } else {
-      // Update engagement counts on existing lead
+      // Update engagement counts on existing lead (and restore if soft-deleted)
       const wasClicker = (existing.click_count ?? 0) === 0 && row.click_count > 0
       if (wasClicker) newClickers++
 
@@ -364,6 +368,10 @@ async function syncOneCampaign(
           click_count: row.click_count,
           ...(wasClicker ? { first_clicked_at: now } : {}),
           last_activity_at: row.last_opened_at ?? now,
+          // Restore soft-deleted leads on re-sync
+          deleted_at: null,
+          assigned_to_user_id: autoAssignUserId,
+          assigned_at: autoAssignUserId ? now : null,
         })
         .eq('id', existing.id)
     }

@@ -44,7 +44,7 @@ export default async function SalesLeadDetailPage({
     .eq('id', id)
     .single()
 
-  if (!lead) notFound()
+  if (!lead || lead.deleted_at) notFound()
 
   // Sales users can only see their own leads
   if (!isAdmin && lead.assigned_to_user_id !== user.id) redirect('/sales')

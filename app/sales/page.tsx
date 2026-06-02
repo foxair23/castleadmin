@@ -39,6 +39,7 @@ export default async function SalesPage() {
       'assigned_to_user_id, created_at, first_opened_at, last_opened_at, ' +
       'open_count, click_count, last_activity_at, closed_outcome, sf_job_created'
     )
+    .is('deleted_at', null)
     // Reps only work engaged leads — anyone who opened or clicked.
     // (Guards against stale non-engaged leads left by earlier sync logic.)
     .order('last_activity_at', { ascending: false })
