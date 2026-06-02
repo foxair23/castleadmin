@@ -55,6 +55,41 @@ interface Props {
 
 type Tab = 'campaigns' | 'pipeline' | 'unmatched'
 
+// ─── Mailchimp sync button ────────────────────────────────────────────────────
+
+function SyncButton() {
+  const [syncing, setSyncing] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  async function handleSync() {
+    setSyncing(true)
+    setMsg(null)
+    try {
+      const res = await fetch('/api/sales/sync', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { setMsg(data.error ?? 'Sync failed'); return }
+      setMsg(`${data.newOpeners} new lead${data.newOpeners !== 1 ? 's' : ''} · ${data.totalOpeners} total contacts`)
+    } catch {
+      setMsg('Sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={handleSync}
+        disabled={syncing}
+        className="px-3 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
+      >
+        {syncing ? 'Syncing…' : 'Sync Mailchimp'}
+      </button>
+      {msg && <span className="text-xs text-gray-500">{msg}</span>}
+    </div>
+  )
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string | null | undefined) {
@@ -620,12 +655,15 @@ export default function AdminSalesClient({
             Manage campaigns, pipeline config, rep assignment, and unmatched engagements.
           </p>
         </div>
-        <a
-          href="/sales"
-          className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
-        >
-          → Sales dashboard
-        </a>
+        <div className="flex items-center gap-4">
+          <SyncButton />
+          <a
+            href="/sales"
+            className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+          >
+            → Sales dashboard
+          </a>
+        </div>
       </div>
 
       <div className="flex gap-1 mb-6 border-b border-gray-200">
