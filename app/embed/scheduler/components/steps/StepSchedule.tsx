@@ -143,7 +143,9 @@ export default function StepSchedule({ state, config, widgetKey, onNext }: Props
       {state.service_type && (() => {
         const FREE_ESTIMATE_TYPES = ['door_panel_replacement', 'new_gate_replacement']
         const isFreeEstimate = FREE_ESTIMATE_TYPES.includes(state.service_type)
-        const fee = config.service_call_fee ?? 99
+        const fee = state.primary_category === 'gate'
+          ? (config.gate_service_call_fee ?? config.service_call_fee ?? 99)
+          : (config.service_call_fee ?? 99)
         return (
           <div
             style={{
