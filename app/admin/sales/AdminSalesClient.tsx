@@ -65,7 +65,7 @@ function SyncButton() {
     setSyncing(true)
     setMsg(null)
     try {
-      const res = await fetch('/api/sales/sync', { method: 'POST' })
+      const res = await fetch('/api/admin/sales/sync', { method: 'POST' })
       const data = await res.json()
       if (!res.ok) { setMsg(data.error ?? 'Sync failed'); return }
       setMsg(`${data.newOpeners} new lead${data.newOpeners !== 1 ? 's' : ''} · ${data.totalOpeners} total contacts`)
