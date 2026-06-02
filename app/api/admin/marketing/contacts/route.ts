@@ -66,42 +66,6 @@ export async function GET(req: NextRequest) {
 
   const dateRange = parseDateRange(recency, dateFrom, dateTo)
 
-  // ── Date filter: customers whose MOST RECENT closed job falls in range ────
-  // Two-query set subtraction avoids fetching all jobs (PostgREST caps at 1000
-  // rows by default, which would miss older data entirely):
-  //   Set A = customers with any job closed in [from, to]
-  //   Set B = customers with any job closed AFTER to (came back more recently)
-  //   Result = A minus B
-  let dateFilterCustomerIds: Set<string> | null = null
-  if (dateRange.from || dateRange.to) {
-    let inRangeQ = db
-      .from('sf_jobs')
-      .select('customer_id')
-      .eq('is_deleted', false)
-      .not('closed_at', 'is', null)
-      .not('customer_id', 'is', null)
-    if (dateRange.from) inRangeQ = inRangeQ.gte('closed_at', dateRange.from)
-    if (dateRange.to) inRangeQ = inRangeQ.lte('closed_at', dateRange.to + 'T23:59:59Z')
-    const { data: inRangeJobs } = await inRangeQ.limit(50000)
-
-    const inRangeIds = new Set((inRangeJobs ?? []).map((j: { customer_id: string }) => j.customer_id))
-
-    if (dateRange.to) {
-      const { data: newerJobs } = await db
-        .from('sf_jobs')
-        .select('customer_id')
-        .eq('is_deleted', false)
-        .not('closed_at', 'is', null)
-        .not('customer_id', 'is', null)
-        .gt('closed_at', dateRange.to + 'T23:59:59Z')
-        .limit(50000)
-      for (const j of (newerJobs ?? []) as { customer_id: string }[]) inRangeIds.delete(j.customer_id)
-    }
-
-    dateFilterCustomerIds = inRangeIds
-    if (dateFilterCustomerIds.size === 0) return NextResponse.json({ contacts: [] })
-  }
-
   // ── Job-category filter ───────────────────────────────────────────────────
   let categoryCustomerIds: Set<string> | null = null
   if (jobCategories) {
@@ -128,16 +92,15 @@ export async function GET(req: NextRequest) {
     .eq('is_deleted', false)
     .order('last_serviced_date', { ascending: false, nullsFirst: false })
 
+  if (dateRange.from) query = query.gte('last_serviced_date', dateRange.from)
+  if (dateRange.to) query = query.lte('last_serviced_date', dateRange.to)
+
   if (leadSources) {
     const sources = leadSources.split(',').map(s => s.trim()).filter(Boolean)
     if (sources.length > 0) query = query.in('referral_source', sources)
   }
   if (paymentFilter === 'outstanding') query = query.gt('account_balance', 0)
 
-  if (dateFilterCustomerIds) {
-    const ids = [...dateFilterCustomerIds]
-    query = query.in('id', ids.slice(0, 5000))
-  }
   if (categoryCustomerIds) {
     const ids = [...categoryCustomerIds]
     query = query.in('id', ids.slice(0, 5000))
