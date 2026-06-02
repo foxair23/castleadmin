@@ -47,6 +47,8 @@ interface Lead {
 interface Props {
   lead: Lead
   approverName: string | null
+  garageServiceCallFee: number
+  gateServiceCallFee: number
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -115,7 +117,7 @@ function Row({ label, value }: { label: string; value: string | undefined | null
   )
 }
 
-export default function LeadDetailClient({ lead, approverName }: Props) {
+export default function LeadDetailClient({ lead, approverName, garageServiceCallFee, gateServiceCallFee }: Props) {
   const [isPending, startTransition] = useTransition()
   const [showRejectModal, setShowRejectModal] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
@@ -246,7 +248,8 @@ export default function LeadDetailClient({ lead, approverName }: Props) {
               className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 flex-1"
             >
               <option value="">— not set —</option>
-              <option value="$99 Service Call Fee">$99 Service Call Fee</option>
+              <option value={`$${garageServiceCallFee} Service Call Fee`}>${garageServiceCallFee} Garage Door Service Call Fee</option>
+              <option value={`$${gateServiceCallFee} Service Call Fee`}>${gateServiceCallFee} Gate Service Call Fee</option>
               <option value="Free Estimate">Free Estimate</option>
             </select>
             <button

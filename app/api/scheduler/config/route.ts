@@ -52,6 +52,7 @@ const PUBLIC_KEYS = [
   'incentive_banner_enabled',
   'incentive_banner_text',
   'service_call_fee',
+  'gate_service_call_fee',
 ]
 
 export async function GET(req: NextRequest) {

@@ -90,6 +90,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
 
   // Pricing
   const serviceCallFee = useField(String(num(s.service_call_fee, 99)))
+  const gateServiceCallFee = useField(String(num(s.gate_service_call_fee, 99)))
 
   // Service Fusion
   const autoSyncToSf = useField(bool(s.auto_sync_to_sf, false))
@@ -506,8 +507,8 @@ export default function SettingsClient({ initialSettings: s }: Props) {
       </Section>
 
       <Section title="Pricing">
-        <div className="mb-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Service call fee ($)</label>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Garage door service call fee ($)</label>
           <div className="flex gap-2 items-center">
             <input
               type="number"
@@ -523,8 +524,26 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               saved={serviceCallFee.saved}
             />
           </div>
+        </div>
+        <div className="mb-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Gate service call fee ($)</label>
+          <div className="flex gap-2 items-center">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={gateServiceCallFee.value}
+              onChange={e => gateServiceCallFee.setValue(e.target.value)}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+            <SaveButton
+              onClick={() => save('gate_service_call_fee', parseInt(gateServiceCallFee.value, 10), gateServiceCallFee.markSaved)}
+              disabled={isPending || gateServiceCallFee.value === ''}
+              saved={gateServiceCallFee.saved}
+            />
+          </div>
           <p className="text-xs text-gray-400 mt-1">
-            Shown to customers booking repairs or opener service. New door / gate replacements always show &quot;Free Estimate&quot;.
+            Shown to customers booking garage door or gate repairs and opener service. New door / gate replacements always show &quot;Free Estimate&quot;.
           </p>
         </div>
       </Section>
