@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   }
   const started = Date.now()
   try {
-    const upserted = await runIncrementalSyncForEntity('calendar_tasks')
+    const upserted = await runIncrementalSyncForEntity('calendar_tasks', started + 240_000)
     return NextResponse.json({ ok: true, calendar_tasks: upserted, ms: Date.now() - started })
   } catch (err) {
     console.error('[sf-sync-calendar-tasks] fatal:', err)

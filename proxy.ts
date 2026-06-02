@@ -31,7 +31,8 @@ export async function proxy(request: NextRequest) {
   if (
     pathname === '/login' ||
     pathname.startsWith('/embed/') ||
-    pathname.startsWith('/api/scheduler/')
+    pathname.startsWith('/api/scheduler/') ||
+    pathname.startsWith('/api/cron/')
   ) {
     if (pathname === '/login' && user) {
       return NextResponse.redirect(new URL('/', request.url))
