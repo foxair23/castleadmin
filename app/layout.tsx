@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Castle Payroll",
+  title: "Castle Admin",
   description: "Operations portal for Castle Garage Doors & Gates",
 };
 

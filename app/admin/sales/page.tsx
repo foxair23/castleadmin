@@ -70,13 +70,15 @@ export default async function AdminSalesPage() {
     (database as any)
       .from('sales_leads')
       .select('tag_name')
-      .not('tag_name', 'is', null),
+      .not('tag_name', 'is', null)
+      .is('deleted_at', null),
 
     // Lead counts per status (for deletion guard on pipeline editor)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (database as any)
       .from('sales_leads')
-      .select('status'),
+      .select('status')
+      .is('deleted_at', null),
 
     // Standing tag → rep assignment rules
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
