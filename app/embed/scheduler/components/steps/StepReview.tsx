@@ -111,6 +111,9 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Temporary debug — remove after diagnosing gate fee issue
+  console.log('[StepReview] primary_category:', state.primary_category, '| service_call_fee:', config.service_call_fee, '| gate_service_call_fee:', config.gate_service_call_fee);
+
   async function handleSubmit() {
     if (
       !state.primary_category ||
