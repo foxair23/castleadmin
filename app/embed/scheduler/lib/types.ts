@@ -31,6 +31,7 @@ export interface SchedulerConfig {
   scheduling_enabled: boolean
   scheduling_disabled_message: string
   service_call_fee: number
+  gate_service_call_fee: number
 }
 
 export interface FlowState {

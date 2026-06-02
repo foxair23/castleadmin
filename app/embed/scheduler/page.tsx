@@ -25,6 +25,7 @@ const CONFIG_KEYS = [
   'incentive_banner_enabled',
   'incentive_banner_text',
   'service_call_fee',
+  'gate_service_call_fee',
 ]
 
 interface SearchParams {
@@ -84,6 +85,7 @@ export default async function SchedulerPage({
     scheduling_enabled: (settingsMap.scheduling_enabled as boolean) ?? DEFAULT_CONFIG.scheduling_enabled,
     scheduling_disabled_message: (settingsMap.scheduling_disabled_message as string) ?? DEFAULT_CONFIG.scheduling_disabled_message,
     service_call_fee: (settingsMap.service_call_fee as number) ?? DEFAULT_CONFIG.service_call_fee,
+    gate_service_call_fee: (settingsMap.gate_service_call_fee as number) ?? DEFAULT_CONFIG.gate_service_call_fee,
   }
 
   return <SchedulerEmbed config={config} widgetKey={key} />

@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
   const { data: capSettings } = await db
     .from('scheduler_settings')
     .select('key, value')
-    .in('key', ['min_notice_hours', 'max_jobs_per_day', 'max_bookings_per_window', 'service_call_fee'])
+    .in('key', ['min_notice_hours', 'max_jobs_per_day', 'max_bookings_per_window', 'service_call_fee', 'gate_service_call_fee'])
 
   const cap: Record<string, unknown> = {}
   for (const r of capSettings ?? []) cap[r.key] = r.value
@@ -147,7 +147,9 @@ export async function POST(req: NextRequest) {
   const minNoticeHours  = Number(cap.min_notice_hours ?? 24)
   const maxJobsPerDay   = Number(cap.max_jobs_per_day ?? 0)
   const maxPerWindow    = Number(cap.max_bookings_per_window ?? 0)
-  const serviceCallFee  = Number(cap.service_call_fee ?? 99)
+  const garageServiceCallFee = Number(cap.service_call_fee ?? 99)
+  const gateServiceCallFee   = Number(cap.gate_service_call_fee ?? garageServiceCallFee)
+  const serviceCallFee = body.primary_category === 'gate' ? gateServiceCallFee : garageServiceCallFee
 
   const FREE_ESTIMATE_TYPES = ['door_panel_replacement', 'new_gate_replacement']
   const quotedFee = FREE_ESTIMATE_TYPES.includes(body.service_type)
