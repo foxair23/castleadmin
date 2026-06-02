@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FlowState, SchedulerConfig, BookingPayload } from '../../lib/types';
 import { submitBooking } from '../../lib/api';
+import { clearFlowState } from '../../lib/storage';
 import { formatPhoneDisplay } from '../../lib/validation';
 
 interface Props {
@@ -169,6 +170,7 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
         key: widgetKey,
         name: state.first_name,
       });
+      clearFlowState();
       router.push(`/embed/scheduler/confirmation?${params.toString()}`);
     } else if (result.status === 429) {
       setError('A booking was already submitted recently with this contact info.');

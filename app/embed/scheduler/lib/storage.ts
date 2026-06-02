@@ -1,6 +1,6 @@
 import { FlowState } from './types';
 
-const STORAGE_KEY = 'castle_scheduler_flow_v1';
+const STORAGE_KEY = 'castle_scheduler_flow_v2';
 
 export const INITIAL_FLOW_STATE: FlowState = {
   currentStep: 1,
