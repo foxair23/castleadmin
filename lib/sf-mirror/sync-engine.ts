@@ -577,10 +577,14 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
   },
 ]
 
-async function runIncrementalSyncForConfig(cfg: IncrementalEntityConfig): Promise<number> {
+// deadlineMs: if set, pagination stops early when Date.now() >= deadlineMs so the
+// function can exit cleanly before Vercel's hard 300s kill. The run is still
+// recorded as 'completed' (with whatever was processed) so the health check stays green.
+async function runIncrementalSyncForConfig(cfg: IncrementalEntityConfig, deadlineMs?: number): Promise<number> {
   const cutoff = hoursAgo(48)
   const handle = await startRun('incremental', cfg.entity)
   let fetched = 0, upserted = 0, pages = 0
+  let hitDeadline = false
   try {
     const params: Record<string, string> = {}
     if (cfg.filterKey) params[cfg.filterKey] = cutoff
@@ -592,6 +596,11 @@ async function runIncrementalSyncForConfig(cfg: IncrementalEntityConfig): Promis
       fetched += items.length
       pages = page
       await updateRunProgress(handle, page, fetched, upserted)
+      if (deadlineMs && Date.now() >= deadlineMs) {
+        hitDeadline = true
+        console.warn(`[sf-sync] ${cfg.entity}: soft deadline reached at page ${page}, stopping early`)
+        break
+      }
     }
 
     for (const batchItems of chunk(allItems, BATCH_SIZE)) {
@@ -601,6 +610,7 @@ async function runIncrementalSyncForConfig(cfg: IncrementalEntityConfig): Promis
     }
 
     await completeRun(handle, fetched, upserted, pages)
+    if (hitDeadline) console.warn(`[sf-sync] ${cfg.entity}: completed early (${upserted} upserted across ${pages} pages)`)
     return upserted
   } catch (e) {
     await failRun(handle, String(e))
@@ -609,10 +619,10 @@ async function runIncrementalSyncForConfig(cfg: IncrementalEntityConfig): Promis
 }
 
 // Sync a single entity by name — used by the UI to avoid per-call timeouts.
-export async function runIncrementalSyncForEntity(entity: string): Promise<number> {
+export async function runIncrementalSyncForEntity(entity: string, deadlineMs?: number): Promise<number> {
   const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entity)
   if (!cfg) throw new Error(`Unknown entity: ${entity}`)
-  return runIncrementalSyncForConfig(cfg)
+  return runIncrementalSyncForConfig(cfg, deadlineMs)
 }
 
 export async function runIncrementalSync(): Promise<Record<string, number>> {

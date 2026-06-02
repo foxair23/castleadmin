@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   }
   const started = Date.now()
   try {
-    const upserted = await runIncrementalSyncForEntity('estimates')
+    const upserted = await runIncrementalSyncForEntity('estimates', started + 240_000)
     return NextResponse.json({ ok: true, estimates: upserted, ms: Date.now() - started })
   } catch (err) {
     console.error('[sf-sync-estimates] fatal:', err)
