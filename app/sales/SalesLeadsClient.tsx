@@ -85,7 +85,7 @@ export default function SalesLeadsClient({
   const router = useRouter()
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [tagFilter, setTagFilter] = useState<string>('all')
-  const [sortField, setSortField] = useState<'customer_name' | 'status' | 'open_count' | 'last_activity_at' | 'days_since_created'>('last_activity_at')
+  const [sortField, setSortField] = useState<'customer_name' | 'status' | 'open_count' | 'last_activity_at' | 'days_since_created' | 'last_serviced_date'>('last_activity_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
   const [syncMessage, setSyncMessage] = useState('')
@@ -100,7 +100,7 @@ export default function SalesLeadsClient({
     }
   }
 
-  function SortIcon({ field }: { field: typeof sortField }) {
+  function SortIcon({ field }: { field: 'customer_name' | 'status' | 'open_count' | 'last_activity_at' | 'days_since_created' | 'last_serviced_date' }) {
     if (sortField !== field) return <span className="ml-1 text-gray-300">↕</span>
     return <span className="ml-1 text-red-500">{sortDir === 'asc' ? '↑' : '↓'}</span>
   }
@@ -128,6 +128,7 @@ export default function SalesLeadsClient({
         case 'open_count':    cmp = a.open_count - b.open_count; break
         case 'last_activity_at': cmp = (a.days_since_activity ?? 9999) - (b.days_since_activity ?? 9999); break
         case 'days_since_created': cmp = (a.days_since_created ?? 9999) - (b.days_since_created ?? 9999); break
+        case 'last_serviced_date': cmp = (a.last_serviced_date ?? '').localeCompare(b.last_serviced_date ?? ''); break
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
@@ -276,6 +277,11 @@ export default function SalesLeadsClient({
                     Last email activity<SortIcon field="last_activity_at" />
                   </button>
                 </th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">
+                  <button onClick={() => handleSort('last_serviced_date')} className="flex items-center hover:text-gray-900">
+                    Last serviced<SortIcon field="last_serviced_date" />
+                  </button>
+                </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Last call</th>
               </tr>
             </thead>
@@ -312,11 +318,6 @@ export default function SalesLeadsClient({
                           {lead.phone}
                         </a>
                       )}
-                      {lead.last_serviced_date && (
-                        <div className="text-xs text-gray-400">
-                          Last service: {new Date(lead.last_serviced_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </div>
-                      )}
                     </td>
                     <td className="px-4 py-3">
                       {lead.tag_name && (
@@ -351,6 +352,11 @@ export default function SalesLeadsClient({
                     </td>
                     <td className="px-4 py-3">
                       <AgingDate dateStr={lead.last_activity_at} days={lead.days_since_activity} />
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-600">
+                      {lead.last_serviced_date
+                        ? new Date(lead.last_serviced_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                        : <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       {dc ? (
