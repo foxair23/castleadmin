@@ -196,7 +196,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       weekday: 'long', month: 'long', day: 'numeric',
     })
     const customerName = [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ')
-    const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/admin/scheduler`
+    const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/scheduler`
 
     const { subject, bodyHtml, bodyText } = renderSchedulerLeadSynced({
       customerName,
@@ -249,7 +249,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
         weekday: 'long', month: 'long', day: 'numeric',
       })
       const customerName = [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ')
-      const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/admin/scheduler`
+      const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/scheduler`
 
       const { subject, bodyHtml, bodyText } = renderSchedulerLeadStuck({
         customerName,

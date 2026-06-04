@@ -366,7 +366,7 @@ export async function POST(req: NextRequest) {
 
   const autoSync = sfSetting?.value === true
   const syncLeadId = leadId!
-  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/admin/scheduler`
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/scheduler`
 
   // Build shared label for notifications
   const serviceCategoryLabels: Record<string, string> = {

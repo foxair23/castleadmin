@@ -75,7 +75,7 @@ export async function enqueuePieceworkReminders(): Promise<number> {
       fullName: (tech.full_name as string).split(' ')[0],
       weekLabel,
       deadlineDate,
-      submitUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/tech`,
+      submitUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/tech`,
     })
 
     await enqueueNotification({

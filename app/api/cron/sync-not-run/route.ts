@@ -8,7 +8,7 @@ export const maxDuration = 30
 
 const STALE_HOURS = 30
 const SYNC_ENTITIES = ['jobs', 'estimates', 'invoices', 'calendar_tasks']
-const ADMIN_URL = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/admin/integrations`
+const ADMIN_URL = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/integrations`
 
 function db() {
   return createClient(
