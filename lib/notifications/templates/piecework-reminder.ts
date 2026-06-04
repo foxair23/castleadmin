@@ -7,12 +7,13 @@ const BASE = `
 `
 const HEADING = `font-size: 20px; font-weight: 700; margin: 0 0 16px;`
 const BODY = `font-size: 15px; line-height: 1.6; margin: 0 0 16px;`
+const BTN = `display: inline-block; background: #dc2626; color: #ffffff; font-size: 15px; font-weight: 600; text-decoration: none; padding: 12px 24px; border-radius: 6px; margin: 8px 0 16px;`
 const MUTED = `font-size: 13px; color: #6b7280; margin: 24px 0 0;`
 
 export interface PieceworkReminderData {
   fullName: string
   weekLabel: string     // e.g. "June 2 – 8"
-  deadlineDate: string  // e.g. "Wednesday, June 11 at 11:59 PM"
+  deadlineDate: string  // e.g. "Wednesday at 11:59 PM"
   submitUrl: string
 }
 
@@ -35,9 +36,9 @@ export function renderPieceworkReminder(data: PieceworkReminderData): {
     <strong>Deadline: ${data.deadlineDate}</strong>
   </p>
   <p style="${BODY}">
-    Log in to Castle Admin and submit your jobs before the deadline.
     After the deadline your week will be locked and cannot be updated.
   </p>
+  <a href="${data.submitUrl}" style="${BTN}">Submit My Piecework →</a>
   <p style="${MUTED}">
     You're receiving this because you have not yet submitted piecework for this week.
     Reply to your supervisor if you have questions.
@@ -53,7 +54,7 @@ export function renderPieceworkReminder(data: PieceworkReminderData): {
     ``,
     `Deadline: ${data.deadlineDate}`,
     ``,
-    `Log in to Castle Admin and submit your jobs before the deadline.`,
+    `Log in here to submit: ${data.submitUrl}`,
   ].join('\n')
 
   return { subject, bodyHtml, bodyText }

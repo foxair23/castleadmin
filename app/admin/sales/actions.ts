@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { enqueueForUserIfEnabled } from '@/lib/notifications/enqueue'
+import { renderLeadAssigned } from '@/lib/notifications/templates/lead-assigned'
 
 async function requireAdmin() {
   const supabase = await createClient()
@@ -67,8 +69,17 @@ export async function saveCampaignAssignment(campaignId: string, userId: string 
         .from('sales_leads')
         .update({ assigned_to_user_id: userId, assigned_at: now, assigned_by_user_id: adminId })
         .eq('mailchimp_campaign_id', campaignId)
-        .select('id', { count: 'exact' })
+        .select('id, customer_id', { count: 'exact' })
       count = result.count ?? 0
+      if (count > 0) {
+        await notifyRepOfAssignment({
+          database,
+          userId,
+          tagName: campaignId,
+          leadIds: ((result.data ?? []) as { id: string; customer_id: string }[]).map(r => r.customer_id),
+          totalCount: count,
+        })
+      }
     }
     revalidatePath('/admin/sales')
     revalidatePath('/sales')
@@ -289,15 +300,88 @@ export async function saveTagAssignment(tagName: string, userId: string | null) 
   const ids = ((leads ?? []) as { id: string }[]).map(l => l.id)
   if (ids.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (database as any)
+    const { data: updatedLeads } = await (database as any)
       .from('sales_leads')
       .update({ assigned_to_user_id: userId, assigned_at: now, assigned_by_user_id: adminId })
       .in('id', ids)
+      .select('customer_id')
+    const customerIds = ((updatedLeads ?? []) as { customer_id: string }[]).map(l => l.customer_id)
+    await notifyRepOfAssignment({ database, userId, tagName, leadIds: customerIds, totalCount: ids.length })
   }
 
   revalidatePath('/admin/sales')
   revalidatePath('/sales')
   return { assigned: ids.length }
+}
+
+// ─── Shared: notify a sales rep of newly assigned leads ──────────────────────
+
+async function notifyRepOfAssignment({
+  database,
+  userId,
+  tagName,
+  leadIds,
+  totalCount,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  database: any
+  userId: string
+  tagName: string
+  leadIds: string[]  // sf_customer IDs
+  totalCount: number
+}) {
+  try {
+    const PREVIEW_LIMIT = 10
+    const previewIds = leadIds.slice(0, PREVIEW_LIMIT)
+
+    // Fetch rep's first name
+    const { data: rep } = await database
+      .from('profiles')
+      .select('full_name')
+      .eq('id', userId)
+      .single()
+    const repFirstName = ((rep?.full_name as string | null) ?? '').split(' ')[0] || 'there'
+
+    // Fetch customer names/phones for preview
+    let leads: { customerName: string; phone: string | null; email: string | null }[] = []
+    if (previewIds.length > 0) {
+      const { data: customers } = await database
+        .from('sf_customers')
+        .select('id, customer_name, primary_phone, primary_email')
+        .in('id', previewIds)
+      leads = ((customers ?? []) as {
+        id: string
+        customer_name: string | null
+        primary_phone: string | null
+        primary_email: string | null
+      }[]).map(c => ({
+        customerName: c.customer_name ?? 'Unknown',
+        phone: c.primary_phone,
+        email: c.primary_email,
+      }))
+    }
+
+    const salesUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/sales`
+    const { subject, bodyHtml, bodyText } = renderLeadAssigned({
+      repFirstName,
+      tagName,
+      totalCount,
+      leads,
+      salesUrl,
+    })
+
+    await enqueueForUserIfEnabled({
+      notificationTypeKey: 'lead_assigned',
+      userId,
+      subject,
+      bodyHtml,
+      bodyText,
+      relatedEntityType: 'sales_tag',
+      relatedEntityId: tagName,
+    })
+  } catch {
+    // Non-critical — don't let notification failure break the assignment
+  }
 }
 
 export async function searchCustomers(query: string) {

@@ -108,6 +108,50 @@ export async function enqueueForSubscribers(params: {
 }
 
 /**
+ * Enqueue a notification for a single user, but only if they have the preference enabled.
+ * Returns false if the type is inactive or the user has the preference disabled.
+ */
+export async function enqueueForUserIfEnabled(params: {
+  notificationTypeKey: string
+  userId: string
+  subject: string
+  bodyHtml: string
+  bodyText: string
+  relatedEntityType?: string
+  relatedEntityId?: string
+  payload?: Record<string, unknown>
+  sendAfter?: Date
+}): Promise<boolean> {
+  const supabase = db()
+  const typeId = await getTypeId(params.notificationTypeKey)
+  if (!typeId) return false
+
+  const { data: pref } = await supabase
+    .from('user_notification_preferences')
+    .select('is_enabled')
+    .eq('user_id', params.userId)
+    .eq('notification_type_id', typeId)
+    .single()
+
+  if (!pref?.is_enabled) return false
+
+  await supabase.from('notification_log').insert({
+    user_id: params.userId,
+    notification_type_id: typeId,
+    related_entity_type: params.relatedEntityType ?? null,
+    related_entity_id: params.relatedEntityId ?? null,
+    subject: params.subject,
+    body_html: params.bodyHtml,
+    body_text: params.bodyText,
+    payload: params.payload ?? null,
+    status: 'queued',
+    send_after: (params.sendAfter ?? new Date()).toISOString(),
+  } satisfies Partial<EnqueueRow>)
+
+  return true
+}
+
+/**
  * Check if a notification for a given entity was already enqueued/sent recently.
  * Used for dedup (e.g. one scheduler_lead_stuck per lead, one sync_not_run per 24h).
  */
