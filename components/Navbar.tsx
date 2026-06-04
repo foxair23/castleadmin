@@ -57,7 +57,8 @@ export default function Navbar({ role, fullName }: NavbarProps) {
     pathname.startsWith('/admin/techs') ||
     pathname.startsWith('/admin/integrations') ||
     pathname.startsWith('/admin/sf') ||
-    pathname.startsWith('/admin/mailchimp')
+    pathname.startsWith('/admin/mailchimp') ||
+    pathname.startsWith('/admin/notifications')
 
   return (
     <nav className="bg-gray-950 text-white border-b border-gray-800">
@@ -144,6 +145,13 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                       onClick={() => setSettingsOpen(false)}
                     >
                       Pay Rates
+                    </DropdownLink>
+                    <DropdownLink
+                      href="/admin/notifications"
+                      active={pathname.startsWith('/admin/notifications')}
+                      onClick={() => setSettingsOpen(false)}
+                    >
+                      Notifications
                     </DropdownLink>
                   </div>
                 )}

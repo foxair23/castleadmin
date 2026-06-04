@@ -1,5 +1,8 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { sfPost, sfGet } from '@/lib/crm/service-fusion'
+import { enqueueForSubscribers, hasRecentNotification } from '@/lib/notifications/enqueue'
+import { renderSchedulerLeadSynced } from '@/lib/notifications/templates/scheduler-lead-synced'
+import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
 
 function db() {
   return createServiceClient(
@@ -187,6 +190,30 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       })
       .eq('id', leadId)
 
+    // Notify dispatch users that this lead was synced
+    const serviceLabel = `${l.service_type === 'gate' ? 'Gate' : 'Garage Door'} — ${l.service_category}`
+    const appointmentDate = new Date(`${l.appointment_date}T12:00:00`).toLocaleDateString('en-US', {
+      weekday: 'long', month: 'long', day: 'numeric',
+    })
+    const customerName = [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ')
+    const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/admin/scheduler`
+
+    const { subject, bodyHtml, bodyText } = renderSchedulerLeadSynced({
+      customerName,
+      serviceLabel,
+      appointmentDate,
+      sfJobId: sfJobId!,
+      adminUrl,
+    })
+    await enqueueForSubscribers({
+      notificationTypeKey: 'scheduler_lead_synced',
+      subject,
+      bodyHtml,
+      bodyText,
+      relatedEntityType: 'scheduler_lead',
+      relatedEntityId: leadId,
+    }).catch(() => { /* non-critical */ })
+
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[sf-sync] Lead ${leadId} sync failed:`, message)
@@ -207,6 +234,40 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
         ],
       })
       .eq('id', leadId)
+
+    // Notify admins that sync failed — one alert per lead (dedup)
+    const alreadyNotified = await hasRecentNotification({
+      notificationTypeKey: 'scheduler_lead_stuck',
+      relatedEntityType: 'scheduler_lead',
+      relatedEntityId: leadId,
+      withinHours: 72,
+    }).catch(() => false)
+
+    if (!alreadyNotified) {
+      const serviceLabel = `${l.service_type === 'gate' ? 'Gate' : 'Garage Door'} — ${l.service_category}`
+      const appointmentDate = new Date(`${l.appointment_date}T12:00:00`).toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric',
+      })
+      const customerName = [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ')
+      const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/admin/scheduler`
+
+      const { subject, bodyHtml, bodyText } = renderSchedulerLeadStuck({
+        customerName,
+        serviceLabel,
+        appointmentDate,
+        reason: 'sync_failed',
+        errorMessage: message.slice(0, 200),
+        adminUrl,
+      })
+      await enqueueForSubscribers({
+        notificationTypeKey: 'scheduler_lead_stuck',
+        subject,
+        bodyHtml,
+        bodyText,
+        relatedEntityType: 'scheduler_lead',
+        relatedEntityId: leadId,
+      }).catch(() => { /* non-critical */ })
+    }
 
     throw err
   }

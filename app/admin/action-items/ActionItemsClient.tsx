@@ -16,6 +16,8 @@ import type {
   OverdueCustomersResult,
   AwaitingSfJobLead,
   AwaitingSfJobResult,
+  AwaitingPushLead,
+  AwaitingPushResult,
 } from '@/lib/analytics/alerts'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -359,6 +361,69 @@ function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
   )
 }
 
+// ── Alert 7 — Scheduler Leads Awaiting Manual SF Push ────────────────────────
+
+const SERVICE_CATEGORY_LABELS: Record<string, string> = {
+  repairs_service: 'Repairs & Service',
+  door_panel_replacement: 'Door / Panel Replacement',
+  opener_service: 'Opener Service / Replacement',
+  gate_opener_service: 'Gate Opener Service / Replacement',
+  new_gate_replacement: 'New Gate / Gate Replacement',
+  annual_maintenance: 'Annual Maintenance',
+}
+
+function AwaitingPushTable({ items }: { items: AwaitingPushLead[] }) {
+  const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="sync_status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="days_waiting" label="Days Waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-4 py-2" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {sorted.map(lead => (
+            <tr key={lead.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 font-medium text-gray-900">{lead.customer_name}</td>
+              <td className="px-4 py-2 text-gray-600">
+                {lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}
+                {' — '}
+                {SERVICE_CATEGORY_LABELS[lead.service_category] ?? lead.service_category}
+              </td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(lead.appointment_date)}</td>
+              <td className="px-4 py-2">
+                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                  lead.sync_status === 'sync_failed'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}>
+                  {lead.sync_status === 'sync_failed' ? 'Sync Failed' : 'Not Pushed'}
+                </span>
+              </td>
+              <td className="px-4 py-2"><AgingPill days={lead.days_waiting} /></td>
+              <td className="px-4 py-2 text-right">
+                <Link
+                  href="/admin/scheduler"
+                  className="text-xs text-red-600 hover:text-red-800 font-medium whitespace-nowrap"
+                >
+                  Push to SF →
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function AlertSection({
   title,
   count,
@@ -393,6 +458,7 @@ interface Props {
   followUpJobs: FollowUpJobsResult
   overdueCustomers: OverdueCustomersResult
   awaitingSfJob: AwaitingSfJobResult
+  awaitingPushLeads: AwaitingPushResult
 }
 
 export default function ActionItemsClient({
@@ -402,6 +468,7 @@ export default function ActionItemsClient({
   followUpJobs,
   overdueCustomers,
   awaitingSfJob,
+  awaitingPushLeads,
 }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -412,7 +479,8 @@ export default function ActionItemsClient({
     staleEstimates.items.length +
     followUpJobs.items.length +
     overdueCustomers.items.length +
-    awaitingSfJob.items.length
+    awaitingSfJob.items.length +
+    awaitingPushLeads.items.length
 
   function handleRefresh() {
     startTransition(() => {
@@ -544,6 +612,18 @@ export default function ActionItemsClient({
           <AllClear />
         ) : (
           <AwaitingSfJobTable items={awaitingSfJob.items} />
+        )}
+      </AlertSection>
+
+      {/* Alert 7 — Scheduler Leads Awaiting Manual SF Push */}
+      <AlertSection
+        title="Scheduler Leads — Awaiting SF Push"
+        count={awaitingPushLeads.items.length}
+      >
+        {awaitingPushLeads.items.length === 0 ? (
+          <AllClear />
+        ) : (
+          <AwaitingPushTable items={awaitingPushLeads.items} />
         )}
       </AlertSection>
     </div>

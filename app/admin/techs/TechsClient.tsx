@@ -12,6 +12,7 @@ interface Tech {
   created_at: string
   weekly_bonus: number
   gas_eligible: boolean
+  is_dispatch: boolean
 }
 
 interface NewTechForm {
@@ -150,6 +151,22 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
     } else {
       const data = await res.json()
       setError(data.error ?? 'Failed to update gas eligibility')
+    }
+  }
+
+  async function handleToggleDispatch(tech: Tech) {
+    setError('')
+    setSuccess('')
+    const res = await fetch(`/api/admin/techs/${tech.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_dispatch: !tech.is_dispatch }),
+    })
+    if (res.ok) {
+      setTechs(ts => ts.map(t => t.id === tech.id ? { ...t, is_dispatch: !tech.is_dispatch } : t))
+    } else {
+      const data = await res.json()
+      setError(data.error ?? 'Failed to update dispatch setting')
     }
   }
 
@@ -305,6 +322,11 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                           ⛽ Gas
                         </span>
                       )}
+                      {tech.role === 'sales' && tech.is_dispatch && (
+                        <span className="ml-2 text-xs text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded font-medium">
+                          Dispatch
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-sm">{tech.email}</td>
                     <td className="px-4 py-3">
@@ -331,6 +353,14 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                             className={tech.gas_eligible ? 'text-amber-600 hover:underline' : 'text-gray-500 hover:underline'}
                           >
                             {tech.gas_eligible ? 'Gas: On' : 'Gas: Off'}
+                          </button>
+                        )}
+                        {tech.role === 'sales' && (
+                          <button
+                            onClick={() => handleToggleDispatch(tech)}
+                            className={tech.is_dispatch ? 'text-teal-600 hover:underline' : 'text-gray-500 hover:underline'}
+                          >
+                            {tech.is_dispatch ? 'Dispatch: On' : 'Dispatch: Off'}
                           </button>
                         )}
                         {tech.role === 'technician' && (

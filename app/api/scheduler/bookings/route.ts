@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { syncLeadToServiceFusion } from '@/lib/scheduler/sf-sync'
+import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
+import { renderLeadAssigned } from '@/lib/notifications/templates/lead-assigned'
+import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
 
 const ALLOWED_ORIGINS = [
   'https://schedule.castlegaragedoors.com',
@@ -361,16 +364,93 @@ export async function POST(req: NextRequest) {
     .eq('key', 'auto_sync_to_sf')
     .maybeSingle()
 
-  if (sfSetting?.value === true) {
-    const syncLeadId = leadId!
-    after(async () => {
+  const autoSync = sfSetting?.value === true
+  const syncLeadId = leadId!
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://admin.castlegaragedoors.com'}/admin/scheduler`
+
+  // Build shared label for notifications
+  const serviceCategoryLabels: Record<string, string> = {
+    repairs_service: 'Repairs & Service',
+    door_panel_replacement: 'Door / Panel Replacement',
+    opener_service: 'Opener Service / Replacement',
+    gate_opener_service: 'Gate Opener Service / Replacement',
+    new_gate_replacement: 'New Gate / Gate Replacement',
+    annual_maintenance: 'Annual Maintenance',
+  }
+  const categoryLabel = serviceCategoryLabels[body.service_type] ?? body.service_type
+  const typeLabel = body.primary_category === 'gate' ? 'Gate' : 'Garage Door'
+  const serviceLabel = `${typeLabel} — ${categoryLabel}`
+
+  const customerName = [body.first_name.trim(), body.last_name?.trim()].filter(Boolean).join(' ')
+
+  function fmtWindow(start: string, end: string): string {
+    function fmtTime(t: string): string {
+      const [h, m] = t.split(':').map(Number)
+      const ampm = h >= 12 ? 'PM' : 'AM'
+      const h12 = h % 12 || 12
+      return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, '0')} ${ampm}`
+    }
+    return `${fmtTime(start)} – ${fmtTime(end)}`
+  }
+
+  function fmtDate(d: string): string {
+    return new Date(`${d}T12:00:00`).toLocaleDateString('en-US', {
+      weekday: 'long', month: 'long', day: 'numeric',
+    })
+  }
+
+  after(async () => {
+    // Enqueue lead_assigned for sales/dispatch subscribers (60s delay for dedup window)
+    const sendAfter = new Date(Date.now() + 60_000)
+    const { subject: laSubject, bodyHtml: laHtml, bodyText: laText } = renderLeadAssigned({
+      customerName,
+      phone: body.mobile_phone.trim(),
+      email: body.customer_email?.trim() || null,
+      serviceLabel,
+      appointmentDate: fmtDate(body.appointment_date),
+      appointmentWindow: fmtWindow(body.appointment_window_start, body.appointment_window_end),
+      address: [body.address_line1, body.address_city, body.address_state ?? 'CA', body.address_zip]
+        .filter(Boolean).join(', '),
+      quotedFee: quotedFee || null,
+      notes: body.optional_note?.trim() || null,
+      adminUrl,
+    })
+    await enqueueForSubscribers({
+      notificationTypeKey: 'lead_assigned',
+      subject: laSubject,
+      bodyHtml: laHtml,
+      bodyText: laText,
+      relatedEntityType: 'scheduler_lead',
+      relatedEntityId: syncLeadId,
+      sendAfter,
+    })
+
+    if (autoSync) {
       try {
         await syncLeadToServiceFusion(syncLeadId)
       } catch {
         // sync_status already set to sync_failed inside syncLeadToServiceFusion
+        // scheduler_lead_stuck emitted from sf-sync.ts
       }
-    })
-  }
+    } else {
+      // Manual push mode — lead is stuck until admin pushes it
+      const { subject, bodyHtml, bodyText } = renderSchedulerLeadStuck({
+        customerName,
+        serviceLabel,
+        appointmentDate: fmtDate(body.appointment_date),
+        reason: 'manual_push',
+        adminUrl,
+      })
+      await enqueueForSubscribers({
+        notificationTypeKey: 'scheduler_lead_stuck',
+        subject,
+        bodyHtml,
+        bodyText,
+        relatedEntityType: 'scheduler_lead',
+        relatedEntityId: syncLeadId,
+      })
+    }
+  })
 
   return NextResponse.json(
     {
