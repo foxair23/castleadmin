@@ -122,6 +122,9 @@ ALTER TABLE public.user_notification_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notification_log ENABLE ROW LEVEL SECURITY;
 
 -- notification_types: all authenticated users can read; admins manage
+DROP POLICY IF EXISTS "authenticated_read_notification_types" ON public.notification_types;
+DROP POLICY IF EXISTS "admin_manage_notification_types"        ON public.notification_types;
+
 CREATE POLICY "authenticated_read_notification_types"
   ON public.notification_types FOR SELECT
   TO authenticated
@@ -134,6 +137,9 @@ CREATE POLICY "admin_manage_notification_types"
   WITH CHECK (public.is_admin());
 
 -- user_notification_preferences: users read their own; admins manage all
+DROP POLICY IF EXISTS "users_read_own_prefs" ON public.user_notification_preferences;
+DROP POLICY IF EXISTS "admin_manage_prefs"   ON public.user_notification_preferences;
+
 CREATE POLICY "users_read_own_prefs"
   ON public.user_notification_preferences FOR SELECT
   TO authenticated
@@ -146,6 +152,9 @@ CREATE POLICY "admin_manage_prefs"
   WITH CHECK (public.is_admin());
 
 -- notification_log: users read their own; admins manage all
+DROP POLICY IF EXISTS "users_read_own_log" ON public.notification_log;
+DROP POLICY IF EXISTS "admin_manage_log"   ON public.notification_log;
+
 CREATE POLICY "users_read_own_log"
   ON public.notification_log FOR SELECT
   TO authenticated
@@ -185,6 +194,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_auto_populate_notification_preferences ON public.profiles;
 CREATE TRIGGER trg_auto_populate_notification_preferences
   AFTER INSERT ON public.profiles
   FOR EACH ROW
@@ -220,6 +230,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_handle_is_dispatch_change ON public.profiles;
 CREATE TRIGGER trg_handle_is_dispatch_change
   AFTER UPDATE OF is_dispatch ON public.profiles
   FOR EACH ROW
