@@ -342,23 +342,26 @@ async function notifyRepOfAssignment({
       .single()
     const repFirstName = ((rep?.full_name as string | null) ?? '').split(' ')[0] || 'there'
 
-    // Fetch customer names/phones for preview
+    // Fetch customer names/phones/emails for preview via contact child tables
     let leads: { customerName: string; phone: string | null; email: string | null }[] = []
     if (previewIds.length > 0) {
       const { data: customers } = await database
         .from('sf_customers')
-        .select('id, customer_name, primary_phone, primary_email')
+        .select('id, customer_name, sf_customer_contacts(sf_contact_phones(phone), sf_contact_emails(email))')
         .in('id', previewIds)
       leads = ((customers ?? []) as {
         id: string
         customer_name: string | null
-        primary_phone: string | null
-        primary_email: string | null
-      }[]).map(c => ({
-        customerName: c.customer_name ?? 'Unknown',
-        phone: c.primary_phone,
-        email: c.primary_email,
-      }))
+        sf_customer_contacts: Array<{
+          sf_contact_phones: Array<{ phone: string | null }>
+          sf_contact_emails: Array<{ email: string | null }>
+        }>
+      }[]).map(c => {
+        const contacts = c.sf_customer_contacts ?? []
+        const phone = contacts.flatMap(ct => ct.sf_contact_phones).map(p => p.phone).find(Boolean) ?? null
+        const email = contacts.flatMap(ct => ct.sf_contact_emails).map(e => e.email).find(Boolean) ?? null
+        return { customerName: c.customer_name ?? 'Unknown', phone, email }
+      })
     }
 
     const salesUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/sales`
