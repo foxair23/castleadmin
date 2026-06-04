@@ -21,7 +21,14 @@ export default async function NotificationsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [{ data: types }, { data: profiles }, { data: prefs }] = await Promise.all([
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()
+
+  const [
+    { data: types },
+    { data: profiles },
+    { data: prefs },
+    { data: recentLog },
+  ] = await Promise.all([
     adminDb
       .from('notification_types')
       .select('id, key, display_name, description, category')
@@ -36,6 +43,12 @@ export default async function NotificationsPage() {
     adminDb
       .from('user_notification_preferences')
       .select('user_id, notification_type_id, is_enabled'),
+    adminDb
+      .from('notification_log')
+      .select('id, created_at, user_id, notification_type_id, status, subject, related_entity_type, related_entity_id, error_message')
+      .gte('created_at', sevenDaysAgo)
+      .order('created_at', { ascending: false })
+      .limit(100),
   ])
 
   // Build a nested map: userId → typeId → isEnabled
@@ -55,9 +68,24 @@ export default async function NotificationsPage() {
     prefs: Object.fromEntries(prefMap.get(p.id as string) ?? []),
   }))
 
+  const nameById = new Map((profiles ?? []).map(p => [p.id as string, p.full_name as string]))
+  const typeNameById = new Map((types ?? []).map(t => [t.id as string, t.display_name as string]))
+
+  const activity = (recentLog ?? []).map(r => ({
+    id: r.id as string,
+    createdAt: r.created_at as string,
+    userName: nameById.get(r.user_id as string) ?? r.user_id as string,
+    typeName: typeNameById.get(r.notification_type_id as string) ?? r.notification_type_id as string,
+    status: r.status as string,
+    subject: r.subject as string,
+    relatedEntityType: (r.related_entity_type as string | null) ?? null,
+    relatedEntityId: (r.related_entity_id as string | null) ?? null,
+    errorMessage: (r.error_message as string | null) ?? null,
+  }))
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
-      <NotificationsClient types={types ?? []} users={users} />
+      <NotificationsClient types={types ?? []} users={users} activity={activity} />
     </div>
   )
 }

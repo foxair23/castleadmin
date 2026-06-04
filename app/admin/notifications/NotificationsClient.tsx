@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState } from 'react'
 
 export interface NotificationType {
   id: string
@@ -18,16 +18,32 @@ export interface UserRow {
   prefs: Record<string, boolean>  // notification_type_id → is_enabled
 }
 
+export interface ActivityRow {
+  id: string
+  createdAt: string
+  userName: string
+  typeName: string
+  status: string
+  subject: string
+  relatedEntityType: string | null
+  relatedEntityId: string | null
+  errorMessage: string | null
+}
+
 export default function NotificationsClient({
   types,
   users,
+  activity,
 }: {
   types: NotificationType[]
   users: UserRow[]
+  activity: ActivityRow[]
 }) {
   const [rows, setRows] = useState(users)
   const [saving, setSaving] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [activityOpen, setActivityOpen] = useState(false)
+  const [expandedError, setExpandedError] = useState<string | null>(null)
 
   async function handleToggle(userId: string, typeId: string, current: boolean) {
     const key = `${userId}-${typeId}`
@@ -162,6 +178,102 @@ export default function NotificationsClient({
 
       <div className="text-xs text-gray-400">
         Changes take effect immediately. Toggle switches turn green when a notification is enabled.
+      </div>
+
+      {/* Recent Notifications Activity Panel */}
+      <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <button
+          onClick={() => setActivityOpen(o => !o)}
+          className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+        >
+          <span className="font-medium text-gray-700 text-sm">
+            Recent Notifications — Last 7 Days
+            <span className="ml-2 text-xs text-gray-400 font-normal">({activity.length} entries)</span>
+          </span>
+          <svg
+            className={`w-4 h-4 text-gray-400 transition-transform ${activityOpen ? 'rotate-180' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {activityOpen && (
+          <div className="overflow-x-auto">
+            {activity.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-sm">No notifications in the last 7 days.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-white">
+                    <th className="text-left px-4 py-2 font-medium text-gray-500 text-xs">Time</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-500 text-xs">Recipient</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-500 text-xs">Type</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-500 text-xs">Subject</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-500 text-xs">Status</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-500 text-xs">Entity</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {activity.map(row => {
+                    const statusColors: Record<string, string> = {
+                      sent: 'bg-green-100 text-green-700',
+                      queued: 'bg-yellow-100 text-yellow-700',
+                      sending: 'bg-blue-100 text-blue-700',
+                      failed: 'bg-red-100 text-red-700',
+                      deduped: 'bg-gray-100 text-gray-500',
+                    }
+                    const isExpanded = expandedError === row.id
+                    return (
+                      <React.Fragment key={row.id}>
+                        <tr
+                          className={`${row.status === 'failed' ? 'cursor-pointer hover:bg-red-50' : ''}`}
+                          onClick={() => {
+                            if (row.status === 'failed') {
+                              setExpandedError(isExpanded ? null : row.id)
+                            }
+                          }}
+                        >
+                          <td className="px-4 py-2 text-gray-500 whitespace-nowrap text-xs">
+                            {new Date(row.createdAt).toLocaleString('en-US', {
+                              month: 'short', day: 'numeric',
+                              hour: 'numeric', minute: '2-digit',
+                            })}
+                          </td>
+                          <td className="px-4 py-2 text-gray-900 whitespace-nowrap">{row.userName}</td>
+                          <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{row.typeName}</td>
+                          <td className="px-4 py-2 text-gray-600 max-w-[240px] truncate" title={row.subject}>
+                            {row.subject}
+                          </td>
+                          <td className="px-4 py-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[row.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                              {row.status}
+                            </span>
+                            {row.status === 'failed' && (
+                              <span className="ml-1 text-xs text-red-400">{isExpanded ? '▲' : '▼'}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
+                            {row.relatedEntityType && row.relatedEntityId
+                              ? `${row.relatedEntityType}:${row.relatedEntityId.slice(0, 8)}…`
+                              : row.relatedEntityType ?? '—'}
+                          </td>
+                        </tr>
+                        {isExpanded && row.errorMessage && (
+                          <tr>
+                            <td colSpan={6} className="px-4 py-2 bg-red-50 text-xs text-red-700 font-mono">
+                              {row.errorMessage}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
