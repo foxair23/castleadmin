@@ -43,6 +43,17 @@ export async function createWidget(displayName: string, leadSource: string) {
   revalidatePath('/admin/scheduler/widgets')
 }
 
+export async function deleteWidget(id: string) {
+  await assertAdmin()
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('scheduler_widget_instances')
+    .delete()
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+  revalidatePath('/admin/scheduler/widgets')
+}
+
 export async function toggleWidget(id: string, isActive: boolean) {
   await assertAdmin()
   const supabase = await createClient()

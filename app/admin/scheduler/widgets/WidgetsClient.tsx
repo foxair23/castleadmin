@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { createWidget, toggleWidget } from './actions'
+import { createWidget, toggleWidget, deleteWidget } from './actions'
 
 interface Widget {
   id: string
@@ -68,6 +68,8 @@ export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
   const [newSource, setNewSource] = useState('website')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
 
   function handleCreate() {
     if (!newName.trim()) return
@@ -80,6 +82,32 @@ export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
         setShowNew(false)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to create widget')
+      }
+    })
+  }
+
+  function startDelete(id: string) {
+    setDeleteId(id)
+    setDeleteConfirmText('')
+    setError('')
+  }
+
+  function cancelDelete() {
+    setDeleteId(null)
+    setDeleteConfirmText('')
+  }
+
+  function handleDelete(widget: Widget) {
+    if (deleteConfirmText !== widget.display_name) return
+    setError('')
+    startTransition(async () => {
+      try {
+        await deleteWidget(widget.id)
+        setWidgets(prev => prev.filter(w => w.id !== widget.id))
+        setDeleteId(null)
+        setDeleteConfirmText('')
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to delete widget')
       }
     })
   }
@@ -190,8 +218,51 @@ export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
                 >
                   {widget.is_active ? 'Disable' : 'Enable'}
                 </button>
+                <button
+                  onClick={() => startDelete(widget.id)}
+                  disabled={isPending}
+                  className="text-sm text-red-500 hover:text-red-700 disabled:opacity-40"
+                >
+                  Delete
+                </button>
               </div>
             </div>
+
+            {deleteId === widget.id && (
+              <div className="mt-3 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm font-semibold text-red-700 mb-1">Delete this widget?</p>
+                <p className="text-xs text-red-600 mb-3">
+                  This will permanently delete <strong>{widget.display_name}</strong> and invalidate its API key.
+                  Any pages using this embed will stop working. This cannot be undone.
+                </p>
+                <p className="text-xs text-gray-600 mb-2">
+                  Type <strong>{widget.display_name}</strong> to confirm:
+                </p>
+                <input
+                  type="text"
+                  value={deleteConfirmText}
+                  onChange={e => setDeleteConfirmText(e.target.value)}
+                  placeholder={widget.display_name}
+                  className="w-full border border-red-300 rounded px-3 py-1.5 text-sm text-gray-900 mb-3 focus:outline-none focus:ring-2 focus:ring-red-400"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleDelete(widget)}
+                    disabled={isPending || deleteConfirmText !== widget.display_name}
+                    className="px-4 py-1.5 bg-red-600 text-white text-sm font-semibold rounded hover:bg-red-700 disabled:opacity-40 transition-colors"
+                  >
+                    {isPending ? 'Deleting…' : 'Delete widget'}
+                  </button>
+                  <button
+                    onClick={cancelDelete}
+                    className="px-4 py-1.5 text-sm text-gray-500 hover:text-gray-700"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="mt-3 p-3 bg-gray-50 rounded-lg">
               <div className="flex items-center justify-between">
