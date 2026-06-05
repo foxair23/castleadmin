@@ -11,5 +11,7 @@ export default async function WidgetsPage() {
     .select('id, display_name, lead_source, api_key, is_active, created_at')
     .order('created_at')
 
-  return <WidgetsClient initialWidgets={widgets ?? []} />
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'
+
+  return <WidgetsClient initialWidgets={widgets ?? []} appUrl={appUrl} />
 }

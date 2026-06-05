@@ -14,14 +14,14 @@ interface Widget {
 
 interface Props {
   initialWidgets: Widget[]
+  appUrl: string
 }
 
-function EmbedSnippet({ widget }: { widget: Widget }) {
+function EmbedSnippet({ widget, appUrl }: { widget: Widget; appUrl: string }) {
   const [copied, setCopied] = useState(false)
 
-  const adminUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'
   const snippet = `<iframe
-  src="${adminUrl}/embed/scheduler?key=${widget.api_key}"
+  src="${appUrl}/embed/scheduler?key=${widget.api_key}"
   style="width:100%;border:none;min-height:600px"
   allow="payment"
   loading="lazy"
@@ -60,7 +60,7 @@ function EmbedSnippet({ widget }: { widget: Widget }) {
   )
 }
 
-export default function WidgetsClient({ initialWidgets }: Props) {
+export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
   const [widgets, setWidgets] = useState(initialWidgets)
   const [isPending, startTransition] = useTransition()
   const [showNew, setShowNew] = useState(false)
@@ -200,7 +200,7 @@ export default function WidgetsClient({ initialWidgets }: Props) {
               <p className="font-mono text-xs text-gray-700 mt-1 break-all">{widget.api_key}</p>
             </div>
 
-            {expandedId === widget.id && <EmbedSnippet widget={widget} />}
+            {expandedId === widget.id && <EmbedSnippet widget={widget} appUrl={appUrl} />}
           </div>
         ))}
 
