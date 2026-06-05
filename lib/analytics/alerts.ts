@@ -457,3 +457,57 @@ export async function getOverdueCustomers(): Promise<OverdueCustomersResult> {
   const totalOverdue = limited.reduce((s, i) => s + i.account_balance, 0)
   return { items: limited, totalOverdue }
 }
+
+// ── Alert 7 — Scheduler Leads Awaiting Manual SF Push ────────────────────────
+
+export interface AwaitingPushLead {
+  id: string
+  customer_name: string
+  service_type: string
+  service_category: string
+  appointment_date: string
+  sync_status: string
+  created_at: string
+  days_waiting: number
+}
+
+export interface AwaitingPushResult {
+  items: AwaitingPushLead[]
+}
+
+export async function getAwaitingPushLeads(): Promise<AwaitingPushResult> {
+  const db = getAdminClient()
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString()
+
+  const { data } = await db
+    .from('scheduler_leads')
+    .select('id, customer_first_name, customer_last_name, service_type, service_category, appointment_date, sync_status, created_at')
+    .in('sync_status', ['not_attempted', 'sync_failed'])
+    .neq('status', 'rejected')
+    .gte('created_at', thirtyDaysAgo)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  const items: AwaitingPushLead[] = (data ?? []).map((l: {
+    id: string
+    customer_first_name: string
+    customer_last_name: string
+    service_type: string
+    service_category: string
+    appointment_date: string
+    sync_status: string
+    created_at: string
+  }) => ({
+    id: l.id,
+    customer_name: [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' '),
+    service_type: l.service_type,
+    service_category: l.service_category,
+    appointment_date: l.appointment_date,
+    sync_status: l.sync_status,
+    created_at: l.created_at,
+    days_waiting: daysBetween(l.created_at),
+  }))
+
+  return { items }
+}

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { syncLeadToServiceFusion } from '@/lib/scheduler/sf-sync'
+import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
+import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
 
 const ALLOWED_ORIGINS = [
   'https://schedule.castlegaragedoors.com',
@@ -361,16 +363,55 @@ export async function POST(req: NextRequest) {
     .eq('key', 'auto_sync_to_sf')
     .maybeSingle()
 
-  if (sfSetting?.value === true) {
-    const syncLeadId = leadId!
-    after(async () => {
+  const autoSync = sfSetting?.value === true
+  const syncLeadId = leadId!
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/scheduler`
+
+  const serviceCategoryLabels: Record<string, string> = {
+    repairs_service: 'Repairs & Service',
+    door_panel_replacement: 'Door / Panel Replacement',
+    opener_service: 'Opener Service / Replacement',
+    gate_opener_service: 'Gate Opener Service / Replacement',
+    new_gate_replacement: 'New Gate / Gate Replacement',
+    annual_maintenance: 'Annual Maintenance',
+  }
+  const categoryLabel = serviceCategoryLabels[body.service_type] ?? body.service_type
+  const serviceLabel = `${body.primary_category === 'gate' ? 'Gate' : 'Garage Door'} — ${categoryLabel}`
+  const customerName = [body.first_name.trim(), body.last_name?.trim()].filter(Boolean).join(' ')
+
+  function fmtDate(d: string): string {
+    return new Date(`${d}T12:00:00`).toLocaleDateString('en-US', {
+      weekday: 'long', month: 'long', day: 'numeric',
+    })
+  }
+
+  after(async () => {
+    if (autoSync) {
       try {
         await syncLeadToServiceFusion(syncLeadId)
       } catch {
         // sync_status already set to sync_failed inside syncLeadToServiceFusion
+        // scheduler_lead_stuck emitted from sf-sync.ts
       }
-    })
-  }
+    } else {
+      // Manual push mode — lead is stuck until admin pushes it
+      const { subject, bodyHtml, bodyText } = renderSchedulerLeadStuck({
+        customerName,
+        serviceLabel,
+        appointmentDate: fmtDate(body.appointment_date),
+        reason: 'manual_push',
+        adminUrl,
+      })
+      await enqueueForSubscribers({
+        notificationTypeKey: 'scheduler_lead_stuck',
+        subject,
+        bodyHtml,
+        bodyText,
+        relatedEntityType: 'scheduler_lead',
+        relatedEntityId: syncLeadId,
+      })
+    }
+  })
 
   return NextResponse.json(
     {

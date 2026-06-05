@@ -97,5 +97,18 @@ export async function PATCH(
     return NextResponse.json({ profile })
   }
 
+  // Handle dispatch toggle
+  if (typeof body.is_dispatch === 'boolean') {
+    const { data: profile, error } = await adminClient
+      .from('profiles')
+      .update({ is_dispatch: body.is_dispatch })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ profile })
+  }
+
   return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
 }
