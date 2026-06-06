@@ -1,4 +1,4 @@
-const FROM = 'Castle Garage Doors <noreply@castlegaragedoors.com>'
+const FROM = 'Castle Garage Doors <noreply@updates.castlegaragedoors.com>'
 
 export async function sendEmail(params: {
   to: string
