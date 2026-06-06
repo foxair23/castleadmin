@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { after } from 'next/server'
+import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
+import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
 
 function serviceClient() {
   return createClient(
@@ -80,5 +83,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ id: (data as { id: string }).id })
+  const newLeadId = (data as { id: string }).id
+  const customerName = first_name.trim()
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/scheduler`
+
+  after(async () => {
+    const { subject, bodyHtml, bodyText } = renderSchedulerLeadStuck({
+      customerName,
+      serviceLabel: 'Incomplete submission',
+      appointmentDate: '—',
+      reason: 'manual_push',
+      adminUrl,
+    })
+    await enqueueForSubscribers({
+      notificationTypeKey: 'scheduler_lead_stuck',
+      subject,
+      bodyHtml,
+      bodyText,
+      relatedEntityType: 'scheduler_lead',
+      relatedEntityId: newLeadId,
+    }).catch(() => { /* non-critical */ })
+  })
+
+  return NextResponse.json({ id: newLeadId })
 }
