@@ -32,11 +32,11 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
 }
 
 const SYNC_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  not_attempted:  { bg: 'bg-gray-100',   text: 'text-gray-600',   label: '—' },
-  in_progress:    { bg: 'bg-blue-100',   text: 'text-blue-700',   label: 'Syncing' },
-  synced:         { bg: 'bg-green-100',  text: 'text-green-700',  label: 'Synced' },
-  sync_failed:    { bg: 'bg-red-100',    text: 'text-red-700',    label: 'Failed' },
-  manually_synced:{ bg: 'bg-purple-100', text: 'text-purple-700', label: 'Manual' },
+  not_attempted:   { bg: 'bg-gray-100',   text: 'text-gray-600',   label: '—' },
+  in_progress:     { bg: 'bg-blue-100',   text: 'text-blue-700',   label: 'Syncing' },
+  synced:          { bg: 'bg-green-100',  text: 'text-green-700',  label: 'Synced' },
+  sync_failed:     { bg: 'bg-red-100',    text: 'text-red-700',    label: 'Failed' },
+  manually_synced: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'Manual' },
 }
 
 function formatApptDate(ymd: string): string {
@@ -60,23 +60,37 @@ function Badge({ bg, text, label }: { bg: string; text: string; label: string })
   )
 }
 
+function statusBadge(lead: Lead) {
+  if (lead.is_partial && lead.status === 'approved') {
+    return <Badge bg="bg-green-100" text="text-green-700" label="Actioned" />
+  }
+  if (lead.is_partial && lead.status === 'pending') {
+    return <Badge bg="bg-orange-100" text="text-orange-700" label="Partial" />
+  }
+  const ss = STATUS_STYLES[lead.status] ?? STATUS_STYLES.pending
+  return <Badge {...ss} />
+}
+
 export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) {
   const [filter, setFilter] = useState<StatusFilter>('pending')
 
   const fullLeads = initialLeads.filter(l => !l.is_partial)
-  const partialLeads = initialLeads.filter(l => l.is_partial)
+  // Rejected partials move to the rejected tab, not the partial tab
+  const partialLeads = initialLeads.filter(l => l.is_partial && l.status !== 'rejected')
+  const rejectedLeads = initialLeads.filter(l => l.status === 'rejected')
 
   const counts = {
-    all: fullLeads.length,
-    pending: fullLeads.filter(l => l.status === 'pending').length,
+    all:      fullLeads.length,
+    pending:  fullLeads.filter(l => l.status === 'pending').length,
     approved: fullLeads.filter(l => l.status === 'approved').length,
-    rejected: fullLeads.filter(l => l.status === 'rejected').length,
-    partial: partialLeads.length,
+    rejected: rejectedLeads.length,
+    partial:  partialLeads.length,
   }
 
   const visible =
-    filter === 'partial' ? partialLeads :
-    filter === 'all' ? fullLeads :
+    filter === 'partial'  ? partialLeads :
+    filter === 'rejected' ? rejectedLeads :
+    filter === 'all'      ? fullLeads :
     fullLeads.filter(l => l.status === filter)
 
   const tabs: { key: StatusFilter; label: string }[] = [
@@ -93,21 +107,23 @@ export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) 
         <h1 className="text-2xl font-bold text-gray-900">Scheduler Leads</h1>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex gap-1 mb-4 border-b border-gray-200">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setFilter(tab.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              filter === tab.key
-                ? 'border-red-600 text-red-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* Filter tabs — horizontally scrollable on mobile */}
+      <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <div className="flex gap-1 mb-4 border-b border-gray-200 min-w-max sm:min-w-0">
+          {tabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+                filter === tab.key
+                  ? 'border-red-600 text-red-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {visible.length === 0 ? (
@@ -115,100 +131,164 @@ export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) 
           No {filter === 'all' ? '' : filter} leads yet.
         </div>
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">ID</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Customer</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Service</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Appointment</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Area</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Sync</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {visible.map(lead => {
-                const ss = STATUS_STYLES[lead.status] ?? STATUS_STYLES.pending
-                const sy = SYNC_STYLES[lead.sync_status] ?? SYNC_STYLES.not_attempted
-                return (
-                  <tr key={lead.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-mono text-xs text-gray-500">
-                      <Link href={`/admin/scheduler/leads/${lead.id}`} className="hover:text-red-600">
-                        {lead.id.slice(0, 8)}…
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <Link href={`/admin/scheduler/leads/${lead.id}`} className="font-medium text-gray-900 hover:text-red-600">
+        <>
+          {/* ── Mobile card list ─────────────────────────────────────── */}
+          <div className="sm:hidden space-y-3">
+            {visible.map(lead => {
+              const sy = SYNC_STYLES[lead.sync_status] ?? SYNC_STYLES.not_attempted
+              return (
+                <Link
+                  key={lead.id}
+                  href={`/admin/scheduler/leads/${lead.id}`}
+                  className="block bg-white rounded-lg border border-gray-200 p-4 active:bg-gray-50"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium text-gray-900">
                           {lead.customer_first_name}{lead.customer_last_name ? ` ${lead.customer_last_name}` : ''}
-                        </Link>
-                        {lead.is_partial && (
+                        </span>
+                        {lead.is_partial && lead.status === 'pending' && (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">Partial</span>
                         )}
                       </div>
-                      <span className="text-gray-400 text-xs">
-                        {lead.address_city ? `${lead.address_city}${lead.address_state ? `, ${lead.address_state}` : ''}` : lead.customer_phone}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">
-                      {lead.service_category ? (
-                        <>
-                          <div>{lead.service_category}</div>
-                          <span className="text-gray-400 text-xs capitalize">{lead.service_type?.replace(/_/g, ' ')}</span>
-                          {lead.quoted_fee && (
-                            <span className={`mt-0.5 inline-block text-xs font-medium px-1.5 py-0.5 rounded ${
-                              lead.quoted_fee === 'Free Estimate'
-                                ? 'bg-green-50 text-green-700'
-                                : 'bg-blue-50 text-blue-700'
-                            }`}>
-                              {lead.quoted_fee}
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-gray-400 text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">
-                      {lead.appointment_date ? (
-                        <>
-                          <div>{formatApptDate(lead.appointment_date)}</div>
-                          {lead.appointment_window_start && lead.appointment_window_end && (
-                            <span className="text-gray-400 text-xs">{formatWindow(lead.appointment_window_start, lead.appointment_window_end)}</span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-gray-400 text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {lead.address_in_service_area === null ? (
-                        <span className="text-gray-400 text-xs">unknown</span>
-                      ) : lead.address_in_service_area ? (
-                        <span className="text-green-600 text-xs font-medium">✓ In area</span>
-                      ) : (
-                        <span className="text-red-500 text-xs font-medium">✗ Outside</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {lead.is_partial && lead.status === 'pending'
-                        ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">Partial</span>
-                        : lead.is_partial && lead.status === 'approved'
-                          ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Actioned</span>
-                          : <Badge {...ss} />
-                      }
-                    </td>
-                    <td className="px-4 py-3">
-                      {!lead.is_partial && lead.sync_status !== 'not_attempted' && <Badge {...sy} />}
-                    </td>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {lead.address_city
+                          ? `${lead.address_city}${lead.address_state ? `, ${lead.address_state}` : ''}`
+                          : lead.customer_phone}
+                      </p>
+                    </div>
+                    <div className="shrink-0">{statusBadge(lead)}</div>
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
+                    {lead.service_category && (
+                      <div>
+                        <span className="text-gray-400">Service </span>
+                        {lead.service_category}
+                        {lead.quoted_fee && (
+                          <span className={`ml-1 px-1.5 py-0.5 rounded font-medium ${
+                            lead.quoted_fee === 'Free Estimate' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+                          }`}>{lead.quoted_fee}</span>
+                        )}
+                      </div>
+                    )}
+                    {lead.appointment_date && (
+                      <div>
+                        <span className="text-gray-400">Appt </span>
+                        {formatApptDate(lead.appointment_date)}
+                        {lead.appointment_window_start && lead.appointment_window_end && (
+                          <span className="text-gray-400"> {formatWindow(lead.appointment_window_start, lead.appointment_window_end)}</span>
+                        )}
+                      </div>
+                    )}
+                    {lead.address_in_service_area !== null && (
+                      <div>
+                        {lead.address_in_service_area
+                          ? <span className="text-green-600 font-medium">✓ In area</span>
+                          : <span className="text-red-500 font-medium">✗ Outside</span>}
+                      </div>
+                    )}
+                    {!lead.is_partial && lead.sync_status !== 'not_attempted' && (
+                      <div>
+                        <span className="text-gray-400">Sync </span>
+                        <span className={`${sy.text} font-medium`}>{sy.label}</span>
+                      </div>
+                    )}
+                  </div>
+                </Link>
+              )
+            })}
+          </div>
+
+          {/* ── Desktop table ────────────────────────────────────────── */}
+          <div className="hidden sm:block bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">ID</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Customer</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Service</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Appointment</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Area</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Sync</th>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {visible.map(lead => {
+                    const sy = SYNC_STYLES[lead.sync_status] ?? SYNC_STYLES.not_attempted
+                    return (
+                      <tr key={lead.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-mono text-xs text-gray-500">
+                          <Link href={`/admin/scheduler/leads/${lead.id}`} className="hover:text-red-600">
+                            {lead.id.slice(0, 8)}…
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <Link href={`/admin/scheduler/leads/${lead.id}`} className="font-medium text-gray-900 hover:text-red-600">
+                              {lead.customer_first_name}{lead.customer_last_name ? ` ${lead.customer_last_name}` : ''}
+                            </Link>
+                            {lead.is_partial && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">Partial</span>
+                            )}
+                          </div>
+                          <span className="text-gray-400 text-xs">
+                            {lead.address_city ? `${lead.address_city}${lead.address_state ? `, ${lead.address_state}` : ''}` : lead.customer_phone}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">
+                          {lead.service_category ? (
+                            <>
+                              <div>{lead.service_category}</div>
+                              <span className="text-gray-400 text-xs capitalize">{lead.service_type?.replace(/_/g, ' ')}</span>
+                              {lead.quoted_fee && (
+                                <span className={`mt-0.5 inline-block text-xs font-medium px-1.5 py-0.5 rounded ${
+                                  lead.quoted_fee === 'Free Estimate' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+                                }`}>
+                                  {lead.quoted_fee}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-gray-400 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">
+                          {lead.appointment_date ? (
+                            <>
+                              <div>{formatApptDate(lead.appointment_date)}</div>
+                              {lead.appointment_window_start && lead.appointment_window_end && (
+                                <span className="text-gray-400 text-xs">{formatWindow(lead.appointment_window_start, lead.appointment_window_end)}</span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-gray-400 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {lead.address_in_service_area === null ? (
+                            <span className="text-gray-400 text-xs">unknown</span>
+                          ) : lead.address_in_service_area ? (
+                            <span className="text-green-600 text-xs font-medium">✓ In area</span>
+                          ) : (
+                            <span className="text-red-500 text-xs font-medium">✗ Outside</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">{statusBadge(lead)}</td>
+                        <td className="px-4 py-3">
+                          {!lead.is_partial && lead.sync_status !== 'not_attempted' && <Badge {...sy} />}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
