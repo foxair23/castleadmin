@@ -6,15 +6,25 @@ import { getToken } from '@/lib/crm/service-fusion'
 export async function GET() {
   const token = await getToken()
 
-  const res = await fetch(
-    'https://api.servicefusion.com/v1/jobs?' +
-    new URLSearchParams({
-      'per-page': '3',
-      page: '1',
-      expand: 'techs_assigned,visits,visits.techs_assigned',
-    }),
-    { headers: { Authorization: `Bearer ${token}` } }
-  )
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 15_000)
+
+  let res: Response
+  try {
+    res = await fetch(
+      'https://api.servicefusion.com/v1/jobs?' +
+      new URLSearchParams({
+        'per-page': '3',
+        page: '1',
+        expand: 'visits',
+      }),
+      { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal }
+    )
+  } catch (err) {
+    clearTimeout(timeoutId)
+    return NextResponse.json({ error: String(err) }, { status: 504 })
+  }
+  clearTimeout(timeoutId)
 
   if (!res.ok) {
     return NextResponse.json({ error: await res.text() }, { status: res.status })
