@@ -1,9 +1,14 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from '@/lib/crm/service-fusion'
 
 // Temporary diagnostic endpoint — delete after confirming visit structure
-// Hit: GET /api/admin/sf-visit-probe
-export async function GET() {
+// Hit: GET /api/cron/sf-visit-probe?secret=<CRON_SECRET>
+export async function GET(req: NextRequest) {
+  const secret = req.nextUrl.searchParams.get('secret')
+  if (!secret || secret !== process.env.CRON_SECRET) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const token = await getToken()
 
   const res = await fetch(
@@ -22,7 +27,6 @@ export async function GET() {
 
   const json = await res.json()
 
-  // Summarise what we care about: does each job have a visits array? How many?
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const summary = (json?.items ?? []).map((job: any) => ({
     sf_job_id: job.id,
@@ -31,6 +35,7 @@ export async function GET() {
     start_date: job.start_date,
     visit_count: Array.isArray(job.visits) ? job.visits.length : 'not an array',
     visits: Array.isArray(job.visits)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ? job.visits.map((v: any) => ({
           id: v.id,
           start_date: v.start_date,
@@ -42,5 +47,5 @@ export async function GET() {
       : job.visits,
   }))
 
-  return NextResponse.json({ job_count: summary.length, jobs: summary }, { status: 200 })
+  return NextResponse.json({ job_count: summary.length, jobs: summary })
 }
