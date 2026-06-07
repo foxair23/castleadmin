@@ -129,11 +129,11 @@ export async function GET(req: NextRequest) {
 
   const nowMs = Date.now()
 
-  // Count SF jobs per day in range (open/dispatched, not cancelled or deleted)
+  // Count SF jobs per day (and per window) in range (open/dispatched, not cancelled or deleted)
   const CLOSED_STATUSES = ['Cancelled', 'Closed', 'Complete', 'Completed']
   const { data: sfJobs } = await db
     .from('sf_jobs')
-    .select('start_date')
+    .select('start_date, time_frame_promised_start')
     .gte('start_date', from)
     .lte('start_date', to)
     .eq('is_deleted', false)
@@ -141,9 +141,16 @@ export async function GET(req: NextRequest) {
     .not('status', 'in', `(${CLOSED_STATUSES.map(s => `"${s}"`).join(',')})`)
 
   const sfCountByDate = new Map<string, number>()
+  // key: "YYYY-MM-DD|HH:MM" — only populated when SF job has a time window
+  const sfCountByDateWindow = new Map<string, number>()
   for (const j of sfJobs ?? []) {
     const d = j.start_date as string
     sfCountByDate.set(d, (sfCountByDate.get(d) ?? 0) + 1)
+    const tfps = j.time_frame_promised_start as string | null
+    if (tfps) {
+      const key = `${d}|${tfps}`
+      sfCountByDateWindow.set(key, (sfCountByDateWindow.get(key) ?? 0) + 1)
+    }
   }
 
   // Count approved/pending scheduler_leads per date+window in range
@@ -181,11 +188,12 @@ export async function GET(req: NextRequest) {
       const hoursUntil = (windowStart.getTime() - nowMs) / 3_600_000
       if (hoursUntil < minNoticeHours) return { ...w, available: false, reason: 'too_soon' as const }
 
-      // Per-window booking cap
+      // Per-window booking cap: scheduler leads + SF jobs in this window
       if (maxBookingsPerWindow > 0) {
         const key = `${dateStr}|${w.start}`
-        const bookingCount = leadCountByDateWindow.get(key) ?? 0
-        if (bookingCount >= maxBookingsPerWindow) return { ...w, available: false, reason: 'full' as const }
+        const schedulerCount = leadCountByDateWindow.get(key) ?? 0
+        const sfWindowCount = sfCountByDateWindow.get(key) ?? 0
+        if (schedulerCount + sfWindowCount >= maxBookingsPerWindow) return { ...w, available: false, reason: 'full' as const }
       }
 
       return { ...w, available: true }
