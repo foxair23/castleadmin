@@ -14,11 +14,14 @@ export interface CrmJob {
   id: string
   jobNumber: string      // human-readable job number e.g. "10042"
   customerName: string
-  scheduledDate: string  // YYYY-MM-DD
+  scheduledDate: string  // YYYY-MM-DD — from the visit's start_date, not the job's
   status: 'assigned' | 'completed'
   statusLabel: string    // original status name from the CRM, for display
   description: string | null
   items: CrmJobItem[]
+  visitIndex: number     // 1-based position of this visit within the job
+  visitTotal: number     // total number of visits on the job
+  visitNotes: string | null  // visit.notes_for_techs
 }
 
 export interface CrmProvider {
