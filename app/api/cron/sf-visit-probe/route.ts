@@ -6,7 +6,6 @@ import { getToken } from '@/lib/crm/service-fusion'
 export async function GET() {
   const t0 = Date.now()
 
-  // Step 1: get token (may hit Supabase + SF OAuth if expired)
   let token: string
   try {
     token = await getToken()
@@ -15,76 +14,88 @@ export async function GET() {
   }
   const tokenMs = Date.now() - t0
 
-  // Step 2: fetch 3 jobs — no expand, 25s timeout
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 25_000)
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let jobsJson: any
-  try {
-    const res = await fetch(
-      'https://api.servicefusion.com/v1/jobs?' +
-        new URLSearchParams({ 'per-page': '3', page: '1' }),
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: controller.signal }
-    )
-    clearTimeout(timer)
-    if (!res.ok) {
-      return NextResponse.json({ step: 'list_jobs', status: res.status, body: await res.text(), token_ms: tokenMs }, { status: 502 })
+  async function sfFetch(label: string, url: string) {
+    const c = new AbortController()
+    const timer = setTimeout(() => c.abort(), 20_000)
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: c.signal,
+      })
+      clearTimeout(timer)
+      const ms = Date.now() - t0
+      if (!res.ok) return { label, ok: false, status: res.status, body: await res.text(), ms }
+      const json = await res.json()
+      return { label, ok: true, ms, json }
+    } catch (err) {
+      clearTimeout(timer)
+      return { label, ok: false, error: String(err), ms: Date.now() - t0 }
     }
-    jobsJson = await res.json()
-  } catch (err) {
-    clearTimeout(timer)
-    return NextResponse.json({ step: 'list_jobs', error: String(err), token_ms: tokenMs, total_ms: Date.now() - t0 }, { status: 502 })
   }
 
-  const listMs = Date.now() - t0
+  // Test 1: /techs — simplest possible call
+  const techs = await sfFetch(
+    'GET /techs?per-page=1',
+    'https://api.servicefusion.com/v1/techs?' + new URLSearchParams({ 'per-page': '1' })
+  )
+  if (!techs.ok) {
+    return NextResponse.json({ token_ms: tokenMs, techs }, { status: 502 })
+  }
+
+  // Test 2: /jobs with date filter — avoid full-table scan
+  const today = new Date().toISOString().slice(0, 10)
+  const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10)
+  const jobs = await sfFetch(
+    'GET /jobs with date filter',
+    'https://api.servicefusion.com/v1/jobs?' +
+      new URLSearchParams({
+        'per-page': '3',
+        page: '1',
+        'filters[start_date][gte]': weekAgo,
+        'filters[start_date][lte]': today,
+      })
+  )
+  if (!jobs.ok) {
+    return NextResponse.json({ token_ms: tokenMs, techs: { ok: true, ms: techs.ms }, jobs }, { status: 502 })
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const jobs: any[] = jobsJson?.items ?? []
-
-  if (jobs.length === 0) {
-    return NextResponse.json({ step: 'list_jobs', job_count: 0, token_ms: tokenMs, list_ms: listMs })
+  const jobItems: any[] = jobs.json?.items ?? []
+  if (jobItems.length === 0) {
+    return NextResponse.json({ token_ms: tokenMs, techs: { ok: true, ms: techs.ms }, jobs: { ok: true, ms: jobs.ms, count: 0 } })
   }
 
-  const firstId = jobs[0].id
-
-  // Step 3: fetch single job with expand=visits, 25s timeout
-  const c2 = new AbortController()
-  const t2 = setTimeout(() => c2.abort(), 25_000)
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let singleJson: any
-  try {
-    const res = await fetch(
-      `https://api.servicefusion.com/v1/jobs/${firstId}?` +
-        new URLSearchParams({ expand: 'visits' }),
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: c2.signal }
-    )
-    clearTimeout(t2)
-    if (!res.ok) {
-      return NextResponse.json({ step: 'single_job', status: res.status, body: await res.text(), token_ms: tokenMs, list_ms: listMs }, { status: 502 })
-    }
-    singleJson = await res.json()
-  } catch (err) {
-    clearTimeout(t2)
-    return NextResponse.json({
-      step: 'single_job_with_visits',
-      error: String(err),
-      token_ms: tokenMs,
-      list_ms: listMs,
-      total_ms: Date.now() - t0,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      bare_jobs: jobs.map((j: any) => ({ id: j.id, number: j.number, customer: j.customer_name, start_date: j.start_date })),
-    }, { status: 502 })
-  }
+  // Test 3: single job with expand=visits
+  const firstId = jobItems[0].id
+  const visit = await sfFetch(
+    `GET /jobs/${firstId}?expand=visits`,
+    `https://api.servicefusion.com/v1/jobs/${firstId}?` + new URLSearchParams({ expand: 'visits' })
+  )
 
   return NextResponse.json({
     token_ms: tokenMs,
-    list_ms: listMs,
-    total_ms: Date.now() - t0,
-    first_job_id: firstId,
-    visit_count: Array.isArray(singleJson?.visits) ? singleJson.visits.length : 'not an array',
-    visits_raw: singleJson?.visits,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    bare_jobs: jobs.map((j: any) => ({ id: j.id, number: j.number, customer: j.customer_name, start_date: j.start_date })),
+    techs: { ok: true, ms: techs.ms },
+    jobs: {
+      ok: true,
+      ms: jobs.ms,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      items: jobItems.map((j: any) => ({ id: j.id, number: j.number, customer: j.customer_name, start_date: j.start_date })),
+    },
+    visit_probe: visit.ok
+      ? {
+          ok: true,
+          ms: visit.ms,
+          job_id: firstId,
+          visit_count: Array.isArray(visit.json?.visits) ? visit.json.visits.length : 'not an array',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          visits: Array.isArray(visit.json?.visits) ? visit.json.visits.map((v: any) => ({
+            id: v.id,
+            start_date: v.start_date,
+            time_frame_promised_start: v.time_frame_promised_start,
+            time_frame_promised_end: v.time_frame_promised_end,
+            techs_assigned: v.techs_assigned,
+          })) : visit.json?.visits,
+        }
+      : { ok: false, ms: visit.ms, error: visit.error, status: visit.status },
   })
 }
