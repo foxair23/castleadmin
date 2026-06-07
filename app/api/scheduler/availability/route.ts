@@ -141,15 +141,19 @@ export async function GET(req: NextRequest) {
     .not('status', 'in', `(${CLOSED_STATUSES.map(s => `"${s}"`).join(',')})`)
 
   const sfCountByDate = new Map<string, number>()
-  // key: "YYYY-MM-DD|HH:MM" — only populated when SF job has a time window
+  // key: "YYYY-MM-DD|windowStart" — keyed by the window the SF job falls within
   const sfCountByDateWindow = new Map<string, number>()
   for (const j of sfJobs ?? []) {
     const d = j.start_date as string
     sfCountByDate.set(d, (sfCountByDate.get(d) ?? 0) + 1)
     const tfps = j.time_frame_promised_start as string | null
     if (tfps) {
-      const key = `${d}|${tfps}`
-      sfCountByDateWindow.set(key, (sfCountByDateWindow.get(key) ?? 0) + 1)
+      // Find which scheduler window this SF job's start time falls within
+      const matchingWindow = timeWindows.find(w => tfps >= w.start && tfps < w.end)
+      if (matchingWindow) {
+        const key = `${d}|${matchingWindow.start}`
+        sfCountByDateWindow.set(key, (sfCountByDateWindow.get(key) ?? 0) + 1)
+      }
     }
   }
 
