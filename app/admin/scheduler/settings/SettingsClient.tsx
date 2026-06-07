@@ -310,7 +310,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
               }}
               className="rounded border-gray-300 text-red-600 focus:ring-red-500"
             />
-            Limit online bookings per time window
+            Limit total bookings per time window
             {maxWindowEnabled.saved && <span className="text-green-600 text-xs">Saved ✓</span>}
           </label>
           {maxWindowEnabled.value && (
@@ -329,7 +329,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
                   saved={maxWindowLimit.saved}
                 />
               </div>
-              <p className="text-xs text-gray-400 mt-1">Max pending/approved online leads per AM or PM window per day.</p>
+              <p className="text-xs text-gray-400 mt-1">Max total jobs (SF + online leads) per AM or PM window per day.</p>
             </div>
           )}
           {!maxWindowEnabled.value && (
