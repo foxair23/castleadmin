@@ -6,6 +6,7 @@
     { "path": "/api/cron/sf-sync-calendar-tasks", "schedule": "25 8 * * 1-6" },
     { "path": "/api/cron/sf-sync-weekly", "schedule": "1 8 * * 0" },
     { "path": "/api/cron/send-notifications", "schedule": "* * * * *" },
+    { "path": "/api/cron/piecework-reminder-3", "schedule": "0 16 * * 1" },
     { "path": "/api/cron/piecework-reminder-1", "schedule": "0 16 * * 3" },
     { "path": "/api/cron/piecework-reminder-2", "schedule": "0 1 * * 4" },
     { "path": "/api/cron/sync-not-run", "schedule": "0 17 * * *" }
