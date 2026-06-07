@@ -153,7 +153,7 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
       const json = (await sfGet('/jobs', {
         'filters[start_date][gte]': fmt(weekStart),
         'filters[start_date][lte]': fmt(weekEnd),
-        expand: 'techs_assigned,items',
+        expand: 'visits,visits.techs_assigned,items',
         'per-page': '50',
         page: String(page),
       })) as any
@@ -162,12 +162,6 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const job of items as any[]) {
-        // Filter to only jobs assigned to this tech
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const techs: any[] = job.techs_assigned ?? []
-        if (!techs.some(t => String(t.id) === sfTechId)) continue
-
-        // status is a plain string e.g. "Open Job", "Open Job In Progress", "Job Closed", "Cancelled"
         const statusStr: string = job.status ?? ''
         const lower = statusStr.toLowerCase()
 
@@ -178,22 +172,59 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
 
         if (!status) continue
 
-        // SF may return items under 'items' or 'line_items' depending on API version
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const rawItems: any[] = job.items ?? job.line_items ?? []
-        results.push({
-          id: String(job.id),
-          jobNumber: job.number ?? String(job.id),
-          customerName: job.customer_name ?? `SF Job #${job.id}`,
-          scheduledDate: (job.start_date ?? fmt(weekStart)).slice(0, 10),
-          status,
-          statusLabel: statusStr,
-          description: job.description ?? null,
-          items: rawItems.map(item => ({
-            name: item.name ?? item.product_name ?? item.item_name ?? null,
-            description: item.description ?? null,
-            quantity: item.quantity != null ? parseFloat(String(item.quantity)) : null,
-            unit_price: item.unit_price ?? item.price ?? item.rate ?? null,
-          })),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mappedItems = rawItems.map((item: any) => ({
+          name: item.name ?? item.product_name ?? item.item_name ?? null,
+          description: item.description ?? null,
+          quantity: item.quantity != null ? parseFloat(String(item.quantity)) : null,
+          unit_price: item.unit_price ?? item.price ?? item.rate ?? null,
+        }))
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const visits: any[] = Array.isArray(job.visits) ? job.visits : []
+
+        if (visits.length === 0) {
+          // No visits returned — fall back to job-level tech assignment and start_date
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const jobTechs: any[] = job.techs_assigned ?? []
+          if (!jobTechs.some((t: any) => String(t.id) === sfTechId)) continue
+          results.push({
+            id: String(job.id),
+            jobNumber: job.number ?? String(job.id),
+            customerName: job.customer_name ?? `SF Job #${job.id}`,
+            scheduledDate: (job.start_date ?? fmt(weekStart)).slice(0, 10),
+            status,
+            statusLabel: statusStr,
+            description: job.description ?? null,
+            items: mappedItems,
+            visitIndex: 1,
+            visitTotal: 1,
+            visitNotes: null,
+          })
+          continue
+        }
+
+        const visitTotal = visits.length
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        visits.forEach((visit: any, idx: number) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const visitTechs: any[] = visit.techs_assigned ?? []
+          if (!visitTechs.some((t: any) => String(t.id) === sfTechId)) return
+          results.push({
+            id: String(job.id),
+            jobNumber: job.number ?? String(job.id),
+            customerName: job.customer_name ?? `SF Job #${job.id}`,
+            scheduledDate: (visit.start_date ?? job.start_date ?? fmt(weekStart)).slice(0, 10),
+            status,
+            statusLabel: statusStr,
+            description: visit.notes_for_techs ?? job.description ?? null,
+            items: mappedItems,
+            visitIndex: idx + 1,
+            visitTotal,
+            visitNotes: visit.notes_for_techs ?? null,
+          })
         })
       }
 

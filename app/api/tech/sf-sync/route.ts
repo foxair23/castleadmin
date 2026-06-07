@@ -61,8 +61,10 @@ export async function POST(req: NextRequest) {
 
     const now = new Date().toISOString()
 
-    // Log item counts so we can verify SF is returning items
-    console.log(`[sf-sync] fetched ${sfJobs.length} jobs. Item counts:`, sfJobs.map(j => `${j.id}:${j.items.length}`).join(', '))
+    // Log visit counts so we can verify SF is returning visits
+    console.log(`[sf-sync] fetched ${sfJobs.length} visit entries. Visits:`, sfJobs.map(j => `${j.id}@${j.scheduledDate}(${j.visitIndex}/${j.visitTotal})`).join(', '))
+
+    const refreshedJobIds = new Set<string>()
 
     for (const sfJob of sfJobs) {
       const { data: existing } = await service
@@ -70,12 +72,20 @@ export async function POST(req: NextRequest) {
         .select('id')
         .eq('tech_id', user.id)
         .eq('sf_job_id', sfJob.id)
+        .eq('work_date', sfJob.scheduledDate)
         .maybeSingle()
 
       if (existing) {
         await service
           .from('jobs')
-          .update({ sf_status: sfJob.status, sf_job_number: sfJob.jobNumber, sf_last_synced_at: now, sf_description: sfJob.description })
+          .update({
+            sf_status: sfJob.status,
+            sf_job_number: sfJob.jobNumber,
+            sf_last_synced_at: now,
+            sf_description: sfJob.description,
+            sf_visit_index: sfJob.visitIndex,
+            sf_visit_total: sfJob.visitTotal,
+          })
           .eq('id', existing.id)
         updated++
       } else {
@@ -92,16 +102,21 @@ export async function POST(req: NextRequest) {
           sf_status: sfJob.status,
           sf_last_synced_at: now,
           sf_description: sfJob.description,
+          sf_visit_index: sfJob.visitIndex,
+          sf_visit_total: sfJob.visitTotal,
         })
         added++
       }
 
-      // Refresh stored items for this SF job (delete + re-insert)
-      await service.from('sf_job_items').delete().eq('sf_job_id', sfJob.id)
-      if (sfJob.items.length > 0) {
-        await service.from('sf_job_items').insert(
-          sfJob.items.map(item => ({ sf_job_id: sfJob.id, ...item, sf_synced_at: now }))
-        )
+      // Refresh stored items once per SF job (same items across all visits)
+      if (!refreshedJobIds.has(sfJob.id)) {
+        refreshedJobIds.add(sfJob.id)
+        await service.from('sf_job_items').delete().eq('sf_job_id', sfJob.id)
+        if (sfJob.items.length > 0) {
+          await service.from('sf_job_items').insert(
+            sfJob.items.map(item => ({ sf_job_id: sfJob.id, ...item, sf_synced_at: now }))
+          )
+        }
       }
     }
   } catch (err: unknown) {
