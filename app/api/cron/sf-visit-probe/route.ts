@@ -65,37 +65,34 @@ export async function GET() {
     return NextResponse.json({ token_ms: tokenMs, techs: { ok: true, ms: techs.ms }, jobs: { ok: true, ms: jobs.ms, count: 0 } })
   }
 
-  // Test 3: single job with expand=visits
+  // Test 3: single job with expand=visits — dump raw to find all field names
   const firstId = jobItems[0].id
   const visit = await sfFetch(
     `GET /jobs/${firstId}?expand=visits`,
     `https://api.servicefusion.com/v1/jobs/${firstId}?` + new URLSearchParams({ expand: 'visits' })
   )
+  if (!visit.ok) {
+    return NextResponse.json({ token_ms: tokenMs, techs: { ok: true }, jobs: { ok: true }, visit_probe: visit }, { status: 502 })
+  }
+
+  // Test 4: same job with expand=visits,visits.techs_assigned
+  const visitTechs = await sfFetch(
+    `GET /jobs/${firstId}?expand=visits,visits.techs_assigned`,
+    `https://api.servicefusion.com/v1/jobs/${firstId}?` + new URLSearchParams({ expand: 'visits,visits.techs_assigned' })
+  )
 
   return NextResponse.json({
     token_ms: tokenMs,
-    techs: { ok: true, ms: techs.ms },
-    jobs: {
-      ok: true,
-      ms: jobs.ms,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      items: jobItems.map((j: any) => ({ id: j.id, number: j.number, customer: j.customer_name, start_date: j.start_date })),
-    },
-    visit_probe: visit.ok
+    visit_raw_first: Array.isArray(visit.json?.visits) ? visit.json.visits[0] : visit.json?.visits,
+    visit_keys: Array.isArray(visit.json?.visits) && visit.json.visits[0]
+      ? Object.keys(visit.json.visits[0])
+      : [],
+    visit_techs_expand: visitTechs.ok
       ? {
           ok: true,
-          ms: visit.ms,
-          job_id: firstId,
-          visit_count: Array.isArray(visit.json?.visits) ? visit.json.visits.length : 'not an array',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          visits: Array.isArray(visit.json?.visits) ? visit.json.visits.map((v: any) => ({
-            id: v.id,
-            start_date: v.start_date,
-            time_frame_promised_start: v.time_frame_promised_start,
-            time_frame_promised_end: v.time_frame_promised_end,
-            techs_assigned: v.techs_assigned,
-          })) : visit.json?.visits,
+          ms: visitTechs.ms,
+          first_visit: Array.isArray(visitTechs.json?.visits) ? visitTechs.json.visits[0] : null,
         }
-      : { ok: false, ms: visit.ms, error: visit.error, status: visit.status },
+      : { ok: false, error: visitTechs.error, ms: visitTechs.ms },
   })
 }
