@@ -219,6 +219,8 @@ function mapJob(r: Raw) {
     status: toStr(r.status), sub_status: toStr(r.sub_status),
     category: toStr(r.category), source: toStr(r.source),
     start_date: toStr(r.start_date), end_date: toStr(r.end_date),
+    time_frame_promised_start: toStr(r.time_frame_promised_start),
+    time_frame_promised_end: toStr(r.time_frame_promised_end),
     closed_at: toStr(r.closed_at), created_at_sf: toStr(r.created_at), updated_at_sf: toStr(r.updated_at),
     contact_first_name: toStr(r.contact_first_name), contact_last_name: toStr(r.contact_last_name),
     street_1: toStr(r.street_1), street_2: toStr(r.street_2),
