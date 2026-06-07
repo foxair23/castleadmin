@@ -1,14 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { getToken } from '@/lib/crm/service-fusion'
 
 // Temporary diagnostic endpoint — delete after confirming visit structure
-// Hit: GET /api/cron/sf-visit-probe?secret=<CRON_SECRET>
-export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get('secret')
-  if (!secret || secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
+// Hit: GET /api/cron/sf-visit-probe
+export async function GET() {
   const token = await getToken()
 
   const res = await fetch(
