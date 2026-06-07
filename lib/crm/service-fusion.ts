@@ -145,14 +145,24 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
     weekEnd: Date
   ): Promise<CrmJob[]> {
     const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const weekStartStr = fmt(weekStart)
+    const weekEndStr = fmt(weekEnd)
+
+    // Widen the job-level date filter so we catch jobs whose SF start_date
+    // differs from their visit dates (e.g. jobs created last week with visits
+    // this week, or jobs "scheduled" next week whose visits fall this week).
+    // We then filter visits to [weekStart, weekEnd] on our side.
+    const fetchFrom = fmt(new Date(weekStart.getTime() - 30 * 86400_000))
+    const fetchTo   = fmt(new Date(weekEnd.getTime()   + 14 * 86400_000))
+
     const results: CrmJob[] = []
     let page = 1
 
     while (true) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const json = (await sfGet('/jobs', {
-        'filters[start_date][gte]': fmt(weekStart),
-        'filters[start_date][lte]': fmt(weekEnd),
+        'filters[start_date][gte]': fetchFrom,
+        'filters[start_date][lte]': fetchTo,
         expand: 'visits,visits.techs_assigned,items',
         'per-page': '50',
         page: String(page),
@@ -186,7 +196,10 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
         const visits: any[] = Array.isArray(job.visits) ? job.visits : []
 
         if (visits.length === 0) {
-          // No visits returned — fall back to job-level tech assignment and start_date
+          // No visits returned — fall back to job-level tech assignment.
+          // Only include if the job's own start_date falls within the week.
+          const jobDate = (job.start_date ?? '').slice(0, 10)
+          if (jobDate < weekStartStr || jobDate > weekEndStr) continue
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const jobTechs: any[] = job.techs_assigned ?? []
           if (!jobTechs.some((t: any) => String(t.id) === sfTechId)) continue
@@ -194,7 +207,7 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
             id: String(job.id),
             jobNumber: job.number ?? String(job.id),
             customerName: job.customer_name ?? `SF Job #${job.id}`,
-            scheduledDate: (job.start_date ?? fmt(weekStart)).slice(0, 10),
+            scheduledDate: jobDate || fmt(weekStart),
             status,
             statusLabel: statusStr,
             description: job.description ?? null,
@@ -206,9 +219,15 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
           continue
         }
 
-        const visitTotal = visits.length
+        // Only include visits whose date falls within the requested week.
+        const weekVisits = visits.filter((v: any) => {
+          const d = (v.start_date ?? '').slice(0, 10)
+          return d >= weekStartStr && d <= weekEndStr
+        })
+        const visitTotal = weekVisits.length
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        visits.forEach((visit: any, idx: number) => {
+        weekVisits.forEach((visit: any, idx: number) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const visitTechs: any[] = visit.techs_assigned ?? []
           if (!visitTechs.some((t: any) => String(t.id) === sfTechId)) return
@@ -216,7 +235,7 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
             id: String(job.id),
             jobNumber: job.number ?? String(job.id),
             customerName: job.customer_name ?? `SF Job #${job.id}`,
-            scheduledDate: (visit.start_date ?? job.start_date ?? fmt(weekStart)).slice(0, 10),
+            scheduledDate: visit.start_date.slice(0, 10),
             status,
             statusLabel: statusStr,
             description: visit.notes_for_techs ?? job.description ?? null,
