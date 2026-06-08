@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runWeeklyReconcileForEntity } from '@/lib/sf-mirror/sync-engine'
 
-// Reconcile all 618+ pages of jobs. We skip expand (no techs/payments/invoices child
-// data) so each SF page comes back in ~500ms instead of ~3s, keeping the total well
-// within the 800s limit. Child data stays fresh via the daily incremental sync.
+// Reconcile all SF jobs. Two optimizations to fit within 800s:
+//   skipExpand: omit child data (techs/payments/invoices) — kept fresh by daily sync
+//   concurrency=3: fetch 3 pages in parallel, ~410s for 618 pages vs ~1550s sequential
 export const maxDuration = 800
 
 export async function GET(req: NextRequest) {
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
 
   const started = Date.now()
   try {
-    const upserted = await runWeeklyReconcileForEntity('jobs', { skipExpand: true })
+    const upserted = await runWeeklyReconcileForEntity('jobs', { skipExpand: true, concurrency: 3 })
     return NextResponse.json({ ok: true, upserted, ms: Date.now() - started })
   } catch (err) {
     console.error('[sf-reconcile-jobs] fatal:', err)
