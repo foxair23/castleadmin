@@ -6,6 +6,7 @@ import {
   runIncrementalSync,
   runIncrementalSyncForEntity,
   runWeeklyReconcile,
+  runScopedReconcile,
   runBackfill,
   reprocessCustomerChildren,
 } from '@/lib/sf-mirror/sync-engine'
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { action, entity } = body as { action: string; entity?: string }
+    const { action, entity } = body as { action: string; entity?: string; days?: number; entities?: string[] }
 
     let counts: Record<string, number>
 
@@ -62,6 +63,10 @@ export async function POST(req: NextRequest) {
       counts = await runWeeklyReconcile()
     } else if (action === 'backfill') {
       counts = await runBackfill(entity)
+    } else if (action === 'reconcile-scoped') {
+      const days = typeof body.days === 'number' ? body.days : 120
+      const scopeEntities: string[] = Array.isArray(body.entities) ? body.entities : ['jobs', 'estimates']
+      counts = await runScopedReconcile(days, scopeEntities)
     } else if (action === 'reprocess-children') {
       const n = await reprocessCustomerChildren()
       counts = { customers_processed: n }
