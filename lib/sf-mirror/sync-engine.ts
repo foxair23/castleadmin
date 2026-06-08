@@ -690,7 +690,7 @@ export async function runBackfill(entity?: string): Promise<Record<string, numbe
 // Run one entity at a time via runWeeklyReconcileForEntity — each entity gets
 // its own function invocation to stay within Vercel's per-function time limit.
 
-export async function runWeeklyReconcileForEntity(entityName: string): Promise<number> {
+export async function runWeeklyReconcileForEntity(entityName: string, { skipExpand = false } = {}): Promise<number> {
   const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entityName)
   if (!cfg) throw new Error(`Unknown entity: ${entityName}`)
   const supabase = db()
@@ -701,12 +701,15 @@ export async function runWeeklyReconcileForEntity(entityName: string): Promise<n
 
   try {
     const params: Record<string, string> = {}
-    if (cfg.expand) params['expand'] = cfg.expand
+    // skipExpand: omit child data (techs, payments, invoices) to dramatically speed up
+    // pagination. Children are kept fresh by daily incremental sync; the reconcile only
+    // needs main fields to detect soft-deletions.
+    if (!skipExpand && cfg.expand) params['expand'] = cfg.expand
 
     for await (const { items, page, meta } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
       const rows = items.map(cfg.mapper)
       await batchUpsert(cfg.table, rows)
-      if (cfg.afterUpsert) await cfg.afterUpsert(items)
+      if (!skipExpand && cfg.afterUpsert) await cfg.afterUpsert(items)
 
       for (const item of items) seenIds.add(toStr(item.id)!)
       fetched += items.length
