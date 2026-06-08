@@ -9,7 +9,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
-import { sfMirrorPaginateAll } from './client'
+import { sfMirrorPaginateAll, sfMirrorGet } from './client'
 
 // ─── Supabase admin client ─────────────────────────────────────────────────
 
@@ -690,7 +690,10 @@ export async function runBackfill(entity?: string): Promise<Record<string, numbe
 // Run one entity at a time via runWeeklyReconcileForEntity — each entity gets
 // its own function invocation to stay within Vercel's per-function time limit.
 
-export async function runWeeklyReconcileForEntity(entityName: string, { skipExpand = false } = {}): Promise<number> {
+export async function runWeeklyReconcileForEntity(
+  entityName: string,
+  { skipExpand = false, concurrency = 1 }: { skipExpand?: boolean; concurrency?: number } = {}
+): Promise<number> {
   const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entityName)
   if (!cfg) throw new Error(`Unknown entity: ${entityName}`)
   const supabase = db()
@@ -701,22 +704,53 @@ export async function runWeeklyReconcileForEntity(entityName: string, { skipExpa
 
   try {
     const params: Record<string, string> = {}
-    // skipExpand: omit child data (techs, payments, invoices) to dramatically speed up
-    // pagination. Children are kept fresh by daily incremental sync; the reconcile only
-    // needs main fields to detect soft-deletions.
+    // skipExpand: omit child data (techs, payments, invoices). Children are kept
+    // fresh by daily incremental sync; the reconcile only needs main fields for
+    // soft-delete detection.
     if (!skipExpand && cfg.expand) params['expand'] = cfg.expand
 
-    for await (const { items, page, meta } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
-      const rows = items.map(cfg.mapper)
-      await batchUpsert(cfg.table, rows)
-      if (!skipExpand && cfg.afterUpsert) await cfg.afterUpsert(items)
+    if (concurrency > 1) {
+      // Parallel path: fetch multiple pages simultaneously to overcome SF API latency.
+      // With concurrency=3, 618 pages / 3 batches × ~2s each ≈ 410s (fits in 800s).
+      const first = await sfMirrorGet(cfg.path, { ...params, page: '1' }) as { items?: Raw[]; _meta?: { pageCount: number } }
+      const totalPages = first._meta?.pageCount ?? 1
+      const processItems = async (items: Raw[]) => {
+        await batchUpsert(cfg.table, items.map(cfg.mapper))
+        if (!skipExpand && cfg.afterUpsert) await cfg.afterUpsert(items)
+        for (const item of items) seenIds.add(toStr(item.id)!)
+        fetched += items.length
+        upserted += items.length
+      }
 
-      for (const item of items) seenIds.add(toStr(item.id)!)
-      fetched += items.length
-      upserted += items.length
-      pages = page
-      await updateRunProgress(handle, page, fetched, upserted)
-      console.log(`[sf-reconcile] ${cfg.entity} page ${page}/${meta.pageCount}`)
+      await processItems(first.items ?? [])
+      pages = 1
+      await updateRunProgress(handle, 1, fetched, upserted)
+
+      for (let batchStart = 2; batchStart <= totalPages; batchStart += concurrency) {
+        const batchEnd = Math.min(batchStart + concurrency - 1, totalPages)
+        const pageNums = Array.from({ length: batchEnd - batchStart + 1 }, (_, i) => batchStart + i)
+
+        const batchResults = await Promise.all(
+          pageNums.map(p => sfMirrorGet(cfg.path, { ...params, page: String(p) }) as Promise<{ items?: Raw[] }>)
+        )
+        for (const result of batchResults) await processItems(result.items ?? [])
+        pages = batchEnd
+        await updateRunProgress(handle, batchEnd, fetched, upserted)
+        console.log(`[sf-reconcile] ${cfg.entity} pages ${batchStart}-${batchEnd}/${totalPages}`)
+      }
+    } else {
+      // Sequential path
+      for await (const { items, page, meta } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
+        const rows = items.map(cfg.mapper)
+        await batchUpsert(cfg.table, rows)
+        if (!skipExpand && cfg.afterUpsert) await cfg.afterUpsert(items)
+        for (const item of items) seenIds.add(toStr(item.id)!)
+        fetched += items.length
+        upserted += items.length
+        pages = page
+        await updateRunProgress(handle, page, fetched, upserted)
+        console.log(`[sf-reconcile] ${cfg.entity} page ${page}/${meta.pageCount}`)
+      }
     }
 
     // Soft-delete detection: find IDs in our DB not returned by SF
