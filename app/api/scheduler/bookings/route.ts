@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js'
 import { syncLeadToServiceFusion } from '@/lib/scheduler/sf-sync'
 import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
+import { renderBookingConfirmation, formatTimeWindow } from '@/lib/notifications/templates/booking-confirmation'
+import { sendEmail } from '@/lib/notifications/resend'
 
 const ALLOWED_ORIGINS = [
   'https://schedule.castlegaragedoors.com',
@@ -385,7 +387,25 @@ export async function POST(req: NextRequest) {
     })
   }
 
+  const customerEmail = body.customer_email?.trim().toLowerCase() || null
+  const appointmentWindow = formatTimeWindow(body.appointment_window_start, body.appointment_window_end)
+  const appointmentDateLabel = fmtDate(body.appointment_date)
+  const addressLabel = [body.address_line1.trim(), body.address_city.trim(), body.address_state ?? 'CA', body.address_zip.trim()].join(', ')
+
   after(async () => {
+    // Confirmation email to customer (non-blocking, best-effort)
+    if (customerEmail) {
+      const { subject, bodyHtml, bodyText } = renderBookingConfirmation({
+        customerFirstName: body.first_name.trim(),
+        serviceLabel,
+        appointmentDate: appointmentDateLabel,
+        appointmentWindow,
+        address: addressLabel,
+        quotedFee,
+      })
+      await sendEmail({ to: customerEmail, subject, html: bodyHtml, text: bodyText, replyTo: 'info@castlegaragedoors.com' }).catch(() => { /* non-critical */ })
+    }
+
     if (autoSync) {
       try {
         await syncLeadToServiceFusion(syncLeadId)
@@ -398,7 +418,7 @@ export async function POST(req: NextRequest) {
       const { subject, bodyHtml, bodyText } = renderSchedulerLeadStuck({
         customerName,
         serviceLabel,
-        appointmentDate: fmtDate(body.appointment_date),
+        appointmentDate: appointmentDateLabel,
         reason: 'manual_push',
         adminUrl,
       })
