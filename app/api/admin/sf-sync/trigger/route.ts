@@ -6,6 +6,7 @@ import {
   runIncrementalSync,
   runIncrementalSyncForEntity,
   runWeeklyReconcile,
+  runWeeklyReconcileForEntity,
   runScopedReconcile,
   runBackfill,
   reprocessCustomerChildren,
@@ -60,7 +61,11 @@ export async function POST(req: NextRequest) {
     } else if (action === 'incremental') {
       counts = await runIncrementalSync()
     } else if (action === 'reconcile') {
-      counts = await runWeeklyReconcile()
+      if (entity) {
+        counts = { [entity]: await runWeeklyReconcileForEntity(entity) }
+      } else {
+        counts = await runWeeklyReconcile()
+      }
     } else if (action === 'backfill') {
       counts = await runBackfill(entity)
     } else if (action === 'reconcile-scoped') {
