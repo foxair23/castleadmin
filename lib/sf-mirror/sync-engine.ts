@@ -687,55 +687,67 @@ export async function runBackfill(entity?: string): Promise<Record<string, numbe
 
 // ─── Weekly reconcile (full scan + soft-delete detection) ─────────────────
 // Fetches every ID from SF, compares against our mirror, marks missing = is_deleted.
-// Also syncs equipment (nested per-customer, only practical during full scan).
+// Run one entity at a time via runWeeklyReconcileForEntity — each entity gets
+// its own function invocation to stay within Vercel's per-function time limit.
+
+export async function runWeeklyReconcileForEntity(entityName: string): Promise<number> {
+  const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entityName)
+  if (!cfg) throw new Error(`Unknown entity: ${entityName}`)
+  const supabase = db()
+
+  const handle = await startRun('reconcile', cfg.entity)
+  let fetched = 0, upserted = 0, pages = 0
+  const seenIds = new Set<string>()
+
+  try {
+    const params: Record<string, string> = {}
+    if (cfg.expand) params['expand'] = cfg.expand
+
+    for await (const { items, page, meta } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
+      const rows = items.map(cfg.mapper)
+      await batchUpsert(cfg.table, rows)
+      if (cfg.afterUpsert) await cfg.afterUpsert(items)
+
+      for (const item of items) seenIds.add(toStr(item.id)!)
+      fetched += items.length
+      upserted += items.length
+      pages = page
+      await updateRunProgress(handle, page, fetched, upserted)
+      console.log(`[sf-reconcile] ${cfg.entity} page ${page}/${meta.pageCount}`)
+    }
+
+    // Soft-delete detection: find IDs in our DB not returned by SF
+    if (seenIds.size > 0) {
+      const { data: allOurs } = await supabase
+        .from(cfg.table)
+        .select('id')
+        .eq('is_deleted', false)
+
+      const deletedIds = (allOurs as { id: string }[] ?? [])
+        .filter(r => !seenIds.has(r.id))
+        .map(r => r.id)
+
+      if (deletedIds.length > 0) {
+        await supabase.from(cfg.table).update({ is_deleted: true, sf_synced_at: nowIso() }).in('id', deletedIds)
+        console.log(`[sf-reconcile] ${cfg.entity}: marked ${deletedIds.length} as deleted`)
+      }
+    }
+
+    await completeRun(handle, fetched, upserted, pages)
+    return upserted
+  } catch (e) {
+    await failRun(handle, String(e))
+    throw e
+  }
+}
 
 export async function runWeeklyReconcile(): Promise<Record<string, number>> {
   const counts: Record<string, number> = {}
-  const supabase = db()
 
   for (const cfg of INCREMENTAL_ENTITIES) {
-    const handle = await startRun('reconcile', cfg.entity)
-    let fetched = 0, upserted = 0, pages = 0
-    const seenIds = new Set<string>()
-
     try {
-      const params: Record<string, string> = {}
-      if (cfg.expand) params['expand'] = cfg.expand
-
-      for await (const { items, page, meta } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
-        const rows = items.map(cfg.mapper)
-        await batchUpsert(cfg.table, rows)
-        if (cfg.afterUpsert) await cfg.afterUpsert(items)
-
-        for (const item of items) seenIds.add(toStr(item.id)!)
-        fetched += items.length
-        upserted += items.length
-        pages = page
-        await updateRunProgress(handle, page, fetched, upserted)
-        console.log(`[sf-reconcile] ${cfg.entity} page ${page}/${meta.pageCount}`)
-      }
-
-      // Soft-delete detection: find IDs in our DB not returned by SF
-      if (seenIds.size > 0) {
-        const { data: allOurs } = await supabase
-          .from(cfg.table)
-          .select('id')
-          .eq('is_deleted', false)
-
-        const deletedIds = (allOurs as { id: string }[] ?? [])
-          .filter(r => !seenIds.has(r.id))
-          .map(r => r.id)
-
-        if (deletedIds.length > 0) {
-          await supabase.from(cfg.table).update({ is_deleted: true, sf_synced_at: nowIso() }).in('id', deletedIds)
-          console.log(`[sf-reconcile] ${cfg.entity}: marked ${deletedIds.length} as deleted`)
-        }
-      }
-
-      await completeRun(handle, fetched, upserted, pages)
-      counts[cfg.entity] = upserted
-    } catch (e) {
-      await failRun(handle, String(e))
+      counts[cfg.entity] = await runWeeklyReconcileForEntity(cfg.entity)
+    } catch {
       counts[cfg.entity] = -1
     }
   }

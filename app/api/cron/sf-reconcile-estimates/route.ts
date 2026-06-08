@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { runReferenceSync } from '@/lib/sf-mirror/sync-engine'
+import { runWeeklyReconcileForEntity } from '@/lib/sf-mirror/sync-engine'
 
-export const maxDuration = 300
+export const maxDuration = 800
 
 export async function GET(req: NextRequest) {
   if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -10,10 +10,10 @@ export async function GET(req: NextRequest) {
 
   const started = Date.now()
   try {
-    const counts = await runReferenceSync()
-    return NextResponse.json({ ok: true, counts, ms: Date.now() - started })
+    const upserted = await runWeeklyReconcileForEntity('estimates')
+    return NextResponse.json({ ok: true, upserted, ms: Date.now() - started })
   } catch (err) {
-    console.error('[sf-sync-weekly] fatal:', err)
+    console.error('[sf-reconcile-estimates] fatal:', err)
     return NextResponse.json({ ok: false, error: String(err), ms: Date.now() - started }, { status: 500 })
   }
 }
