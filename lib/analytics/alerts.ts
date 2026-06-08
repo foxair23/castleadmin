@@ -63,7 +63,9 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
     .from('sf_jobs')
     .select('id, number, customer_name, customer_id, closed_at, total, due_total, payment_status')
     .not('closed_at', 'is', null)
+    .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
     .gt('due_total', 0)
+    .not('status', 'in', '("Cancelled","Void","Voided")')
     .eq('is_deleted', false)
     .order('closed_at', { ascending: true })
     .limit(100)
@@ -124,6 +126,8 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     .from('sf_jobs')
     .select('id, number, customer_name, customer_id, closed_at, total')
     .not('closed_at', 'is', null)
+    .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
+    .not('status', 'in', '("Cancelled","Void","Voided")')
     .eq('is_deleted', false)
     .limit(1000)
 
