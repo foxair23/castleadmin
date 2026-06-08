@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type {
@@ -461,6 +461,20 @@ interface Props {
   awaitingPushLeads: AwaitingPushResult
 }
 
+const RECONCILE_STEPS = [
+  { label: 'jobs (last 120 days)', entities: ['jobs'] },
+  { label: 'estimates (last 120 days)', entities: ['estimates'] },
+]
+
+function Spinner() {
+  return (
+    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  )
+}
+
 export default function ActionItemsClient({
   unpaidJobs,
   uninvoicedJobs,
@@ -471,7 +485,9 @@ export default function ActionItemsClient({
   awaitingPushLeads,
 }: Props) {
   const router = useRouter()
-  const [isPending, startTransition] = useTransition()
+  const [syncing, setSyncing] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   const totalCount =
     unpaidJobs.items.length +
@@ -482,37 +498,94 @@ export default function ActionItemsClient({
     awaitingSfJob.items.length +
     awaitingPushLeads.items.length
 
-  function handleRefresh() {
-    startTransition(() => {
-      router.refresh()
-    })
+  async function handleRefresh() {
+    setSyncing(true)
+    setSyncResult(null)
+    setProgress(null)
+
+    for (let i = 0; i < RECONCILE_STEPS.length; i++) {
+      const step = RECONCILE_STEPS[i]
+      const MAX_RETRIES = 5
+      let attempt = 0
+      let succeeded = false
+
+      while (!succeeded) {
+        if (attempt >= MAX_RETRIES) {
+          setSyncResult({ ok: false, message: `${step.label} failed after ${MAX_RETRIES} attempts.` })
+          setSyncing(false)
+          setProgress(null)
+          router.refresh()
+          return
+        }
+
+        setProgress(
+          attempt > 0
+            ? `Retrying ${step.label} (attempt ${attempt + 1})…`
+            : `Reconciling ${step.label} (${i + 1}/${RECONCILE_STEPS.length})…`
+        )
+
+        try {
+          const res = await fetch('/api/admin/sf-sync/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'reconcile-scoped', days: 120, entities: step.entities }),
+          })
+          const text = await res.text()
+
+          if (res.status === 504 || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
+            attempt++
+            continue
+          }
+          if (!res.ok) {
+            setSyncResult({ ok: false, message: `Error on ${step.label}: ${text.slice(0, 150)}` })
+            setSyncing(false)
+            setProgress(null)
+            router.refresh()
+            return
+          }
+          succeeded = true
+        } catch {
+          attempt++
+        }
+      }
+    }
+
+    setSyncResult({ ok: true, message: 'Done.' })
+    setSyncing(false)
+    setProgress(null)
+    router.refresh()
   }
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       {/* Page header */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           Action Items
           <CountBadge count={totalCount} />
         </h1>
-        <button
-          onClick={handleRefresh}
-          disabled={isPending}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-white border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors shadow-sm"
-        >
-          {isPending ? (
-            <svg className="animate-spin h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-            </svg>
-          ) : (
-            <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+        <div className="flex items-center gap-3">
+          {progress && (
+            <span className="text-sm text-gray-500">{progress}</span>
           )}
-          {isPending ? 'Refreshing…' : 'Refresh'}
-        </button>
+          {!syncing && syncResult && (
+            <span className={`text-sm ${syncResult.ok ? 'text-green-700' : 'text-red-600'}`}>
+              {syncResult.message}
+            </span>
+          )}
+          <button
+            onClick={handleRefresh}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-white border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors shadow-sm"
+          >
+            {syncing ? <Spinner /> : (
+              <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
+            {syncing ? 'Syncing…' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {/* Alert 1 — Completed but Unpaid */}

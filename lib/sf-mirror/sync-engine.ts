@@ -793,6 +793,73 @@ async function syncAllEquipment(counts: Record<string, number>) {
   }
 }
 
+// ─── Scoped reconcile (date-windowed soft-delete detection) ───────────────
+// Like runWeeklyReconcile but limited to records within the last N days.
+// Jobs: filtered at SF API level via start_date. Estimates: fetched all
+// (no SF date filter), but soft-delete detection scoped to created_at_sf window.
+
+export async function runScopedReconcile(days: number, entities: string[]): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {}
+  const supabase = db()
+
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - days)
+  const cutoffDate = cutoff.toISOString().slice(0, 10) // YYYY-MM-DD
+  const cutoffIso = cutoff.toISOString().slice(0, 19) + '+00:00'
+
+  for (const entityName of entities) {
+    const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entityName)
+    if (!cfg) continue
+
+    const handle = await startRun('reconcile', cfg.entity)
+    let fetched = 0, upserted = 0, pages = 0
+    const seenIds = new Set<string>()
+
+    try {
+      const params: Record<string, string> = {}
+      if (cfg.expand) params['expand'] = cfg.expand
+      if (entityName === 'jobs') params['filters[start_date][gte]'] = cutoffDate
+
+      for await (const { items, page } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
+        const rows = items.map(cfg.mapper)
+        await batchUpsert(cfg.table, rows)
+        if (cfg.afterUpsert) await cfg.afterUpsert(items)
+        for (const item of items) seenIds.add(toStr(item.id)!)
+        fetched += items.length
+        upserted += items.length
+        pages = page
+        await updateRunProgress(handle, page, fetched, upserted)
+      }
+
+      // Scoped soft-delete: only check records within the date window
+      if (seenIds.size > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let query: any = supabase.from(cfg.table).select('id').eq('is_deleted', false)
+        if (entityName === 'jobs') query = query.gte('start_date', cutoffDate)
+        else if (entityName === 'estimates') query = query.gte('created_at_sf', cutoffIso)
+
+        const { data: scopedOurs } = await query
+        const deletedIds = (scopedOurs as { id: string }[] ?? [])
+          .filter((r: { id: string }) => !seenIds.has(r.id))
+          .map((r: { id: string }) => r.id)
+
+        if (deletedIds.length > 0) {
+          await supabase.from(cfg.table).update({ is_deleted: true, sf_synced_at: nowIso() }).in('id', deletedIds)
+          console.log(`[sf-scoped-reconcile] ${entityName}: marked ${deletedIds.length} as deleted`)
+        }
+      }
+
+      await completeRun(handle, fetched, upserted, pages)
+      counts[entityName] = upserted
+    } catch (e) {
+      await failRun(handle, String(e))
+      counts[entityName] = -1
+    }
+  }
+
+  return counts
+}
+
 // ─── Status query (for admin UI) ──────────────────────────────────────────
 
 export async function getSyncStatus() {
