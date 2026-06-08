@@ -26,17 +26,17 @@ export function renderBookingConfirmation(data: BookingConfirmationData): {
   bodyHtml: string
   bodyText: string
 } {
-  const subject = `Your appointment is confirmed — ${data.appointmentDate}`
+  const subject = `Your appointment request has been received — ${data.appointmentDate}`
 
   const bodyHtml = `
 <div style="${BASE}">
-  <p style="${HEADING}">You're booked!</p>
-  <p style="${SUBHEAD}">We look forward to seeing you.</p>
+  <p style="${HEADING}">We've received your appointment request.</p>
+  <p style="${SUBHEAD}">A member of the Castle team will be in touch to confirm your appointment as soon as possible.</p>
 
   <p style="${LABEL}">Service</p>
   <p style="${VALUE}">${data.serviceLabel}</p>
 
-  <p style="${LABEL}">Date</p>
+  <p style="${LABEL}">Requested Date</p>
   <p style="${VALUE}">${data.appointmentDate}</p>
 
   <p style="${LABEL}">Arrival Window</p>
@@ -51,25 +51,25 @@ export function renderBookingConfirmation(data: BookingConfirmationData): {
   <hr style="${DIVIDER}" />
 
   <p style="${MUTED}">
-    Questions? Call us at <strong>(818) 659-4992</strong> or reply to this email.<br/>
+    Please call our office if you have further questions.<br/>
     Castle Garage Doors &amp; Gates
   </p>
 </div>`.trim()
 
   const bodyText = [
-    `You're booked — ${data.appointmentDate}`,
+    `We've received your appointment request — ${data.appointmentDate}`,
     ``,
     `Hi ${data.customerFirstName},`,
     ``,
-    `Your appointment has been confirmed. Here are the details:`,
+    `A member of the Castle team will be in touch to confirm your appointment as soon as possible.`,
     ``,
-    `Service:         ${data.serviceLabel}`,
-    `Date:            ${data.appointmentDate}`,
-    `Arrival Window:  ${data.appointmentWindow}`,
-    `Address:         ${data.address}`,
-    `Fee:             ${data.quotedFee}`,
+    `Service:          ${data.serviceLabel}`,
+    `Requested Date:   ${data.appointmentDate}`,
+    `Arrival Window:   ${data.appointmentWindow}`,
+    `Address:          ${data.address}`,
+    `Fee:              ${data.quotedFee}`,
     ``,
-    `Questions? Call us at (818) 659-4992 or reply to this email.`,
+    `Please call our office if you have further questions.`,
     `Castle Garage Doors & Gates`,
   ].join('\n')
 

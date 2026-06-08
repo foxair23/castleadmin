@@ -403,7 +403,7 @@ export async function POST(req: NextRequest) {
         address: addressLabel,
         quotedFee,
       })
-      await sendEmail({ to: customerEmail, subject, html: bodyHtml, text: bodyText }).catch(() => { /* non-critical */ })
+      await sendEmail({ to: customerEmail, subject, html: bodyHtml, text: bodyText, replyTo: 'info@castlegaragedoors.com' }).catch(() => { /* non-critical */ })
     }
 
     if (autoSync) {
