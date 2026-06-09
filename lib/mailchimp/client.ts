@@ -73,8 +73,10 @@ export interface MailchimpContact {
 }
 
 export interface PushResult {
+  total: number     // total contacts sent to Mailchimp
   added: number
   updated: number
+  unchanged: number // already in Mailchimp with identical data (tagged but not counted as added/updated)
   skipped: number   // already unsubscribed in Mailchimp
   errored: number
   errors: { email: string; error: string }[]
@@ -87,7 +89,7 @@ function md5Email(email: string): string {
 const BATCH_SIZE = 500
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
-  const result: PushResult = { added: 0, updated: 0, skipped: 0, errored: 0, errors: [] }
+  const result: PushResult = { total: contacts.length, added: 0, updated: 0, unchanged: 0, skipped: 0, errored: 0, errors: [] }
 
   if (!API_KEY || !SERVER_PREFIX || !AUDIENCE_ID) {
     return { ...result, errored: contacts.length, errors: contacts.map(c => ({ email: c.email, error: 'Mailchimp not configured' })) }
@@ -119,11 +121,15 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
 
     const data = await res.json()
 
-    result.added += data.new_members?.length ?? 0
-    result.updated += data.updated_members?.length ?? 0
+    const batchAdded = data.new_members?.length ?? 0
+    const batchUpdated = data.updated_members?.length ?? 0
+    result.added += batchAdded
+    result.updated += batchUpdated
 
     // Count errors
     const batchErrors: { email: string; error: string }[] = []
+    let batchSkipped = 0
+    let batchErrored = 0
     for (const err of (data.errors ?? [])) {
       const email = err.email_address ?? ''
       const msg: string = err.error ?? 'Unknown error'
@@ -133,13 +139,18 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
         msg.toLowerCase().includes('unsubscrib') ||
         msg.toLowerCase().includes('resubscrib')
       ) {
-        result.skipped++
+        batchSkipped++
       } else {
-        result.errored++
+        batchErrored++
         batchErrors.push({ email, error: msg })
       }
     }
+    result.skipped += batchSkipped
+    result.errored += batchErrored
     result.errors.push(...batchErrors)
+
+    // Contacts Mailchimp accepted but didn't count (already existed with identical data)
+    result.unchanged += batch.length - batchAdded - batchUpdated - batchSkipped - batchErrored
 
     // Apply tag to every contact in the batch — not just new/updated ones.
     // Mailchimp's batch import silently skips unchanged existing members (they
