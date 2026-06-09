@@ -141,6 +141,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -153,6 +154,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_outstanding} /></td>
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(job.due_total)}</td>
@@ -178,6 +180,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_since_completion" label="Days Since Completion" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Job Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -189,6 +192,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_since_completion} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(job.total)}</td>
@@ -248,6 +252,7 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="start_date" label="Start Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_open" label="Days Open" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -260,6 +265,7 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.start_date)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_open} /></td>
               <td className="px-4 py-2 text-gray-600">{job.status ?? '—'}</td>
@@ -461,6 +467,15 @@ interface Props {
   awaitingPushLeads: AwaitingPushResult
 }
 
+function SourceBadge({ source }: { source: string | null }) {
+  if (!source) return <span className="text-gray-400">—</span>
+  return (
+    <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 whitespace-nowrap">
+      {source}
+    </span>
+  )
+}
+
 const RECONCILE_STEPS = [
   { label: 'jobs (last 120 days)', entities: ['jobs'] },
   { label: 'estimates (last 120 days)', entities: ['estimates'] },
@@ -488,6 +503,21 @@ export default function ActionItemsClient({
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [sourceFilter, setSourceFilter] = useState<string>('')
+
+  // Collect unique sources from all job-based sections
+  const allSources = Array.from(new Set([
+    ...unpaidJobs.items.map(j => j.source),
+    ...uninvoicedJobs.items.map(j => j.source),
+    ...followUpJobs.items.map(j => j.source),
+  ].filter((s): s is string => !!s))).sort()
+
+  const filterBySource = <T extends { source: string | null }>(items: T[]): T[] =>
+    sourceFilter ? items.filter(j => j.source === sourceFilter) : items
+
+  const filteredUnpaid = filterBySource(unpaidJobs.items)
+  const filteredUninvoiced = filterBySource(uninvoicedJobs.items)
+  const filteredFollowUp = filterBySource(followUpJobs.items)
 
   const totalCount =
     unpaidJobs.items.length +
@@ -565,6 +595,18 @@ export default function ActionItemsClient({
           <CountBadge count={totalCount} />
         </h1>
         <div className="flex items-center gap-3">
+          {allSources.length > 0 && (
+            <select
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value)}
+              className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-gray-900 shadow-sm focus:outline-none focus:ring-1 focus:ring-red-500"
+            >
+              <option value="">All sources</option>
+              {allSources.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          )}
           {progress && (
             <span className="text-sm text-gray-500">{progress}</span>
           )}
@@ -591,38 +633,38 @@ export default function ActionItemsClient({
       {/* Alert 1 — Completed but Unpaid */}
       <AlertSection
         title="Completed but Unpaid Jobs"
-        count={unpaidJobs.items.length}
+        count={filteredUnpaid.length}
         summary={
-          unpaidJobs.items.length > 0 ? (
+          filteredUnpaid.length > 0 ? (
             <span className="text-sm text-gray-600">
-              Total due: <span className="font-semibold text-red-700">{fmtMoney(unpaidJobs.totalDue)}</span>
+              Total due: <span className="font-semibold text-red-700">{fmtMoney(filteredUnpaid.reduce((s, j) => s + j.due_total, 0))}</span>
             </span>
           ) : undefined
         }
       >
-        {unpaidJobs.items.length === 0 ? (
+        {filteredUnpaid.length === 0 ? (
           <AllClear />
         ) : (
-          <UnpaidJobsTable items={unpaidJobs.items} />
+          <UnpaidJobsTable items={filteredUnpaid} />
         )}
       </AlertSection>
 
       {/* Alert 2 — Never Invoiced */}
       <AlertSection
         title="Completed but Never Invoiced"
-        count={uninvoicedJobs.items.length}
+        count={filteredUninvoiced.length}
         summary={
-          uninvoicedJobs.items.length > 0 ? (
+          filteredUninvoiced.length > 0 ? (
             <span className="text-sm text-gray-600">
-              Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(uninvoicedJobs.totalUninvoiced)}</span>
+              Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(filteredUninvoiced.reduce((s, j) => s + (j.total ?? 0), 0))}</span>
             </span>
           ) : undefined
         }
       >
-        {uninvoicedJobs.items.length === 0 ? (
+        {filteredUninvoiced.length === 0 ? (
           <AllClear />
         ) : (
-          <UninvoicedJobsTable items={uninvoicedJobs.items} />
+          <UninvoicedJobsTable items={filteredUninvoiced} />
         )}
       </AlertSection>
 
@@ -648,12 +690,12 @@ export default function ActionItemsClient({
       {/* Alert 4 — Follow-Up Required */}
       <AlertSection
         title="Jobs Flagged for Follow-Up"
-        count={followUpJobs.items.length}
+        count={filteredFollowUp.length}
       >
-        {followUpJobs.items.length === 0 ? (
+        {filteredFollowUp.length === 0 ? (
           <AllClear />
         ) : (
-          <FollowUpJobsTable items={followUpJobs.items} />
+          <FollowUpJobsTable items={filteredFollowUp} />
         )}
       </AlertSection>
 
