@@ -3,6 +3,7 @@
 import { useSearchParams } from 'next/navigation';
 import { useEffect, Suspense } from 'react';
 import { clearFlowState } from '../lib/storage';
+import { trackBookingConfirmed } from '../lib/analytics';
 import Link from 'next/link';
 
 function formatAppointmentDate(dateStr: string): string {
@@ -41,7 +42,8 @@ function ConfirmationContent() {
 
   useEffect(() => {
     clearFlowState();
-  }, []);
+    trackBookingConfirmed({ booking_id: id, date });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div

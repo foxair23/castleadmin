@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { FlowState, SchedulerConfig } from '../lib/types';
 import { loadFlowState, saveFlowState, INITIAL_FLOW_STATE } from '../lib/storage';
+import { trackStep } from '../lib/analytics';
 import ProgressBar from './ui/ProgressBar';
 import BackButton from './ui/BackButton';
 import StepZip from './steps/StepZip';
@@ -319,6 +320,12 @@ export default function FlowShell({ config, widgetKey }: Props) {
   useEffect(() => {
     if (mounted) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [state.currentStep, mounted]);
+
+  useEffect(() => {
+    if (mounted) {
+      trackStep(state.currentStep);
     }
   }, [state.currentStep, mounted]);
 
