@@ -47,6 +47,7 @@ export interface UnpaidJob {
   total: number
   due_total: number
   payment_status: string | null
+  source: string | null
   tech_names: string[]
   days_outstanding: number
 }
@@ -61,7 +62,7 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
 
   const { data } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, closed_at, total, due_total, payment_status')
+    .select('id, number, customer_name, customer_id, closed_at, total, due_total, payment_status, source')
     .not('closed_at', 'is', null)
     .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
     .gt('due_total', 0)
@@ -83,6 +84,7 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
     total: number | null
     due_total: number | null
     payment_status: string | null
+    source: string | null
   }) => ({
     id: j.id,
     number: j.number,
@@ -92,6 +94,7 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
     total: j.total ?? 0,
     due_total: j.due_total ?? 0,
     payment_status: j.payment_status,
+    source: j.source ?? null,
     tech_names: techMap.get(j.id) ?? [],
     days_outstanding: daysBetween(j.closed_at),
   }))
@@ -109,6 +112,7 @@ export interface UninvoicedJob {
   customer_id: string | null
   closed_at: string
   total: number | null
+  source: string | null
   tech_names: string[]
   days_since_completion: number
 }
@@ -124,7 +128,7 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   // Fetch all closed job IDs
   const { data: closedJobs } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, closed_at, total')
+    .select('id, number, customer_name, customer_id, closed_at, total, source')
     .not('closed_at', 'is', null)
     .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
     .not('status', 'in', '("Cancelled","Void","Voided")')
@@ -159,6 +163,7 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     customer_id: string | null
     closed_at: string
     total: number | null
+    source: string | null
   }) => ({
     id: j.id,
     number: j.number,
@@ -166,6 +171,7 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     customer_id: j.customer_id,
     closed_at: j.closed_at,
     total: j.total,
+    source: j.source ?? null,
     tech_names: techMap.get(j.id) ?? [],
     days_since_completion: daysBetween(j.closed_at),
   }))
@@ -238,6 +244,7 @@ export interface FollowUpJob {
   customer_id: string | null
   start_date: string | null
   status: string | null
+  source: string | null
   tech_names: string[]
   note_to_customer: string | null
   tech_notes: string | null
@@ -253,7 +260,7 @@ export async function getFollowUpJobs(): Promise<FollowUpJobsResult> {
 
   const { data } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, start_date, status, note_to_customer, tech_notes')
+    .select('id, number, customer_name, customer_id, start_date, status, source, note_to_customer, tech_notes')
     .eq('is_requires_follow_up', true)
     .is('closed_at', null)
     .eq('is_deleted', false)
@@ -271,6 +278,7 @@ export async function getFollowUpJobs(): Promise<FollowUpJobsResult> {
     customer_id: string | null
     start_date: string | null
     status: string | null
+    source: string | null
     note_to_customer: string | null
     tech_notes: string | null
   }) => ({
@@ -280,6 +288,7 @@ export async function getFollowUpJobs(): Promise<FollowUpJobsResult> {
     customer_id: j.customer_id,
     start_date: j.start_date,
     status: j.status,
+    source: j.source ?? null,
     tech_names: techMap.get(j.id) ?? [],
     note_to_customer: j.note_to_customer,
     tech_notes: j.tech_notes,
