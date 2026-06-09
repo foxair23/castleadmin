@@ -502,7 +502,7 @@ function SourceFilterDropdown({
 
   const label =
     selected.length === 0 ? 'All sources' :
-    selected.length === 1 ? selected[0] :
+    selected.length === 1 ? (selected[0] === '__blank__' ? 'No source' : selected[0]) :
     `${selected.length} sources`
 
   return (
@@ -544,7 +544,10 @@ function SourceFilterDropdown({
                   onChange={() => toggle(source)}
                   className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
                 />
-                <span className="text-sm text-gray-700">{source}</span>
+                {source === '__blank__'
+                  ? <span className="text-sm text-gray-400 italic">No source</span>
+                  : <span className="text-sm text-gray-700">{source}</span>
+                }
               </label>
             ))}
           </div>
@@ -583,15 +586,26 @@ export default function ActionItemsClient({
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [sourcesFilter, setSourcesFilter] = useState<string[]>([])
 
-  // Collect unique sources from all job-based sections
-  const allSources = Array.from(new Set([
-    ...unpaidJobs.items.map(j => j.source),
-    ...uninvoicedJobs.items.map(j => j.source),
-    ...followUpJobs.items.map(j => j.source),
-  ].filter((s): s is string => !!s))).sort()
+  // '__blank__' is a sentinel for jobs with no source set
+  const BLANK = '__blank__'
+  const allJobItems = [
+    ...unpaidJobs.items,
+    ...uninvoicedJobs.items,
+    ...followUpJobs.items,
+  ]
+  const hasBlank = allJobItems.some(j => !j.source)
+  const allSources = [
+    ...(hasBlank ? [BLANK] : []),
+    ...Array.from(new Set(allJobItems.map(j => j.source).filter((s): s is string => !!s))).sort(),
+  ]
 
-  const filterBySource = <T extends { source: string | null }>(items: T[]): T[] =>
-    sourcesFilter.length === 0 ? items : items.filter(j => j.source !== null && sourcesFilter.includes(j.source))
+  const filterBySource = <T extends { source: string | null }>(items: T[]): T[] => {
+    if (sourcesFilter.length === 0) return items
+    return items.filter(j => {
+      if (!j.source) return sourcesFilter.includes(BLANK)
+      return sourcesFilter.includes(j.source)
+    })
+  }
 
   const filteredUnpaid = filterBySource(unpaidJobs.items)
   const filteredUninvoiced = filterBySource(uninvoicedJobs.items)
