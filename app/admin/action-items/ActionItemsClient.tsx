@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type {
@@ -476,6 +476,84 @@ function SourceBadge({ source }: { source: string | null }) {
   )
 }
 
+function SourceFilterDropdown({
+  sources,
+  selected,
+  onChange,
+}: {
+  sources: string[]
+  selected: string[]
+  onChange: (s: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [])
+
+  function toggle(source: string) {
+    onChange(selected.includes(source) ? selected.filter(s => s !== source) : [...selected, source])
+  }
+
+  const label =
+    selected.length === 0 ? 'All sources' :
+    selected.length === 1 ? selected[0] :
+    `${selected.length} sources`
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md bg-white text-gray-700 hover:bg-gray-50 shadow-sm"
+      >
+        <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+        </svg>
+        <span>{label}</span>
+        {selected.length > 0 && (
+          <span className="inline-flex items-center justify-center h-4 w-4 text-xs font-bold bg-red-600 text-white rounded-full">
+            {selected.length}
+          </span>
+        )}
+        <svg className={`h-4 w-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter by source</span>
+            {selected.length > 0 && (
+              <button onClick={() => onChange([])} className="text-xs text-red-600 hover:text-red-800 font-medium">
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {sources.map(source => (
+              <label key={source} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(source)}
+                  onChange={() => toggle(source)}
+                  className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                />
+                <span className="text-sm text-gray-700">{source}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const RECONCILE_STEPS = [
   { label: 'jobs (last 120 days)', entities: ['jobs'] },
   { label: 'estimates (last 120 days)', entities: ['estimates'] },
@@ -503,7 +581,7 @@ export default function ActionItemsClient({
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
-  const [sourceFilter, setSourceFilter] = useState<string>('')
+  const [sourcesFilter, setSourcesFilter] = useState<string[]>([])
 
   // Collect unique sources from all job-based sections
   const allSources = Array.from(new Set([
@@ -513,7 +591,7 @@ export default function ActionItemsClient({
   ].filter((s): s is string => !!s))).sort()
 
   const filterBySource = <T extends { source: string | null }>(items: T[]): T[] =>
-    sourceFilter ? items.filter(j => j.source === sourceFilter) : items
+    sourcesFilter.length === 0 ? items : items.filter(j => j.source !== null && sourcesFilter.includes(j.source))
 
   const filteredUnpaid = filterBySource(unpaidJobs.items)
   const filteredUninvoiced = filterBySource(uninvoicedJobs.items)
@@ -596,16 +674,11 @@ export default function ActionItemsClient({
         </h1>
         <div className="flex items-center gap-3">
           {allSources.length > 0 && (
-            <select
-              value={sourceFilter}
-              onChange={e => setSourceFilter(e.target.value)}
-              className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-gray-900 shadow-sm focus:outline-none focus:ring-1 focus:ring-red-500"
-            >
-              <option value="">All sources</option>
-              {allSources.map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
+            <SourceFilterDropdown
+              sources={allSources}
+              selected={sourcesFilter}
+              onChange={setSourcesFilter}
+            />
           )}
           {progress && (
             <span className="text-sm text-gray-500">{progress}</span>
