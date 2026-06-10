@@ -82,6 +82,40 @@ export interface PushResult {
 
 const BATCH_SIZE = 500
 
+/** Get an existing static segment by name, or create it if it doesn't exist. Returns the segment ID. */
+async function getOrCreateSegment(tagName: string): Promise<string | null> {
+  try {
+    // Fetch up to 1000 existing static segments (tags)
+    const listRes = await mcFetch(`/lists/${AUDIENCE_ID}/segments?type=static&count=1000&fields=segments.id,segments.name`)
+    if (!listRes.ok) return null
+    const listData = await listRes.json()
+    const existing = (listData.segments ?? []).find((s: { id: number; name: string }) => s.name === tagName)
+    if (existing) return String(existing.id)
+
+    // Create it
+    const createRes = await mcFetch(`/lists/${AUDIENCE_ID}/segments`, {
+      method: 'POST',
+      body: JSON.stringify({ name: tagName, type: 'static', static_segment: [] }),
+    })
+    if (!createRes.ok) return null
+    const created = await createRes.json()
+    return created.id ? String(created.id) : null
+  } catch {
+    return null
+  }
+}
+
+/** Bulk-add emails to a static segment (tag). Processes in chunks of 500. */
+async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<void> {
+  for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+    const chunk = emails.slice(i, i + BATCH_SIZE)
+    await mcFetch(`/lists/${AUDIENCE_ID}/segments/${segmentId}`, {
+      method: 'POST',
+      body: JSON.stringify({ members_to_add: chunk }),
+    })
+  }
+}
+
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
   const result: PushResult = { total: contacts.length, added: 0, updated: 0, unchanged: 0, skipped: 0, errored: 0, errors: [] }
 
@@ -96,9 +130,6 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     const members = batch.map(c => ({
       email_address: c.email,
       status_if_new: 'subscribed',
-      // Tags included here so Mailchimp applies them to existing members too.
-      // The separate /members/{hash}/tags endpoint was unreliable under rate limits.
-      tags: c.sms_only ? [tag, 'sms only'] : [tag],
       merge_fields: {
         FNAME: c.first_name ?? '',
         LNAME: c.last_name ?? '',
@@ -148,6 +179,19 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
 
     // Contacts Mailchimp accepted but didn't count (already existed with identical data)
     result.unchanged += batch.length - batchAdded - batchUpdated - batchSkipped - batchErrored
+  }
+
+  // Apply the tag to ALL contacts via Mailchimp's static segment (tag) API.
+  // This is the only reliable method for existing members whose data didn't
+  // change — the batch import payload's `tags` field is only applied when
+  // Mailchimp actually processes a member (new or updated), not for unchanged ones.
+  const allEmails = contacts.map(c => c.email)
+  const smsEmails = contacts.filter(c => c.sms_only).map(c => c.email)
+  const segmentId = await getOrCreateSegment(tag)
+  if (segmentId) await addEmailsToSegment(segmentId, allEmails)
+  if (smsEmails.length > 0) {
+    const smsSegmentId = await getOrCreateSegment('sms only')
+    if (smsSegmentId) await addEmailsToSegment(smsSegmentId, smsEmails)
   }
 
   return result
