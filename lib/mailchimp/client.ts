@@ -1,5 +1,3 @@
-import { createHash } from 'crypto'
-
 // Server-side only — never import this in client components
 
 const API_KEY = process.env.MAILCHIMP_API_KEY ?? ''
@@ -82,10 +80,6 @@ export interface PushResult {
   errors: { email: string; error: string }[]
 }
 
-function md5Email(email: string): string {
-  return createHash('md5').update(email.toLowerCase()).digest('hex')
-}
-
 const BATCH_SIZE = 500
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
@@ -102,6 +96,9 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     const members = batch.map(c => ({
       email_address: c.email,
       status_if_new: 'subscribed',
+      // Tags included here so Mailchimp applies them to existing members too.
+      // The separate /members/{hash}/tags endpoint was unreliable under rate limits.
+      tags: c.sms_only ? [tag, 'sms only'] : [tag],
       merge_fields: {
         FNAME: c.first_name ?? '',
         LNAME: c.last_name ?? '',
@@ -151,22 +148,6 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
 
     // Contacts Mailchimp accepted but didn't count (already existed with identical data)
     result.unchanged += batch.length - batchAdded - batchUpdated - batchSkipped - batchErrored
-
-    // Apply tag to every contact in the batch — not just new/updated ones.
-    // Mailchimp's batch import silently skips unchanged existing members (they
-    // don't appear in new_members or updated_members), so tagging only those
-    // would miss anyone whose data hadn't changed since the last push.
-    // SMS-only contacts (no real email) also get an "sms only" tag.
-    await Promise.allSettled(
-      batch.map((c: MailchimpContact) => {
-        const tags: { name: string; status: string }[] = [{ name: tag, status: 'active' }]
-        if (c.sms_only) tags.push({ name: 'sms only', status: 'active' })
-        return mcFetch(`/lists/${AUDIENCE_ID}/members/${md5Email(c.email)}/tags`, {
-          method: 'POST',
-          body: JSON.stringify({ tags }),
-        })
-      })
-    )
   }
 
   return result
