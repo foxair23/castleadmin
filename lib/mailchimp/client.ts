@@ -71,12 +71,14 @@ export interface MailchimpContact {
 }
 
 export interface PushResult {
-  total: number     // total contacts sent to Mailchimp
-  added: number
-  updated: number
-  unchanged: number // already in Mailchimp with identical data (tagged but not counted as added/updated)
+  total: number     // all contacts attempted
+  no_email: number  // SMS-only contacts (no real email, skipped — cannot be in Mailchimp audience)
+  added: number     // newly added to Mailchimp audience
+  updated: number   // existing member whose profile data changed
+  unchanged: number // existing member with identical data
+  tagged: number    // confirmed tagged by Mailchimp segment API (the authoritative count)
   skipped: number   // already unsubscribed in Mailchimp
-  errored: number
+  errored: number   // rejected by batch import (invalid email etc.)
   errors: { email: string; error: string }[]
 }
 
@@ -105,19 +107,30 @@ async function getOrCreateSegment(tagName: string): Promise<string | null> {
   }
 }
 
-/** Bulk-add emails to a static segment (tag). Processes in chunks of 500. */
-async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<void> {
+/** Bulk-add emails to a static segment (tag). Returns the number Mailchimp confirms as tagged. */
+async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<number> {
+  let totalTagged = 0
   for (let i = 0; i < emails.length; i += BATCH_SIZE) {
     const chunk = emails.slice(i, i + BATCH_SIZE)
-    await mcFetch(`/lists/${AUDIENCE_ID}/segments/${segmentId}`, {
+    const res = await mcFetch(`/lists/${AUDIENCE_ID}/segments/${segmentId}`, {
       method: 'POST',
       body: JSON.stringify({ members_to_add: chunk }),
     })
+    if (res.ok) {
+      const data = await res.json()
+      totalTagged += data.total_added ?? 0
+    }
   }
+  return totalTagged
 }
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
-  const result: PushResult = { total: contacts.length, added: 0, updated: 0, unchanged: 0, skipped: 0, errored: 0, errors: [] }
+  const smsOnly = contacts.filter(c => c.sms_only)
+  const result: PushResult = {
+    total: contacts.length,
+    no_email: smsOnly.length,
+    added: 0, updated: 0, unchanged: 0, tagged: 0, skipped: 0, errored: 0, errors: [],
+  }
 
   if (!API_KEY || !SERVER_PREFIX || !AUDIENCE_ID) {
     return { ...result, errored: contacts.length, errors: contacts.map(c => ({ email: c.email, error: 'Mailchimp not configured' })) }
@@ -181,17 +194,15 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     result.unchanged += batch.length - batchAdded - batchUpdated - batchSkipped - batchErrored
   }
 
-  // Apply the tag to ALL contacts via Mailchimp's static segment (tag) API.
-  // This is the only reliable method for existing members whose data didn't
-  // change — the batch import payload's `tags` field is only applied when
-  // Mailchimp actually processes a member (new or updated), not for unchanged ones.
-  const allEmails = contacts.map(c => c.email)
-  const smsEmails = contacts.filter(c => c.sms_only).map(c => c.email)
-  const segmentId = await getOrCreateSegment(tag)
-  if (segmentId) await addEmailsToSegment(segmentId, allEmails)
-  if (smsEmails.length > 0) {
-    const smsSegmentId = await getOrCreateSegment('sms only')
-    if (smsSegmentId) await addEmailsToSegment(smsSegmentId, smsEmails)
+  // Apply the tag to all real-email contacts via Mailchimp's static segment API.
+  // SMS-only contacts use placeholder addresses that aren't valid Mailchimp
+  // audience members, so the segment add would silently fail for them.
+  const realEmails = contacts.filter(c => !c.sms_only).map(c => c.email)
+  if (realEmails.length > 0) {
+    const segmentId = await getOrCreateSegment(tag)
+    if (segmentId) {
+      result.tagged = await addEmailsToSegment(segmentId, realEmails)
+    }
   }
 
   return result

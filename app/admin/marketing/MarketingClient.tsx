@@ -23,9 +23,11 @@ interface ContactRow {
 
 interface PushResult {
   total: number
+  no_email: number
   added: number
   updated: number
   unchanged: number
+  tagged: number
   skipped: number
   errored: number
   errors: { email: string; error: string }[]
@@ -411,11 +413,12 @@ export default function MarketingClient({
           {pushResult && (
             <div className="mt-4 bg-green-900/30 border border-green-800 rounded-lg p-4 text-sm text-green-300 space-y-1.5">
               <div className="font-semibold">
-                Tag applied to {pushResult.total - pushResult.skipped - pushResult.errored} contact{(pushResult.total - pushResult.skipped - pushResult.errored) !== 1 ? 's' : ''} in Mailchimp
+                Tag applied to {pushResult.tagged} of {pushResult.total} contact{pushResult.total !== 1 ? 's' : ''} in Mailchimp
               </div>
               <div className="text-green-400 text-xs">
                 {pushResult.added} newly added &nbsp;·&nbsp; {pushResult.updated} profile updated &nbsp;·&nbsp; {pushResult.unchanged} already in Mailchimp (re-tagged)
                 {pushResult.skipped > 0 && <>&nbsp;·&nbsp; {pushResult.skipped} unsubscribed (skipped)</>}
+                {pushResult.no_email > 0 && <>&nbsp;·&nbsp; {pushResult.no_email} no email (skipped)</>}
                 {pushResult.errored > 0 && <>&nbsp;·&nbsp; {pushResult.errored} error{pushResult.errored !== 1 ? 's' : ''}</>}
               </div>
               {pushResult.errors.length > 0 && (
