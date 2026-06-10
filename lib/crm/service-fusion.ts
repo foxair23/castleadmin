@@ -228,8 +228,13 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         weekVisits.forEach((visit: any, idx: number) => {
+          // Fall back to job-level techs when visit-level assignment is absent.
+          // SF only populates visit.techs_assigned for explicitly-scheduled
+          // additional visits; initial dispatches carry assignment at the job level.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const visitTechs: any[] = visit.techs_assigned ?? []
+          const visitTechs: any[] = (visit.techs_assigned?.length > 0)
+            ? visit.techs_assigned
+            : (job.techs_assigned ?? [])
           if (!visitTechs.some((t: any) => String(t.id) === sfTechId)) return
           results.push({
             id: String(job.id),
