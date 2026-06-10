@@ -488,22 +488,10 @@ export default function MarketingClient({
                     <span className="text-green-400 font-medium">{pushResult.tagged} contacts</span>
                   </div>
                   <div className="h-px bg-gray-700" />
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Newly added to Mailchimp</span>
-                    <span className="text-gray-300">{pushResult.added}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Profile updated</span>
-                    <span className="text-gray-300">{pushResult.updated}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Already in Mailchimp (re-tagged)</span>
-                    <span className="text-gray-300">{pushResult.unchanged}</span>
-                  </div>
-                  {pushResult.skipped > 0 && (
+                  {pushResult.total - pushResult.no_email - pushResult.tagged > 0 && (
                     <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">Unsubscribed (skipped)</span>
-                      <span className="text-yellow-400">{pushResult.skipped}</span>
+                      <span className="text-gray-500">Unsubscribed in Mailchimp (not tagged)</span>
+                      <span className="text-yellow-400">{pushResult.total - pushResult.no_email - pushResult.tagged}</span>
                     </div>
                   )}
                   {pushResult.no_email > 0 && (
@@ -518,6 +506,11 @@ export default function MarketingClient({
                       <span className="text-red-400">{pushResult.errored}</span>
                     </div>
                   )}
+                  <div className="h-px bg-gray-700" />
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Total selected</span>
+                    <span className="text-gray-300">{pushResult.total}</span>
+                  </div>
                 </div>
                 {pushResult.errors.length > 0 && (
                   <div className="mb-4 text-red-400 text-xs space-y-0.5 max-h-24 overflow-y-auto">
