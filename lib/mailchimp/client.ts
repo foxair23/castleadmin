@@ -138,6 +138,16 @@ async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<
 }
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
+  // Deduplicate by email — Mailchimp rejects batches containing duplicate addresses.
+  // Keep the first occurrence (primary contact wins).
+  const seen = new Set<string>()
+  contacts = contacts.filter(c => {
+    const key = c.email.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
   const smsOnly = contacts.filter(c => c.sms_only)
   const result: PushResult = {
     total: contacts.length,
