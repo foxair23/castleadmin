@@ -484,16 +484,16 @@ export default function MarketingClient({
                     <span className="text-gray-400">Tag applied</span>
                     <span className="text-green-400 font-medium">{pushResult.tagged}</span>
                   </div>
+                  {pushResult.no_email > 0 && (
+                    <div className="flex justify-between text-xs text-gray-500">
+                      <span>SMS-only (no email, tagged via placeholder)</span>
+                      <span>{pushResult.no_email}</span>
+                    </div>
+                  )}
                   {pushResult.not_taggable > 0 && (
                     <div className="flex justify-between">
                       <span className="text-gray-400">Unsubscribed / bounced (not tagged)</span>
                       <span className="text-yellow-400">{pushResult.not_taggable}</span>
-                    </div>
-                  )}
-                  {pushResult.no_email > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">No email on file (skipped)</span>
-                      <span className="text-yellow-400">{pushResult.no_email}</span>
                     </div>
                   )}
                   {pushResult.errored > 0 && (
@@ -555,8 +555,8 @@ export default function MarketingClient({
                   </div>
                   {selectedSmsOnly > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-gray-400">No email (skipped)</span>
-                      <span className="text-yellow-400 font-medium">{selectedSmsOnly}</span>
+                      <span className="text-gray-400">SMS-only (placeholder email)</span>
+                      <span className="text-gray-300 font-medium">{selectedSmsOnly}</span>
                     </div>
                   )}
                 </div>

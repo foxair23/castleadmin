@@ -179,15 +179,26 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     }
   }
 
-  // Step 2: Apply the tag via the static segment API.
-  // Only real-email contacts — SMS-only placeholder addresses are not valid audience members.
-  // Members already in the segment are silently accepted (not double-counted as new).
-  if (realEmailContacts.length > 0) {
+  // Step 2: Apply the campaign tag to ALL contacts (real-email and SMS-only)
+  // via the static segment API. SMS-only contacts use placeholder emails but are
+  // valid audience members — they're intended for Mailchimp's SMS/text feature.
+  // Members already in the segment are silently accepted (not double-counted).
+  const allEmails = contacts.map(c => c.email)
+  if (allEmails.length > 0) {
     const segmentId = await getOrCreateSegment(tag)
     if (segmentId) {
-      const { tagged, failed } = await addEmailsToSegment(segmentId, realEmailContacts.map(c => c.email))
+      const { tagged, failed } = await addEmailsToSegment(segmentId, allEmails)
       result.tagged = tagged
       result.not_taggable = failed
+    }
+  }
+
+  // Step 3: Also apply the "sms only" tag to SMS-only contacts so they can be
+  // targeted for text campaigns without accidentally receiving email campaigns.
+  if (smsOnly.length > 0) {
+    const smsSegmentId = await getOrCreateSegment('sms only')
+    if (smsSegmentId) {
+      await addEmailsToSegment(smsSegmentId, smsOnly.map(c => c.email))
     }
   }
 
