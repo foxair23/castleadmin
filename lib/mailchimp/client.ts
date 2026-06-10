@@ -71,12 +71,18 @@ export interface MailchimpContact {
 }
 
 export interface PushResult {
-  total: number      // all contacts selected
-  no_email: number   // no real email — skipped entirely
-  tagged: number     // confirmed in the segment (newly added + already there)
-  not_taggable: number // rejected by segment API (true unsubscribes, hard bounces, etc.)
-  errored: number    // batch import errors (invalid email format, etc.)
-  errors: { email: string; error: string }[]
+  total: number          // contacts passed to this function
+  // ── Mailchimp audience upsert (Step 1) ──────────────────────────────────
+  audience_added: number    // newly added to the Mailchimp audience this push
+  audience_updated: number  // already existed, profile data updated
+  audience_unchanged: number // already existed, no data change (silently accepted)
+  audience_skipped: number  // compliance state: unsubscribed / cleaned / bounced
+  audience_errored: number  // other hard errors (invalid email format, etc.)
+  // ── Segment / tag (Step 2) ───────────────────────────────────────────────
+  tagged: number         // confirmed in segment after this push
+  not_taggable: number   // segment API rejected (unsubscribed, cleaned, etc.)
+  // ── Details ─────────────────────────────────────────────────────────────
+  errors: { email: string; error: string }[]  // hard errors from either step
 }
 
 const BATCH_SIZE = 500
@@ -133,21 +139,27 @@ async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
   const smsOnly = contacts.filter(c => c.sms_only)
-  const realEmailContacts = contacts.filter(c => !c.sms_only)
   const result: PushResult = {
     total: contacts.length,
-    no_email: smsOnly.length,
+    audience_added: 0,
+    audience_updated: 0,
+    audience_unchanged: 0,
+    audience_skipped: 0,
+    audience_errored: 0,
     tagged: 0,
     not_taggable: 0,
-    errored: 0,
     errors: [],
   }
 
   if (!API_KEY || !SERVER_PREFIX || !AUDIENCE_ID) {
-    return { ...result, errored: contacts.length, errors: contacts.map(c => ({ email: c.email, error: 'Mailchimp not configured' })) }
+    result.audience_errored = contacts.length
+    result.errors = contacts.map(c => ({ email: c.email, error: 'Mailchimp not configured' }))
+    return result
   }
 
-  // Step 1: Upsert all contacts into the Mailchimp audience (adds new, updates existing profile data).
+  // ── Step 1: Upsert contacts into the Mailchimp audience ─────────────────
+  // Adds new contacts, updates existing profile data. Unsubscribed / cleaned
+  // contacts cannot be re-subscribed via API and will appear in errors.
   for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
     const batch = contacts.slice(i, i + BATCH_SIZE)
     const members = batch.map(c => ({
@@ -164,25 +176,57 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
         BALANCE: c.account_balance != null ? String(c.account_balance) : '',
       },
     }))
+
     const res = await mcFetch(`/lists/${AUDIENCE_ID}`, {
       method: 'POST',
       body: JSON.stringify({ members, update_existing: true }),
     })
+
+    if (!res.ok) {
+      // Entire batch request failed (auth error, malformed request, etc.)
+      const errBody = await res.json().catch(() => ({}))
+      const msg = errBody?.detail ?? errBody?.title ?? `HTTP ${res.status}`
+      console.error('[mailchimp] batch import failed:', msg, 'batch size:', batch.length)
+      result.audience_errored += batch.length
+      result.errors.push({ email: '(batch)', error: `Batch import failed: ${msg}` })
+      continue
+    }
+
     const data = await res.json()
+    result.audience_added += data.new_members?.length ?? 0
+    result.audience_updated += data.updated_members?.length ?? 0
+
     for (const err of (data.errors ?? [])) {
-      const email = err.email_address ?? ''
+      const email: string = err.email_address ?? ''
       const msg: string = err.error ?? 'Unknown error'
-      if (!msg.toLowerCase().includes('unsubscrib') && !msg.toLowerCase().includes('resubscrib')) {
-        result.errored++
+      const msgLower = msg.toLowerCase()
+      if (
+        msgLower.includes('unsubscrib') ||
+        msgLower.includes('resubscrib') ||
+        msgLower.includes('compliance') ||
+        msgLower.includes('cleaned') ||
+        msgLower.includes('bounced') ||
+        msgLower.includes('opted out')
+      ) {
+        // Compliance state — Mailchimp won't re-subscribe these via API
+        result.audience_skipped++
+      } else {
+        result.audience_errored++
         result.errors.push({ email, error: msg })
       }
     }
+
+    // Contacts not in any of the above buckets were already in Mailchimp
+    // with identical data — silently accepted, no entry in any array
+    const batchAccounted = (data.new_members?.length ?? 0)
+      + (data.updated_members?.length ?? 0)
+      + (data.errors?.length ?? 0)
+    result.audience_unchanged += batch.length - batchAccounted
   }
 
-  // Step 2: Apply the campaign tag to ALL contacts (real-email and SMS-only)
-  // via the static segment API. SMS-only contacts use placeholder emails but are
-  // valid audience members — they're intended for Mailchimp's SMS/text feature.
-  // Members already in the segment are silently accepted (not double-counted).
+  // ── Step 2: Apply the campaign tag via Mailchimp's static segment API ───
+  // Works for all subscribed audience members regardless of data changes.
+  // Unsubscribed / cleaned members will fail and be counted in not_taggable.
   const allEmails = contacts.map(c => c.email)
   if (allEmails.length > 0) {
     const segmentId = await getOrCreateSegment(tag)
@@ -193,8 +237,7 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     }
   }
 
-  // Step 3: Also apply the "sms only" tag to SMS-only contacts so they can be
-  // targeted for text campaigns without accidentally receiving email campaigns.
+  // ── Step 3: Tag SMS-only contacts with "sms only" ───────────────────────
   if (smsOnly.length > 0) {
     const smsSegmentId = await getOrCreateSegment('sms only')
     if (smsSegmentId) {

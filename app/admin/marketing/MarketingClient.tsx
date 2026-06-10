@@ -23,10 +23,13 @@ interface ContactRow {
 
 interface PushResult {
   total: number
-  no_email: number
+  audience_added: number
+  audience_updated: number
+  audience_unchanged: number
+  audience_skipped: number
+  audience_errored: number
   tagged: number
   not_taggable: number
-  errored: number
   errors: { email: string; error: string }[]
 }
 
@@ -479,27 +482,44 @@ export default function MarketingClient({
                   </div>
                   <h2 className="text-base font-semibold text-white">Push complete</h2>
                 </div>
-                <div className="bg-gray-800 rounded px-3 py-3 text-sm space-y-2 mb-5">
-                  <div className="flex justify-between">
+                <div className="bg-gray-800 rounded px-3 py-3 text-sm space-y-2 mb-4">
+                  {/* Audience upsert breakdown */}
+                  <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Mailchimp audience</p>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">New contacts added</span>
+                    <span className="text-green-400 font-medium">{pushResult.audience_added}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Existing — profile updated</span>
+                    <span className="text-gray-300">{pushResult.audience_updated}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Existing — no change</span>
+                    <span className="text-gray-300">{pushResult.audience_unchanged}</span>
+                  </div>
+                  {pushResult.audience_skipped > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-yellow-500">Unsubscribed / bounced (cannot re-add)</span>
+                      <span className="text-yellow-400">{pushResult.audience_skipped}</span>
+                    </div>
+                  )}
+                  {pushResult.audience_errored > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-red-400">Import errors</span>
+                      <span className="text-red-400">{pushResult.audience_errored}</span>
+                    </div>
+                  )}
+                  <div className="h-px bg-gray-700" />
+                  {/* Tag breakdown */}
+                  <p className="text-xs text-gray-500 uppercase tracking-wide font-medium pt-1">Tag</p>
+                  <div className="flex justify-between text-xs">
                     <span className="text-gray-400">Tag applied</span>
                     <span className="text-green-400 font-medium">{pushResult.tagged}</span>
                   </div>
-                  {pushResult.no_email > 0 && (
-                    <div className="flex justify-between text-xs text-gray-500">
-                      <span>SMS-only (no email, tagged via placeholder)</span>
-                      <span>{pushResult.no_email}</span>
-                    </div>
-                  )}
                   {pushResult.not_taggable > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Unsubscribed / bounced (not tagged)</span>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-yellow-500">Could not be tagged (unsubscribed / bounced)</span>
                       <span className="text-yellow-400">{pushResult.not_taggable}</span>
-                    </div>
-                  )}
-                  {pushResult.errored > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Errors</span>
-                      <span className="text-red-400">{pushResult.errored}</span>
                     </div>
                   )}
                   <div className="h-px bg-gray-700" />
@@ -509,7 +529,7 @@ export default function MarketingClient({
                   </div>
                 </div>
                 {pushResult.errors.length > 0 && (
-                  <div className="mb-4 text-red-400 text-xs space-y-0.5 max-h-24 overflow-y-auto">
+                  <div className="mb-4 text-red-400 text-xs space-y-0.5 max-h-20 overflow-y-auto bg-gray-800 rounded px-2 py-2">
                     {pushResult.errors.slice(0, 10).map((e, i) => (
                       <div key={i}>{e.email}: {e.error}</div>
                     ))}
