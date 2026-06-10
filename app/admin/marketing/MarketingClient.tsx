@@ -23,9 +23,11 @@ interface ContactRow {
 
 interface PushResult {
   total: number
+  no_email: number
   added: number
   updated: number
   unchanged: number
+  tagged: number
   skipped: number
   errored: number
   errors: { email: string; error: string }[]
@@ -149,7 +151,7 @@ export default function MarketingClient({
     setPushing(true)
     setPushError(null)
     setPushResult(null)
-    setShowConfirm(false)
+    // Keep dialog open — it transitions to loading then result state
 
     try {
       const res = await fetch('/api/admin/marketing/push', {
@@ -168,6 +170,12 @@ export default function MarketingClient({
     } finally {
       setPushing(false)
     }
+  }
+
+  function handleDismissResult() {
+    setShowConfirm(false)
+    setPushResult(null)
+    setPushError(null)
   }
 
   async function handleDownloadCSV() {
@@ -407,33 +415,6 @@ export default function MarketingClient({
             </>
           )}
 
-          {/* Push result banner */}
-          {pushResult && (
-            <div className="mt-4 bg-green-900/30 border border-green-800 rounded-lg p-4 text-sm text-green-300 space-y-1.5">
-              <div className="font-semibold">
-                Tag applied to {pushResult.total - pushResult.skipped - pushResult.errored} contact{(pushResult.total - pushResult.skipped - pushResult.errored) !== 1 ? 's' : ''} in Mailchimp
-              </div>
-              <div className="text-green-400 text-xs">
-                {pushResult.added} newly added &nbsp;·&nbsp; {pushResult.updated} profile updated &nbsp;·&nbsp; {pushResult.unchanged} already in Mailchimp (re-tagged)
-                {pushResult.skipped > 0 && <>&nbsp;·&nbsp; {pushResult.skipped} unsubscribed (skipped)</>}
-                {pushResult.errored > 0 && <>&nbsp;·&nbsp; {pushResult.errored} error{pushResult.errored !== 1 ? 's' : ''}</>}
-              </div>
-              {pushResult.errors.length > 0 && (
-                <div className="mt-1 text-red-400 text-xs space-y-0.5">
-                  {pushResult.errors.slice(0, 10).map((e, i) => (
-                    <div key={i}>{e.email}: {e.error}</div>
-                  ))}
-                  {pushResult.errors.length > 10 && <div>…and {pushResult.errors.length - 10} more</div>}
-                </div>
-              )}
-            </div>
-          )}
-
-          {pushError && (
-            <div className="mt-4 bg-red-900/30 border border-red-800 rounded-lg p-4 text-sm text-red-400">
-              Push failed: {pushError}
-            </div>
-          )}
         </div>
       </div>
 
@@ -473,48 +454,139 @@ export default function MarketingClient({
         </div>
       )}
 
-      {/* Confirmation dialog */}
+      {/* Confirm / pushing / result dialog */}
       {showConfirm && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-20" onClick={() => setShowConfirm(false)}>
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-20"
+          onClick={!pushing ? handleDismissResult : undefined}
+        >
           <div
             ref={confirmRef}
             className="bg-gray-900 border border-gray-700 rounded-lg p-6 max-w-md w-full mx-4"
             onClick={e => e.stopPropagation()}
           >
-            <h2 className="text-lg font-semibold text-white mb-3">Confirm Push</h2>
-            <p className="text-gray-300 text-sm mb-2">
-              Push to Mailchimp with tag <strong>&apos;{tag}&apos;</strong>?
-            </p>
-            <div className="bg-gray-800 rounded px-3 py-2 text-sm mb-6 space-y-1">
-              <div className="flex justify-between">
-                <span className="text-gray-400">Selected</span>
-                <span className="text-white font-medium">{selectedIds.size}</span>
+            {/* ── Pushing (loading) state ── */}
+            {pushing && (
+              <div className="text-center py-6">
+                <div className="text-gray-300 text-sm mb-2">Pushing to Mailchimp…</div>
+                <div className="text-gray-500 text-xs">This may take a few seconds</div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Email contacts</span>
-                <span className="text-green-400 font-medium">{selectedWithEmail}</span>
-              </div>
-              {selectedSmsOnly > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-gray-400">SMS only (no email, tagged)</span>
-                  <span className="text-yellow-400 font-medium">{selectedSmsOnly}</span>
+            )}
+
+            {/* ── Result state ── */}
+            {!pushing && pushResult && (
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-green-900/60 flex items-center justify-center shrink-0">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <h2 className="text-base font-semibold text-white">Push complete</h2>
                 </div>
-              )}
-            </div>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handlePush}
-                className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
-              >
-                Confirm Push
-              </button>
-            </div>
+                <div className="bg-gray-800 rounded px-3 py-3 text-sm space-y-2 mb-5">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Tag applied</span>
+                    <span className="text-green-400 font-medium">{pushResult.tagged} contacts</span>
+                  </div>
+                  <div className="h-px bg-gray-700" />
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Newly added to Mailchimp</span>
+                    <span className="text-gray-300">{pushResult.added}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Profile updated</span>
+                    <span className="text-gray-300">{pushResult.updated}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Already in Mailchimp (re-tagged)</span>
+                    <span className="text-gray-300">{pushResult.unchanged}</span>
+                  </div>
+                  {pushResult.skipped > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Unsubscribed (skipped)</span>
+                      <span className="text-yellow-400">{pushResult.skipped}</span>
+                    </div>
+                  )}
+                  {pushResult.no_email > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">No email on file (skipped)</span>
+                      <span className="text-yellow-400">{pushResult.no_email}</span>
+                    </div>
+                  )}
+                  {pushResult.errored > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Errors</span>
+                      <span className="text-red-400">{pushResult.errored}</span>
+                    </div>
+                  )}
+                </div>
+                {pushResult.errors.length > 0 && (
+                  <div className="mb-4 text-red-400 text-xs space-y-0.5 max-h-24 overflow-y-auto">
+                    {pushResult.errors.slice(0, 10).map((e, i) => (
+                      <div key={i}>{e.email}: {e.error}</div>
+                    ))}
+                    {pushResult.errors.length > 10 && <div>…and {pushResult.errors.length - 10} more</div>}
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <button onClick={handleDismissResult} className="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded transition-colors">
+                    Done
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* ── Error state ── */}
+            {!pushing && pushError && (
+              <>
+                <h2 className="text-base font-semibold text-white mb-3">Push failed</h2>
+                <p className="text-red-400 text-sm mb-5">{pushError}</p>
+                <div className="flex justify-end">
+                  <button onClick={handleDismissResult} className="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded transition-colors">
+                    Close
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* ── Confirm state ── */}
+            {!pushing && !pushResult && !pushError && (
+              <>
+                <h2 className="text-lg font-semibold text-white mb-3">Confirm Push</h2>
+                <p className="text-gray-300 text-sm mb-2">
+                  Push to Mailchimp with tag <strong>&apos;{tag}&apos;</strong>?
+                </p>
+                <div className="bg-gray-800 rounded px-3 py-2 text-sm mb-6 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Selected</span>
+                    <span className="text-white font-medium">{selectedIds.size}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Email contacts</span>
+                    <span className="text-green-400 font-medium">{selectedWithEmail}</span>
+                  </div>
+                  {selectedSmsOnly > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">No email (skipped)</span>
+                      <span className="text-yellow-400 font-medium">{selectedSmsOnly}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={handleDismissResult}
+                    className="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handlePush}
+                    className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+                  >
+                    Confirm Push
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
