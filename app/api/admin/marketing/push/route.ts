@@ -146,11 +146,11 @@ export async function POST(req: NextRequest) {
     tag: tag.trim(),
     filter_criteria: { customer_ids_count: customerIds.length },
     contact_count: contacts.length,
-    added_count: result.added,
-    updated_count: result.updated,
-    skipped_count: result.skipped,
+    added_count: result.tagged,
+    updated_count: 0,
+    skipped_count: result.not_taggable,
     failed_count: result.errored,
-    contact_results: { tagged: result.tagged, no_email: result.no_email, unchanged: result.unchanged, errors: result.errors },
+    contact_results: { tagged: result.tagged, no_email: result.no_email, not_taggable: result.not_taggable, errors: result.errors },
     created_by: admin.id,
   })
 

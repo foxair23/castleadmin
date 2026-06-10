@@ -24,11 +24,8 @@ interface ContactRow {
 interface PushResult {
   total: number
   no_email: number
-  added: number
-  updated: number
-  unchanged: number
   tagged: number
-  skipped: number
+  not_taggable: number
   errored: number
   errors: { email: string; error: string }[]
 }
@@ -485,31 +482,30 @@ export default function MarketingClient({
                 <div className="bg-gray-800 rounded px-3 py-3 text-sm space-y-2 mb-5">
                   <div className="flex justify-between">
                     <span className="text-gray-400">Tag applied</span>
-                    <span className="text-green-400 font-medium">{pushResult.tagged} contacts</span>
+                    <span className="text-green-400 font-medium">{pushResult.tagged}</span>
                   </div>
-                  <div className="h-px bg-gray-700" />
-                  {pushResult.total - pushResult.no_email - pushResult.tagged > 0 && (
-                    <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">Unsubscribed in Mailchimp (not tagged)</span>
-                      <span className="text-yellow-400">{pushResult.total - pushResult.no_email - pushResult.tagged}</span>
+                  {pushResult.not_taggable > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Unsubscribed / bounced (not tagged)</span>
+                      <span className="text-yellow-400">{pushResult.not_taggable}</span>
                     </div>
                   )}
                   {pushResult.no_email > 0 && (
-                    <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">No email on file (skipped)</span>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">No email on file (skipped)</span>
                       <span className="text-yellow-400">{pushResult.no_email}</span>
                     </div>
                   )}
                   {pushResult.errored > 0 && (
-                    <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">Errors</span>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Errors</span>
                       <span className="text-red-400">{pushResult.errored}</span>
                     </div>
                   )}
                   <div className="h-px bg-gray-700" />
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Total selected</span>
-                    <span className="text-gray-300">{pushResult.total}</span>
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span>Total selected</span>
+                    <span>{pushResult.total}</span>
                   </div>
                 </div>
                 {pushResult.errors.length > 0 && (
