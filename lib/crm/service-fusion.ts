@@ -163,7 +163,7 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
       const json = (await sfGet('/jobs', {
         'filters[start_date][gte]': fetchFrom,
         'filters[start_date][lte]': fetchTo,
-        expand: 'visits,visits.techs_assigned,items',
+        expand: 'visits,visits.techs_assigned,techs_assigned,items',
         'per-page': '50',
         page: String(page),
       })) as any
