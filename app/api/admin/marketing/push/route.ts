@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
     updated_count: result.updated,
     skipped_count: result.skipped,
     failed_count: result.errored,
-    contact_results: result.errors,
+    contact_results: { unchanged: result.unchanged, errors: result.errors },
     created_by: admin.id,
   })
 

@@ -1,5 +1,3 @@
-import { createHash } from 'crypto'
-
 // Server-side only — never import this in client components
 
 const API_KEY = process.env.MAILCHIMP_API_KEY ?? ''
@@ -73,21 +71,19 @@ export interface MailchimpContact {
 }
 
 export interface PushResult {
+  total: number     // total contacts sent to Mailchimp
   added: number
   updated: number
+  unchanged: number // already in Mailchimp with identical data (tagged but not counted as added/updated)
   skipped: number   // already unsubscribed in Mailchimp
   errored: number
   errors: { email: string; error: string }[]
 }
 
-function md5Email(email: string): string {
-  return createHash('md5').update(email.toLowerCase()).digest('hex')
-}
-
 const BATCH_SIZE = 500
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
-  const result: PushResult = { added: 0, updated: 0, skipped: 0, errored: 0, errors: [] }
+  const result: PushResult = { total: contacts.length, added: 0, updated: 0, unchanged: 0, skipped: 0, errored: 0, errors: [] }
 
   if (!API_KEY || !SERVER_PREFIX || !AUDIENCE_ID) {
     return { ...result, errored: contacts.length, errors: contacts.map(c => ({ email: c.email, error: 'Mailchimp not configured' })) }
@@ -100,6 +96,9 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     const members = batch.map(c => ({
       email_address: c.email,
       status_if_new: 'subscribed',
+      // Tags included here so Mailchimp applies them to existing members too.
+      // The separate /members/{hash}/tags endpoint was unreliable under rate limits.
+      tags: c.sms_only ? [tag, 'sms only'] : [tag],
       merge_fields: {
         FNAME: c.first_name ?? '',
         LNAME: c.last_name ?? '',
@@ -119,11 +118,15 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
 
     const data = await res.json()
 
-    result.added += data.new_members?.length ?? 0
-    result.updated += data.updated_members?.length ?? 0
+    const batchAdded = data.new_members?.length ?? 0
+    const batchUpdated = data.updated_members?.length ?? 0
+    result.added += batchAdded
+    result.updated += batchUpdated
 
     // Count errors
     const batchErrors: { email: string; error: string }[] = []
+    let batchSkipped = 0
+    let batchErrored = 0
     for (const err of (data.errors ?? [])) {
       const email = err.email_address ?? ''
       const msg: string = err.error ?? 'Unknown error'
@@ -133,29 +136,18 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
         msg.toLowerCase().includes('unsubscrib') ||
         msg.toLowerCase().includes('resubscrib')
       ) {
-        result.skipped++
+        batchSkipped++
       } else {
-        result.errored++
+        batchErrored++
         batchErrors.push({ email, error: msg })
       }
     }
+    result.skipped += batchSkipped
+    result.errored += batchErrored
     result.errors.push(...batchErrors)
 
-    // Apply tag to every contact in the batch — not just new/updated ones.
-    // Mailchimp's batch import silently skips unchanged existing members (they
-    // don't appear in new_members or updated_members), so tagging only those
-    // would miss anyone whose data hadn't changed since the last push.
-    // SMS-only contacts (no real email) also get an "sms only" tag.
-    await Promise.allSettled(
-      batch.map((c: MailchimpContact) => {
-        const tags: { name: string; status: string }[] = [{ name: tag, status: 'active' }]
-        if (c.sms_only) tags.push({ name: 'sms only', status: 'active' })
-        return mcFetch(`/lists/${AUDIENCE_ID}/members/${md5Email(c.email)}/tags`, {
-          method: 'POST',
-          body: JSON.stringify({ tags }),
-        })
-      })
-    )
+    // Contacts Mailchimp accepted but didn't count (already existed with identical data)
+    result.unchanged += batch.length - batchAdded - batchUpdated - batchSkipped - batchErrored
   }
 
   return result

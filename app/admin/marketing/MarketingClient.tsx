@@ -22,8 +22,10 @@ interface ContactRow {
 }
 
 interface PushResult {
+  total: number
   added: number
   updated: number
+  unchanged: number
   skipped: number
   errored: number
   errors: { email: string; error: string }[]
@@ -407,8 +409,21 @@ export default function MarketingClient({
 
           {/* Push result banner */}
           {pushResult && (
-            <div className="mt-4 bg-green-900/30 border border-green-800 rounded-lg p-4 text-sm text-green-300">
-              Added: {pushResult.added} | Updated: {pushResult.updated} | Skipped (unsubscribed): {pushResult.skipped} | Errors: {pushResult.errored}
+            <div className="mt-4 bg-green-900/30 border border-green-800 rounded-lg p-4 text-sm text-green-300 space-y-1">
+              <div className="font-semibold">
+                Pushed {pushResult.total} contact{pushResult.total !== 1 ? 's' : ''} to Mailchimp
+              </div>
+              <div className="text-green-400">
+                {pushResult.added} new &nbsp;·&nbsp; {pushResult.updated} updated &nbsp;·&nbsp; {pushResult.unchanged} already up-to-date &nbsp;·&nbsp; {pushResult.skipped} unsubscribed (skipped) &nbsp;·&nbsp; {pushResult.errored} error{pushResult.errored !== 1 ? 's' : ''}
+              </div>
+              {pushResult.errors.length > 0 && (
+                <div className="mt-2 text-red-400 text-xs space-y-0.5">
+                  {pushResult.errors.slice(0, 10).map((e, i) => (
+                    <div key={i}>{e.email}: {e.error}</div>
+                  ))}
+                  {pushResult.errors.length > 10 && <div>…and {pushResult.errors.length - 10} more</div>}
+                </div>
+              )}
             </div>
           )}
 
