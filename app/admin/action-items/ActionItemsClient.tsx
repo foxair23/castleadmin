@@ -656,6 +656,8 @@ export default function ActionItemsClient({
   const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [sourcesFilter, setSourcesFilter] = useState<string[]>([])
+  const [daysFilter, setDaysFilter] = useState<number | null>(null)
+  const [daysInput, setDaysInput] = useState('')
 
   // '__blank__' is a sentinel for jobs with no source set
   const BLANK = '__blank__'
@@ -678,18 +680,30 @@ export default function ActionItemsClient({
     })
   }
 
-  const filteredUnpaid = filterBySource(unpaidJobs.items)
-  const filteredUninvoiced = filterBySource(uninvoicedJobs.items)
-  const filteredFollowUp = filterBySource(followUpJobs.items)
+  const filterByDays = <T,>(items: T[], key: keyof T): T[] => {
+    if (daysFilter == null) return items
+    return items.filter(item => {
+      const v = item[key]
+      return typeof v === 'number' && v >= daysFilter
+    })
+  }
+
+  const filteredUnpaid = filterByDays(filterBySource(unpaidJobs.items), 'days_outstanding')
+  const filteredUninvoiced = filterByDays(filterBySource(uninvoicedJobs.items), 'days_since_completion')
+  const filteredFollowUp = filterByDays(filterBySource(followUpJobs.items), 'days_open')
+  const filteredStaleEstimates = filterByDays(staleEstimates.items, 'days_outstanding')
+  const filteredOverdueCustomers = filterByDays(overdueCustomers.items, 'days_overdue')
+  const filteredAwaitingSfJob = filterByDays(awaitingSfJob.items, 'days_waiting')
+  const filteredAwaitingPush = filterByDays(awaitingPushLeads.items, 'days_waiting')
 
   const totalCount =
-    unpaidJobs.items.length +
-    uninvoicedJobs.items.length +
-    staleEstimates.items.length +
-    followUpJobs.items.length +
-    overdueCustomers.items.length +
-    awaitingSfJob.items.length +
-    awaitingPushLeads.items.length
+    filteredUnpaid.length +
+    filteredUninvoiced.length +
+    filteredStaleEstimates.length +
+    filteredFollowUp.length +
+    filteredOverdueCustomers.length +
+    filteredAwaitingSfJob.length +
+    filteredAwaitingPush.length
 
   async function handleRefresh() {
     setSyncing(true)
@@ -757,7 +771,7 @@ export default function ActionItemsClient({
           Action Items
           <CountBadge count={totalCount} />
         </h1>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {allSources.length > 0 && (
             <SourceFilterDropdown
               sources={allSources}
@@ -765,6 +779,44 @@ export default function ActionItemsClient({
               onChange={setSourcesFilter}
             />
           )}
+          <div className="flex items-center rounded-md border border-gray-300 bg-white shadow-sm overflow-hidden text-sm">
+            {([null, 30, 60, 90, 120] as (number | null)[]).map(opt => (
+              <button
+                key={opt ?? 'all'}
+                onClick={() => { setDaysFilter(opt); setDaysInput('') }}
+                className={`px-3 py-2 font-medium transition-colors whitespace-nowrap border-r border-gray-300 ${
+                  daysFilter === opt && daysInput === ''
+                    ? 'bg-red-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {opt == null ? 'All' : `${opt}+`}
+              </button>
+            ))}
+            <div className="flex items-center border-l border-gray-300 px-2 gap-1">
+              <input
+                type="number"
+                min={1}
+                placeholder="Custom"
+                value={daysInput}
+                onChange={e => {
+                  const val = e.target.value
+                  setDaysInput(val)
+                  const n = parseInt(val, 10)
+                  setDaysFilter(val === '' ? null : isNaN(n) ? null : n)
+                }}
+                className="w-20 py-1.5 text-sm text-gray-900 bg-transparent focus:outline-none placeholder:text-gray-400"
+              />
+              {daysInput && (
+                <button
+                  onClick={() => { setDaysInput(''); setDaysFilter(null) }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
           {progress && (
             <span className="text-sm text-gray-500">{progress}</span>
           )}
@@ -829,19 +881,19 @@ export default function ActionItemsClient({
       {/* Alert 3 — Stale Estimates */}
       <AlertSection
         title="Stale Estimates (14+ Days)"
-        count={staleEstimates.items.length}
+        count={filteredStaleEstimates.length}
         summary={
-          staleEstimates.items.length > 0 ? (
+          filteredStaleEstimates.length > 0 ? (
             <span className="text-sm text-gray-600">
-              Pipeline value: <span className="font-semibold text-amber-700">{fmtMoney(staleEstimates.totalValue)}</span>
+              Pipeline value: <span className="font-semibold text-amber-700">{fmtMoney(filteredStaleEstimates.reduce((s, e) => s + (e.total ?? 0), 0))}</span>
             </span>
           ) : undefined
         }
       >
-        {staleEstimates.items.length === 0 ? (
+        {filteredStaleEstimates.length === 0 ? (
           <AllClear />
         ) : (
-          <StaleEstimatesTable items={staleEstimates.items} notes={notes} />
+          <StaleEstimatesTable items={filteredStaleEstimates} notes={notes} />
         )}
       </AlertSection>
 
@@ -860,43 +912,43 @@ export default function ActionItemsClient({
       {/* Alert 5 — Overdue Customers */}
       <AlertSection
         title="Customers Overdue Past Payment Terms"
-        count={overdueCustomers.items.length}
+        count={filteredOverdueCustomers.length}
         summary={
-          overdueCustomers.items.length > 0 ? (
+          filteredOverdueCustomers.length > 0 ? (
             <span className="text-sm text-gray-600">
-              Total overdue: <span className="font-semibold text-red-700">{fmtMoney(overdueCustomers.totalOverdue)}</span>
+              Total overdue: <span className="font-semibold text-red-700">{fmtMoney(filteredOverdueCustomers.reduce((s, c) => s + (c.account_balance ?? 0), 0))}</span>
             </span>
           ) : undefined
         }
       >
-        {overdueCustomers.items.length === 0 ? (
+        {filteredOverdueCustomers.length === 0 ? (
           <AllClear />
         ) : (
-          <OverdueCustomersTable items={overdueCustomers.items} notes={notes} />
+          <OverdueCustomersTable items={filteredOverdueCustomers} notes={notes} />
         )}
       </AlertSection>
 
       {/* Alert 6 — Closed Won Awaiting SF Job */}
       <AlertSection
         title="Closed Won — Awaiting SF Job"
-        count={awaitingSfJob.items.length}
+        count={filteredAwaitingSfJob.length}
       >
-        {awaitingSfJob.items.length === 0 ? (
+        {filteredAwaitingSfJob.length === 0 ? (
           <AllClear />
         ) : (
-          <AwaitingSfJobTable items={awaitingSfJob.items} notes={notes} />
+          <AwaitingSfJobTable items={filteredAwaitingSfJob} notes={notes} />
         )}
       </AlertSection>
 
       {/* Alert 7 — Scheduler Leads Awaiting Manual SF Push */}
       <AlertSection
         title="Scheduler Leads — Awaiting SF Push"
-        count={awaitingPushLeads.items.length}
+        count={filteredAwaitingPush.length}
       >
-        {awaitingPushLeads.items.length === 0 ? (
+        {filteredAwaitingPush.length === 0 ? (
           <AllClear />
         ) : (
-          <AwaitingPushTable items={awaitingPushLeads.items} notes={notes} />
+          <AwaitingPushTable items={filteredAwaitingPush} notes={notes} />
         )}
       </AlertSection>
     </div>
