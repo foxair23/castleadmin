@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type {
@@ -129,9 +129,64 @@ function SortTh<T>({
   )
 }
 
+// ── Notes cell ────────────────────────────────────────────────────────────────
+
+function NotesCell({ entityType, entityId, initialNote }: {
+  entityType: string
+  entityId: string
+  initialNote: string
+}) {
+  const [note, setNote] = useState(initialNote)
+  const [saved, setSaved] = useState(initialNote)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const save = useCallback(async (value: string) => {
+    if (value === saved) { setEditing(false); return }
+    setSaving(true)
+    await fetch('/api/admin/action-item-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entity_type: entityType, entity_id: entityId, note: value }),
+    })
+    setSaved(value)
+    setSaving(false)
+    setEditing(false)
+  }, [entityType, entityId, saved])
+
+  if (editing) {
+    return (
+      <td className="px-3 py-1.5 align-top" style={{ minWidth: '180px' }}>
+        <textarea
+          className="w-full text-xs text-gray-900 border border-gray-300 rounded px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-red-500"
+          rows={2}
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          onBlur={() => save(note)}
+          disabled={saving}
+          autoFocus
+        />
+      </td>
+    )
+  }
+
+  return (
+    <td
+      className="px-3 py-2 text-xs text-gray-600 cursor-text max-w-[180px]"
+      onClick={() => setEditing(true)}
+      title={saved || 'Click to add note'}
+    >
+      {saved
+        ? <span className="line-clamp-2">{saved}</span>
+        : <span className="text-gray-300 italic">Add note…</span>
+      }
+    </td>
+  )
+}
+
 // ── Alert 1 — Completed but Unpaid Jobs ──────────────────────────────────────
 
-function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
+function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_outstanding')
 
   return (
@@ -147,6 +202,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="payment_status" label="Payment Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -160,6 +216,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.payment_status ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -170,7 +227,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
 
 // ── Alert 2 — Completed but Never Invoiced ────────────────────────────────────
 
-function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
+function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_since_completion')
 
   return (
@@ -185,6 +242,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
             <SortTh col="days_since_completion" label="Days Since Completion" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Job Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -197,6 +255,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
               <td className="px-4 py-2"><AgingPill days={job.days_since_completion} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(job.total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -207,7 +266,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
 
 // ── Alert 3 — Stale Estimates ─────────────────────────────────────────────────
 
-function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
+function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_outstanding')
 
   return (
@@ -221,6 +280,7 @@ function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -232,6 +292,7 @@ function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
               <td className="px-4 py-2"><AgingPill days={est.days_outstanding} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(est.total)}</td>
               <td className="px-4 py-2 text-gray-600">{est.status ?? '—'}</td>
+              <NotesCell entityType="sf_estimate" entityId={est.id} initialNote={notes[`sf_estimate:${est.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -242,7 +303,7 @@ function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
 
 // ── Alert 4 — Jobs Flagged for Follow-Up ─────────────────────────────────────
 
-function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
+function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_open')
 
   return (
@@ -257,7 +318,8 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
             <SortTh col="days_open" label="Days Open" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Note</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">SF Note</th>
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -273,6 +335,7 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
               <td className="px-4 py-2 text-gray-600 max-w-xs truncate">
                 {job.note_to_customer || job.tech_notes || '—'}
               </td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -283,7 +346,7 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
 
 // ── Alert 5 — Customers Overdue Past Payment Terms ────────────────────────────
 
-function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
+function OverdueCustomersTable({ items, notes }: { items: OverdueCustomer[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_overdue')
 
   return (
@@ -297,6 +360,7 @@ function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
             <SortTh col="oldest_overdue_date" label="Oldest Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_overdue" label="Days Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="overdue_invoice_count" label="Invoices" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -308,6 +372,7 @@ function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(cust.oldest_overdue_date)}</td>
               <td className="px-4 py-2"><AgingPill days={cust.days_overdue} /></td>
               <td className="px-4 py-2 text-gray-600">{cust.overdue_invoice_count}</td>
+              <NotesCell entityType="sf_customer" entityId={cust.id} initialNote={notes[`sf_customer:${cust.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -320,7 +385,7 @@ function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
 
 // ── Alert 6 — Closed Won Awaiting SF Job ─────────────────────────────────────
 
-function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
+function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
 
   return (
@@ -334,6 +399,7 @@ function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
             <SortTh col="assigned_rep_name" label="Rep" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Won" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Days waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -351,6 +417,7 @@ function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
               <td className="px-4 py-2 text-gray-600">{l.assigned_rep_name ?? <span className="text-gray-400">Unassigned</span>}</td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(l.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={l.days_waiting} /></td>
+              <NotesCell entityType="sales_lead" entityId={l.id} initialNote={notes[`sales_lead:${l.id}`] ?? ''} />
               <td className="px-4 py-2 text-right">
                 <Link
                   href={`/sales/${l.id}`}
@@ -378,7 +445,7 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
   annual_maintenance: 'Annual Maintenance',
 }
 
-function AwaitingPushTable({ items }: { items: AwaitingPushLead[] }) {
+function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
 
   return (
@@ -391,6 +458,7 @@ function AwaitingPushTable({ items }: { items: AwaitingPushLead[] }) {
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="sync_status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Days Waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -414,6 +482,7 @@ function AwaitingPushTable({ items }: { items: AwaitingPushLead[] }) {
                 </span>
               </td>
               <td className="px-4 py-2"><AgingPill days={lead.days_waiting} /></td>
+              <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
               <td className="px-4 py-2 text-right">
                 <Link
                   href="/admin/scheduler"
@@ -465,6 +534,7 @@ interface Props {
   overdueCustomers: OverdueCustomersResult
   awaitingSfJob: AwaitingSfJobResult
   awaitingPushLeads: AwaitingPushResult
+  notes: Record<string, string>
 }
 
 function SourceBadge({ source }: { source: string | null }) {
@@ -579,6 +649,7 @@ export default function ActionItemsClient({
   overdueCustomers,
   awaitingSfJob,
   awaitingPushLeads,
+  notes,
 }: Props) {
   const router = useRouter()
   const [syncing, setSyncing] = useState(false)
@@ -732,7 +803,7 @@ export default function ActionItemsClient({
         {filteredUnpaid.length === 0 ? (
           <AllClear />
         ) : (
-          <UnpaidJobsTable items={filteredUnpaid} />
+          <UnpaidJobsTable items={filteredUnpaid} notes={notes} />
         )}
       </AlertSection>
 
@@ -751,7 +822,7 @@ export default function ActionItemsClient({
         {filteredUninvoiced.length === 0 ? (
           <AllClear />
         ) : (
-          <UninvoicedJobsTable items={filteredUninvoiced} />
+          <UninvoicedJobsTable items={filteredUninvoiced} notes={notes} />
         )}
       </AlertSection>
 
@@ -770,7 +841,7 @@ export default function ActionItemsClient({
         {staleEstimates.items.length === 0 ? (
           <AllClear />
         ) : (
-          <StaleEstimatesTable items={staleEstimates.items} />
+          <StaleEstimatesTable items={staleEstimates.items} notes={notes} />
         )}
       </AlertSection>
 
@@ -782,7 +853,7 @@ export default function ActionItemsClient({
         {filteredFollowUp.length === 0 ? (
           <AllClear />
         ) : (
-          <FollowUpJobsTable items={filteredFollowUp} />
+          <FollowUpJobsTable items={filteredFollowUp} notes={notes} />
         )}
       </AlertSection>
 
@@ -801,7 +872,7 @@ export default function ActionItemsClient({
         {overdueCustomers.items.length === 0 ? (
           <AllClear />
         ) : (
-          <OverdueCustomersTable items={overdueCustomers.items} />
+          <OverdueCustomersTable items={overdueCustomers.items} notes={notes} />
         )}
       </AlertSection>
 
@@ -813,7 +884,7 @@ export default function ActionItemsClient({
         {awaitingSfJob.items.length === 0 ? (
           <AllClear />
         ) : (
-          <AwaitingSfJobTable items={awaitingSfJob.items} />
+          <AwaitingSfJobTable items={awaitingSfJob.items} notes={notes} />
         )}
       </AlertSection>
 
@@ -825,7 +896,7 @@ export default function ActionItemsClient({
         {awaitingPushLeads.items.length === 0 ? (
           <AllClear />
         ) : (
-          <AwaitingPushTable items={awaitingPushLeads.items} />
+          <AwaitingPushTable items={awaitingPushLeads.items} notes={notes} />
         )}
       </AlertSection>
     </div>
