@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 
-async function requireAdmin() {
+async function requireAdminOrSales() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (profile?.role !== 'admin') return null
+  if (!['admin', 'sales'].includes(profile?.role ?? '')) return null
   return user
 }
 
 export async function POST(req: NextRequest) {
-  const user = await requireAdmin()
+  const user = await requireAdminOrSales()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
