@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
   getUnpaidJobs,
   getUninvoicedJobs,
@@ -24,7 +25,12 @@ export default async function ActionItemsPage() {
 
   if (profile?.role !== 'admin') redirect('/admin')
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, overdueCustomers, awaitingSfJob, awaitingPushLeads] =
+  const db = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, overdueCustomers, awaitingSfJob, awaitingPushLeads, notesResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -33,7 +39,13 @@ export default async function ActionItemsPage() {
       getOverdueCustomers(),
       getAwaitingSfJob(),
       getAwaitingPushLeads(),
+      db.from('action_item_notes').select('entity_type, entity_id, note'),
     ])
+
+  const notes: Record<string, string> = {}
+  for (const n of notesResult.data ?? []) {
+    notes[`${n.entity_type}:${n.entity_id}`] = n.note
+  }
 
   return (
     <ActionItemsClient
@@ -44,6 +56,7 @@ export default async function ActionItemsPage() {
       overdueCustomers={overdueCustomers}
       awaitingSfJob={awaitingSfJob}
       awaitingPushLeads={awaitingPushLeads}
+      notes={notes}
     />
   )
 }
