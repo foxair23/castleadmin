@@ -196,13 +196,13 @@ function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<s
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="payment_status" label="Payment Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -210,13 +210,13 @@ function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<s
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_outstanding} /></td>
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.payment_status ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
-              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -237,12 +237,12 @@ function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: 
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_since_completion" label="Days Since Completion" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Job Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -250,12 +250,12 @@ function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: 
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_since_completion} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(job.total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
-              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -276,11 +276,11 @@ function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: 
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Estimate #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <SortTh col="created_at_sf" label="Created" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -288,11 +288,11 @@ function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: 
             <tr key={est.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{est.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{est.number ?? '—'}</td>
+              <NotesCell entityType="sf_estimate" entityId={est.id} initialNote={notes[`sf_estimate:${est.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(est.created_at_sf)}</td>
               <td className="px-4 py-2"><AgingPill days={est.days_outstanding} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(est.total)}</td>
               <td className="px-4 py-2 text-gray-600">{est.status ?? '—'}</td>
-              <NotesCell entityType="sf_estimate" entityId={est.id} initialNote={notes[`sf_estimate:${est.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -313,13 +313,13 @@ function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Reco
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="start_date" label="Start Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_open" label="Days Open" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">SF Note</th>
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -327,6 +327,7 @@ function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Reco
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.start_date)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_open} /></td>
@@ -335,7 +336,6 @@ function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Reco
               <td className="px-4 py-2 text-gray-600 max-w-xs truncate">
                 {job.note_to_customer || job.tech_notes || '—'}
               </td>
-              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -356,11 +356,11 @@ function OverdueCustomersTable({ items, notes }: { items: OverdueCustomer[]; not
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="account_balance" label="Balance" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <SortTh col="payment_terms" label="Payment Terms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="oldest_overdue_date" label="Oldest Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_overdue" label="Days Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="overdue_invoice_count" label="Invoices" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -368,11 +368,11 @@ function OverdueCustomersTable({ items, notes }: { items: OverdueCustomer[]; not
             <tr key={cust.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{cust.customer_name ?? '—'}</td>
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(cust.account_balance)}</td>
+              <NotesCell entityType="sf_customer" entityId={cust.id} initialNote={notes[`sf_customer:${cust.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">{cust.payment_terms ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(cust.oldest_overdue_date)}</td>
               <td className="px-4 py-2"><AgingPill days={cust.days_overdue} /></td>
               <td className="px-4 py-2 text-gray-600">{cust.overdue_invoice_count}</td>
-              <NotesCell entityType="sf_customer" entityId={cust.id} initialNote={notes[`sf_customer:${cust.id}`] ?? ''} />
             </tr>
           ))}
         </tbody>
@@ -395,11 +395,11 @@ function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; note
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="account_number" label="Account #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <SortTh col="tag_name" label="Tag" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="assigned_rep_name" label="Rep" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Won" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Days waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -408,6 +408,7 @@ function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; note
             <tr key={l.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{l.customer_name ?? '—'}</td>
               <td className="px-4 py-2 font-mono text-xs text-gray-600">{l.account_number ?? '—'}</td>
+              <NotesCell entityType="sales_lead" entityId={l.id} initialNote={notes[`sales_lead:${l.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">
                 {l.tag_name
                   ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{l.tag_name}</span>
@@ -417,7 +418,6 @@ function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; note
               <td className="px-4 py-2 text-gray-600">{l.assigned_rep_name ?? <span className="text-gray-400">Unassigned</span>}</td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(l.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={l.days_waiting} /></td>
-              <NotesCell entityType="sales_lead" entityId={l.id} initialNote={notes[`sales_lead:${l.id}`] ?? ''} />
               <td className="px-4 py-2 text-right">
                 <Link
                   href={`/sales/${l.id}`}
@@ -454,11 +454,11 @@ function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes:
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="sync_status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Days Waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -466,6 +466,7 @@ function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes:
           {sorted.map(lead => (
             <tr key={lead.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{lead.customer_name}</td>
+              <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">
                 {lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}
                 {' — '}
@@ -482,7 +483,6 @@ function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes:
                 </span>
               </td>
               <td className="px-4 py-2"><AgingPill days={lead.days_waiting} /></td>
-              <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
               <td className="px-4 py-2 text-right">
                 <Link
                   href="/admin/scheduler"
