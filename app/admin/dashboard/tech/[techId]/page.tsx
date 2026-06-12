@@ -126,6 +126,8 @@ export default async function TechDetailPage({
     .gte('completed_at', weekStart + 'T00:00:00')
     .lte('completed_at', wkEnd + 'T23:59:59')
     .not('completed_at', 'is', null)
+    .not('customer_id', 'is', null)
+    .neq('customer_id', '')
 
   const weekJobIds = (weekJobs ?? []).map(j => j.id as string)
   const weekJobMap = new Map((weekJobs ?? []).map(j => [j.id as string, j as SfJobRaw]))
