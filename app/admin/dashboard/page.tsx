@@ -141,20 +141,23 @@ export default async function DashboardPage() {
   const currentWeekStart = weekStartStr(new Date())
   const techScoreboard = await getTechScoreboard(db, currentWeekStart)
 
-  // Monthly revenue (sf_invoices_cache, 2025-2026) + tech attribution (piecework)
-  // Invoices are synced without a date filter (full history), unlike sf_jobs which
-  // only keeps a 48-hour updated_date window. Using invoices matches the rest of the
-  // dashboard's revenue metrics.
+  // Monthly revenue (sf_jobs.total, 2025-2026) + tech attribution (piecework)
+  // Query sf_jobs directly (not the view) to avoid the is_closed computed join and
+  // capture all jobs with a close date — invoices are intentionally NOT used here
+  // because not all jobs are invoiced.
   const [
-    { data: monthlyInvoiceData },
+    { data: monthlyJobsData },
     { data: pwJobsForChart },
     { data: techProfilesForChart },
   ] = await Promise.all([
-    db.from('sf_invoices_cache')
-      .select('issued_at, total')
-      .gte('issued_at', '2025-01-01T00:00:00')
-      .lte('issued_at', '2026-12-31T23:59:59')
-      .not('issued_at', 'is', null),
+    db.from('sf_jobs')
+      .select('closed_at, total')
+      .not('closed_at', 'is', null)
+      .not('customer_id', 'is', null)
+      .neq('customer_id', '')
+      .eq('is_deleted', false)
+      .gte('closed_at', '2025-01-01')
+      .lte('closed_at', '2026-12-31'),
     db.from('jobs')
       .select('tech_id, sf_job_id, week_start_date')
       .gte('week_start_date', '2025-01-01')
@@ -165,16 +168,16 @@ export default async function DashboardPage() {
       .eq('is_active', true),
   ])
 
-  // Company monthly revenue aggregated by year-month (invoice issue date)
-  const invoicesByYearMonth: Record<string, number> = {}
-  for (const inv of (monthlyInvoiceData ?? []) as { issued_at?: string | null; total?: number | null }[]) {
-    const ym = inv.issued_at?.slice(0, 7)
-    if (ym) invoicesByYearMonth[ym] = (invoicesByYearMonth[ym] ?? 0) + (inv.total ?? 0)
+  // Company monthly revenue aggregated by year-month (job close date)
+  const jobsByYearMonth: Record<string, number> = {}
+  for (const j of (monthlyJobsData ?? []) as { closed_at?: string | null; total?: number | null }[]) {
+    const ym = j.closed_at?.slice(0, 7)
+    if (ym) jobsByYearMonth[ym] = (jobsByYearMonth[ym] ?? 0) + (j.total ?? 0)
   }
   const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
   const monthlyRevenue = MONTHS_SHORT.map((label, i) => {
     const m = String(i + 1).padStart(2, '0')
-    return { month: label, revenue2025: invoicesByYearMonth[`2025-${m}`] ?? 0, revenue2026: invoicesByYearMonth[`2026-${m}`] ?? 0 }
+    return { month: label, revenue2025: jobsByYearMonth[`2025-${m}`] ?? 0, revenue2026: jobsByYearMonth[`2026-${m}`] ?? 0 }
   })
 
   // Tech monthly revenue — deduplicate sf_job_ids per tech per month
