@@ -8,8 +8,6 @@ function getAdminClient(): SupabaseClient {
   )
 }
 
-function today(): string { return new Date().toISOString().slice(0, 10) }
-
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
 function daysBetween(dateStr: string): number {
@@ -62,42 +60,18 @@ export interface UnpaidJobsResult {
 export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
   const db = getAdminClient()
 
-  // Fetch completed jobs. sf_jobs.due_total is null for most records (not returned
-  // by SF API list endpoint). Determine "unpaid" via sf_invoices.is_paid instead.
-  const { data: completedJobs } = await db
+  const { data } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, closed_at, end_date, total, payment_status, source')
-    .not('end_date', 'is', null)
-    .lte('end_date', today())
-    .gt('total', 0)
-    .not('status', 'in', '("Cancelled","Void","Voided","Open","Pending","Scheduled")')
+    .select('id, number, customer_name, customer_id, closed_at, total, due_total, payment_status, source')
+    .not('closed_at', 'is', null)
+    .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
+    .gt('due_total', 0)
+    .not('status', 'in', '("Cancelled","Void","Voided")')
     .eq('is_deleted', false)
-    .order('end_date', { ascending: true })
-    .limit(2000)
+    .order('closed_at', { ascending: true })
+    .limit(100)
 
-  const allJobs = completedJobs ?? []
-  if (allJobs.length === 0) return { items: [], totalDue: 0 }
-
-  const allJobIds = allJobs.map((j: { id: string }) => j.id)
-
-  // Fetch unpaid invoices for these jobs
-  const { data: unpaidInvoices } = await db
-    .from('sf_invoices')
-    .select('job_id, total')
-    .in('job_id', allJobIds)
-    .eq('is_paid', false)
-    .eq('is_deleted', false)
-    .limit(5000)
-
-  // Sum unpaid invoice totals per job
-  const unpaidByJob = new Map<string, number>()
-  for (const inv of (unpaidInvoices ?? []) as { job_id: string | null; total: number | null }[]) {
-    if (!inv.job_id) continue
-    unpaidByJob.set(inv.job_id, (unpaidByJob.get(inv.job_id) ?? 0) + (inv.total ?? 0))
-  }
-
-  // Keep only jobs that have at least one unpaid invoice
-  const jobs = allJobs.filter((j: { id: string }) => unpaidByJob.has(j.id)).slice(0, 100)
+  const jobs = data ?? []
   const jobIds = jobs.map((j: { id: string }) => j.id)
   const techMap = await fetchTechNamesByJobIds(db, jobIds)
 
@@ -106,28 +80,24 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
     number: string | null
     customer_name: string | null
     customer_id: string | null
-    closed_at: string | null
-    end_date: string | null
+    closed_at: string
     total: number | null
+    due_total: number | null
     payment_status: string | null
     source: string | null
-  }) => {
-    const effectiveDate = j.closed_at ?? j.end_date ?? ''
-    const dueTotal = unpaidByJob.get(j.id) ?? 0
-    return {
-      id: j.id,
-      number: j.number,
-      customer_name: j.customer_name,
-      customer_id: j.customer_id,
-      closed_at: effectiveDate,
-      total: j.total ?? 0,
-      due_total: dueTotal,
-      payment_status: j.payment_status,
-      source: j.source ?? null,
-      tech_names: techMap.get(j.id) ?? [],
-      days_outstanding: daysBetween(effectiveDate),
-    }
-  })
+  }) => ({
+    id: j.id,
+    number: j.number,
+    customer_name: j.customer_name,
+    customer_id: j.customer_id,
+    closed_at: j.closed_at,
+    total: j.total ?? 0,
+    due_total: j.due_total ?? 0,
+    payment_status: j.payment_status,
+    source: j.source ?? null,
+    tech_names: techMap.get(j.id) ?? [],
+    days_outstanding: daysBetween(j.closed_at),
+  }))
 
   const totalDue = items.reduce((s, i) => s + i.due_total, 0)
   return { items, totalDue }
@@ -155,17 +125,17 @@ export interface UninvoicedJobsResult {
 export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   const db = getAdminClient()
 
-  // Fetch completed jobs — use end_date <= today since closed_at is null for most
-  // records (SF API field is completed_date, populated going forward via mapJob fix).
+  // Fetch completed jobs, most recently closed first, then subtract any that have
+  // an invoice. Ordering by closed_at DESC is what surfaces recent uninvoiced jobs —
+  // without it the 5000-row scan returned an arbitrary (old) slice.
   const { data: closedJobs } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, closed_at, end_date, total, source')
-    .not('end_date', 'is', null)
-    .lte('end_date', today())
-    .not('status', 'in', '("Cancelled","Void","Voided","Open","Pending")')
-    .not('customer_id', 'is', null)
-    .neq('customer_id', '')
+    .select('id, number, customer_name, customer_id, closed_at, total, source')
+    .not('closed_at', 'is', null)
+    .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
+    .not('status', 'in', '("Cancelled","Void","Voided")')
     .eq('is_deleted', false)
+    .order('closed_at', { ascending: false })  // most recently completed first
     .limit(5000)
 
   const closed = closedJobs ?? []
@@ -194,24 +164,20 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     number: string | null
     customer_name: string | null
     customer_id: string | null
-    closed_at: string | null
-    end_date: string | null
+    closed_at: string
     total: number | null
     source: string | null
-  }) => {
-    const effectiveDate = j.closed_at ?? j.end_date ?? ''
-    return {
-      id: j.id,
-      number: j.number,
-      customer_name: j.customer_name,
-      customer_id: j.customer_id,
-      closed_at: effectiveDate,
-      total: j.total,
-      source: j.source ?? null,
-      tech_names: techMap.get(j.id) ?? [],
-      days_since_completion: daysBetween(effectiveDate),
-    }
-  })
+  }) => ({
+    id: j.id,
+    number: j.number,
+    customer_name: j.customer_name,
+    customer_id: j.customer_id,
+    closed_at: j.closed_at,
+    total: j.total,
+    source: j.source ?? null,
+    tech_names: techMap.get(j.id) ?? [],
+    days_since_completion: daysBetween(j.closed_at),
+  }))
 
   const totalUninvoiced = items.reduce((s, i) => s + (i.total ?? 0), 0)
   return { items, totalUninvoiced }
@@ -299,7 +265,7 @@ export async function getFollowUpJobs(): Promise<FollowUpJobsResult> {
     .from('sf_jobs')
     .select('id, number, customer_name, customer_id, start_date, status, source, note_to_customer, tech_notes')
     .eq('is_requires_follow_up', true)
-    .not('status', 'in', '("Cancelled","Void","Voided")')
+    .is('closed_at', null)
     .eq('is_deleted', false)
     .order('start_date', { ascending: true })
     .limit(100)
