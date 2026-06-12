@@ -141,6 +141,81 @@ export default async function DashboardPage() {
   const currentWeekStart = weekStartStr(new Date())
   const techScoreboard = await getTechScoreboard(db, currentWeekStart)
 
+  // Monthly revenue (sf_jobs_cache, 2025-2026) + tech attribution (piecework)
+  const [
+    { data: monthlyJobsData },
+    { data: pwJobsForChart },
+    { data: techProfilesForChart },
+  ] = await Promise.all([
+    db.from('sf_jobs_cache')
+      .select('completed_at, total_amount')
+      .eq('is_closed', true)
+      .gte('completed_at', '2025-01-01T00:00:00')
+      .lte('completed_at', '2026-12-31T23:59:59')
+      .not('completed_at', 'is', null)
+      .not('customer_id', 'is', null)
+      .neq('customer_id', ''),
+    db.from('jobs')
+      .select('tech_id, sf_job_id, week_start_date')
+      .gte('week_start_date', '2025-01-01')
+      .not('sf_job_id', 'is', null),
+    db.from('profiles')
+      .select('id, full_name')
+      .eq('role', 'technician')
+      .eq('is_active', true),
+  ])
+
+  // Company monthly revenue aggregated by year-month
+  const sfJobsByYearMonth: Record<string, number> = {}
+  for (const j of (monthlyJobsData ?? []) as { completed_at?: string | null; total_amount?: number | null }[]) {
+    const ym = j.completed_at?.slice(0, 7)
+    if (ym) sfJobsByYearMonth[ym] = (sfJobsByYearMonth[ym] ?? 0) + (j.total_amount ?? 0)
+  }
+  const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const monthlyRevenue = MONTHS_SHORT.map((label, i) => {
+    const m = String(i + 1).padStart(2, '0')
+    return { month: label, revenue2025: sfJobsByYearMonth[`2025-${m}`] ?? 0, revenue2026: sfJobsByYearMonth[`2026-${m}`] ?? 0 }
+  })
+
+  // Tech monthly revenue — deduplicate sf_job_ids per tech per month
+  const chartSfJobIds = [...new Set(
+    (pwJobsForChart ?? []).map((j: { sf_job_id?: string | null }) => j.sf_job_id).filter((id): id is string => !!id)
+  )]
+  const { data: chartSfRevData } = chartSfJobIds.length > 0
+    ? await db.from('sf_jobs_cache').select('id, total_amount').in('id', chartSfJobIds)
+    : { data: [] as { id: string; total_amount: number | null }[] }
+  const chartSfRevMap = new Map((chartSfRevData ?? []).map((j: { id: string; total_amount?: number | null }) => [j.id, (j.total_amount ?? 0) as number]))
+
+  const techNameMap = new Map(
+    (techProfilesForChart ?? []).map((p: { id: string; full_name?: string | null }) => [p.id, p.full_name ?? `Tech ${p.id.slice(0, 8)}`])
+  )
+  const techMonthSfIds: Record<string, Record<string, Set<string>>> = {}
+  for (const job of (pwJobsForChart ?? []) as { tech_id?: string | null; sf_job_id?: string | null; week_start_date?: string | null }[]) {
+    const { tech_id, sf_job_id, week_start_date } = job
+    if (!tech_id || !sf_job_id || !week_start_date) continue
+    const ym = week_start_date.slice(0, 7)
+    if (!techMonthSfIds[tech_id]) techMonthSfIds[tech_id] = {}
+    if (!techMonthSfIds[tech_id][ym]) techMonthSfIds[tech_id][ym] = new Set()
+    techMonthSfIds[tech_id][ym].add(sf_job_id)
+  }
+  const techMonthlyRevenue = Object.entries(techMonthSfIds)
+    .map(([techId, byMonth]) => ({
+      techId,
+      techName: techNameMap.get(techId) ?? `Tech ${techId.slice(0, 8)}`,
+      data: Object.entries(byMonth)
+        .map(([yearMonth, sfIds]) => ({
+          yearMonth,
+          revenue: [...sfIds].reduce((s, id) => s + (chartSfRevMap.get(id) ?? 0), 0),
+        }))
+        .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth)),
+    }))
+    .filter(t => t.data.length > 0)
+    .sort((a, b) => {
+      const totalA = a.data.reduce((s, d) => s + d.revenue, 0)
+      const totalB = b.data.reduce((s, d) => s + d.revenue, 0)
+      return totalB - totalA
+    })
+
   // Pipeline buckets
   const now = Date.now()
   const buckets = { fresh: 0, aging: 0, old: 0, freshValue: 0, agingValue: 0, oldValue: 0 }
@@ -174,6 +249,8 @@ export default async function DashboardPage() {
       annotations={(annotations ?? []) as { id: string; occurred_on: string; title: string; note: string | null }[]}
       backlog={{ count: backlogCount ?? 0 }}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
+      monthlyRevenue={monthlyRevenue}
+      techMonthlyRevenue={techMonthlyRevenue}
     />
   )
 }
