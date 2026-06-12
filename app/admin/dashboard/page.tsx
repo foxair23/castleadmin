@@ -153,10 +153,11 @@ export default async function DashboardPage() {
     db.from('sf_jobs')
       .select('closed_at, end_date, total, status')
       .not('customer_id', 'is', null)
-      .neq('customer_id', '')
       .eq('is_deleted', false)
       .gte('end_date', '2025-01-01')
-      .lte('end_date', '2026-12-31')
+      .lte('end_date', today())
+      .gt('total', 0)
+      .not('status', 'in', '("Cancelled","Void","Voided","Open","Pending","Scheduled")')
       .limit(10000),
     db.from('jobs')
       .select('tech_id, sf_job_id, week_start_date')
@@ -170,12 +171,10 @@ export default async function DashboardPage() {
   ])
 
   // Company monthly revenue aggregated by year-month.
-  // Use closed_at when available (populated after mapJob fix), fall back to end_date.
-  // Filter to closed/completed/invoiced/paid statuses only.
-  const CLOSED_STATUS_RE = /closed|completed|invoiced|paid/i
+  // SQL already excludes Cancelled/Void/Open/Pending/Scheduled and future end_dates.
+  // Bucket by closed_at when set (populated going forward), otherwise end_date.
   const jobsByYearMonth: Record<string, number> = {}
-  for (const j of (monthlyJobsData ?? []) as { closed_at?: string | null; end_date?: string | null; total?: number | null; status?: string | null }[]) {
-    if (!CLOSED_STATUS_RE.test(j.status ?? '')) continue
+  for (const j of (monthlyJobsData ?? []) as { closed_at?: string | null; end_date?: string | null; total?: number | null }[]) {
     const ym = (j.closed_at ?? j.end_date)?.slice(0, 7)
     if (ym) jobsByYearMonth[ym] = (jobsByYearMonth[ym] ?? 0) + (j.total ?? 0)
   }
