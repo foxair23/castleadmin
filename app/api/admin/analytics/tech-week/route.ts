@@ -93,43 +93,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 5. Also include SF jobs completed this week (for techs with no piecework,
-  //    and to count SF-only jobs not yet in piecework).
-  //    Exclude jobs with no customer_id — those are SF internal/template records
-  //    that have no real customer and should not be attributed to technicians.
-  const { data: weekSfJobs } = await db
-    .from('sf_jobs_cache')
-    .select('id, total_amount')
-    .eq('is_closed', true)
-    .gte('completed_at', weekStart + 'T00:00:00')
-    .lte('completed_at', weekEnd + 'T23:59:59')
-    .not('completed_at', 'is', null)
-    .not('customer_id', 'is', null)
-    .neq('customer_id', '')
-
-  const weekSfJobIds = (weekSfJobs ?? []).map(j => j.id as string)
-  const weekSfJobMap = new Map((weekSfJobs ?? []).map(j => [j.id as string, j]))
-
-  if (weekSfJobIds.length > 0) {
-    const { data: assignments } = await db
-      .from('sf_job_techs_cache')
-      .select('sf_job_id, sf_tech_id')
-      .in('sf_job_id', weekSfJobIds)
-
-    for (const a of assignments ?? []) {
-      const sfTechId = a.sf_tech_id as string
-      if (!byTech.has(sfTechId)) byTech.set(sfTechId, { sfJobIds: new Set(), revenue: 0, labor: 0 })
-      const agg = byTech.get(sfTechId)!
-      const jobId = a.sf_job_id as string
-      if (!agg.sfJobIds.has(jobId)) {
-        // Only add jobs not already counted via piecework
-        agg.sfJobIds.add(jobId)
-        agg.revenue += (weekSfJobMap.get(jobId)?.total_amount as number) ?? 0
-      }
-    }
-  }
-
-  // 6. Build result rows
+  // 5. Build result rows
   const rows = Array.from(byTech.entries()).map(([sfTechId, agg]) => {
     const profile = sfIdToProfile.get(sfTechId)
     const bonus = profile?.weekly_bonus ?? 0
