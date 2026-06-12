@@ -62,20 +62,42 @@ export interface UnpaidJobsResult {
 export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
   const db = getAdminClient()
 
-  // sf_jobs.closed_at is null for most records (SF API field is completed_date,
-  // not closed_at). Use end_date <= today as the "job has completed" proxy.
-  const { data } = await db
+  // Fetch completed jobs. sf_jobs.due_total is null for most records (not returned
+  // by SF API list endpoint). Determine "unpaid" via sf_invoices.is_paid instead.
+  const { data: completedJobs } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, closed_at, end_date, total, due_total, payment_status, source')
+    .select('id, number, customer_name, customer_id, closed_at, end_date, total, payment_status, source')
     .not('end_date', 'is', null)
     .lte('end_date', today())
-    .gt('due_total', 0)
-    .not('status', 'in', '("Cancelled","Void","Voided")')
+    .gt('total', 0)
+    .not('status', 'in', '("Cancelled","Void","Voided","Open","Pending","Scheduled")')
     .eq('is_deleted', false)
     .order('end_date', { ascending: true })
-    .limit(100)
+    .limit(2000)
 
-  const jobs = data ?? []
+  const allJobs = completedJobs ?? []
+  if (allJobs.length === 0) return { items: [], totalDue: 0 }
+
+  const allJobIds = allJobs.map((j: { id: string }) => j.id)
+
+  // Fetch unpaid invoices for these jobs
+  const { data: unpaidInvoices } = await db
+    .from('sf_invoices')
+    .select('job_id, total')
+    .in('job_id', allJobIds)
+    .eq('is_paid', false)
+    .eq('is_deleted', false)
+    .limit(5000)
+
+  // Sum unpaid invoice totals per job
+  const unpaidByJob = new Map<string, number>()
+  for (const inv of (unpaidInvoices ?? []) as { job_id: string | null; total: number | null }[]) {
+    if (!inv.job_id) continue
+    unpaidByJob.set(inv.job_id, (unpaidByJob.get(inv.job_id) ?? 0) + (inv.total ?? 0))
+  }
+
+  // Keep only jobs that have at least one unpaid invoice
+  const jobs = allJobs.filter((j: { id: string }) => unpaidByJob.has(j.id)).slice(0, 100)
   const jobIds = jobs.map((j: { id: string }) => j.id)
   const techMap = await fetchTechNamesByJobIds(db, jobIds)
 
@@ -87,11 +109,11 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
     closed_at: string | null
     end_date: string | null
     total: number | null
-    due_total: number | null
     payment_status: string | null
     source: string | null
   }) => {
     const effectiveDate = j.closed_at ?? j.end_date ?? ''
+    const dueTotal = unpaidByJob.get(j.id) ?? 0
     return {
       id: j.id,
       number: j.number,
@@ -99,7 +121,7 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
       customer_id: j.customer_id,
       closed_at: effectiveDate,
       total: j.total ?? 0,
-      due_total: j.due_total ?? 0,
+      due_total: dueTotal,
       payment_status: j.payment_status,
       source: j.source ?? null,
       tech_names: techMap.get(j.id) ?? [],
