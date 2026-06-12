@@ -145,12 +145,32 @@ export default async function TechDetailPage({
       .sort((a, b) => (a.completed_at ?? '').localeCompare(b.completed_at ?? ''))
   }
 
+  // ── Enrich SF-only rows with customer name + job number from sf_jobs ──────
+  // sf_jobs_cache doesn't expose these fields, so fetch them directly.
+  type SfJobMeta = { id: string; number: string | null; customer_name: string | null }
+  const sfJobMetaMap = new Map<string, SfJobMeta>()
+  const sfOnlyIds = sfJobRows.map(j => j.id)
+  if (sfOnlyIds.length > 0) {
+    const { data: sfMeta } = await db
+      .from('sf_jobs')
+      .select('id, number, customer_name')
+      .in('id', sfOnlyIds)
+    for (const m of sfMeta ?? []) {
+      sfJobMetaMap.set(m.id as string, {
+        id: m.id as string,
+        number: m.number as string | null,
+        customer_name: m.customer_name as string | null,
+      })
+    }
+  }
+
   // ── Build unified rows ────────────────────────────────────────────────────
   type UnifiedRow = {
     key: string
     date: string
     sfJobId: string | null
     sfJobNumber: string | null
+    customerName: string | null
     jobName: string | null
     revenue: number | null
     labor: number | null
@@ -164,7 +184,6 @@ export default async function TechDetailPage({
   // First pass: piecework jobs — revenue from sfRevenueById (no date restriction)
   for (const pw of pwJobRows) {
     if (pw.sf_job_id) usedSfIds.add(pw.sf_job_id)
-    // Use the week's SF job for the date; fall back to just having the ID
     const sfInWeek = pw.sf_job_id ? sfJobMap.get(pw.sf_job_id) : undefined
     const revenue = pw.sf_job_id !== null ? (sfRevenueById.get(pw.sf_job_id) ?? null) : null
     rows.push({
@@ -172,6 +191,7 @@ export default async function TechDetailPage({
       date: sfInWeek?.completed_at?.slice(0, 10) ?? pw.work_date,
       sfJobId: pw.sf_job_id,
       sfJobNumber: pw.sf_job_number,
+      customerName: pw.sf_job_id ? (sfJobMetaMap.get(pw.sf_job_id)?.customer_name ?? null) : null,
       jobName: pw.job_name,
       revenue,
       labor: pw.total_pay,
@@ -182,11 +202,13 @@ export default async function TechDetailPage({
   // Second pass: SF jobs with no matching piecework entry
   for (const sf of sfJobRows) {
     if (usedSfIds.has(sf.id)) continue
+    const meta = sfJobMetaMap.get(sf.id)
     rows.push({
       key: sf.id,
       date: sf.completed_at!.slice(0, 10),
       sfJobId: sf.id,
-      sfJobNumber: null,
+      sfJobNumber: meta?.number ?? null,
+      customerName: meta?.customer_name ?? null,
       jobName: null,
       revenue: sf.total_amount ?? null,
       labor: null,
