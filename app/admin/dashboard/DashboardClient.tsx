@@ -378,6 +378,7 @@ export default function DashboardClient({
   const [techWeekRows, setTechWeekRows] = useState<TechWeekRow[] | null>(null)
   const [techWeekLoading, setTechWeekLoading] = useState(false)
   const [techChartYear, setTechChartYear] = useState<2025 | 2026>(new Date().getFullYear() >= 2026 ? 2026 : 2025)
+  const [hiddenRevLines, setHiddenRevLines] = useState<Set<string>>(new Set())
 
   const fetchTechWeek = useCallback(async (wk: string) => {
     setTechWeekLoading(true)
@@ -727,9 +728,24 @@ export default function DashboardClient({
                       width={44}
                     />
                     <Tooltip formatter={(v) => typeof v === 'number' ? fmt$(v) : v} />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="revenue2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} />
-                    <Line type="monotone" dataKey="revenue2026" name="2026" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                      onClick={(e) => {
+                        const key = e.dataKey as string
+                        setHiddenRevLines(prev => {
+                          const next = new Set(prev)
+                          next.has(key) ? next.delete(key) : next.add(key)
+                          return next
+                        })
+                      }}
+                      formatter={(value, entry) => (
+                        <span style={{ color: hiddenRevLines.has((entry as { dataKey?: string }).dataKey ?? '') ? '#d1d5db' : '#374151' }}>
+                          {value}
+                        </span>
+                      )}
+                    />
+                    <Line type="monotone" dataKey="revenue2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenRevLines.has('revenue2025')} />
+                    <Line type="monotone" dataKey="revenue2026" name="2026" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenRevLines.has('revenue2026')} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
