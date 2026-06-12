@@ -367,6 +367,16 @@ export async function POST(req: NextRequest) {
 
   const autoSync = sfSetting?.value === true
   const syncLeadId = leadId!
+
+  // When auto-sync is on, mark the lead approved immediately so the dashboard
+  // shows it in the Approved tab rather than Pending.
+  if (autoSync) {
+    await db
+      .from('scheduler_leads')
+      .update({ status: 'approved', auto_approved: true, approved_at: new Date().toISOString() })
+      .eq('id', syncLeadId)
+  }
+
   const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/scheduler`
 
   const serviceCategoryLabels: Record<string, string> = {
