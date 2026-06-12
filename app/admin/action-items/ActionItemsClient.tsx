@@ -641,6 +641,8 @@ function Spinner() {
   )
 }
 
+type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'followup' | 'overdue' | 'awaiting-sf' | 'awaiting-push'
+
 export default function ActionItemsClient({
   unpaidJobs,
   uninvoicedJobs,
@@ -658,6 +660,7 @@ export default function ActionItemsClient({
   const [sourcesFilter, setSourcesFilter] = useState<string[]>([])
   const [daysFilter, setDaysFilter] = useState<number | null>(null)
   const [daysInput, setDaysInput] = useState('')
+  const [activeTab, setActiveTab] = useState<TabKey>('unpaid')
 
   // '__blank__' is a sentinel for jobs with no source set
   const BLANK = '__blank__'
@@ -763,6 +766,16 @@ export default function ActionItemsClient({
     router.refresh()
   }
 
+  const TABS: { key: TabKey; label: string; count: number }[] = [
+    { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
+    { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
+    { key: 'estimates',    label: 'Stale Estimates',count: filteredStaleEstimates.length },
+    { key: 'followup',     label: 'Follow-Up',      count: filteredFollowUp.length },
+    { key: 'overdue',      label: 'Overdue',        count: filteredOverdueCustomers.length },
+    { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
+    { key: 'awaiting-push',label: 'Awaiting Push',  count: filteredAwaitingPush.length },
+  ]
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       {/* Page header */}
@@ -840,117 +853,115 @@ export default function ActionItemsClient({
         </div>
       </div>
 
-      {/* Alert 1 — Completed but Unpaid */}
-      <AlertSection
-        title="Completed but Unpaid Jobs"
-        count={filteredUnpaid.length}
-        summary={
-          filteredUnpaid.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Total due: <span className="font-semibold text-red-700">{fmtMoney(filteredUnpaid.reduce((s, j) => s + j.due_total, 0))}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {filteredUnpaid.length === 0 ? (
-          <AllClear />
-        ) : (
-          <UnpaidJobsTable items={filteredUnpaid} notes={notes} />
-        )}
-      </AlertSection>
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto pb-px">
+        {TABS.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-px ${
+              activeTab === tab.key
+                ? 'border-red-600 text-red-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {tab.label}
+            <CountBadge count={tab.count} />
+          </button>
+        ))}
+      </div>
 
-      {/* Alert 2 — Never Invoiced */}
-      <AlertSection
-        title="Completed but Never Invoiced"
-        count={filteredUninvoiced.length}
-        summary={
-          filteredUninvoiced.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(filteredUninvoiced.reduce((s, j) => s + (j.total ?? 0), 0))}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {filteredUninvoiced.length === 0 ? (
-          <AllClear />
-        ) : (
-          <UninvoicedJobsTable items={filteredUninvoiced} notes={notes} />
-        )}
-      </AlertSection>
+      {/* Active tab content */}
+      {activeTab === 'unpaid' && (
+        <AlertSection
+          title="Completed but Unpaid Jobs"
+          count={filteredUnpaid.length}
+          summary={
+            filteredUnpaid.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Total due: <span className="font-semibold text-red-700">{fmtMoney(filteredUnpaid.reduce((s, j) => s + j.due_total, 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredUnpaid.length === 0 ? <AllClear /> : <UnpaidJobsTable items={filteredUnpaid} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 3 — Stale Estimates */}
-      <AlertSection
-        title="Stale Estimates (14+ Days)"
-        count={filteredStaleEstimates.length}
-        summary={
-          filteredStaleEstimates.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Pipeline value: <span className="font-semibold text-amber-700">{fmtMoney(filteredStaleEstimates.reduce((s, e) => s + (e.total ?? 0), 0))}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {filteredStaleEstimates.length === 0 ? (
-          <AllClear />
-        ) : (
-          <StaleEstimatesTable items={filteredStaleEstimates} notes={notes} />
-        )}
-      </AlertSection>
+      {activeTab === 'uninvoiced' && (
+        <AlertSection
+          title="Completed but Never Invoiced"
+          count={filteredUninvoiced.length}
+          summary={
+            filteredUninvoiced.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(filteredUninvoiced.reduce((s, j) => s + (j.total ?? 0), 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredUninvoiced.length === 0 ? <AllClear /> : <UninvoicedJobsTable items={filteredUninvoiced} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 4 — Follow-Up Required */}
-      <AlertSection
-        title="Jobs Flagged for Follow-Up"
-        count={filteredFollowUp.length}
-      >
-        {filteredFollowUp.length === 0 ? (
-          <AllClear />
-        ) : (
-          <FollowUpJobsTable items={filteredFollowUp} notes={notes} />
-        )}
-      </AlertSection>
+      {activeTab === 'estimates' && (
+        <AlertSection
+          title="Stale Estimates (14+ Days)"
+          count={filteredStaleEstimates.length}
+          summary={
+            filteredStaleEstimates.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Pipeline value: <span className="font-semibold text-amber-700">{fmtMoney(filteredStaleEstimates.reduce((s, e) => s + (e.total ?? 0), 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredStaleEstimates.length === 0 ? <AllClear /> : <StaleEstimatesTable items={filteredStaleEstimates} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 5 — Overdue Customers */}
-      <AlertSection
-        title="Customers Overdue Past Payment Terms"
-        count={filteredOverdueCustomers.length}
-        summary={
-          filteredOverdueCustomers.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Total overdue: <span className="font-semibold text-red-700">{fmtMoney(filteredOverdueCustomers.reduce((s, c) => s + (c.account_balance ?? 0), 0))}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {filteredOverdueCustomers.length === 0 ? (
-          <AllClear />
-        ) : (
-          <OverdueCustomersTable items={filteredOverdueCustomers} notes={notes} />
-        )}
-      </AlertSection>
+      {activeTab === 'followup' && (
+        <AlertSection
+          title="Jobs Flagged for Follow-Up"
+          count={filteredFollowUp.length}
+        >
+          {filteredFollowUp.length === 0 ? <AllClear /> : <FollowUpJobsTable items={filteredFollowUp} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 6 — Closed Won Awaiting SF Job */}
-      <AlertSection
-        title="Closed Won — Awaiting SF Job"
-        count={filteredAwaitingSfJob.length}
-      >
-        {filteredAwaitingSfJob.length === 0 ? (
-          <AllClear />
-        ) : (
-          <AwaitingSfJobTable items={filteredAwaitingSfJob} notes={notes} />
-        )}
-      </AlertSection>
+      {activeTab === 'overdue' && (
+        <AlertSection
+          title="Customers Overdue Past Payment Terms"
+          count={filteredOverdueCustomers.length}
+          summary={
+            filteredOverdueCustomers.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Total overdue: <span className="font-semibold text-red-700">{fmtMoney(filteredOverdueCustomers.reduce((s, c) => s + (c.account_balance ?? 0), 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredOverdueCustomers.length === 0 ? <AllClear /> : <OverdueCustomersTable items={filteredOverdueCustomers} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 7 — Scheduler Leads Awaiting Manual SF Push */}
-      <AlertSection
-        title="Scheduler Leads — Awaiting SF Push"
-        count={filteredAwaitingPush.length}
-      >
-        {filteredAwaitingPush.length === 0 ? (
-          <AllClear />
-        ) : (
-          <AwaitingPushTable items={filteredAwaitingPush} notes={notes} />
-        )}
-      </AlertSection>
+      {activeTab === 'awaiting-sf' && (
+        <AlertSection
+          title="Closed Won — Awaiting SF Job"
+          count={filteredAwaitingSfJob.length}
+        >
+          {filteredAwaitingSfJob.length === 0 ? <AllClear /> : <AwaitingSfJobTable items={filteredAwaitingSfJob} notes={notes} />}
+        </AlertSection>
+      )}
+
+      {activeTab === 'awaiting-push' && (
+        <AlertSection
+          title="Scheduler Leads — Awaiting SF Push"
+          count={filteredAwaitingPush.length}
+        >
+          {filteredAwaitingPush.length === 0 ? <AllClear /> : <AwaitingPushTable items={filteredAwaitingPush} notes={notes} />}
+        </AlertSection>
+      )}
     </div>
   )
 }
