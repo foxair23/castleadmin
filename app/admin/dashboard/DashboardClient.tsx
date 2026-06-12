@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import {
   ResponsiveContainer,
   LineChart,
+  BarChart,
+  Bar,
   Line,
   XAxis,
   YAxis,
@@ -50,6 +52,8 @@ interface Props {
   annotations: { id: string; occurred_on: string; title: string; note: string | null }[]
   backlog: { count: number }
   lastSync: { sync_type: string; completed_at: string; records_synced: number } | null
+  monthlyRevenue: { month: string; revenue2025: number; revenue2026: number }[]
+  techMonthlyRevenue: { techId: string; techName: string; data: { yearMonth: string; revenue: number }[] }[]
 }
 
 const fmt$ = (n: number) =>
@@ -346,6 +350,9 @@ function BackfillModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+const TECH_COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6']
+const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
 export default function DashboardClient({
   hasData,
   snapshotMetrics,
@@ -358,6 +365,8 @@ export default function DashboardClient({
   annotations,
   backlog,
   lastSync,
+  monthlyRevenue,
+  techMonthlyRevenue,
 }: Props) {
   const router = useRouter()
   const [syncing, setSyncing] = useState(false)
@@ -368,6 +377,8 @@ export default function DashboardClient({
   const [techWeekStart, setTechWeekStart] = useState(weekOptions[0])
   const [techWeekRows, setTechWeekRows] = useState<TechWeekRow[] | null>(null)
   const [techWeekLoading, setTechWeekLoading] = useState(false)
+  const [techChartYear, setTechChartYear] = useState<2025 | 2026>(new Date().getFullYear() >= 2026 ? 2026 : 2025)
+  const [hiddenRevLines, setHiddenRevLines] = useState<Set<string>>(new Set())
 
   const fetchTechWeek = useCallback(async (wk: string) => {
     setTechWeekLoading(true)
@@ -702,7 +713,97 @@ export default function DashboardClient({
             </div>
           </div>
 
-          {/* Section 3 — Capacity Indicators */}
+          {/* Section 3 — Monthly Revenue */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 mb-2">Monthly Revenue</h2>
+            <div className="bg-white border border-gray-200 rounded-lg p-4">
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={monthlyRevenue} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} />
+                    <YAxis
+                      tick={{ fontSize: 10 }}
+                      tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
+                      width={44}
+                    />
+                    <Tooltip formatter={(v) => typeof v === 'number' ? fmt$(v) : v} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                      onClick={(e) => {
+                        const key = e.dataKey as string
+                        setHiddenRevLines(prev => {
+                          const next = new Set(prev)
+                          next.has(key) ? next.delete(key) : next.add(key)
+                          return next
+                        })
+                      }}
+                      formatter={(value, entry) => (
+                        <span style={{ color: hiddenRevLines.has((entry as { dataKey?: string }).dataKey ?? '') ? '#d1d5db' : '#374151' }}>
+                          {value}
+                        </span>
+                      )}
+                    />
+                    <Line type="monotone" dataKey="revenue2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenRevLines.has('revenue2025')} />
+                    <Line type="monotone" dataKey="revenue2026" name="2026" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenRevLines.has('revenue2026')} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4 — Revenue by Tech */}
+          {techMonthlyRevenue.length > 0 && (() => {
+            const techBarData = MONTH_LABELS.map((label, i) => {
+              const ym = `${techChartYear}-${String(i + 1).padStart(2, '0')}`
+              const row: Record<string, number | string> = { month: label }
+              for (const tech of techMonthlyRevenue) {
+                const entry = tech.data.find(d => d.yearMonth === ym)
+                row[tech.techName] = entry?.revenue ?? 0
+              }
+              return row
+            })
+            return (
+              <div>
+                <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                  <h2 className="text-sm font-semibold text-gray-700">Revenue by Tech</h2>
+                  <div className="flex gap-1">
+                    {([2025, 2026] as const).map(y => (
+                      <button
+                        key={y}
+                        onClick={() => setTechChartYear(y)}
+                        className={`px-3 py-1 text-xs rounded-full font-medium transition-colors ${techChartYear === y ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        {y}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={techBarData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} />
+                        <YAxis
+                          tick={{ fontSize: 10 }}
+                          tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
+                          width={44}
+                        />
+                        <Tooltip formatter={(v) => typeof v === 'number' ? fmt$(v) : v} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        {techMonthlyRevenue.map((tech, i) => (
+                          <Bar key={tech.techId} dataKey={tech.techName} fill={TECH_COLORS[i % TECH_COLORS.length]} radius={[2, 2, 0, 0]} />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Section 5 — Capacity Indicators */}
           <div>
             <h2 className="text-sm font-semibold text-gray-700 mb-2">Capacity Indicators</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -818,7 +919,7 @@ export default function DashboardClient({
             </div>
           </div>
 
-          {/* Section 4 — Tech Scoreboard */}
+          {/* Section 6 — Tech Scoreboard */}
           <div>
             <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
               <h2 className="text-sm font-semibold text-gray-700">Tech Scoreboard</h2>
@@ -900,7 +1001,7 @@ export default function DashboardClient({
             </Card>
           </div>
 
-          {/* Section 5 — Pipeline */}
+          {/* Section 7 — Pipeline */}
           <div>
             <h2 className="text-sm font-semibold text-gray-700 mb-2">Pipeline</h2>
             <div className="grid grid-cols-3 gap-3">
@@ -925,7 +1026,7 @@ export default function DashboardClient({
             </p>
           </div>
 
-          {/* Section 6 — Annotations Manager */}
+          {/* Section 8 — Annotations Manager */}
           <div>
             <h2 className="text-sm font-semibold text-gray-700 mb-2">Annotations</h2>
             <Card>
