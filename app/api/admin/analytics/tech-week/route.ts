@@ -94,9 +94,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 5. Also include SF jobs completed this week (for techs with no piecework,
-  //    and to count SF-only jobs not yet in piecework).
-  //    Exclude jobs with no customer_id — those are SF internal/template records
-  //    that have no real customer and should not be attributed to technicians.
+  //    and to count SF-only jobs not yet in piecework)
   const { data: weekSfJobs } = await db
     .from('sf_jobs_cache')
     .select('id, total_amount')
@@ -104,8 +102,6 @@ export async function GET(req: NextRequest) {
     .gte('completed_at', weekStart + 'T00:00:00')
     .lte('completed_at', weekEnd + 'T23:59:59')
     .not('completed_at', 'is', null)
-    .not('customer_id', 'is', null)
-    .neq('customer_id', '')
 
   const weekSfJobIds = (weekSfJobs ?? []).map(j => j.id as string)
   const weekSfJobMap = new Map((weekSfJobs ?? []).map(j => [j.id as string, j]))
