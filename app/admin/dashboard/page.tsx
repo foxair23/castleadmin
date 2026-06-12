@@ -157,11 +157,13 @@ export default async function DashboardPage() {
       .neq('customer_id', '')
       .eq('is_deleted', false)
       .gte('closed_at', '2025-01-01')
-      .lte('closed_at', '2026-12-31'),
+      .lte('closed_at', '2026-12-31')
+      .limit(10000),
     db.from('jobs')
       .select('tech_id, sf_job_id, week_start_date')
       .gte('week_start_date', '2025-01-01')
-      .not('sf_job_id', 'is', null),
+      .not('sf_job_id', 'is', null)
+      .limit(10000),
     db.from('profiles')
       .select('id, full_name')
       .eq('role', 'technician')
@@ -185,7 +187,7 @@ export default async function DashboardPage() {
     (pwJobsForChart ?? []).map((j: { sf_job_id?: string | null }) => j.sf_job_id).filter((id): id is string => !!id)
   )]
   const { data: chartSfRevData } = chartSfJobIds.length > 0
-    ? await db.from('sf_jobs_cache').select('id, total_amount').in('id', chartSfJobIds)
+    ? await db.from('sf_jobs_cache').select('id, total_amount').in('id', chartSfJobIds).limit(10000)
     : { data: [] as { id: string; total_amount: number | null }[] }
   const chartSfRevMap = new Map((chartSfRevData ?? []).map((j: { id: string; total_amount?: number | null }) => [j.id, (j.total_amount ?? 0) as number]))
 
