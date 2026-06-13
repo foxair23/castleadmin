@@ -86,6 +86,7 @@ export async function GET() {
     d.from('sf_jobs')
       .select('closed_at, end_date, start_date, total, status, is_deleted')
       .or('end_date.gte.2025-01-01,closed_at.gte.2025-01-01')
+      .order('id', { ascending: true })  // stable order — without it .range() pages skip/dupe rows
       .range(from, to)
   , db)
 
@@ -122,6 +123,7 @@ export async function GET() {
     d.from('sf_invoices')
       .select('date, total, is_paid, is_deleted')
       .gte('date', '2025-01-01')
+      .order('id', { ascending: true })  // stable order — without it .range() pages skip/dupe rows
       .range(from, to)
   , db)
   const liveInv = invoices.filter(i => !i.is_deleted)
