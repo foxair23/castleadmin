@@ -148,6 +148,8 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   // paginate with a stable order('id') because PostgREST caps any single response
   // at 1000 rows — a plain .limit(5000) silently returned only 1000 invoices, so
   // recently-invoiced jobs were wrongly flagged as never invoiced.
+  const oneYearAgo = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10)
+
   const closed = await fetchAll<{
     id: string; number: string | null; customer_name: string | null
     customer_id: string | null; closed_at: string; total: number | null; source: string | null
@@ -155,7 +157,7 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     db.from('sf_jobs')
       .select('id, number, customer_name, customer_id, closed_at, total, source')
       .not('closed_at', 'is', null)
-      .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
+      .gte('closed_at', oneYearAgo)
       .not('status', 'in', '("Cancelled","Void","Voided")')
       .eq('is_deleted', false)
       .order('id', { ascending: true })
