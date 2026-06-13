@@ -41,7 +41,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { action, entity } = body as { action: string; entity?: string; days?: number; entities?: string[] }
+    const { action, entity } = body as {
+      action: string; entity?: string; days?: number; entities?: string[]
+      skipExpand?: boolean; concurrency?: number
+    }
 
     let counts: Record<string, number>
 
@@ -62,7 +65,14 @@ export async function POST(req: NextRequest) {
       counts = await runIncrementalSync()
     } else if (action === 'reconcile') {
       if (entity) {
-        counts = { [entity]: await runWeeklyReconcileForEntity(entity) }
+        // skipExpand re-pulls main job fields only (fast — fits in 300s) which is
+        // all that's needed to backfill closed_at; concurrency fetches pages in
+        // parallel to beat SF API latency.
+        const opts = {
+          skipExpand: body.skipExpand === true,
+          concurrency: typeof body.concurrency === 'number' ? body.concurrency : 1,
+        }
+        counts = { [entity]: await runWeeklyReconcileForEntity(entity, opts) }
       } else {
         counts = await runWeeklyReconcile()
       }
