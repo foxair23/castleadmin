@@ -141,24 +141,27 @@ export default async function DashboardPage() {
   const currentWeekStart = weekStartStr(new Date())
   const techScoreboard = await getTechScoreboard(db, currentWeekStart)
 
-  // Monthly revenue (sf_jobs.total, 2025-2026) + tech attribution (piecework)
-  // Query sf_jobs directly (not the view) to avoid the is_closed computed join and
-  // capture all jobs with a close date — invoices are intentionally NOT used here
-  // because not all jobs are invoiced.
+  // Monthly revenue (sf_jobs.total bucketed by closed_at, 2025-2026) + tech
+  // attribution (piecework). We bucket by closed_at (the SF completion date) — NOT
+  // end_date, which is null for ~99.8% of jobs — and paginate because PostgREST
+  // hard-caps any single response at 1000 rows regardless of .limit(). Invoices are
+  // intentionally NOT used here because the figure tracks total job revenue.
   const [
-    { data: monthlyJobsData },
+    monthlyJobsData,
     { data: pwJobsForChart },
     { data: techProfilesForChart },
   ] = await Promise.all([
-    db.from('sf_jobs')
-      .select('closed_at, end_date, total, status')
-      .not('customer_id', 'is', null)
-      .eq('is_deleted', false)
-      .gte('end_date', '2025-01-01')
-      .lte('end_date', today())
-      .gt('total', 0)
-      .not('status', 'in', '("Cancelled","Void","Voided","Open","Pending","Scheduled")')
-      .limit(10000),
+    fetchAllRows<{ closed_at: string | null; total: number | null; status: string | null }>((from, to) =>
+      db.from('sf_jobs')
+        .select('closed_at, total, status')
+        .eq('is_deleted', false)
+        .not('closed_at', 'is', null)
+        .gte('closed_at', '2025-01-01')
+        .lte('closed_at', '2026-12-31')
+        .gt('total', 0)
+        .not('status', 'in', '("Cancelled","Void","Voided")')
+        .range(from, to)
+    ),
     db.from('jobs')
       .select('tech_id, sf_job_id, week_start_date')
       .gte('week_start_date', '2025-01-01')
@@ -170,12 +173,11 @@ export default async function DashboardPage() {
       .eq('is_active', true),
   ])
 
-  // Company monthly revenue aggregated by year-month.
-  // SQL already excludes Cancelled/Void/Open/Pending/Scheduled and future end_dates.
-  // Bucket by closed_at when set (populated going forward), otherwise end_date.
+  // Company monthly revenue aggregated by year-month of closed_at.
+  // (Cancelled/Void already excluded in SQL; closed_at is validated >= 2025 there.)
   const jobsByYearMonth: Record<string, number> = {}
-  for (const j of (monthlyJobsData ?? []) as { closed_at?: string | null; end_date?: string | null; total?: number | null }[]) {
-    const ym = (j.closed_at ?? j.end_date)?.slice(0, 7)
+  for (const j of monthlyJobsData) {
+    const ym = j.closed_at?.slice(0, 7)
     if (ym) jobsByYearMonth[ym] = (jobsByYearMonth[ym] ?? 0) + (j.total ?? 0)
   }
   const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -260,6 +262,24 @@ export default async function DashboardPage() {
       techMonthlyRevenue={techMonthlyRevenue}
     />
   )
+}
+
+// Paginate past PostgREST's 1000-row hard cap. `build` receives a [from, to]
+// inclusive range and must return a PostgREST query for that slice.
+async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>
+): Promise<T[]> {
+  const PAGE = 1000
+  const out: T[] = []
+  let from = 0
+  for (;;) {
+    const { data } = await build(from, from + PAGE - 1)
+    const rows = data ?? []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10) }
