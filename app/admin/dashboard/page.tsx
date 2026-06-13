@@ -21,27 +21,38 @@ export default async function DashboardPage() {
   const { count } = await db.from('sf_jobs_cache').select('id', { count: 'exact', head: true })
   const hasData = (count ?? 0) > 0
 
+  // Row-set queries paginate via fetchAllRows (stable order('id')) so 90-day
+  // windows and unbounded lists aren't truncated at PostgREST's 1000-row cap.
+  // The JS aggregation below (daily/weekly grouping, rolling averages) is
+  // order-independent, so ordering by id only serves stable pagination.
   const [
-    { data: recentInvoices },
+    recentInvoices,
     { count: openJobsCount },
-    { data: openEstimates },
-    { data: arData },
-    { data: revenueDays },
-    { data: completedJobs },
-    { data: capacityJobs },
-    { data: schedHistory },
+    openEstimates,
+    arData,
+    revenueDays,
+    completedJobs,
+    capacityJobs,
+    schedHistory,
     { data: annotations },
     { count: backlogCount },
     { data: lastSyncLog },
   ] = await Promise.all([
-    db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)),
+    fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
+      db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
     db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false),
-    db.from('sf_estimates_cache').select('id, total, status').not('status', 'in', '("accepted","declined","Accepted","Declined")'),
-    db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0),
-    db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('issued_at'),
-    db.from('sf_jobs_cache').select('completed_at').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null),
-    db.from('sf_jobs_cache').select('completed_at, original_scheduled_at').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).not('original_scheduled_at', 'is', null),
-    db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at').gte('observed_at', daysAgo(90)).order('observed_at'),
+    fetchAllRows<{ id: string; total: number | null; status: string | null; created_at_sf: string | null }>((f, t) =>
+      db.from('sf_estimates_cache').select('id, total, status, created_at_sf').not('status', 'in', '("accepted","declined","Accepted","Declined")').order('id', { ascending: true }).range(f, t)),
+    fetchAllRows<{ balance_due: number | null }>((f, t) =>
+      db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0).order('id', { ascending: true }).range(f, t)),
+    fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
+      db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
+    fetchAllRows<{ completed_at: string | null }>((f, t) =>
+      db.from('sf_jobs_cache').select('completed_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).order('id', { ascending: true }).range(f, t)),
+    fetchAllRows<{ completed_at: string | null; original_scheduled_at: string | null }>((f, t) =>
+      db.from('sf_jobs_cache').select('completed_at, original_scheduled_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).not('original_scheduled_at', 'is', null).order('id', { ascending: true }).range(f, t)),
+    fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null }>((f, t) =>
+      db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, id').gte('observed_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
     db.from('dashboard_annotations').select('*').order('occurred_on'),
     db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('scheduled_at', today()).lte('scheduled_at', daysAgo(-7)),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
@@ -249,6 +260,22 @@ export default async function DashboardPage() {
       techMonthlyRevenue={techMonthlyRevenue}
     />
   )
+}
+
+async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>
+): Promise<T[]> {
+  const PAGE = 1000
+  const out: T[] = []
+  let from = 0
+  for (;;) {
+    const { data } = await build(from, from + PAGE - 1)
+    const rows = data ?? []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10) }

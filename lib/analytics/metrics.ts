@@ -1,5 +1,23 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 
+// Paginate past PostgREST's 1000-row response cap. `build` receives an inclusive
+// [from, to] range and must apply a stable .order() so pages don't skip/dupe.
+async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>
+): Promise<T[]> {
+  const PAGE = 1000
+  const out: T[] = []
+  let from = 0
+  for (;;) {
+    const { data } = await build(from, from + PAGE - 1)
+    const rows = data ?? []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
 // Helper: date string YYYY-MM-DD for N days ago
 function daysAgo(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10)
@@ -249,25 +267,31 @@ export async function getTechScoreboard(db: SupabaseClient, weekStart: string) {
     if (p.sf_technician_id) nameMap.set(String(p.sf_technician_id), p.full_name)
   }
 
-  // Fetch closed jobs in the relevant window
-  const { data: jobs } = await db
-    .from('sf_jobs_cache')
-    .select('id, total_amount, completed_at')
-    .eq('is_closed', true)
-    .gte('completed_at', baselineFrom)
-    .lte('completed_at', weekEndStr)
-    .not('completed_at', 'is', null)
+  // Fetch closed jobs in the relevant window (paginate past the 1000-row cap —
+  // a 12-week baseline window can exceed it).
+  const jobs = await fetchAllRows<{ id: string; total_amount: number | null; completed_at: string }>((f, t) =>
+    db.from('sf_jobs_cache')
+      .select('id, total_amount, completed_at')
+      .eq('is_closed', true)
+      .gte('completed_at', baselineFrom)
+      .lte('completed_at', weekEndStr)
+      .not('completed_at', 'is', null)
+      .order('id', { ascending: true })
+      .range(f, t))
 
-  if (!jobs || jobs.length === 0) return []
+  if (jobs.length === 0) return []
 
-  const jobIds = jobs.map(j => j.id as string)
-  const jobMap = new Map(jobs.map(j => [j.id as string, j]))
+  const jobIds = jobs.map(j => j.id)
+  const jobMap = new Map(jobs.map(j => [j.id, j]))
 
-  // Fetch tech assignments for those jobs
-  const { data: assignments } = await db
-    .from('sf_job_techs_cache')
-    .select('sf_job_id, sf_tech_id')
-    .in('sf_job_id', jobIds)
+  // Fetch tech assignments for those jobs (also paginated — multiple techs per
+  // job means this can exceed 1000 even when jobs does not).
+  const assignments = await fetchAllRows<{ sf_job_id: string; sf_tech_id: string }>((f, t) =>
+    db.from('sf_job_techs_cache')
+      .select('sf_job_id, sf_tech_id')
+      .in('sf_job_id', jobIds)
+      .order('id', { ascending: true })
+      .range(f, t))
 
   // Aggregate
   const weekByTech: Record<string, { jobs: number; revenue: number }> = {}
