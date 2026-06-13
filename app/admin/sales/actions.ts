@@ -64,6 +64,7 @@ export async function saveCampaignAssignment(campaignId: string, userId: string 
   if (userId) {
     let count = 0
     if (moveExisting) {
+      // 1. Reassign any existing leads for this campaign to the new rep.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (database as any)
         .from('sales_leads')
@@ -71,6 +72,58 @@ export async function saveCampaignAssignment(campaignId: string, userId: string 
         .eq('mailchimp_campaign_id', campaignId)
         .select('id, customer_id', { count: 'exact' })
       count = result.count ?? 0
+
+      // 2. Create leads from mc_campaign_engagement records that pre-date this
+      //    assignment. When a sync runs before a rep is assigned, engagements are
+      //    stored in mc_campaign_engagement but sales_leads are intentionally skipped.
+      //    Converting them here ensures the rep sees those leads without needing a
+      //    manual re-sync.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const [{ data: campaign }, { data: engagements }] = await Promise.all([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (database as any)
+          .from('mc_campaigns')
+          .select('tag_name')
+          .eq('mailchimp_campaign_id', campaignId)
+          .single(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (database as any)
+          .from('mc_campaign_engagement')
+          .select('customer_id, open_count, click_count, first_opened_at, last_opened_at')
+          .eq('mailchimp_campaign_id', campaignId)
+          .not('customer_id', 'is', null),
+      ])
+      const tagName = (campaign as any)?.tag_name ?? null
+      const engRows = ((engagements ?? []) as {
+        customer_id: string
+        open_count: number | null
+        click_count: number | null
+        first_opened_at: string | null
+        last_opened_at: string | null
+      }[]).map(eng => ({
+        customer_id: eng.customer_id,
+        mailchimp_campaign_id: campaignId,
+        tag_name: tagName,
+        status: 'New',
+        assigned_to_user_id: userId,
+        assigned_at: now,
+        assigned_by_user_id: adminId,
+        open_count: eng.open_count,
+        click_count: eng.click_count,
+        first_opened_at: eng.first_opened_at,
+        last_opened_at: eng.last_opened_at,
+        last_activity_at: eng.last_opened_at ?? now,
+        deleted_at: null,
+      }))
+      // Insert only — don't overwrite status/notes on leads that already exist.
+      for (let i = 0; i < engRows.length; i += 500) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (database as any)
+          .from('sales_leads')
+          .upsert(engRows.slice(i, i + 500), { onConflict: 'customer_id,mailchimp_campaign_id', ignoreDuplicates: true })
+      }
+      count = Math.max(count, engRows.length)
+
       if (count > 0) {
         await notifyRepOfAssignment({
           database,
