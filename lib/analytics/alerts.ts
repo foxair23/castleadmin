@@ -14,6 +14,25 @@ function daysBetween(dateStr: string): number {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000)
 }
 
+// Fetch every matching row past PostgREST's 1000-row response cap. `build`
+// receives an inclusive [from, to] range and must apply a stable .order() so
+// pages don't skip or duplicate rows.
+async function fetchAll<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>
+): Promise<T[]> {
+  const PAGE = 1000
+  const out: T[] = []
+  let from = 0
+  for (;;) {
+    const { data } = await build(from, from + PAGE - 1)
+    const rows = data ?? []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
 async function fetchTechNamesByJobIds(
   db: SupabaseClient,
   jobIds: string[]
@@ -125,36 +144,39 @@ export interface UninvoicedJobsResult {
 export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   const db = getAdminClient()
 
-  // Fetch completed jobs, most recently closed first, then subtract any that have
-  // an invoice. Ordering by closed_at DESC is what surfaces recent uninvoiced jobs —
-  // without it the 5000-row scan returned an arbitrary (old) slice.
-  const { data: closedJobs } = await db
-    .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, closed_at, total, source')
-    .not('closed_at', 'is', null)
-    .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
-    .not('status', 'in', '("Cancelled","Void","Voided")')
-    .eq('is_deleted', false)
-    .order('closed_at', { ascending: false })  // most recently completed first
-    .limit(5000)
-
-  const closed = closedJobs ?? []
+  // Fetch ALL completed jobs and ALL invoice job_ids, then subtract. Both queries
+  // paginate with a stable order('id') because PostgREST caps any single response
+  // at 1000 rows — a plain .limit(5000) silently returned only 1000 invoices, so
+  // recently-invoiced jobs were wrongly flagged as never invoiced.
+  const closed = await fetchAll<{
+    id: string; number: string | null; customer_name: string | null
+    customer_id: string | null; closed_at: string; total: number | null; source: string | null
+  }>((from, to) =>
+    db.from('sf_jobs')
+      .select('id, number, customer_name, customer_id, closed_at, total, source')
+      .not('closed_at', 'is', null)
+      .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
+      .not('status', 'in', '("Cancelled","Void","Voided")')
+      .eq('is_deleted', false)
+      .order('id', { ascending: true })
+      .range(from, to)
+  )
   if (closed.length === 0) return { items: [], totalUninvoiced: 0 }
 
-  // Fetch all invoice job_ids
-  const { data: invoices } = await db
-    .from('sf_invoices')
-    .select('job_id')
-    .not('job_id', 'is', null)
-    .eq('is_deleted', false)
-    .limit(5000)
+  const invoiceRows = await fetchAll<{ job_id: string | null }>((from, to) =>
+    db.from('sf_invoices')
+      .select('job_id')
+      .not('job_id', 'is', null)
+      .eq('is_deleted', false)
+      .order('id', { ascending: true })
+      .range(from, to)
+  )
+  const invoicedJobIds = new Set(invoiceRows.map(inv => inv.job_id).filter(Boolean))
 
-  const invoicedJobIds = new Set((invoices ?? []).map((inv: { job_id: string | null }) => inv.job_id).filter(Boolean))
-
-  // Subtract in JS
-  const uninvoiced = closed.filter((j: { id: string }) => !invoicedJobIds.has(j.id))
-
-  // Limit to 100
+  // Keep jobs with no invoice, newest completion first, cap at 100.
+  const uninvoiced = closed
+    .filter(j => !invoicedJobIds.has(j.id))
+    .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
   const limited = uninvoiced.slice(0, 100)
   const jobIds = limited.map((j: { id: string }) => j.id)
   const techMap = await fetchTechNamesByJobIds(db, jobIds)
@@ -414,16 +436,17 @@ export async function getOverdueCustomers(): Promise<OverdueCustomersResult> {
 
   const customerIds = custList.map((c: { id: string }) => c.id)
 
-  // 2. Fetch unpaid invoices for those customers
-  const { data: invoices } = await db
-    .from('sf_invoices')
-    .select('id, customer_id, date, payment_terms, total')
-    .in('customer_id', customerIds)
-    .eq('is_paid', false)
-    .eq('is_deleted', false)
-    .limit(2000)
-
-  const invList = invoices ?? []
+  // 2. Fetch unpaid invoices for those customers (paginate past the 1000-row cap
+  //    so customers with many unpaid invoices aren't undercounted).
+  const invList = await fetchAll<{ customer_id: string; date: string; payment_terms: string | null; total: number | null }>((from, to) =>
+    db.from('sf_invoices')
+      .select('id, customer_id, date, payment_terms, total')
+      .in('customer_id', customerIds)
+      .eq('is_paid', false)
+      .eq('is_deleted', false)
+      .order('id', { ascending: true })
+      .range(from, to)
+  )
   const now = Date.now()
 
   // Group invoices by customer_id
