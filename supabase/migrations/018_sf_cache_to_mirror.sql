@@ -8,18 +8,31 @@
 -- changes to app/admin/dashboard or lib/analytics are needed.
 -- ============================================================
 
--- Drop old Phase 1 cache tables/views (handles both table and view in case of a
--- partial prior run — DROP TABLE errors on views with 42809; DROP VIEW first).
-drop view  if exists public.sf_customers_cache  cascade;
-drop view  if exists public.sf_jobs_cache        cascade;
-drop view  if exists public.sf_job_techs_cache   cascade;
-drop view  if exists public.sf_estimates_cache   cascade;
-drop view  if exists public.sf_invoices_cache    cascade;
-drop table if exists public.sf_customers_cache   cascade;
-drop table if exists public.sf_jobs_cache        cascade;
-drop table if exists public.sf_job_techs_cache   cascade;
-drop table if exists public.sf_estimates_cache   cascade;
-drop table if exists public.sf_invoices_cache    cascade;
+-- Drop old Phase 1 cache objects, whichever kind each one is. A plain
+-- `drop view if exists <table>` raises 42809 ("is not a view") because IF EXISTS
+-- only suppresses "does not exist", not a type mismatch — so we inspect pg_class
+-- and issue the matching DROP for each object (table 'r' / view 'v' / matview 'm').
+do $$
+declare
+  obj   text;
+  kind  "char";
+begin
+  foreach obj in array array[
+    'sf_customers_cache', 'sf_jobs_cache', 'sf_job_techs_cache',
+    'sf_estimates_cache', 'sf_invoices_cache'
+  ]
+  loop
+    select c.relkind into kind
+    from   pg_class c
+    join   pg_namespace n on n.oid = c.relnamespace
+    where  n.nspname = 'public' and c.relname = obj;
+
+    if    kind = 'v' then execute format('drop view             if exists public.%I cascade', obj);
+    elsif kind = 'm' then execute format('drop materialized view if exists public.%I cascade', obj);
+    elsif kind is not null then execute format('drop table        if exists public.%I cascade', obj);
+    end if;  -- kind null => object absent, nothing to drop
+  end loop;
+end $$;
 
 -- ─────────────────────────────────────────────────────────────
 -- sf_jobs_cache
