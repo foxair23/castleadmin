@@ -212,7 +212,7 @@ export async function getStaleEstimates(): Promise<StaleEstimatesResult> {
     .not('status', 'in', '("accepted","declined","Accepted","Declined","Closed")')
     .lt('created_at_sf', fourteenDaysAgo)
     .eq('is_deleted', false)
-    .order('created_at_sf', { ascending: true })
+    .order('created_at_sf', { ascending: false })
     .limit(100)
 
   const items: StaleEstimate[] = (data ?? []).map((e: {
