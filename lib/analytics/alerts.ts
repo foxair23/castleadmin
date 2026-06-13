@@ -163,19 +163,42 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   )
   if (closed.length === 0) return { items: [], totalUninvoiced: 0 }
 
-  const invoiceRows = await fetchAll<{ job_id: string | null }>((from, to) =>
+  const invoiceRows = await fetchAll<{ job_id: string | null; customer_id: string | null; date: string | null }>((from, to) =>
     db.from('sf_invoices')
-      .select('job_id')
-      .not('job_id', 'is', null)
+      .select('job_id, customer_id, date')
       .eq('is_deleted', false)
       .order('id', { ascending: true })
       .range(from, to)
   )
+
+  // Primary match: invoice has explicit job_id link
   const invoicedJobIds = new Set(invoiceRows.map(inv => inv.job_id).filter(Boolean))
+
+  // Secondary match: invoice linked only by customer_id (job_id NULL — happens when
+  // invoices are re-synced via the invoices endpoint without job expand, clearing the
+  // job_id that was previously set). Group by customer for fast lookup.
+  const invoicesByCustomer = new Map<string, string[]>()
+  for (const inv of invoiceRows) {
+    if (!inv.customer_id || !inv.date) continue
+    const arr = invoicesByCustomer.get(inv.customer_id) ?? []
+    arr.push(inv.date.slice(0, 10))
+    invoicesByCustomer.set(inv.customer_id, arr)
+  }
 
   // Keep jobs with no invoice, newest completion first, cap at 100.
   const uninvoiced = closed
-    .filter(j => !invoicedJobIds.has(j.id))
+    .filter(j => {
+      if (invoicedJobIds.has(j.id)) return false
+      // Secondary: any invoice for same customer within 60 days of closed_at
+      if (j.customer_id) {
+        const closedYmd = j.closed_at.slice(0, 10)
+        const closedMs = new Date(closedYmd).getTime()
+        const window = 60 * 86_400_000
+        const custInvDates = invoicesByCustomer.get(j.customer_id) ?? []
+        if (custInvDates.some(d => Math.abs(new Date(d).getTime() - closedMs) <= window)) return false
+      }
+      return true
+    })
     .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
   const limited = uninvoiced.slice(0, 100)
   const jobIds = limited.map((j: { id: string }) => j.id)
