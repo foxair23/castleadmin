@@ -1,13 +1,21 @@
 -- ============================================================
--- Castle Garage Doors & Gates — Piecework Payroll App Schema
+-- Migration 000: Base schema (baseline)
 -- ============================================================
--- This file is the human-readable reference for the base schema.
--- For applying the database, the migrations folder is now self-
--- contained: supabase/migrations/000_base_schema.sql is an idempotent
--- copy of this baseline, so running the migrations in order (000 → …)
--- sets up a fresh database without needing to run this file first.
--- Keep 000_base_schema.sql in sync with any change made here.
+-- This is the idempotent baseline that the rest of the numbered
+-- migrations build on. It mirrors supabase/schema.sql but is written
+-- to be safe to run repeatedly: every object uses an existence guard,
+-- so applying it against a fresh database creates the base tables,
+-- and applying it against an already-provisioned database (e.g. prod)
+-- is a no-op.
+--
+-- Why this exists: migration 001 (and others) reference base tables
+-- like public.week_submissions. Without this baseline first, running
+-- the migrations folder from the start fails with
+--   ERROR: relation "public.week_submissions" does not exist
+-- because schema.sql was never part of the migration sequence.
 -- ============================================================
+
+-- ── Tables ──────────────────────────────────────────────────
 
 -- Profiles table extends auth.users
 create table if not exists public.profiles (
@@ -60,14 +68,12 @@ create table if not exists public.week_submissions (
   unique (tech_id, week_start_date)
 );
 
--- ============================================================
--- Row-Level Security
--- ============================================================
+-- ── Row-Level Security ──────────────────────────────────────
 
-alter table public.profiles enable row level security;
-alter table public.job_types enable row level security;
-alter table public.jobs enable row level security;
-alter table public.job_work_items enable row level security;
+alter table public.profiles         enable row level security;
+alter table public.job_types        enable row level security;
+alter table public.jobs             enable row level security;
+alter table public.job_work_items   enable row level security;
 alter table public.week_submissions enable row level security;
 
 -- Helper: is the current user an admin?
@@ -84,26 +90,33 @@ $$;
 revoke execute on function public.is_admin() from anon;
 
 -- profiles: admins see all; techs see themselves
+drop policy if exists "admin_all_profiles" on public.profiles;
 create policy "admin_all_profiles" on public.profiles
   for all using (public.is_admin());
 
+drop policy if exists "tech_own_profile" on public.profiles;
 create policy "tech_own_profile" on public.profiles
   for select using (id = auth.uid());
 
--- job_types: everyone can read active types; only admins write
+-- job_types: everyone can read; only admins write
+drop policy if exists "anyone_read_job_types" on public.job_types;
 create policy "anyone_read_job_types" on public.job_types
   for select using (true);
 
+drop policy if exists "admin_write_job_types" on public.job_types;
 create policy "admin_write_job_types" on public.job_types
   for all using (public.is_admin());
 
 -- jobs: admins see all; techs see/write their own (and only when not submitted)
+drop policy if exists "admin_all_jobs" on public.jobs;
 create policy "admin_all_jobs" on public.jobs
   for all using (public.is_admin());
 
+drop policy if exists "tech_own_jobs_select" on public.jobs;
 create policy "tech_own_jobs_select" on public.jobs
   for select using (tech_id = auth.uid());
 
+drop policy if exists "tech_own_jobs_insert" on public.jobs;
 create policy "tech_own_jobs_insert" on public.jobs
   for insert with check (
     tech_id = auth.uid()
@@ -114,6 +127,7 @@ create policy "tech_own_jobs_insert" on public.jobs
     )
   );
 
+drop policy if exists "tech_own_jobs_update" on public.jobs;
 create policy "tech_own_jobs_update" on public.jobs
   for update using (
     tech_id = auth.uid()
@@ -124,6 +138,7 @@ create policy "tech_own_jobs_update" on public.jobs
     )
   );
 
+drop policy if exists "tech_own_jobs_delete" on public.jobs;
 create policy "tech_own_jobs_delete" on public.jobs
   for delete using (
     tech_id = auth.uid()
@@ -135,14 +150,17 @@ create policy "tech_own_jobs_delete" on public.jobs
   );
 
 -- job_work_items: follow parent job's policies
+drop policy if exists "admin_all_work_items" on public.job_work_items;
 create policy "admin_all_work_items" on public.job_work_items
   for all using (public.is_admin());
 
+drop policy if exists "tech_own_work_items_select" on public.job_work_items;
 create policy "tech_own_work_items_select" on public.job_work_items
   for select using (
     exists (select 1 from public.jobs j where j.id = job_id and j.tech_id = auth.uid())
   );
 
+drop policy if exists "tech_own_work_items_insert" on public.job_work_items;
 create policy "tech_own_work_items_insert" on public.job_work_items
   for insert with check (
     exists (
@@ -155,6 +173,7 @@ create policy "tech_own_work_items_insert" on public.job_work_items
     )
   );
 
+drop policy if exists "tech_own_work_items_delete" on public.job_work_items;
 create policy "tech_own_work_items_delete" on public.job_work_items
   for delete using (
     exists (
@@ -168,18 +187,19 @@ create policy "tech_own_work_items_delete" on public.job_work_items
   );
 
 -- week_submissions: admins see all; techs see/insert their own
+drop policy if exists "admin_all_submissions" on public.week_submissions;
 create policy "admin_all_submissions" on public.week_submissions
   for all using (public.is_admin());
 
+drop policy if exists "tech_own_submissions_select" on public.week_submissions;
 create policy "tech_own_submissions_select" on public.week_submissions
   for select using (tech_id = auth.uid());
 
+drop policy if exists "tech_own_submissions_insert" on public.week_submissions;
 create policy "tech_own_submissions_insert" on public.week_submissions
   for insert with check (tech_id = auth.uid());
 
--- ============================================================
--- Auto-update updated_at on jobs
--- ============================================================
+-- ── Auto-update updated_at on jobs ──────────────────────────
 create or replace function public.set_updated_at()
 returns trigger language plpgsql
 set search_path = ''
@@ -190,21 +210,22 @@ begin
 end;
 $$;
 
+drop trigger if exists jobs_updated_at on public.jobs;
 create trigger jobs_updated_at
   before update on public.jobs
   for each row execute function public.set_updated_at();
 
--- ============================================================
--- Seed: initial job types
--- ============================================================
-insert into public.job_types (name, base_rate, additional_rate, requires_quantity, is_active) values
-  ('Install double-car garage door', 125.00, null, false, true),
-  ('Install single-car garage door', 100.00, null, false, true),
-  ('Help stacking a door (up to 1 hour)', 30.00, null, false, true),
-  ('Help install a custom garage door', 125.00, null, false, true),
-  ('Service call (spun cables, door reset, etc.)', 25.00, null, false, true),
-  ('Torsion spring change / torsion conversion', 50.00, null, false, true),
+-- ── Seed: initial job types (only when catalog is empty) ────
+insert into public.job_types (name, base_rate, additional_rate, requires_quantity, is_active)
+select * from (values
+  ('Install double-car garage door', 125.00, null::numeric, false, true),
+  ('Install single-car garage door', 100.00, null::numeric, false, true),
+  ('Help stacking a door (up to 1 hour)', 30.00, null::numeric, false, true),
+  ('Help install a custom garage door', 125.00, null::numeric, false, true),
+  ('Service call (spun cables, door reset, etc.)', 25.00, null::numeric, false, true),
+  ('Torsion spring change / torsion conversion', 50.00, null::numeric, false, true),
   ('Deliveries', 20.00, 10.00, true, true),
-  ('One-piece haul away', 100.00, null, false, true),
-  ('Private door', 200.00, null, false, true)
-on conflict do nothing;
+  ('One-piece haul away', 100.00, null::numeric, false, true),
+  ('Private door', 200.00, null::numeric, false, true)
+) as seed(name, base_rate, additional_rate, requires_quantity, is_active)
+where not exists (select 1 from public.job_types);
