@@ -141,27 +141,16 @@ export default async function DashboardPage() {
   const currentWeekStart = weekStartStr(new Date())
   const techScoreboard = await getTechScoreboard(db, currentWeekStart)
 
-  // Monthly revenue (sf_jobs.total bucketed by closed_at, 2025-2026) + tech
-  // attribution (piecework). We bucket by closed_at (the SF completion date) — NOT
-  // end_date, which is null for ~99.8% of jobs — and paginate because PostgREST
-  // hard-caps any single response at 1000 rows regardless of .limit(). Invoices are
-  // intentionally NOT used here because the figure tracks total job revenue.
+  // Monthly revenue + tech attribution (piecework). Company revenue is computed
+  // server-side by the monthly_job_revenue() RPC — sum(sf_jobs.total) bucketed by
+  // month of closed_at (revenue recognized on completion). Using an RPC sidesteps
+  // PostgREST's 1000-row response cap, which silently truncated the prior approach.
   const [
-    monthlyJobsData,
+    { data: monthlyRevRows },
     { data: pwJobsForChart },
     { data: techProfilesForChart },
   ] = await Promise.all([
-    fetchAllRows<{ closed_at: string | null; total: number | null; status: string | null }>((from, to) =>
-      db.from('sf_jobs')
-        .select('closed_at, total, status')
-        .eq('is_deleted', false)
-        .not('closed_at', 'is', null)
-        .gte('closed_at', '2025-01-01')
-        .lte('closed_at', '2026-12-31')
-        .gt('total', 0)
-        .not('status', 'in', '("Cancelled","Void","Voided")')
-        .range(from, to)
-    ),
+    db.rpc('monthly_job_revenue'),
     db.from('jobs')
       .select('tech_id, sf_job_id, week_start_date')
       .gte('week_start_date', '2025-01-01')
@@ -173,12 +162,10 @@ export default async function DashboardPage() {
       .eq('is_active', true),
   ])
 
-  // Company monthly revenue aggregated by year-month of closed_at.
-  // (Cancelled/Void already excluded in SQL; closed_at is validated >= 2025 there.)
+  // Company monthly revenue: RPC returns one { ym: 'YYYY-MM', revenue } row per month.
   const jobsByYearMonth: Record<string, number> = {}
-  for (const j of monthlyJobsData) {
-    const ym = j.closed_at?.slice(0, 7)
-    if (ym) jobsByYearMonth[ym] = (jobsByYearMonth[ym] ?? 0) + (j.total ?? 0)
+  for (const r of (monthlyRevRows ?? []) as { ym: string | null; revenue: number | string | null }[]) {
+    if (r.ym) jobsByYearMonth[r.ym] = Number(r.revenue ?? 0)
   }
   const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
   const monthlyRevenue = MONTHS_SHORT.map((label, i) => {
@@ -262,24 +249,6 @@ export default async function DashboardPage() {
       techMonthlyRevenue={techMonthlyRevenue}
     />
   )
-}
-
-// Paginate past PostgREST's 1000-row hard cap. `build` receives a [from, to]
-// inclusive range and must return a PostgREST query for that slice.
-async function fetchAllRows<T>(
-  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>
-): Promise<T[]> {
-  const PAGE = 1000
-  const out: T[] = []
-  let from = 0
-  for (;;) {
-    const { data } = await build(from, from + PAGE - 1)
-    const rows = data ?? []
-    out.push(...rows)
-    if (rows.length < PAGE) break
-    from += PAGE
-  }
-  return out
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10) }
