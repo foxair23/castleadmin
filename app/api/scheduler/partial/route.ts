@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { after } from 'next/server'
-import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
+import { enqueueForSubscribers, enqueueNotification } from '@/lib/notifications/enqueue'
 import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
 
 function serviceClient() {
@@ -85,16 +85,21 @@ export async function POST(req: NextRequest) {
 
   const newLeadId = (data as { id: string }).id
   const customerName = first_name.trim()
+  const phoneNumber = mobile_phone.trim()
   const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/scheduler`
 
   after(async () => {
-    const { subject, bodyHtml, bodyText } = renderSchedulerLeadStuck({
+    const { bodyHtml, bodyText } = renderSchedulerLeadStuck({
       customerName,
+      phoneNumber,
       serviceLabel: 'Incomplete submission',
       appointmentDate: '—',
       reason: 'manual_push',
       adminUrl,
     })
+    const subject = 'Action Item: Partial Lead'
+
+    // Notify subscribers (admin users who opted in to scheduler_lead_stuck)
     await enqueueForSubscribers({
       notificationTypeKey: 'scheduler_lead_stuck',
       subject,
@@ -103,6 +108,27 @@ export async function POST(req: NextRequest) {
       relatedEntityType: 'scheduler_lead',
       relatedEntityId: newLeadId,
     }).catch(() => { /* non-critical */ })
+
+    // Also notify all sales users unconditionally
+    const { data: salesUsers } = await db
+      .from('profiles')
+      .select('id')
+      .eq('role', 'sales')
+      .eq('is_active', true)
+
+    await Promise.all(
+      (salesUsers ?? []).map((u: { id: string }) =>
+        enqueueNotification({
+          notificationTypeKey: 'scheduler_lead_stuck',
+          userId: u.id,
+          subject,
+          bodyHtml,
+          bodyText,
+          relatedEntityType: 'scheduler_lead',
+          relatedEntityId: newLeadId,
+        }).catch(() => { /* non-critical */ })
+      )
+    )
   })
 
   return NextResponse.json({ id: newLeadId })

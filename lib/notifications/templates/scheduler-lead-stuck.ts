@@ -14,6 +14,7 @@ export type StuckReason = 'sync_failed' | 'manual_push'
 
 export interface SchedulerLeadStuckData {
   customerName: string
+  phoneNumber?: string
   serviceLabel: string
   appointmentDate: string
   reason: StuckReason
@@ -43,6 +44,8 @@ export function renderSchedulerLeadStuck(data: SchedulerLeadStuckData): {
   <p style="${LABEL}">Customer</p>
   <p style="${VALUE}">${data.customerName}</p>
 
+  ${data.phoneNumber ? `<p style="${LABEL}">Phone</p><p style="${VALUE}">${data.phoneNumber}</p>` : ''}
+
   <p style="${LABEL}">Service</p>
   <p style="${VALUE}">${data.serviceLabel}</p>
 
@@ -61,6 +64,7 @@ export function renderSchedulerLeadStuck(data: SchedulerLeadStuckData): {
     ``,
     `Issue: ${reasonLabel}`,
     `Customer: ${data.customerName}`,
+    ...(data.phoneNumber ? [`Phone: ${data.phoneNumber}`] : []),
     `Service: ${data.serviceLabel}`,
     `Appointment: ${data.appointmentDate}`,
   ]
