@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
-  normalize, tokenize, canonToken, scoreJob, dateBonusDays,
-  AUTO_THRESHOLD, CANDIDATE_THRESHOLD, type ScoreJob,
+  normalize, tokenize, scoreJob, dateBonusDays, buildScoreJob,
+  AUTO_THRESHOLD, CANDIDATE_THRESHOLD,
 } from '@/lib/google-reviews/matcher'
 
 async function requireAdmin() {
@@ -45,12 +45,16 @@ export async function GET(req: NextRequest) {
   const rNorm   = normalize(q)
   const rTokens = tokenize(q)
 
-  // 2. Candidate jobs — any job whose customer_name contains one of the tokens.
-  // Use RAW (pre-canonicalized) tokens for the ILIKE so we match the literal text
-  // stored in the DB. tokenize() folds nicknames ("frank"→"francis"), which would
-  // never appear verbatim in customer_name.
+  // 2. Candidate jobs — any job whose customer_name OR contact name fields contain
+  // one of the reviewer's name tokens. Use RAW (pre-canonicalized) tokens for the
+  // ILIKE so we match the literal text stored in the DB. Also search contact fields
+  // so jobs with null customer_name still surface.
   const rawTokens  = normalize(q).split(' ').filter(t => t.length > 1)
-  const jobFilters = rawTokens.map(t => `customer_name.ilike.%${t}%`).join(',')
+  const jobFilters = rawTokens.flatMap(t => [
+    `customer_name.ilike.%${t}%`,
+    `contact_first_name.ilike.%${t}%`,
+    `contact_last_name.ilike.%${t}%`,
+  ]).join(',')
   const { data: rawJobs } = await db
     .from('sf_jobs')
     .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
@@ -64,15 +68,7 @@ export async function GET(req: NextRequest) {
     contact_first_name: string | null; contact_last_name: string | null
     closed_at: string | null; is_deleted: boolean
   }) => {
-    const sj: ScoreJob = {
-      id:             j.id,
-      customer_id:    j.customer_id,
-      customerTokens: j.customer_name ? tokenize(j.customer_name) : [],
-      customerNorm:   j.customer_name ? normalize(j.customer_name) : '',
-      first:          j.contact_first_name ? canonToken(normalize(j.contact_first_name)) : '',
-      last:           j.contact_last_name ? normalize(j.contact_last_name) : '',
-      closed_at:      j.closed_at,
-    }
+    const sj    = buildScoreJob(j)
     const base  = scoreJob(rNorm, rTokens, sj)
     const bonus = dateBonusDays(reviewDate, j.closed_at)
     const total = Math.min(base + bonus, 1.0)
@@ -81,9 +77,10 @@ export async function GET(req: NextRequest) {
       customer_id:    j.customer_id,
       job_customer_name: j.customer_name,
       contact:        [j.contact_first_name, j.contact_last_name].filter(Boolean).join(' ') || null,
+      match_tokens:   sj.customerTokens,
       closed_at:      j.closed_at,
       is_deleted:     j.is_deleted,
-      excluded_from_matching: j.is_deleted || !j.customer_name,
+      excluded_from_matching: j.is_deleted,
       base_score:     Math.round(base * 100) / 100,
       date_bonus:     bonus,
       total_score:    Math.round(total * 100) / 100,

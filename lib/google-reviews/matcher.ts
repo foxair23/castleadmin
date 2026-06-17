@@ -99,6 +99,39 @@ export interface ScoreJob {
   closed_at: string | null
 }
 
+// Raw job row from sf_jobs that we score against.
+export interface RawJob {
+  id: string
+  customer_id: string
+  customer_name: string | null
+  contact_first_name: string | null
+  contact_last_name: string | null
+  closed_at: string | null
+}
+
+// Build the precomputed ScoreJob from a raw sf_jobs row. The matchable token set
+// is the UNION of customer_name tokens and contact first/last tokens, so a job is
+// matchable whether the name lives in customer_name ("Frank, Edward"), in the
+// contact fields, or both. customerNorm falls back to "first last" when
+// customer_name is null.
+export function buildScoreJob(j: RawJob): ScoreJob {
+  const first = j.contact_first_name ? canonToken(normalize(j.contact_first_name)) : ''
+  const last  = j.contact_last_name ? normalize(j.contact_last_name) : ''
+  const tokenSet = new Set<string>()
+  if (j.customer_name) for (const t of tokenize(j.customer_name)) tokenSet.add(t)
+  if (first) tokenSet.add(first)
+  if (last)  tokenSet.add(last)
+  return {
+    id:             j.id,
+    customer_id:    j.customer_id,
+    customerTokens: [...tokenSet],
+    customerNorm:   j.customer_name ? normalize(j.customer_name) : [first, last].filter(Boolean).join(' '),
+    first,
+    last,
+    closed_at:      j.closed_at,
+  }
+}
+
 /**
  * Score a review's reviewer name against a single job.
  * Returns 0..1 (before any date bonus).
@@ -163,10 +196,13 @@ export async function runMatchingPass(): Promise<MatchResult> {
 
   if (!reviews || reviews.length === 0) return { matched: 0, candidates: 0, noMatch: 0 }
 
-  // Load every non-deleted job that has a customer name. We deliberately do NOT
-  // filter on closed_at — many jobs have a null closed_at and filtering on it
-  // would exclude their customers from matching entirely. closed_at is used only
-  // as an optional date-proximity bonus below.
+  // Load every non-deleted job that has a name we can match on. A job is usable
+  // if it has EITHER a customer_name OR contact name fields — some jobs store the
+  // person's name only in contact_first_name/contact_last_name with a null
+  // customer_name, and the old `customer_name IS NOT NULL` filter dropped those
+  // jobs entirely (so e.g. "Edward Frank" could never match). We also do NOT
+  // filter on closed_at — many jobs have a null closed_at; it's used only as an
+  // optional date-proximity bonus below.
   const jobs: ScoreJob[] = []
   let from = 0
   const PAGE = 1000
@@ -175,7 +211,7 @@ export async function runMatchingPass(): Promise<MatchResult> {
       .from('sf_jobs')
       .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at')
       .eq('is_deleted', false)
-      .not('customer_name', 'is', null)
+      .or('customer_name.not.is.null,contact_last_name.not.is.null')
       .order('id')
       .range(from, from + PAGE - 1)
     if (!page || page.length === 0) break
@@ -183,15 +219,7 @@ export async function runMatchingPass(): Promise<MatchResult> {
       id: string; customer_id: string; customer_name: string | null
       contact_first_name: string | null; contact_last_name: string | null; closed_at: string | null
     }>) {
-      jobs.push({
-        id:             j.id,
-        customer_id:    j.customer_id,
-        customerTokens: j.customer_name ? tokenize(j.customer_name) : [],
-        customerNorm:   j.customer_name ? normalize(j.customer_name) : '',
-        first:          j.contact_first_name ? canonToken(normalize(j.contact_first_name)) : '',
-        last:           j.contact_last_name ? normalize(j.contact_last_name) : '',
-        closed_at:      j.closed_at,
-      })
+      jobs.push(buildScoreJob(j))
     }
     if (page.length < PAGE) break
     from += PAGE
