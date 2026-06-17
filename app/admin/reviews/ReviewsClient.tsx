@@ -276,9 +276,9 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
 
-  // Matching
+  // Sync + matching
   const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
-  const [matchResult, setMatchResult]       = useState<{ matched: number; candidates: number; noMatch: number } | null>(null)
+  const [matchResult, setMatchResult]       = useState<{ reviewsNew: number; reviewsUpdated: number; matched: number; candidates: number; noMatch: number } | null>(null)
 
   // Manual match modal
   const [searchTarget, setSearchTarget] = useState<Review | null>(null)
@@ -311,14 +311,14 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   useEffect(() => { setPage(1) }, [stars, status, dateFrom, dateTo])
   useEffect(() => { load(page) }, [load, page])
 
-  async function runMatching() {
+  async function runSyncAndMatch() {
     setMatchingStatus('running')
     setMatchResult(null)
     try {
       const res = await fetch('/api/admin/reviews/run-matching', { method: 'POST' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
-      setMatchResult({ matched: json.matched, candidates: json.candidates, noMatch: json.noMatch })
+      setMatchResult({ reviewsNew: json.reviewsNew, reviewsUpdated: json.reviewsUpdated, matched: json.matched, candidates: json.candidates, noMatch: json.noMatch })
       setMatchingStatus('done')
       load(page)
     } catch {
@@ -361,15 +361,15 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
           </span>
         )}
         <button
-          onClick={runMatching}
+          onClick={runSyncAndMatch}
           disabled={matchingStatus === 'running'}
           className="text-sm px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50 text-gray-700"
         >
-          {matchingStatus === 'running' ? 'Matching…' : 'Run Matching'}
+          {matchingStatus === 'running' ? 'Syncing…' : 'Sync & Match Reviews'}
         </button>
         {matchingStatus === 'done' && matchResult && (
           <span className="text-xs text-gray-500">
-            {matchResult.matched} auto-matched · {matchResult.candidates} candidates · {matchResult.noMatch} unmatched
+            +{matchResult.reviewsNew} new · {matchResult.matched} auto-matched · {matchResult.candidates} candidates
           </span>
         )}
         {matchingStatus === 'error' && (
