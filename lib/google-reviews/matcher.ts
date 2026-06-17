@@ -27,20 +27,30 @@ function scoreNames(
   const r = normalize(reviewerName)
   if (!r) return 0
 
-  // Exact match against full customer name
-  if (customerName && normalize(customerName) === r) return 1.0
+  const rTokens = r.split(' ').filter(t => t.length > 1)
+  if (rTokens.length === 0) return 0
+
+  // Match against customer name — try both "First Last" and "Last, First" orderings
+  if (customerName) {
+    const cn = normalize(customerName) // strips commas
+    const cnTokens = cn.split(' ').filter(t => t.length > 1)
+    // All tokens match regardless of order (catches "Frank Edward" == "Edward Frank")
+    if (
+      cnTokens.length >= 2 &&
+      cnTokens.length === rTokens.length &&
+      cnTokens.every(t => rTokens.includes(t))
+    ) return 1.0
+    if (cn === r) return 1.0
+  }
 
   const f = first ? normalize(first) : ''
   const l = last ? normalize(last) : ''
   if (!f && !l) return 0
 
-  // Exact first+last match
-  const full = [f, l].filter(Boolean).join(' ')
+  // Exact first+last match (either order)
+  const full     = [f, l].filter(Boolean).join(' ')
   const reversed = [l, f].filter(Boolean).join(' ')
   if (r === full || r === reversed) return 1.0
-
-  const rTokens = r.split(' ').filter(t => t.length > 1) // skip single-char initials
-  if (rTokens.length === 0) return 0
 
   let score = 0
 
@@ -82,7 +92,7 @@ export async function runMatchingPass(): Promise<MatchResult> {
 
   if (!reviews || reviews.length === 0) return { matched: 0, candidates: 0, noMatch: 0 }
 
-  const twoYearsAgo = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000).toISOString()
+  const twoYearsAgo = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000).toISOString()
 
   // Paginate sf_jobs to avoid 1000-row cap
   const jobs: Array<{
