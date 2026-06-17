@@ -18,8 +18,74 @@ export function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z\s]/g, '').trim().replace(/\s+/g, ' ')
 }
 
+// Common nicknames / diminutives → canonical given name. Each variant maps to a
+// single canonical token so "tim" and "timothy" (or "bob"/"robert") are treated
+// as the same name during scoring. Bidirectional by design: the canonical form
+// also maps to itself implicitly via canonToken's fallback.
+const NICKNAMES: Record<string, string> = {
+  abby: 'abigail',
+  al: 'albert', bert: 'albert',
+  alex: 'alexander', alexandra: 'alexander', sandy: 'alexander',
+  andy: 'andrew', drew: 'andrew',
+  tony: 'anthony',
+  ben: 'benjamin', benji: 'benjamin', benny: 'benjamin',
+  brad: 'bradley',
+  cathy: 'catherine', kathy: 'catherine', cath: 'catherine', kate: 'catherine', katie: 'catherine', kat: 'catherine',
+  chuck: 'charles', charlie: 'charles', chas: 'charles',
+  chris: 'christopher', topher: 'christopher',
+  dan: 'daniel', danny: 'daniel',
+  dave: 'david', davey: 'david',
+  deb: 'deborah', debbie: 'deborah', debra: 'deborah',
+  don: 'donald', donnie: 'donald',
+  doug: 'douglas',
+  ed: 'edward', eddie: 'edward', eddy: 'edward', ned: 'edward', ted: 'edward', teddy: 'edward',
+  liz: 'elizabeth', beth: 'elizabeth', betty: 'elizabeth', lizzie: 'elizabeth', eliza: 'elizabeth',
+  frank: 'francis', frankie: 'francis',
+  fred: 'frederick', freddy: 'frederick', freddie: 'frederick',
+  gabe: 'gabriel',
+  greg: 'gregory',
+  hank: 'henry', harry: 'henry',
+  jack: 'john', johnny: 'john', jon: 'john',
+  jake: 'jacob',
+  jim: 'james', jimmy: 'james', jamie: 'james',
+  jeff: 'jeffrey',
+  jen: 'jennifer', jenny: 'jennifer', jenn: 'jennifer',
+  jess: 'jessica', jessie: 'jessica',
+  joe: 'joseph', joey: 'joseph',
+  ken: 'kenneth', kenny: 'kenneth',
+  larry: 'lawrence', laurence: 'lawrence',
+  len: 'leonard', lenny: 'leonard',
+  matt: 'matthew',
+  meg: 'margaret', maggie: 'margaret', peggy: 'margaret', marge: 'margaret',
+  mike: 'michael', mick: 'michael', micky: 'michael',
+  nate: 'nathaniel', nathan: 'nathaniel',
+  nick: 'nicholas',
+  pat: 'patrick', paddy: 'patrick',
+  patty: 'patricia', tricia: 'patricia', trish: 'patricia',
+  phil: 'philip', phillip: 'philip',
+  ray: 'raymond',
+  dick: 'richard', rich: 'richard', rick: 'richard', ricky: 'richard', richie: 'richard',
+  bob: 'robert', bobby: 'robert', rob: 'robert', robbie: 'robert',
+  ron: 'ronald', ronnie: 'ronald',
+  sam: 'samuel', sammy: 'samuel',
+  steve: 'stephen', steven: 'stephen', stevie: 'stephen',
+  sue: 'susan', susie: 'susan', suzy: 'susan',
+  tom: 'thomas', tommy: 'thomas',
+  tim: 'timothy', timmy: 'timothy',
+  vince: 'vincent',
+  walt: 'walter', wally: 'walter',
+  bill: 'william', billy: 'william', will: 'william', willy: 'william', willie: 'william', liam: 'william',
+  zach: 'zachary', zack: 'zachary',
+}
+
+// Collapse a single token to its canonical given-name form when it's a known
+// nickname; otherwise return it unchanged.
+export function canonToken(t: string): string {
+  return NICKNAMES[t] ?? t
+}
+
 export function tokenize(s: string): string[] {
-  return normalize(s).split(' ').filter(t => t.length > 1)
+  return normalize(s).split(' ').filter(t => t.length > 1).map(canonToken)
 }
 
 // Precomputed, normalized job record used by the scorer
@@ -122,7 +188,7 @@ export async function runMatchingPass(): Promise<MatchResult> {
         customer_id:    j.customer_id,
         customerTokens: j.customer_name ? tokenize(j.customer_name) : [],
         customerNorm:   j.customer_name ? normalize(j.customer_name) : '',
-        first:          j.contact_first_name ? normalize(j.contact_first_name) : '',
+        first:          j.contact_first_name ? canonToken(normalize(j.contact_first_name)) : '',
         last:           j.contact_last_name ? normalize(j.contact_last_name) : '',
         closed_at:      j.closed_at,
       })
