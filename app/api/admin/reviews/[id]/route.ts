@@ -28,21 +28,41 @@ export async function PATCH(
 
   const { id } = await params
   const body = await req.json()
-  const { action } = body as { action: 'confirm' | 'skip' }
+  const { action, customerId } = body as { action: 'confirm' | 'skip' | 'manual' | 'unmatch'; customerId?: string }
 
-  if (action !== 'confirm' && action !== 'skip') {
-    return NextResponse.json({ error: 'action must be confirm or skip' }, { status: 400 })
+  if (!['confirm', 'skip', 'manual', 'unmatch'].includes(action)) {
+    return NextResponse.json({ error: 'invalid action' }, { status: 400 })
+  }
+
+  if (action === 'manual' && !customerId) {
+    return NextResponse.json({ error: 'customerId required for manual action' }, { status: 400 })
   }
 
   const update =
     action === 'confirm'
       ? { match_status: 'confirmed' }
-      : {
+      : action === 'skip'
+      ? {
           match_status:        'skipped',
           matched_customer_id: null,
           matched_job_id:      null,
           match_score:         null,
           match_confidence:    null,
+        }
+      : action === 'manual'
+      ? {
+          match_status:        'confirmed',
+          match_confidence:    'manual',
+          matched_customer_id: customerId,
+          matched_job_id:      null,
+          match_score:         null,
+        }
+      : {
+          match_status:        'pending_review',
+          match_confidence:    null,
+          matched_customer_id: null,
+          matched_job_id:      null,
+          match_score:         null,
         }
 
   const { error } = await db().from('google_reviews').update(update).eq('id', id)
