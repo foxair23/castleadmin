@@ -363,7 +363,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
         <button
           onClick={runSyncAndMatch}
           disabled={matchingStatus === 'running'}
-          className="text-sm px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50 text-gray-700"
+          className="text-sm px-3 py-1.5 rounded border border-red-300 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700"
         >
           {matchingStatus === 'running' ? 'Syncing…' : 'Sync & Match Reviews'}
         </button>
