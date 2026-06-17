@@ -27,7 +27,8 @@ export async function GET(req: NextRequest) {
   if (!await requireAdmin()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const q = new URL(req.url).searchParams.get('q')?.trim() ?? ''
-  if (!q) return NextResponse.json({ error: 'pass ?q=<reviewer name>' }, { status: 400 })
+  const jobIdParam = new URL(req.url).searchParams.get('job')?.trim() ?? ''
+  if (!q && !jobIdParam) return NextResponse.json({ error: 'pass ?q=<reviewer name> and/or ?job=<job id>' }, { status: 400 })
 
   const db = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -35,12 +36,26 @@ export async function GET(req: NextRequest) {
     { auth: { persistSession: false } }
   )
 
+  // 0. Direct job lookup — inspect a specific job id verbatim (no name filter, and
+  // is_deleted is shown rather than hidden). Use this to check whether a job the
+  // user expects (e.g. "Frank, Edward / 1020258343") actually exists in sf_jobs and
+  // what its name fields really contain.
+  let lookupJob: unknown = null
+  if (jobIdParam) {
+    const { data: jrow, error: jerr } = await db
+      .from('sf_jobs')
+      .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
+      .eq('id', jobIdParam)
+      .maybeSingle()
+    lookupJob = jerr ? { error: jerr.message } : (jrow ?? { found: false, note: `No sf_jobs row with id=${jobIdParam}` })
+  }
+
   // 1. The review(s) matching this name
-  const { data: reviews } = await db
+  const { data: reviews } = q ? await db
     .from('google_reviews')
     .select('id, reviewer_name, created_at_google, match_status, match_confidence, match_score, matched_customer_id, matched_job_id, deleted_at')
     .ilike('reviewer_name', `%${q}%`)
-    .limit(5)
+    .limit(5) : { data: [] }
 
   const rNorm   = normalize(q)
   const rTokens = tokenize(q)
@@ -48,18 +63,19 @@ export async function GET(req: NextRequest) {
   // 2. Candidate jobs — any job whose customer_name OR contact name fields contain
   // one of the reviewer's name tokens. Use RAW (pre-canonicalized) tokens for the
   // ILIKE so we match the literal text stored in the DB. Also search contact fields
-  // so jobs with null customer_name still surface.
+  // so jobs with null customer_name still surface. High limit so we don't truncate
+  // away the real match when a common token (e.g. "frank") hits hundreds of jobs.
   const rawTokens  = normalize(q).split(' ').filter(t => t.length > 1)
   const jobFilters = rawTokens.flatMap(t => [
     `customer_name.ilike.%${t}%`,
     `contact_first_name.ilike.%${t}%`,
     `contact_last_name.ilike.%${t}%`,
   ]).join(',')
-  const { data: rawJobs } = await db
+  const { data: rawJobs } = q ? await db
     .from('sf_jobs')
     .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
     .or(jobFilters)
-    .limit(100)
+    .limit(2000) : { data: [] }
 
   const reviewDate = (reviews?.[0]?.created_at_google as string | undefined) ?? new Date().toISOString()
 
@@ -93,6 +109,8 @@ export async function GET(req: NextRequest) {
     reviewer_tokens: rTokens,
     reviews,
     thresholds: { auto: AUTO_THRESHOLD, candidate: CANDIDATE_THRESHOLD },
+    lookup_job: lookupJob,
+    candidate_count: scored.length,
     candidate_jobs: scored,
   })
 }
