@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { isConfigured, fetchAllReviews } from '@/lib/google-reviews/gbp-client'
 import { MOCK_REVIEWS } from '@/lib/google-reviews/mock-data'
+import { runMatchingPass } from '@/lib/google-reviews/matcher'
 
 export const maxDuration = 60
 
@@ -120,6 +121,13 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    let matchResult: { matched: number; candidates: number; noMatch: number } | null = null
+    try {
+      matchResult = await runMatchingPass()
+    } catch (err) {
+      errors.push(`matching: ${err instanceof Error ? err.message : String(err)}`)
+    }
+
     await supabase
       .from('review_sync_runs')
       .update({
@@ -132,7 +140,7 @@ export async function GET(req: NextRequest) {
       })
       .eq('id', runId!)
 
-    return NextResponse.json({ ok: true, reviewsSeen, reviewsNew, reviewsUpdated, errors: errors.length })
+    return NextResponse.json({ ok: true, reviewsSeen, reviewsNew, reviewsUpdated, errors: errors.length, matching: matchResult })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[ingest-google-reviews] fatal:', msg)

@@ -13,8 +13,11 @@ interface Review {
   created_at_google: string
   reply_text: string | null
   match_status: string
+  match_score: number | null
+  match_confidence: string | null
   matched_customer_id: string | null
   matched_job_id: string | null
+  matched_customer_name: string | null
 }
 
 interface KPI {
@@ -72,6 +75,57 @@ function MatchBadge({ status }: { status: string }) {
   )
 }
 
+function MatchCell({
+  review,
+  onAction,
+}: {
+  review: Review
+  onAction: (id: string, action: 'confirm' | 'skip') => void
+}) {
+  const { match_status, matched_customer_id, matched_customer_name, id } = review
+
+  if (match_status === 'anonymous' || match_status === 'skipped') {
+    return <td className="px-4 py-3" />
+  }
+
+  if (match_status === 'confirmed' || match_status === 'auto') {
+    return (
+      <td className="px-4 py-3">
+        {matched_customer_name && (
+          <span className="text-xs text-gray-500">{matched_customer_name}</span>
+        )}
+      </td>
+    )
+  }
+
+  // pending_review
+  return (
+    <td className="px-4 py-3">
+      <div className="flex flex-col gap-1">
+        {matched_customer_name && (
+          <span className="text-xs text-gray-500">{matched_customer_name}</span>
+        )}
+        <div className="flex gap-1.5">
+          {matched_customer_id && (
+            <button
+              onClick={() => onAction(id, 'confirm')}
+              className="text-xs px-2 py-0.5 rounded border border-green-300 text-green-700 hover:bg-green-50"
+            >
+              Confirm
+            </button>
+          )}
+          <button
+            onClick={() => onAction(id, 'skip')}
+            className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50"
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+    </td>
+  )
+}
+
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
@@ -86,12 +140,16 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   const [error, setError]       = useState<string | null>(null)
 
   // Filters
-  const [stars, setStars]   = useState<string>('')      // '' = all, or '1', '5', etc.
-  const [status, setStatus] = useState<string>('all')
+  const [stars, setStars]       = useState<string>('')
+  const [status, setStatus]     = useState<string>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
 
-  const pageSize = 25
+  // Matching
+  const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  const [matchResult, setMatchResult]       = useState<{ matched: number; candidates: number; noMatch: number } | null>(null)
+
+  const pageSize   = 25
   const totalPages = Math.ceil(total / pageSize)
 
   const load = useCallback(async (p: number) => {
@@ -99,10 +157,10 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
     setError(null)
     try {
       const params = new URLSearchParams({ page: String(p) })
-      if (stars)    params.set('stars', stars)
+      if (stars)                      params.set('stars', stars)
       if (status && status !== 'all') params.set('status', status)
-      if (dateFrom) params.set('date_from', dateFrom)
-      if (dateTo)   params.set('date_to', dateTo)
+      if (dateFrom)                   params.set('date_from', dateFrom)
+      if (dateTo)                     params.set('date_to', dateTo)
 
       const res = await fetch(`/api/admin/reviews?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -119,14 +177,38 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   useEffect(() => { setPage(1) }, [stars, status, dateFrom, dateTo])
   useEffect(() => { load(page) }, [load, page])
 
+  async function runMatching() {
+    setMatchingStatus('running')
+    setMatchResult(null)
+    try {
+      const res = await fetch('/api/admin/reviews/run-matching', { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json = await res.json()
+      setMatchResult({ matched: json.matched, candidates: json.candidates, noMatch: json.noMatch })
+      setMatchingStatus('done')
+      load(page)
+    } catch {
+      setMatchingStatus('error')
+    }
+  }
+
+  async function handleAction(reviewId: string, action: 'confirm' | 'skip') {
+    await fetch(`/api/admin/reviews/${reviewId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    })
+    load(page)
+  }
+
   const pct = (n: number) => kpi.total > 0 ? Math.round(n / kpi.total * 100) : 0
 
   return (
     <div className="space-y-6">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-gray-900">Google Reviews</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold text-gray-900 mr-auto">Google Reviews</h1>
         {lastRun && (
           <span className="text-xs text-gray-400">
             Last sync: {lastRun.ended_at ? fmtDate(lastRun.ended_at) : '—'}
@@ -134,6 +216,21 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
               <span className="ml-1 text-green-600">+{lastRun.reviews_new} new</span>
             )}
           </span>
+        )}
+        <button
+          onClick={runMatching}
+          disabled={matchingStatus === 'running'}
+          className="text-sm px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50 text-gray-700"
+        >
+          {matchingStatus === 'running' ? 'Matching…' : 'Run Matching'}
+        </button>
+        {matchingStatus === 'done' && matchResult && (
+          <span className="text-xs text-gray-500">
+            {matchResult.matched} auto-matched · {matchResult.candidates} candidates · {matchResult.noMatch} unmatched
+          </span>
+        )}
+        {matchingStatus === 'error' && (
+          <span className="text-xs text-red-500">Matching failed</span>
         )}
       </div>
 
@@ -248,6 +345,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Comment</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Match</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -271,6 +369,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
                   <td className="px-4 py-3">
                     <MatchBadge status={r.match_status} />
                   </td>
+                  <MatchCell review={r} onAction={handleAction} />
                 </tr>
               ))}
             </tbody>
