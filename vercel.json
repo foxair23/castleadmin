@@ -14,6 +14,7 @@
     { "path": "/api/cron/piecework-reminder-3", "schedule": "0 16 * * 1" },
     { "path": "/api/cron/piecework-reminder-1", "schedule": "0 16 * * 3" },
     { "path": "/api/cron/piecework-reminder-2", "schedule": "0 1 * * 4" },
-    { "path": "/api/cron/sync-not-run", "schedule": "0 17 * * *" }
+    { "path": "/api/cron/sync-not-run", "schedule": "0 17 * * *" },
+    { "path": "/api/cron/ingest-google-reviews", "schedule": "0 11 * * *" }
   ]
 }

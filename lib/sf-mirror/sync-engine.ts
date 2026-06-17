@@ -93,6 +93,25 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out
 }
 
+// Fetch every matching row past PostgREST's 1000-row response cap. `build`
+// receives an inclusive [from, to] range and must apply a stable .order() so
+// pages don't skip or duplicate rows.
+async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>
+): Promise<T[]> {
+  const PAGE = 1000
+  const out: T[] = []
+  let from = 0
+  for (;;) {
+    const { data } = await build(from, from + PAGE - 1)
+    const rows = data ?? []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
 // ─── Sync-run logging ─────────────────────────────────────────────────────
 
 export interface RunHandle {
@@ -221,7 +240,7 @@ function mapJob(r: Raw) {
     start_date: toStr(r.start_date), end_date: toStr(r.end_date),
     time_frame_promised_start: toStr(r.time_frame_promised_start),
     time_frame_promised_end: toStr(r.time_frame_promised_end),
-    closed_at: r.closed_at && r.closed_at !== 0 && r.closed_at !== '0' ? toStr(r.closed_at) : null, created_at_sf: toStr(r.created_at), updated_at_sf: toStr(r.updated_at),
+    closed_at: (() => { const v = r.completed_date ?? r.closed_at; return v && v !== 0 && v !== '0' ? toStr(v) : null })(), created_at_sf: toStr(r.created_at), updated_at_sf: toStr(r.updated_at),
     contact_first_name: toStr(r.contact_first_name), contact_last_name: toStr(r.contact_last_name),
     street_1: toStr(r.street_1), street_2: toStr(r.street_2),
     city: toStr(r.city), state_prov: toStr(r.state_prov), postal_code: toStr(r.postal_code),
@@ -372,8 +391,9 @@ export async function reprocessCustomerChildren(): Promise<number> {
   while (true) {
     const { data, error } = await supabase
       .from('sf_customers')
-      .select('raw_data')
+      .select('raw_data, id')
       .eq('is_deleted', false)
+      .order('id', { ascending: true })  // stable order so .range() pages don't skip/dupe
       .range(offset, offset + BATCH - 1)
 
     if (error) throw new Error(error.message)
@@ -753,14 +773,17 @@ export async function runWeeklyReconcileForEntity(
       }
     }
 
-    // Soft-delete detection: find IDs in our DB not returned by SF
+    // Soft-delete detection: find IDs in our DB not returned by SF.
+    // seenIds is the complete set from a fully-paginated SF scan (errors throw
+    // before reaching here), so we must read ALL our rows — paginate past the
+    // 1000-row cap, or large tables (jobs ~4.5k) would under-detect deletions.
     if (seenIds.size > 0) {
-      const { data: allOurs } = await supabase
-        .from(cfg.table)
-        .select('id')
-        .eq('is_deleted', false)
+      const allOurs = await fetchAllRows<{ id: string }>((from, to) =>
+        supabase.from(cfg.table).select('id').eq('is_deleted', false)
+          .order('id', { ascending: true }).range(from, to)
+      )
 
-      const deletedIds = (allOurs as { id: string }[] ?? [])
+      const deletedIds = allOurs
         .filter(r => !seenIds.has(r.id))
         .map(r => r.id)
 
@@ -880,15 +903,17 @@ export async function runScopedReconcile(days: number, entities: string[]): Prom
         await updateRunProgress(handle, page, fetched, upserted)
       }
 
-      // Scoped soft-delete: only check records within the date window
+      // Scoped soft-delete: only check records within the date window.
+      // Paginate past the 1000-row cap so a busy window isn't under-detected.
       if (seenIds.size > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let query: any = supabase.from(cfg.table).select('id').eq('is_deleted', false)
-        if (entityName === 'jobs') query = query.gte('start_date', cutoffDate)
-        else if (entityName === 'estimates') query = query.gte('created_at_sf', cutoffIso)
-
-        const { data: scopedOurs } = await query
-        const deletedIds = (scopedOurs as { id: string }[] ?? [])
+        const scopedOurs = await fetchAllRows<{ id: string }>((from, to) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let query: any = supabase.from(cfg.table).select('id').eq('is_deleted', false)
+          if (entityName === 'jobs') query = query.gte('start_date', cutoffDate)
+          else if (entityName === 'estimates') query = query.gte('created_at_sf', cutoffIso)
+          return query.order('id', { ascending: true }).range(from, to)
+        })
+        const deletedIds = scopedOurs
           .filter((r: { id: string }) => !seenIds.has(r.id))
           .map((r: { id: string }) => r.id)
 

@@ -11,6 +11,24 @@ async function requireAdmin() {
   return user
 }
 
+// Fetch every matching row past PostgREST's 1000-row response cap. `build`
+// receives an inclusive [from, to] range and must apply a stable .order().
+async function fetchAll<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>
+): Promise<T[]> {
+  const PAGE = 1000
+  const out: T[] = []
+  let from = 0
+  for (;;) {
+    const { data } = await build(from, from + PAGE - 1)
+    const rows = data ?? []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
 export interface ContactRow {
   customer_id: string
   customer_name: string | null
@@ -71,14 +89,16 @@ export async function GET(req: NextRequest) {
   if (jobCategories) {
     const cats = jobCategories.split(',').map(s => s.trim()).filter(Boolean)
     if (cats.length > 0) {
-      const { data: catJobs } = await db
-        .from('sf_jobs')
-        .select('customer_id')
-        .in('category', cats)
-        .eq('is_deleted', false)
-        .not('customer_id', 'is', null)
-        .limit(50000)
-      categoryCustomerIds = new Set((catJobs ?? []).map((j: { customer_id: string }) => j.customer_id))
+      const catJobs = await fetchAll<{ customer_id: string }>((from, to) =>
+        db.from('sf_jobs')
+          .select('customer_id')
+          .in('category', cats)
+          .eq('is_deleted', false)
+          .not('customer_id', 'is', null)
+          .order('customer_id', { ascending: true })
+          .range(from, to)
+      )
+      categoryCustomerIds = new Set(catJobs.map(j => j.customer_id))
       if (categoryCustomerIds.size === 0) return NextResponse.json({ contacts: [] })
     }
   }
@@ -113,38 +133,48 @@ export async function GET(req: NextRequest) {
   if (customerIds.length === 0) return NextResponse.json({ contacts: [] })
 
   // ── Enrich with contacts, locations, last service date ───────────────────
-  const [{ data: contactsData }, { data: locationsData }, { data: jobDates }] = await Promise.all([
-    db.from('sf_customer_contacts').select('id, customer_id, first_name, last_name, is_primary').in('customer_id', customerIds),
-    db.from('sf_customer_locations').select('customer_id, city, postal_code, is_primary').in('customer_id', customerIds),
-    db.from('sf_jobs').select('customer_id, closed_at').in('customer_id', customerIds)
-      .eq('is_deleted', false).not('closed_at', 'is', null)
-      .order('closed_at', { ascending: false }).limit(10000),
+  // All three paginate past the 1000-row cap so no customer is silently dropped.
+  const [contactsData, locationsData, jobDates] = await Promise.all([
+    fetchAll<RawContact>((from, to) =>
+      db.from('sf_customer_contacts').select('id, customer_id, first_name, last_name, is_primary')
+        .in('customer_id', customerIds).order('id', { ascending: true }).range(from, to)),
+    fetchAll<RawLocation>((from, to) =>
+      db.from('sf_customer_locations').select('customer_id, city, postal_code, is_primary')
+        .in('customer_id', customerIds).order('customer_id', { ascending: true }).range(from, to)),
+    fetchAll<{ customer_id: string; closed_at: string }>((from, to) =>
+      db.from('sf_jobs').select('customer_id, closed_at').in('customer_id', customerIds)
+        .eq('is_deleted', false).not('closed_at', 'is', null)
+        .order('closed_at', { ascending: false }).range(from, to)),
   ])
 
   type RawContact = { id: string; customer_id: string; first_name: string | null; last_name: string | null; is_primary: boolean }
   type RawLocation = { customer_id: string; city: string | null; postal_code: string | null; is_primary: boolean }
 
-  const contactIds = (contactsData ?? []).map((c: RawContact) => c.id)
-  const [{ data: emailsData }, { data: phonesData }] = await Promise.all([
-    contactIds.length > 0
-      ? db.from('sf_contact_emails').select('contact_id, email, is_primary').in('contact_id', contactIds)
-      : Promise.resolve({ data: [] }),
-    contactIds.length > 0
-      ? db.from('sf_contact_phones').select('contact_id, phone, is_primary').in('contact_id', contactIds)
-      : Promise.resolve({ data: [] }),
-  ])
-
   type RawEmail = { contact_id: string; email: string | null; is_primary: boolean }
   type RawPhone = { contact_id: string; phone: string | null; is_primary: boolean }
 
+  const contactIds = contactsData.map((c: RawContact) => c.id)
+  const [emailsData, phonesData] = await Promise.all([
+    contactIds.length > 0
+      ? fetchAll<RawEmail>((from, to) =>
+          db.from('sf_contact_emails').select('contact_id, email, is_primary')
+            .in('contact_id', contactIds).order('contact_id', { ascending: true }).range(from, to))
+      : Promise.resolve([] as RawEmail[]),
+    contactIds.length > 0
+      ? fetchAll<RawPhone>((from, to) =>
+          db.from('sf_contact_phones').select('contact_id, phone, is_primary')
+            .in('contact_id', contactIds).order('contact_id', { ascending: true }).range(from, to))
+      : Promise.resolve([] as RawPhone[]),
+  ])
+
   const emailsByContact = new Map<string, RawEmail[]>()
-  for (const e of (emailsData ?? []) as RawEmail[]) {
+  for (const e of emailsData) {
     const arr = emailsByContact.get(e.contact_id) ?? []
     arr.push(e)
     emailsByContact.set(e.contact_id, arr)
   }
   const phonesByContact = new Map<string, RawPhone[]>()
-  for (const p of (phonesData ?? []) as RawPhone[]) {
+  for (const p of phonesData) {
     const arr = phonesByContact.get(p.contact_id) ?? []
     arr.push(p)
     phonesByContact.set(p.contact_id, arr)

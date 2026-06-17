@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type {
@@ -129,9 +129,64 @@ function SortTh<T>({
   )
 }
 
+// ── Notes cell ────────────────────────────────────────────────────────────────
+
+function NotesCell({ entityType, entityId, initialNote }: {
+  entityType: string
+  entityId: string
+  initialNote: string
+}) {
+  const [note, setNote] = useState(initialNote)
+  const [saved, setSaved] = useState(initialNote)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const save = useCallback(async (value: string) => {
+    if (value === saved) { setEditing(false); return }
+    setSaving(true)
+    await fetch('/api/admin/action-item-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entity_type: entityType, entity_id: entityId, note: value }),
+    })
+    setSaved(value)
+    setSaving(false)
+    setEditing(false)
+  }, [entityType, entityId, saved])
+
+  if (editing) {
+    return (
+      <td className="px-3 py-1.5 align-top" style={{ minWidth: '180px' }}>
+        <textarea
+          className="w-full text-xs text-gray-900 border border-gray-300 rounded px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-red-500"
+          rows={2}
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          onBlur={() => save(note)}
+          disabled={saving}
+          autoFocus
+        />
+      </td>
+    )
+  }
+
+  return (
+    <td
+      className="px-3 py-2 text-xs text-gray-600 cursor-text max-w-[180px]"
+      onClick={() => setEditing(true)}
+      title={saved || 'Click to add note'}
+    >
+      {saved
+        ? <span className="line-clamp-2">{saved}</span>
+        : <span className="text-gray-300 italic">Add note…</span>
+      }
+    </td>
+  )
+}
+
 // ── Alert 1 — Completed but Unpaid Jobs ──────────────────────────────────────
 
-function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
+function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_outstanding')
 
   return (
@@ -141,6 +196,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -154,6 +210,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_outstanding} /></td>
@@ -170,7 +227,7 @@ function UnpaidJobsTable({ items }: { items: UnpaidJob[] }) {
 
 // ── Alert 2 — Completed but Never Invoiced ────────────────────────────────────
 
-function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
+function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_since_completion')
 
   return (
@@ -180,6 +237,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_since_completion" label="Days Since Completion" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -192,6 +250,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_since_completion} /></td>
@@ -207,7 +266,7 @@ function UninvoicedJobsTable({ items }: { items: UninvoicedJob[] }) {
 
 // ── Alert 3 — Stale Estimates ─────────────────────────────────────────────────
 
-function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
+function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_outstanding')
 
   return (
@@ -217,6 +276,7 @@ function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Estimate #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="created_at_sf" label="Created" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -228,6 +288,7 @@ function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
             <tr key={est.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{est.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{est.number ?? '—'}</td>
+              <NotesCell entityType="sf_estimate" entityId={est.id} initialNote={notes[`sf_estimate:${est.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(est.created_at_sf)}</td>
               <td className="px-4 py-2"><AgingPill days={est.days_outstanding} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(est.total)}</td>
@@ -242,7 +303,7 @@ function StaleEstimatesTable({ items }: { items: StaleEstimate[] }) {
 
 // ── Alert 4 — Jobs Flagged for Follow-Up ─────────────────────────────────────
 
-function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
+function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_open')
 
   return (
@@ -252,12 +313,13 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="start_date" label="Start Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_open" label="Days Open" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Note</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">SF Note</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -265,6 +327,7 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
             <tr key={job.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.start_date)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_open} /></td>
@@ -283,7 +346,7 @@ function FollowUpJobsTable({ items }: { items: FollowUpJob[] }) {
 
 // ── Alert 5 — Customers Overdue Past Payment Terms ────────────────────────────
 
-function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
+function OverdueCustomersTable({ items, notes }: { items: OverdueCustomer[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_overdue')
 
   return (
@@ -293,6 +356,7 @@ function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="account_balance" label="Balance" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="payment_terms" label="Payment Terms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="oldest_overdue_date" label="Oldest Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_overdue" label="Days Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -304,6 +368,7 @@ function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
             <tr key={cust.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{cust.customer_name ?? '—'}</td>
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(cust.account_balance)}</td>
+              <NotesCell entityType="sf_customer" entityId={cust.id} initialNote={notes[`sf_customer:${cust.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">{cust.payment_terms ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(cust.oldest_overdue_date)}</td>
               <td className="px-4 py-2"><AgingPill days={cust.days_overdue} /></td>
@@ -320,7 +385,7 @@ function OverdueCustomersTable({ items }: { items: OverdueCustomer[] }) {
 
 // ── Alert 6 — Closed Won Awaiting SF Job ─────────────────────────────────────
 
-function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
+function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
 
   return (
@@ -330,6 +395,7 @@ function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="account_number" label="Account #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="tag_name" label="Tag" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="assigned_rep_name" label="Rep" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Won" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -342,6 +408,7 @@ function AwaitingSfJobTable({ items }: { items: AwaitingSfJobLead[] }) {
             <tr key={l.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{l.customer_name ?? '—'}</td>
               <td className="px-4 py-2 font-mono text-xs text-gray-600">{l.account_number ?? '—'}</td>
+              <NotesCell entityType="sales_lead" entityId={l.id} initialNote={notes[`sales_lead:${l.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">
                 {l.tag_name
                   ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{l.tag_name}</span>
@@ -378,7 +445,7 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
   annual_maintenance: 'Annual Maintenance',
 }
 
-function AwaitingPushTable({ items }: { items: AwaitingPushLead[] }) {
+function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
 
   return (
@@ -387,6 +454,7 @@ function AwaitingPushTable({ items }: { items: AwaitingPushLead[] }) {
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="sync_status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -398,6 +466,7 @@ function AwaitingPushTable({ items }: { items: AwaitingPushLead[] }) {
           {sorted.map(lead => (
             <tr key={lead.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 font-medium text-gray-900">{lead.customer_name}</td>
+              <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">
                 {lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}
                 {' — '}
@@ -465,6 +534,7 @@ interface Props {
   overdueCustomers: OverdueCustomersResult
   awaitingSfJob: AwaitingSfJobResult
   awaitingPushLeads: AwaitingPushResult
+  notes: Record<string, string>
 }
 
 function SourceBadge({ source }: { source: string | null }) {
@@ -571,6 +641,8 @@ function Spinner() {
   )
 }
 
+type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'followup' | 'overdue' | 'awaiting-sf' | 'awaiting-push'
+
 export default function ActionItemsClient({
   unpaidJobs,
   uninvoicedJobs,
@@ -579,12 +651,16 @@ export default function ActionItemsClient({
   overdueCustomers,
   awaitingSfJob,
   awaitingPushLeads,
+  notes,
 }: Props) {
   const router = useRouter()
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [sourcesFilter, setSourcesFilter] = useState<string[]>([])
+  const [daysFilter, setDaysFilter] = useState<number | null>(null)
+  const [daysInput, setDaysInput] = useState('')
+  const [activeTab, setActiveTab] = useState<TabKey>('unpaid')
 
   // '__blank__' is a sentinel for jobs with no source set
   const BLANK = '__blank__'
@@ -607,18 +683,30 @@ export default function ActionItemsClient({
     })
   }
 
-  const filteredUnpaid = filterBySource(unpaidJobs.items)
-  const filteredUninvoiced = filterBySource(uninvoicedJobs.items)
-  const filteredFollowUp = filterBySource(followUpJobs.items)
+  const filterByDays = <T,>(items: T[], key: keyof T): T[] => {
+    if (daysFilter == null) return items
+    return items.filter(item => {
+      const v = item[key]
+      return typeof v === 'number' && v >= daysFilter
+    })
+  }
+
+  const filteredUnpaid = filterByDays(filterBySource(unpaidJobs.items), 'days_outstanding')
+  const filteredUninvoiced = filterByDays(filterBySource(uninvoicedJobs.items), 'days_since_completion')
+  const filteredFollowUp = filterByDays(filterBySource(followUpJobs.items), 'days_open')
+  const filteredStaleEstimates = filterByDays(staleEstimates.items, 'days_outstanding')
+  const filteredOverdueCustomers = filterByDays(overdueCustomers.items, 'days_overdue')
+  const filteredAwaitingSfJob = filterByDays(awaitingSfJob.items, 'days_waiting')
+  const filteredAwaitingPush = filterByDays(awaitingPushLeads.items, 'days_waiting')
 
   const totalCount =
-    unpaidJobs.items.length +
-    uninvoicedJobs.items.length +
-    staleEstimates.items.length +
-    followUpJobs.items.length +
-    overdueCustomers.items.length +
-    awaitingSfJob.items.length +
-    awaitingPushLeads.items.length
+    filteredUnpaid.length +
+    filteredUninvoiced.length +
+    filteredStaleEstimates.length +
+    filteredFollowUp.length +
+    filteredOverdueCustomers.length +
+    filteredAwaitingSfJob.length +
+    filteredAwaitingPush.length
 
   async function handleRefresh() {
     setSyncing(true)
@@ -678,6 +766,16 @@ export default function ActionItemsClient({
     router.refresh()
   }
 
+  const TABS: { key: TabKey; label: string; count: number }[] = [
+    { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
+    { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
+    { key: 'estimates',    label: 'Stale Estimates',count: filteredStaleEstimates.length },
+    { key: 'followup',     label: 'Follow-Up',      count: filteredFollowUp.length },
+    { key: 'overdue',      label: 'Overdue',        count: filteredOverdueCustomers.length },
+    { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
+    { key: 'awaiting-push',label: 'Awaiting Push',  count: filteredAwaitingPush.length },
+  ]
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       {/* Page header */}
@@ -686,7 +784,7 @@ export default function ActionItemsClient({
           Action Items
           <CountBadge count={totalCount} />
         </h1>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {allSources.length > 0 && (
             <SourceFilterDropdown
               sources={allSources}
@@ -694,6 +792,44 @@ export default function ActionItemsClient({
               onChange={setSourcesFilter}
             />
           )}
+          <div className="flex items-center rounded-md border border-gray-300 bg-white shadow-sm overflow-hidden text-sm">
+            {([null, 30, 60, 90, 120] as (number | null)[]).map(opt => (
+              <button
+                key={opt ?? 'all'}
+                onClick={() => { setDaysFilter(opt); setDaysInput('') }}
+                className={`px-3 py-2 font-medium transition-colors whitespace-nowrap border-r border-gray-300 ${
+                  daysFilter === opt && daysInput === ''
+                    ? 'bg-red-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {opt == null ? 'All' : `${opt}+`}
+              </button>
+            ))}
+            <div className="flex items-center border-l border-gray-300 px-2 gap-1">
+              <input
+                type="number"
+                min={1}
+                placeholder="Custom"
+                value={daysInput}
+                onChange={e => {
+                  const val = e.target.value
+                  setDaysInput(val)
+                  const n = parseInt(val, 10)
+                  setDaysFilter(val === '' ? null : isNaN(n) ? null : n)
+                }}
+                className="w-20 py-1.5 text-sm text-gray-900 bg-transparent focus:outline-none placeholder:text-gray-400"
+              />
+              {daysInput && (
+                <button
+                  onClick={() => { setDaysInput(''); setDaysFilter(null) }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
           {progress && (
             <span className="text-sm text-gray-500">{progress}</span>
           )}
@@ -717,117 +853,115 @@ export default function ActionItemsClient({
         </div>
       </div>
 
-      {/* Alert 1 — Completed but Unpaid */}
-      <AlertSection
-        title="Completed but Unpaid Jobs"
-        count={filteredUnpaid.length}
-        summary={
-          filteredUnpaid.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Total due: <span className="font-semibold text-red-700">{fmtMoney(filteredUnpaid.reduce((s, j) => s + j.due_total, 0))}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {filteredUnpaid.length === 0 ? (
-          <AllClear />
-        ) : (
-          <UnpaidJobsTable items={filteredUnpaid} />
-        )}
-      </AlertSection>
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto pb-px">
+        {TABS.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-px ${
+              activeTab === tab.key
+                ? 'border-red-600 text-red-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {tab.label}
+            <CountBadge count={tab.count} />
+          </button>
+        ))}
+      </div>
 
-      {/* Alert 2 — Never Invoiced */}
-      <AlertSection
-        title="Completed but Never Invoiced"
-        count={filteredUninvoiced.length}
-        summary={
-          filteredUninvoiced.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(filteredUninvoiced.reduce((s, j) => s + (j.total ?? 0), 0))}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {filteredUninvoiced.length === 0 ? (
-          <AllClear />
-        ) : (
-          <UninvoicedJobsTable items={filteredUninvoiced} />
-        )}
-      </AlertSection>
+      {/* Active tab content */}
+      {activeTab === 'unpaid' && (
+        <AlertSection
+          title="Completed but Unpaid Jobs"
+          count={filteredUnpaid.length}
+          summary={
+            filteredUnpaid.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Total due: <span className="font-semibold text-red-700">{fmtMoney(filteredUnpaid.reduce((s, j) => s + j.due_total, 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredUnpaid.length === 0 ? <AllClear /> : <UnpaidJobsTable items={filteredUnpaid} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 3 — Stale Estimates */}
-      <AlertSection
-        title="Stale Estimates (14+ Days)"
-        count={staleEstimates.items.length}
-        summary={
-          staleEstimates.items.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Pipeline value: <span className="font-semibold text-amber-700">{fmtMoney(staleEstimates.totalValue)}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {staleEstimates.items.length === 0 ? (
-          <AllClear />
-        ) : (
-          <StaleEstimatesTable items={staleEstimates.items} />
-        )}
-      </AlertSection>
+      {activeTab === 'uninvoiced' && (
+        <AlertSection
+          title="Completed but Never Invoiced"
+          count={filteredUninvoiced.length}
+          summary={
+            filteredUninvoiced.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(filteredUninvoiced.reduce((s, j) => s + (j.total ?? 0), 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredUninvoiced.length === 0 ? <AllClear /> : <UninvoicedJobsTable items={filteredUninvoiced} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 4 — Follow-Up Required */}
-      <AlertSection
-        title="Jobs Flagged for Follow-Up"
-        count={filteredFollowUp.length}
-      >
-        {filteredFollowUp.length === 0 ? (
-          <AllClear />
-        ) : (
-          <FollowUpJobsTable items={filteredFollowUp} />
-        )}
-      </AlertSection>
+      {activeTab === 'estimates' && (
+        <AlertSection
+          title="Stale Estimates (14+ Days)"
+          count={filteredStaleEstimates.length}
+          summary={
+            filteredStaleEstimates.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Pipeline value: <span className="font-semibold text-amber-700">{fmtMoney(filteredStaleEstimates.reduce((s, e) => s + (e.total ?? 0), 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredStaleEstimates.length === 0 ? <AllClear /> : <StaleEstimatesTable items={filteredStaleEstimates} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 5 — Overdue Customers */}
-      <AlertSection
-        title="Customers Overdue Past Payment Terms"
-        count={overdueCustomers.items.length}
-        summary={
-          overdueCustomers.items.length > 0 ? (
-            <span className="text-sm text-gray-600">
-              Total overdue: <span className="font-semibold text-red-700">{fmtMoney(overdueCustomers.totalOverdue)}</span>
-            </span>
-          ) : undefined
-        }
-      >
-        {overdueCustomers.items.length === 0 ? (
-          <AllClear />
-        ) : (
-          <OverdueCustomersTable items={overdueCustomers.items} />
-        )}
-      </AlertSection>
+      {activeTab === 'followup' && (
+        <AlertSection
+          title="Jobs Flagged for Follow-Up"
+          count={filteredFollowUp.length}
+        >
+          {filteredFollowUp.length === 0 ? <AllClear /> : <FollowUpJobsTable items={filteredFollowUp} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 6 — Closed Won Awaiting SF Job */}
-      <AlertSection
-        title="Closed Won — Awaiting SF Job"
-        count={awaitingSfJob.items.length}
-      >
-        {awaitingSfJob.items.length === 0 ? (
-          <AllClear />
-        ) : (
-          <AwaitingSfJobTable items={awaitingSfJob.items} />
-        )}
-      </AlertSection>
+      {activeTab === 'overdue' && (
+        <AlertSection
+          title="Customers Overdue Past Payment Terms"
+          count={filteredOverdueCustomers.length}
+          summary={
+            filteredOverdueCustomers.length > 0 ? (
+              <span className="text-sm text-gray-600">
+                Total overdue: <span className="font-semibold text-red-700">{fmtMoney(filteredOverdueCustomers.reduce((s, c) => s + (c.account_balance ?? 0), 0))}</span>
+              </span>
+            ) : undefined
+          }
+        >
+          {filteredOverdueCustomers.length === 0 ? <AllClear /> : <OverdueCustomersTable items={filteredOverdueCustomers} notes={notes} />}
+        </AlertSection>
+      )}
 
-      {/* Alert 7 — Scheduler Leads Awaiting Manual SF Push */}
-      <AlertSection
-        title="Scheduler Leads — Awaiting SF Push"
-        count={awaitingPushLeads.items.length}
-      >
-        {awaitingPushLeads.items.length === 0 ? (
-          <AllClear />
-        ) : (
-          <AwaitingPushTable items={awaitingPushLeads.items} />
-        )}
-      </AlertSection>
+      {activeTab === 'awaiting-sf' && (
+        <AlertSection
+          title="Closed Won — Awaiting SF Job"
+          count={filteredAwaitingSfJob.length}
+        >
+          {filteredAwaitingSfJob.length === 0 ? <AllClear /> : <AwaitingSfJobTable items={filteredAwaitingSfJob} notes={notes} />}
+        </AlertSection>
+      )}
+
+      {activeTab === 'awaiting-push' && (
+        <AlertSection
+          title="Scheduler Leads — Awaiting SF Push"
+          count={filteredAwaitingPush.length}
+        >
+          {filteredAwaitingPush.length === 0 ? <AllClear /> : <AwaitingPushTable items={filteredAwaitingPush} notes={notes} />}
+        </AlertSection>
+      )}
     </div>
   )
 }

@@ -10,9 +10,9 @@ import {
   getAwaitingSfJob,
   getAwaitingPushLeads,
 } from '@/lib/analytics/alerts'
-import ActionItemsClient from './ActionItemsClient'
+import ActionItemsClient from '@/app/admin/action-items/ActionItemsClient'
 
-export default async function ActionItemsPage() {
+export default async function SalesActionItemsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -23,7 +23,7 @@ export default async function ActionItemsPage() {
     .eq('id', user.id)
     .single()
 
-  if (profile?.role !== 'admin') redirect('/admin')
+  if (!['admin', 'sales'].includes(profile?.role ?? '')) redirect('/sales')
 
   const db = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
