@@ -14,16 +14,16 @@ function db() {
   )
 }
 
-function normalize(s: string): string {
+export function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z\s]/g, '').trim().replace(/\s+/g, ' ')
 }
 
-function tokenize(s: string): string[] {
+export function tokenize(s: string): string[] {
   return normalize(s).split(' ').filter(t => t.length > 1)
 }
 
 // Precomputed, normalized job record used by the scorer
-interface ScoreJob {
+export interface ScoreJob {
   id: string
   customer_id: string
   customerTokens: string[]
@@ -37,17 +37,18 @@ interface ScoreJob {
  * Score a review's reviewer name against a single job.
  * Returns 0..1 (before any date bonus).
  */
-function scoreJob(rNorm: string, rTokens: string[], job: ScoreJob): number {
+export function scoreJob(rNorm: string, rTokens: string[], job: ScoreJob): number {
   if (rTokens.length === 0) return 0
 
-  // Exact customer-name match, order-independent
-  // ("Edward Frank" matches customer "Frank, Edward")
-  if (
-    job.customerTokens.length >= 2 &&
-    job.customerTokens.length === rTokens.length &&
-    job.customerTokens.every(t => rTokens.includes(t))
-  ) return 1.0
   if (job.customerNorm && job.customerNorm === rNorm) return 1.0
+
+  // Reviewer name fully contained in the customer name, order-independent.
+  // Exact (same token count) → 1.0; subset (customer has extra tokens such as a
+  // middle name, suffix, or spouse — "Frank, Edward & Mary") → 0.92 so it still
+  // auto-matches. ("Edward Frank" matches customer "Frank, Edward".)
+  if (rTokens.length >= 2 && rTokens.every(t => job.customerTokens.includes(t))) {
+    return job.customerTokens.length === rTokens.length ? 1.0 : 0.92
+  }
 
   // Exact contact first+last match (either order)
   if (job.first && job.last) {
@@ -70,7 +71,7 @@ function scoreJob(rNorm: string, rTokens: string[], job: ScoreJob): number {
   return Math.min(score, 0.99)
 }
 
-function dateBonusDays(reviewDate: string, closedAt: string | null): number {
+export function dateBonusDays(reviewDate: string, closedAt: string | null): number {
   if (!closedAt) return 0
   const diffDays = Math.abs(
     (new Date(reviewDate).getTime() - new Date(closedAt).getTime()) / 86400000
@@ -81,8 +82,8 @@ function dateBonusDays(reviewDate: string, closedAt: string | null): number {
   return 0
 }
 
-const AUTO_THRESHOLD      = 0.85
-const CANDIDATE_THRESHOLD = 0.45
+export const AUTO_THRESHOLD      = 0.85
+export const CANDIDATE_THRESHOLD = 0.45
 
 export async function runMatchingPass(): Promise<MatchResult> {
   const supabase = db()
