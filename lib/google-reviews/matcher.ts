@@ -111,7 +111,7 @@ export async function runMatchingPass(): Promise<MatchResult> {
       .from('sf_jobs')
       .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at')
       .eq('is_deleted', false)
-      .not('contact_last_name', 'is', null)
+      .not('customer_name', 'is', null)
       .gte('closed_at', twoYearsAgo)
       .order('id')
       .range(from, from + PAGE - 1)
