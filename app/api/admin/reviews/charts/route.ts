@@ -20,8 +20,16 @@ export async function GET() {
     { auth: { persistSession: false } }
   )
 
-  // Monthly trend — last 18 months
+  // Monthly trend — last 18 months.
+  // bigint count + numeric avg come back from PostgREST as strings — coerce to numbers
+  // so recharts can plot them.
   const { data: monthlyRaw } = await db.rpc('google_reviews_monthly_trend')
+  const monthly = ((monthlyRaw ?? []) as Array<{ month: string; count: number | string; avg_rating: number | string | null }>)
+    .map(m => ({
+      month:      m.month,
+      count:      Number(m.count),
+      avg_rating: m.avg_rating == null ? null : Number(m.avg_rating),
+    }))
 
   // Tech leaderboard — via matched_job_id → sf_job_techs
   const { data: reviews } = await db
@@ -62,5 +70,5 @@ export async function GET() {
     .sort((a, b) => b.reviews - a.reviews)
     .slice(0, 15)
 
-  return NextResponse.json({ monthly: monthlyRaw ?? [], techLeaderboard })
+  return NextResponse.json({ monthly, techLeaderboard })
 }
