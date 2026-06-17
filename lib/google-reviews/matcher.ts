@@ -18,50 +18,54 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z\s]/g, '').trim().replace(/\s+/g, ' ')
 }
 
-function scoreNames(
-  reviewerName: string,
-  first: string | null,
-  last: string | null,
-  customerName: string | null,
-): number {
-  const r = normalize(reviewerName)
-  if (!r) return 0
+function tokenize(s: string): string[] {
+  return normalize(s).split(' ').filter(t => t.length > 1)
+}
 
-  const rTokens = r.split(' ').filter(t => t.length > 1)
+// Precomputed, normalized job record used by the scorer
+interface ScoreJob {
+  id: string
+  customer_id: string
+  customerTokens: string[]
+  customerNorm: string
+  first: string
+  last: string
+  closed_at: string | null
+}
+
+/**
+ * Score a review's reviewer name against a single job.
+ * Returns 0..1 (before any date bonus).
+ */
+function scoreJob(rNorm: string, rTokens: string[], job: ScoreJob): number {
   if (rTokens.length === 0) return 0
 
-  // Match against customer name — try both "First Last" and "Last, First" orderings
-  if (customerName) {
-    const cn = normalize(customerName) // strips commas
-    const cnTokens = cn.split(' ').filter(t => t.length > 1)
-    // All tokens match regardless of order (catches "Frank Edward" == "Edward Frank")
-    if (
-      cnTokens.length >= 2 &&
-      cnTokens.length === rTokens.length &&
-      cnTokens.every(t => rTokens.includes(t))
-    ) return 1.0
-    if (cn === r) return 1.0
+  // Exact customer-name match, order-independent
+  // ("Edward Frank" matches customer "Frank, Edward")
+  if (
+    job.customerTokens.length >= 2 &&
+    job.customerTokens.length === rTokens.length &&
+    job.customerTokens.every(t => rTokens.includes(t))
+  ) return 1.0
+  if (job.customerNorm && job.customerNorm === rNorm) return 1.0
+
+  // Exact contact first+last match (either order)
+  if (job.first && job.last) {
+    const full     = `${job.first} ${job.last}`
+    const reversed = `${job.last} ${job.first}`
+    if (rNorm === full || rNorm === reversed) return 1.0
   }
-
-  const f = first ? normalize(first) : ''
-  const l = last ? normalize(last) : ''
-  if (!f && !l) return 0
-
-  // Exact first+last match (either order)
-  const full     = [f, l].filter(Boolean).join(' ')
-  const reversed = [l, f].filter(Boolean).join(' ')
-  if (r === full || r === reversed) return 1.0
 
   let score = 0
 
-  // Last name match (strongest signal)
-  if (l && l.length > 1 && rTokens.includes(l)) score += 0.60
+  // Contact last/first name token matches
+  if (job.last && rTokens.includes(job.last))  score += 0.60
+  if (job.first && rTokens.includes(job.first)) score += 0.30
 
-  // First name match
-  if (f && f.length > 1 && rTokens.includes(f)) score += 0.30
-
-  // Partial: first token of reviewer matches first name (handles "J. Smith" type names)
-  if (f && f.length > 1 && rTokens[0] && f.startsWith(rTokens[0])) score = Math.max(score, 0.15)
+  // Customer-name token overlap (covers names not split into contact fields)
+  const overlap = rTokens.filter(t => job.customerTokens.includes(t)).length
+  if (overlap >= 2)      score = Math.max(score, 0.80)
+  else if (overlap === 1) score = Math.max(score, 0.45)
 
   return Math.min(score, 0.99)
 }
@@ -92,18 +96,11 @@ export async function runMatchingPass(): Promise<MatchResult> {
 
   if (!reviews || reviews.length === 0) return { matched: 0, candidates: 0, noMatch: 0 }
 
-  const twoYearsAgo = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000).toISOString()
-
-  // Paginate sf_jobs to avoid 1000-row cap
-  const jobs: Array<{
-    id: string
-    customer_id: string
-    customer_name: string | null
-    contact_first_name: string | null
-    contact_last_name: string | null
-    closed_at: string | null
-  }> = []
-
+  // Load every non-deleted job that has a customer name. We deliberately do NOT
+  // filter on closed_at — many jobs have a null closed_at and filtering on it
+  // would exclude their customers from matching entirely. closed_at is used only
+  // as an optional date-proximity bonus below.
+  const jobs: ScoreJob[] = []
   let from = 0
   const PAGE = 1000
   for (;;) {
@@ -112,11 +109,23 @@ export async function runMatchingPass(): Promise<MatchResult> {
       .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at')
       .eq('is_deleted', false)
       .not('customer_name', 'is', null)
-      .gte('closed_at', twoYearsAgo)
       .order('id')
       .range(from, from + PAGE - 1)
     if (!page || page.length === 0) break
-    jobs.push(...page)
+    for (const j of page as Array<{
+      id: string; customer_id: string; customer_name: string | null
+      contact_first_name: string | null; contact_last_name: string | null; closed_at: string | null
+    }>) {
+      jobs.push({
+        id:             j.id,
+        customer_id:    j.customer_id,
+        customerTokens: j.customer_name ? tokenize(j.customer_name) : [],
+        customerNorm:   j.customer_name ? normalize(j.customer_name) : '',
+        first:          j.contact_first_name ? normalize(j.contact_first_name) : '',
+        last:           j.contact_last_name ? normalize(j.contact_last_name) : '',
+        closed_at:      j.closed_at,
+      })
+    }
     if (page.length < PAGE) break
     from += PAGE
   }
@@ -126,11 +135,15 @@ export async function runMatchingPass(): Promise<MatchResult> {
   let matched = 0, candidates = 0, noMatch = 0
 
   for (const review of reviews as Array<{ id: string; reviewer_name: string; created_at_google: string }>) {
+    const rNorm   = normalize(review.reviewer_name)
+    const rTokens = tokenize(review.reviewer_name)
+
     let bestScore = 0
-    let bestJob: typeof jobs[0] | null = null
+    let bestJob: ScoreJob | null = null
 
     for (const job of jobs) {
-      const ns = scoreNames(review.reviewer_name, job.contact_first_name, job.contact_last_name, job.customer_name)
+      const ns = scoreJob(rNorm, rTokens, job)
+      if (ns === 0) continue
       const total = Math.min(ns + dateBonusDays(review.created_at_google, job.closed_at), 1.0)
       if (total > bestScore) {
         bestScore = total

@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import dynamic from 'next/dynamic'
+
+const ReviewsCharts = dynamic(() => import('./ReviewsCharts'), { ssr: false })
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,7 +84,7 @@ function MatchBadge({ status }: { status: string }) {
   )
 }
 
-function MatchCell({
+function MatchCellInner({
   review,
   onAction,
   onSearch,
@@ -93,59 +96,55 @@ function MatchCell({
   const { match_status, matched_customer_id, matched_customer_name, id } = review
 
   if (match_status === 'anonymous' || match_status === 'skipped') {
-    return <td className="px-4 py-3" />
+    return null
   }
 
   if (match_status === 'confirmed' || match_status === 'auto') {
     return (
-      <td className="px-4 py-3">
-        <span className="inline-flex items-center gap-1">
-          {matched_customer_name && (
-            <span className="text-xs text-gray-500">{matched_customer_name}</span>
-          )}
-          <button
-            onClick={() => onAction(id, 'unmatch')}
-            title="Unmatch"
-            className="text-gray-300 hover:text-red-400 transition-colors leading-none"
-          >
-            ✕
-          </button>
-        </span>
-      </td>
+      <span className="inline-flex items-center gap-1">
+        {matched_customer_name && (
+          <span className="text-xs text-gray-500">{matched_customer_name}</span>
+        )}
+        <button
+          onClick={() => onAction(id, 'unmatch')}
+          title="Unmatch"
+          className="text-gray-300 hover:text-red-400 transition-colors leading-none"
+        >
+          ✕
+        </button>
+      </span>
     )
   }
 
   // pending_review
   return (
-    <td className="px-4 py-3">
-      <div className="flex flex-col gap-1">
-        {matched_customer_name && (
-          <span className="text-xs text-gray-500">{matched_customer_name}</span>
+    <div className="flex flex-col gap-1">
+      {matched_customer_name && (
+        <span className="text-xs text-gray-500">{matched_customer_name}</span>
+      )}
+      <div className="flex gap-1.5 flex-wrap">
+        {matched_customer_id && (
+          <button
+            onClick={() => onAction(id, 'confirm')}
+            className="text-xs px-2 py-0.5 rounded border border-green-300 text-green-700 hover:bg-green-50"
+          >
+            Confirm
+          </button>
         )}
-        <div className="flex gap-1.5 flex-wrap">
-          {matched_customer_id && (
-            <button
-              onClick={() => onAction(id, 'confirm')}
-              className="text-xs px-2 py-0.5 rounded border border-green-300 text-green-700 hover:bg-green-50"
-            >
-              Confirm
-            </button>
-          )}
-          <button
-            onClick={() => onSearch(review)}
-            className="text-xs px-2 py-0.5 rounded border border-blue-300 text-blue-600 hover:bg-blue-50"
-          >
-            Search
-          </button>
-          <button
-            onClick={() => onAction(id, 'skip')}
-            className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50"
-          >
-            Skip
-          </button>
-        </div>
+        <button
+          onClick={() => onSearch(review)}
+          className="text-xs px-2 py-0.5 rounded border border-blue-300 text-blue-600 hover:bg-blue-50"
+        >
+          Search
+        </button>
+        <button
+          onClick={() => onAction(id, 'skip')}
+          className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50"
+        >
+          Skip
+        </button>
       </div>
-    </td>
+    </div>
   )
 }
 
@@ -257,6 +256,106 @@ function ManualMatchModal({
   )
 }
 
+// ── Review detail modal ───────────────────────────────────────────────────────
+
+function ReviewDetailModal({
+  review,
+  onClose,
+  onAction,
+  onSearch,
+}: {
+  review: Review
+  onClose: () => void
+  onAction: (id: string, action: 'confirm' | 'skip' | 'unmatch') => void
+  onSearch: (review: Review) => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-100 flex items-start justify-between gap-4">
+          <div>
+            <p className="font-semibold text-gray-900 text-base">
+              {review.reviewer_name ?? <span className="italic text-gray-400">Anonymous</span>}
+            </p>
+            <div className="flex items-center gap-3 mt-1">
+              <Stars rating={review.star_rating} />
+              <span className="text-xs text-gray-400">{fmtDate(review.created_at_google)}</span>
+              <MatchBadge status={review.match_status} />
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none mt-0.5">✕</button>
+        </div>
+
+        {/* Comment */}
+        <div className="px-6 py-4 border-b border-gray-100">
+          {review.comment
+            ? <p className="text-sm text-gray-700 leading-relaxed">{review.comment}</p>
+            : <p className="text-sm text-gray-400 italic">No comment</p>
+          }
+        </div>
+
+        {/* Match info + actions */}
+        <div className="px-6 py-4">
+          {(review.match_status === 'confirmed' || review.match_status === 'auto') && review.matched_customer_name && (
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-xs text-gray-500 mb-0.5">Matched customer</p>
+                <p className="text-sm font-medium text-gray-900">{review.matched_customer_name}</p>
+              </div>
+              <button
+                onClick={() => { onAction(review.id, 'unmatch'); onClose() }}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+              >
+                Unmatch
+              </button>
+            </div>
+          )}
+
+          {review.match_status === 'pending_review' && (
+            <div>
+              {review.matched_customer_name && (
+                <div className="mb-3">
+                  <p className="text-xs text-gray-500 mb-0.5">Suggested match</p>
+                  <p className="text-sm font-medium text-gray-900">{review.matched_customer_name}</p>
+                  {review.match_score != null && (
+                    <p className="text-xs text-gray-400">Confidence: {Math.round(review.match_score * 100)}%</p>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-2 flex-wrap">
+                {review.matched_customer_id && (
+                  <button
+                    onClick={() => { onAction(review.id, 'confirm'); onClose() }}
+                    className="text-sm px-3 py-1.5 rounded border border-green-300 text-green-700 hover:bg-green-50"
+                  >
+                    Confirm Match
+                  </button>
+                )}
+                <button
+                  onClick={() => { onClose(); onSearch(review) }}
+                  className="text-sm px-3 py-1.5 rounded border border-blue-300 text-blue-600 hover:bg-blue-50"
+                >
+                  Search Customer
+                </button>
+                <button
+                  onClick={() => { onAction(review.id, 'skip'); onClose() }}
+                  className="text-sm px-3 py-1.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50"
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
@@ -279,6 +378,12 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   // Sync + matching
   const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [matchResult, setMatchResult]       = useState<{ reviewsNew: number; reviewsUpdated: number; matched: number; candidates: number; noMatch: number } | null>(null)
+
+  // Tab
+  const [tab, setTab] = useState<'list' | 'charts'>('list')
+
+  // Detail modal
+  const [detailReview, setDetailReview] = useState<Review | null>(null)
 
   // Manual match modal
   const [searchTarget, setSearchTarget] = useState<Review | null>(null)
@@ -340,6 +445,16 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   return (
     <div className="space-y-6">
 
+      {/* Detail modal */}
+      {detailReview && (
+        <ReviewDetailModal
+          review={detailReview}
+          onClose={() => setDetailReview(null)}
+          onAction={(id, action) => { handleAction(id, action); setDetailReview(null) }}
+          onSearch={(r) => { setDetailReview(null); setSearchTarget(r) }}
+        />
+      )}
+
       {/* Manual match modal */}
       {searchTarget && (
         <ManualMatchModal
@@ -400,6 +515,27 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
           <p className="text-xs text-gray-400">{pct(kpi.oneStar)}% of total</p>
         </div>
       </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-gray-200">
+        {(['list', 'charts'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm font-medium capitalize transition-colors ${
+              tab === t
+                ? 'text-gray-900 border-b-2 border-red-500 -mb-px'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t === 'list' ? 'Reviews' : 'Charts & Leaderboard'}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'charts' && <ReviewsCharts />}
+
+      {tab === 'list' && <>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-end">
@@ -493,7 +629,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {reviews.map(r => (
-                <tr key={r.id} className="hover:bg-gray-50">
+                <tr key={r.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setDetailReview(r)}>
                   <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
                     {r.reviewer_name ?? <span className="text-gray-400 italic">Anonymous</span>}
                   </td>
@@ -512,7 +648,9 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
                   <td className="px-4 py-3">
                     <MatchBadge status={r.match_status} />
                   </td>
-                  <MatchCell review={r} onAction={handleAction} onSearch={setSearchTarget} />
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                    <MatchCellInner review={r} onAction={handleAction} onSearch={setSearchTarget} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -543,6 +681,8 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
           </div>
         </div>
       )}
+
+      </>}
 
     </div>
   )
