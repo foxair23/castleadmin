@@ -28,9 +28,9 @@ export async function PATCH(
 
   const { id } = await params
   const body = await req.json()
-  const { action, customerId } = body as { action: 'confirm' | 'skip' | 'manual'; customerId?: string }
+  const { action, customerId } = body as { action: 'confirm' | 'skip' | 'manual' | 'unmatch'; customerId?: string }
 
-  if (!['confirm', 'skip', 'manual'].includes(action)) {
+  if (!['confirm', 'skip', 'manual', 'unmatch'].includes(action)) {
     return NextResponse.json({ error: 'invalid action' }, { status: 400 })
   }
 
@@ -49,10 +49,18 @@ export async function PATCH(
           match_score:         null,
           match_confidence:    null,
         }
-      : {
+      : action === 'manual'
+      ? {
           match_status:        'confirmed',
           match_confidence:    'manual',
           matched_customer_id: customerId,
+          matched_job_id:      null,
+          match_score:         null,
+        }
+      : {
+          match_status:        'pending_review',
+          match_confidence:    null,
+          matched_customer_id: null,
           matched_job_id:      null,
           match_score:         null,
         }

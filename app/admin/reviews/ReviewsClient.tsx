@@ -87,7 +87,7 @@ function MatchCell({
   onSearch,
 }: {
   review: Review
-  onAction: (id: string, action: 'confirm' | 'skip') => void
+  onAction: (id: string, action: 'confirm' | 'skip' | 'unmatch') => void
   onSearch: (review: Review) => void
 }) {
   const { match_status, matched_customer_id, matched_customer_name, id } = review
@@ -99,9 +99,17 @@ function MatchCell({
   if (match_status === 'confirmed' || match_status === 'auto') {
     return (
       <td className="px-4 py-3">
-        {matched_customer_name && (
-          <span className="text-xs text-gray-500">{matched_customer_name}</span>
-        )}
+        <div className="flex flex-col gap-1">
+          {matched_customer_name && (
+            <span className="text-xs text-gray-500">{matched_customer_name}</span>
+          )}
+          <button
+            onClick={() => onAction(id, 'unmatch')}
+            className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 w-fit"
+          >
+            Unmatch
+          </button>
+        </div>
       </td>
     )
   }
@@ -317,7 +325,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
     }
   }
 
-  async function handleAction(reviewId: string, action: 'confirm' | 'skip') {
+  async function handleAction(reviewId: string, action: 'confirm' | 'skip' | 'unmatch') {
     await fetch(`/api/admin/reviews/${reviewId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
