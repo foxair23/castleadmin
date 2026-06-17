@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,11 @@ interface Review {
   matched_customer_id: string | null
   matched_job_id: string | null
   matched_customer_name: string | null
+}
+
+interface Customer {
+  id: string
+  customer_name: string
 }
 
 interface KPI {
@@ -78,9 +83,11 @@ function MatchBadge({ status }: { status: string }) {
 function MatchCell({
   review,
   onAction,
+  onSearch,
 }: {
   review: Review
   onAction: (id: string, action: 'confirm' | 'skip') => void
+  onSearch: (review: Review) => void
 }) {
   const { match_status, matched_customer_id, matched_customer_name, id } = review
 
@@ -105,7 +112,7 @@ function MatchCell({
         {matched_customer_name && (
           <span className="text-xs text-gray-500">{matched_customer_name}</span>
         )}
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 flex-wrap">
           {matched_customer_id && (
             <button
               onClick={() => onAction(id, 'confirm')}
@@ -115,6 +122,12 @@ function MatchCell({
             </button>
           )}
           <button
+            onClick={() => onSearch(review)}
+            className="text-xs px-2 py-0.5 rounded border border-blue-300 text-blue-600 hover:bg-blue-50"
+          >
+            Search
+          </button>
+          <button
             onClick={() => onAction(id, 'skip')}
             className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50"
           >
@@ -123,6 +136,109 @@ function MatchCell({
         </div>
       </div>
     </td>
+  )
+}
+
+// ── Manual match modal ────────────────────────────────────────────────────────
+
+function ManualMatchModal({
+  review,
+  onClose,
+  onMatched,
+}: {
+  review: Review
+  onClose: () => void
+  onMatched: () => void
+}) {
+  const [query, setQuery]         = useState('')
+  const [results, setResults]     = useState<Customer[]>([])
+  const [searching, setSearching] = useState(false)
+  const [saving, setSaving]       = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => { inputRef.current?.focus() }, [])
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (query.trim().length < 2) { setResults([]); return }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const res = await fetch(`/api/admin/customers/search?q=${encodeURIComponent(query.trim())}`)
+        const json = await res.json()
+        setResults(json.customers ?? [])
+      } finally {
+        setSearching(false)
+      }
+    }, 250)
+  }, [query])
+
+  async function selectCustomer(customer: Customer) {
+    setSaving(customer.id)
+    await fetch(`/api/admin/reviews/${review.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'manual', customerId: customer.id }),
+    })
+    setSaving(null)
+    onMatched()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-gray-100">
+          <p className="text-xs text-gray-500 mb-0.5">Matching review by</p>
+          <p className="font-semibold text-gray-900">{review.reviewer_name ?? 'Anonymous'}</p>
+          {review.comment && (
+            <p className="text-xs text-gray-400 mt-1 line-clamp-2">{review.comment}</p>
+          )}
+        </div>
+
+        <div className="px-5 py-3">
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search customer name…"
+            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div className="max-h-64 overflow-y-auto divide-y divide-gray-50">
+          {searching && (
+            <div className="px-5 py-3 text-sm text-gray-400">Searching…</div>
+          )}
+          {!searching && query.trim().length >= 2 && results.length === 0 && (
+            <div className="px-5 py-3 text-sm text-gray-400">No customers found</div>
+          )}
+          {results.map(c => (
+            <button
+              key={c.id}
+              onClick={() => selectCustomer(c)}
+              disabled={saving === c.id}
+              className="w-full text-left px-5 py-3 text-sm text-gray-800 hover:bg-blue-50 disabled:opacity-50 transition-colors"
+            >
+              {c.customer_name}
+            </button>
+          ))}
+        </div>
+
+        <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={onClose}
+            className="text-sm text-gray-500 hover:text-gray-700"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -148,6 +264,9 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   // Matching
   const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [matchResult, setMatchResult]       = useState<{ matched: number; candidates: number; noMatch: number } | null>(null)
+
+  // Manual match modal
+  const [searchTarget, setSearchTarget] = useState<Review | null>(null)
 
   const pageSize   = 25
   const totalPages = Math.ceil(total / pageSize)
@@ -205,6 +324,15 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
 
   return (
     <div className="space-y-6">
+
+      {/* Manual match modal */}
+      {searchTarget && (
+        <ManualMatchModal
+          review={searchTarget}
+          onClose={() => setSearchTarget(null)}
+          onMatched={() => { setSearchTarget(null); load(page) }}
+        />
+      )}
 
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
@@ -369,7 +497,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
                   <td className="px-4 py-3">
                     <MatchBadge status={r.match_status} />
                   </td>
-                  <MatchCell review={r} onAction={handleAction} />
+                  <MatchCell review={r} onAction={handleAction} onSearch={setSearchTarget} />
                 </tr>
               ))}
             </tbody>
