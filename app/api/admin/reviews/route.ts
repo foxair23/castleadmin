@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   const { data, error, count } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const rows = (data ?? []) as Array<Record<string, unknown> & { matched_customer_id: string | null }>
+  const rows = (data ?? []) as Array<Record<string, unknown> & { matched_customer_id: string | null; matched_job_id: string | null }>
 
   const customerIds = [...new Set(
     rows.map(r => r.matched_customer_id).filter((id): id is string => id != null)
@@ -65,9 +65,31 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Tech(s) who worked the matched job, via sf_job_techs
+  const jobIds = [...new Set(
+    rows.map(r => r.matched_job_id).filter((id): id is string => id != null)
+  )]
+  const jobTechMap: Record<string, string> = {}
+  if (jobIds.length > 0) {
+    const { data: jobTechs } = await db
+      .from('sf_job_techs')
+      .select('job_id, tech_first_name, tech_last_name')
+      .in('job_id', jobIds)
+    const byJob: Record<string, string[]> = {}
+    for (const jt of (jobTechs ?? []) as Array<{ job_id: string; tech_first_name: string | null; tech_last_name: string | null }>) {
+      const name = [jt.tech_first_name, jt.tech_last_name].filter(Boolean).join(' ')
+      if (!name) continue
+      ;(byJob[jt.job_id] ??= []).push(name)
+    }
+    for (const [jobId, names] of Object.entries(byJob)) {
+      jobTechMap[jobId] = [...new Set(names)].join(', ')
+    }
+  }
+
   const reviews = rows.map(r => ({
     ...r,
     matched_customer_name: r.matched_customer_id ? (customerNameMap[r.matched_customer_id] ?? null) : null,
+    matched_tech_name:     r.matched_job_id ? (jobTechMap[r.matched_job_id] ?? null) : null,
   }))
 
   return NextResponse.json({ reviews, total: count ?? 0, page, pageSize })

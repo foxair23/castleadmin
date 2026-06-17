@@ -21,6 +21,7 @@ interface Review {
   matched_customer_id: string | null
   matched_job_id: string | null
   matched_customer_name: string | null
+  matched_tech_name: string | null
 }
 
 interface Customer {
@@ -305,6 +306,9 @@ function ReviewDetailModal({
               <div>
                 <p className="text-xs text-gray-500 mb-0.5">Matched customer</p>
                 <p className="text-sm font-medium text-gray-900">{review.matched_customer_name}</p>
+                {review.matched_tech_name && (
+                  <p className="text-xs text-gray-400 mt-1">Tech: {review.matched_tech_name}</p>
+                )}
               </div>
               <button
                 onClick={() => { onAction(review.id, 'unmatch'); onClose() }}
@@ -625,6 +629,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Match</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tech</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -650,6 +655,9 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
                   </td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <MatchCellInner review={r} onAction={handleAction} onSearch={setSearchTarget} />
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                    {r.matched_tech_name ?? <span className="text-gray-300">—</span>}
                   </td>
                 </tr>
               ))}
