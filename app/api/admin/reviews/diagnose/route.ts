@@ -77,6 +77,31 @@ export async function GET(req: NextRequest) {
     .or(jobFilters)
     .limit(2000) : { data: [] }
 
+  // 2b. Tight search — jobs whose customer_name contains ALL of the reviewer's raw
+  // tokens (e.g. "edward" AND "frank"). Chained .ilike() calls AND together, so this
+  // narrow query directly surfaces "Frank, Edward" regardless of how many "frank"-only
+  // jobs exist. This is the truncation-proof way to prove a job is/ isn't present.
+  let tightQ = db
+    .from('sf_jobs')
+    .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
+  for (const t of rawTokens) tightQ = tightQ.ilike('customer_name', `%${t}%`)
+  const { data: tightRows } = q && rawTokens.length > 0 ? await tightQ.limit(50) : { data: [] }
+  const tightMatches = (tightRows ?? []).map((j: {
+    id: string; customer_id: string; customer_name: string | null
+    contact_first_name: string | null; contact_last_name: string | null
+    closed_at: string | null; is_deleted: boolean
+  }) => {
+    const sj = buildScoreJob(j)
+    const base = scoreJob(rNorm, rTokens, sj)
+    return {
+      job_id: j.id, customer_id: j.customer_id, job_customer_name: j.customer_name,
+      contact: [j.contact_first_name, j.contact_last_name].filter(Boolean).join(' ') || null,
+      match_tokens: sj.customerTokens, is_deleted: j.is_deleted,
+      base_score: Math.round(base * 100) / 100,
+      verdict: base >= AUTO_THRESHOLD ? 'AUTO' : base >= CANDIDATE_THRESHOLD ? 'candidate' : 'no-match',
+    }
+  })
+
   const reviewDate = (reviews?.[0]?.created_at_google as string | undefined) ?? new Date().toISOString()
 
   const scored = (rawJobs ?? []).map((j: {
@@ -110,6 +135,7 @@ export async function GET(req: NextRequest) {
     reviews,
     thresholds: { auto: AUTO_THRESHOLD, candidate: CANDIDATE_THRESHOLD },
     lookup_job: lookupJob,
+    tight_matches: tightMatches,
     candidate_count: scored.length,
     candidate_jobs: scored,
   })
