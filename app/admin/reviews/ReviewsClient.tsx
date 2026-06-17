@@ -99,17 +99,18 @@ function MatchCell({
   if (match_status === 'confirmed' || match_status === 'auto') {
     return (
       <td className="px-4 py-3">
-        <div className="flex flex-col gap-1">
+        <span className="inline-flex items-center gap-1">
           {matched_customer_name && (
             <span className="text-xs text-gray-500">{matched_customer_name}</span>
           )}
           <button
             onClick={() => onAction(id, 'unmatch')}
-            className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 w-fit"
+            title="Unmatch"
+            className="text-gray-300 hover:text-red-400 transition-colors leading-none"
           >
-            Unmatch
+            ✕
           </button>
-        </div>
+        </span>
       </td>
     )
   }
