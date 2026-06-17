@@ -16,12 +16,12 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
-  const page       = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10))
-  const pageSize   = 25
-  const stars      = searchParams.get('stars')       // comma-separated e.g. "1,5"
-  const status     = searchParams.get('status')      // match_status filter
-  const dateFrom   = searchParams.get('date_from')
-  const dateTo     = searchParams.get('date_to')
+  const page     = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10))
+  const pageSize = 25
+  const stars    = searchParams.get('stars')
+  const status   = searchParams.get('status')
+  const dateFrom = searchParams.get('date_from')
+  const dateTo   = searchParams.get('date_to')
 
   const db = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -30,7 +30,10 @@ export async function GET(req: NextRequest) {
 
   let query = db
     .from('google_reviews')
-    .select('id, google_review_id, reviewer_name, star_rating, comment, created_at_google, reply_text, match_status, matched_customer_id, matched_job_id, deleted_at', { count: 'exact' })
+    .select(
+      'id, google_review_id, reviewer_name, star_rating, comment, created_at_google, reply_text, match_status, match_score, match_confidence, matched_customer_id, matched_job_id, deleted_at',
+      { count: 'exact' }
+    )
     .is('deleted_at', null)
     .order('created_at_google', { ascending: false })
     .range((page - 1) * pageSize, page * pageSize - 1)
@@ -46,5 +49,26 @@ export async function GET(req: NextRequest) {
   const { data, error, count } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ reviews: data ?? [], total: count ?? 0, page, pageSize })
+  const rows = (data ?? []) as Array<Record<string, unknown> & { matched_customer_id: string | null }>
+
+  const customerIds = [...new Set(
+    rows.map(r => r.matched_customer_id).filter((id): id is string => id != null)
+  )]
+  const customerNameMap: Record<string, string> = {}
+  if (customerIds.length > 0) {
+    const { data: customers } = await db
+      .from('sf_customers')
+      .select('id, customer_name')
+      .in('id', customerIds)
+    for (const c of (customers ?? []) as Array<{ id: string; customer_name: string | null }>) {
+      if (c.customer_name) customerNameMap[c.id] = c.customer_name
+    }
+  }
+
+  const reviews = rows.map(r => ({
+    ...r,
+    matched_customer_name: r.matched_customer_id ? (customerNameMap[r.matched_customer_id] ?? null) : null,
+  }))
+
+  return NextResponse.json({ reviews, total: count ?? 0, page, pageSize })
 }
