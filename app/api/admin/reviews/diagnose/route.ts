@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
-  normalize, tokenize, scoreJob, dateBonusDays,
+  normalize, tokenize, canonToken, scoreJob, dateBonusDays,
   AUTO_THRESHOLD, CANDIDATE_THRESHOLD, type ScoreJob,
 } from '@/lib/google-reviews/matcher'
 
@@ -45,8 +45,12 @@ export async function GET(req: NextRequest) {
   const rNorm   = normalize(q)
   const rTokens = tokenize(q)
 
-  // 2. Candidate jobs — any job whose customer_name contains one of the tokens
-  const jobFilters = rTokens.map(t => `customer_name.ilike.%${t}%`).join(',')
+  // 2. Candidate jobs — any job whose customer_name contains one of the tokens.
+  // Use RAW (pre-canonicalized) tokens for the ILIKE so we match the literal text
+  // stored in the DB. tokenize() folds nicknames ("frank"→"francis"), which would
+  // never appear verbatim in customer_name.
+  const rawTokens  = normalize(q).split(' ').filter(t => t.length > 1)
+  const jobFilters = rawTokens.map(t => `customer_name.ilike.%${t}%`).join(',')
   const { data: rawJobs } = await db
     .from('sf_jobs')
     .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
@@ -65,7 +69,7 @@ export async function GET(req: NextRequest) {
       customer_id:    j.customer_id,
       customerTokens: j.customer_name ? tokenize(j.customer_name) : [],
       customerNorm:   j.customer_name ? normalize(j.customer_name) : '',
-      first:          j.contact_first_name ? normalize(j.contact_first_name) : '',
+      first:          j.contact_first_name ? canonToken(normalize(j.contact_first_name)) : '',
       last:           j.contact_last_name ? normalize(j.contact_last_name) : '',
       closed_at:      j.closed_at,
     }
