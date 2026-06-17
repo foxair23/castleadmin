@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await db
     .from('sf_customers')
-    .select('id, customer_name')
+    .select('id, customer_name, last_serviced_date')
     .ilike('customer_name', `%${q}%`)
     .eq('is_deleted', false)
     .order('customer_name')

@@ -23,6 +23,7 @@ interface Review {
 interface Customer {
   id: string
   customer_name: string
+  last_serviced_date: string | null
 }
 
 interface KPI {
@@ -222,9 +223,14 @@ function ManualMatchModal({
               key={c.id}
               onClick={() => selectCustomer(c)}
               disabled={saving === c.id}
-              className="w-full text-left px-5 py-3 text-sm text-gray-800 hover:bg-blue-50 disabled:opacity-50 transition-colors"
+              className="w-full text-left px-5 py-3 hover:bg-blue-50 disabled:opacity-50 transition-colors"
             >
-              {c.customer_name}
+              <span className="text-sm text-gray-800">{c.customer_name}</span>
+              {c.last_serviced_date && (
+                <span className="ml-2 text-xs text-gray-400">
+                  Last service: {new Date(c.last_serviced_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              )}
             </button>
           ))}
         </div>
