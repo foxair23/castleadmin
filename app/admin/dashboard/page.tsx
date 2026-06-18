@@ -38,7 +38,7 @@ export default async function DashboardPage() {
     { data: annotations },
     { count: backlogCount },
     { data: lastSyncLog },
-    { data: todayJobs },
+    closedJobsRevenue,
   ] = await Promise.all([
     fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
       db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
@@ -51,8 +51,8 @@ export default async function DashboardPage() {
       db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
       db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
-    fetchAllRows<{ completed_at: string | null; total_amount: number | null }>((f, t) =>
-      db.from('sf_jobs_cache').select('completed_at, total_amount, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).order('id', { ascending: true }).range(f, t)),
+    fetchAllRows<{ completed_at: string | null }>((f, t) =>
+      db.from('sf_jobs_cache').select('completed_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ completed_at: string | null; original_scheduled_at: string | null }>((f, t) =>
       db.from('sf_jobs_cache').select('completed_at, original_scheduled_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).not('original_scheduled_at', 'is', null).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null }>((f, t) =>
@@ -60,27 +60,37 @@ export default async function DashboardPage() {
     db.from('dashboard_annotations').select('*').order('occurred_on'),
     db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('scheduled_at', todayStr).lte('scheduled_at', daysAgo(-7)),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
-    // Revenue Today — use closed-job totals, not invoices; invoices lag behind
-    // the sync cycle and may not exist yet for same-day completions.
-    db.from('sf_jobs_cache').select('total_amount').eq('is_closed', true).gte('completed_at', todayStr).lt('completed_at', daysAgo(-1)).not('total_amount', 'is', null),
+    // Revenue Today / This Week / 28-day avg — same logic as monthly_job_revenue RPC:
+    // sum(sf_jobs.total) bucketed by closed_at, excluding deleted + cancelled/void jobs.
+    fetchAllRows<{ closed_at: string | null; total: number | null }>((f, t) =>
+      db.from('sf_jobs')
+        .select('closed_at, total')
+        .eq('is_deleted', false)
+        .not('status', 'in', '("Cancelled","Void","Voided")')
+        .not('closed_at', 'is', null)
+        .gte('closed_at', daysAgo(90))
+        .order('id', { ascending: true })
+        .range(f, t)),
   ])
 
-  // Compute snapshot
-  // Revenue Today — sum of closed-job totals from the dedicated today query
-  const revenueToday = (todayJobs ?? []).reduce((s: number, r: { total_amount?: number | null }) => s + (r.total_amount ?? 0), 0)
+  // Compute snapshot — all three revenue metrics use the same source as the
+  // monthly_job_revenue RPC: sf_jobs.total bucketed by closed_at, excluding
+  // deleted + cancelled/void jobs.
+  const revenueToday = closedJobsRevenue
+    .filter(r => r.closed_at?.slice(0, 10) === todayStr)
+    .reduce((s, r) => s + (r.total ?? 0), 0)
 
-  // 28-day avg daily revenue — from closed jobs (consistent with Revenue Today)
-  const trailing28Jobs = (completedJobs ?? []).filter((r: { completed_at?: string | null }) => (r.completed_at ?? '') >= daysAgo(28))
-  const dailyJobTotals: Record<string, number> = {}
-  for (const r of trailing28Jobs as { completed_at?: string | null; total_amount?: number | null }[]) {
-    const d = r.completed_at?.slice(0, 10) ?? ''
-    if (d) dailyJobTotals[d] = (dailyJobTotals[d] ?? 0) + (r.total_amount ?? 0)
+  const revenueWeek = closedJobsRevenue
+    .filter(r => (r.closed_at ?? '') >= daysAgo(7))
+    .reduce((s, r) => s + (r.total ?? 0), 0)
+
+  const dailyRevTotals: Record<string, number> = {}
+  for (const r of closedJobsRevenue.filter(r => (r.closed_at ?? '') >= daysAgo(28))) {
+    const d = r.closed_at?.slice(0, 10) ?? ''
+    if (d) dailyRevTotals[d] = (dailyRevTotals[d] ?? 0) + (r.total ?? 0)
   }
-  const dailyValues = Object.values(dailyJobTotals)
+  const dailyValues = Object.values(dailyRevTotals)
   const avgDailyRevenue = dailyValues.length > 0 ? dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length : 0
-
-  const weekInvoices = (recentInvoices ?? []).filter((r: { issued_at?: string | null }) => (r.issued_at ?? '') >= daysAgo(7))
-  const revenueWeek = weekInvoices.reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
 
   const outstandingAR = (arData ?? []).reduce((s: number, r: { balance_due?: number | null }) => s + (r.balance_due ?? 0), 0)
   const openEstimatesValue = (openEstimates ?? []).reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
