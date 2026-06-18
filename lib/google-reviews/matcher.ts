@@ -265,6 +265,14 @@ export async function runMatchingPass(): Promise<MatchResult> {
     let bestJob: ScoreJob | null = null
 
     for (const job of jobs) {
+      // A reviewer cannot review a job that hasn't happened yet. Skip jobs whose
+      // closed_at is more than 30 days after the review date — this prevents
+      // future customer records from generating spurious candidate matches.
+      if (job.closed_at) {
+        const daysAfter = (new Date(job.closed_at).getTime() - new Date(review.created_at_google).getTime()) / 86400000
+        if (daysAfter > 30) continue
+      }
+
       const ns = scoreJob(rNorm, rTokens, job)
       if (ns === 0) continue
       const total = Math.min(ns + dateBonusDays(review.created_at_google, job.closed_at), 1.0)
