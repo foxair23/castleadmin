@@ -129,6 +129,38 @@ export async function GET(req: NextRequest) {
     }
   }).sort((a, b) => b.total_score - a.total_score)
 
+  // 3. Optional rematch — if ?rematch=true and there's exactly one review and the
+  // tight_matches contain an AUTO-verdict job, write the match directly to the DB.
+  // This bypasses the batch matcher and is the fastest way to unstick a review
+  // whose scoring is provably correct but the batch run isn't reaching it.
+  const rematch = new URL(req.url).searchParams.get('rematch') === 'true'
+  let rematchResult: unknown = null
+  if (rematch && reviews && reviews.length === 1) {
+    const review = reviews[0] as { id: string; created_at_google: string }
+    const bestTight = tightMatches
+      .filter(j => !j.is_deleted)
+      .map(j => {
+        const bonus = dateBonusDays(review.created_at_google, (rawJobs ?? []).find((r: { id: string }) => r.id === j.job_id)?.closed_at ?? null)
+        return { ...j, total_score: Math.min(j.base_score + bonus, 1.0) }
+      })
+      .sort((a, b) => b.total_score - a.total_score)[0]
+
+    if (bestTight && bestTight.total_score >= AUTO_THRESHOLD) {
+      const { error: updateErr } = await db.from('google_reviews').update({
+        match_status:        'auto',
+        match_confidence:    'high',
+        match_score:         bestTight.total_score,
+        matched_customer_id: bestTight.customer_id,
+        matched_job_id:      bestTight.job_id,
+      }).eq('id', review.id)
+      rematchResult = updateErr
+        ? { ok: false, error: updateErr.message }
+        : { ok: true, matched_to: bestTight.job_customer_name, job_id: bestTight.job_id, score: bestTight.total_score }
+    } else {
+      rematchResult = { ok: false, reason: 'No AUTO-threshold tight match found', best: bestTight ?? null }
+    }
+  }
+
   return NextResponse.json({
     query: q,
     reviewer_tokens: rTokens,
@@ -136,6 +168,7 @@ export async function GET(req: NextRequest) {
     thresholds: { auto: AUTO_THRESHOLD, candidate: CANDIDATE_THRESHOLD },
     lookup_job: lookupJob,
     tight_matches: tightMatches,
+    rematch: rematchResult,
     candidate_count: scored.length,
     candidate_jobs: scored,
   })
