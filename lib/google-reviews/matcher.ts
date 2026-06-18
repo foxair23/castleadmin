@@ -196,22 +196,47 @@ export async function runMatchingPass(): Promise<MatchResult> {
 
   if (!reviews || reviews.length === 0) return { matched: 0, candidates: 0, noMatch: 0 }
 
-  // Load every non-deleted job that has a name we can match on. A job is usable
-  // if it has EITHER a customer_name OR contact name fields — some jobs store the
-  // person's name only in contact_first_name/contact_last_name with a null
-  // customer_name, and the old `customer_name IS NOT NULL` filter dropped those
-  // jobs entirely (so e.g. "Edward Frank" could never match). We also do NOT
-  // filter on closed_at — many jobs have a null closed_at; it's used only as an
-  // optional date-proximity bonus below.
+  // Load every non-deleted job that has a name we can match on. We use two
+  // separate paginated queries — one for jobs that have a customer_name, one for
+  // jobs whose name is stored only in the contact fields (null customer_name) —
+  // because the supabase-js .or() syntax for IS NOT NULL is unreliable across
+  // driver versions. Using .not('field','is',null) directly is guaranteed safe.
   const jobs: ScoreJob[] = []
+  const JOB_SELECT = 'id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at'
+
+  // ── Pass 1: jobs with a customer_name ────────────────────────────────────
   let from = 0
   const PAGE = 1000
   for (;;) {
     const { data: page } = await supabase
       .from('sf_jobs')
-      .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at')
+      .select(JOB_SELECT)
       .eq('is_deleted', false)
-      .or('customer_name.not.is.null,contact_last_name.not.is.null')
+      .not('customer_name', 'is', null)
+      .order('id')
+      .range(from, from + PAGE - 1)
+    if (!page || page.length === 0) break
+    for (const j of page as Array<{
+      id: string; customer_id: string; customer_name: string | null
+      contact_first_name: string | null; contact_last_name: string | null; closed_at: string | null
+    }>) {
+      jobs.push(buildScoreJob(j))
+    }
+    if (page.length < PAGE) break
+    from += PAGE
+  }
+
+  // ── Pass 2: jobs with null customer_name but a contact last name ──────────
+  // These would have been silently excluded by the customer_name IS NOT NULL
+  // filter and can now be matched via the contact fields.
+  from = 0
+  for (;;) {
+    const { data: page } = await supabase
+      .from('sf_jobs')
+      .select(JOB_SELECT)
+      .eq('is_deleted', false)
+      .is('customer_name', null)
+      .not('contact_last_name', 'is', null)
       .order('id')
       .range(from, from + PAGE - 1)
     if (!page || page.length === 0) break
