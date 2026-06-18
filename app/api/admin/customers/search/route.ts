@@ -38,5 +38,30 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ customers: data ?? [] })
+  const customers = data ?? []
+  const customerIds = customers.map((c: { id: string }) => c.id)
+
+  // Get most recent closed job per customer as fallback for missing last_serviced_date
+  const jobDateMap: Record<string, string> = {}
+  if (customerIds.length > 0) {
+    const { data: jobs } = await db
+      .from('sf_jobs')
+      .select('customer_id, closed_at')
+      .in('customer_id', customerIds)
+      .eq('is_deleted', false)
+      .not('closed_at', 'is', null)
+      .order('closed_at', { ascending: false })
+
+    for (const j of (jobs ?? []) as Array<{ customer_id: string; closed_at: string }>) {
+      if (!jobDateMap[j.customer_id]) jobDateMap[j.customer_id] = j.closed_at
+    }
+  }
+
+  const result = customers.map((c: { id: string; customer_name: string; last_serviced_date: string | null }) => ({
+    id: c.id,
+    customer_name: c.customer_name,
+    last_serviced_date: c.last_serviced_date ?? jobDateMap[c.id] ?? null,
+  }))
+
+  return NextResponse.json({ customers: result })
 }
