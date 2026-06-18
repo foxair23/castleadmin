@@ -6,6 +6,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from 'recharts'
+import ReviewsLeaderboard from './ReviewsLeaderboard'
 
 interface MonthlyPoint {
   month: string
@@ -87,11 +88,14 @@ export default function ReviewsCharts() {
         )}
       </div>
 
-      {/* Tech leaderboard */}
+      {/* Weekly tech leaderboard */}
+      <ReviewsLeaderboard />
+
+      {/* All-time tech leaderboard */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">Tech Leaderboard</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Based on matched reviews only</p>
+          <h2 className="text-sm font-semibold text-gray-700">All-Time Tech Leaderboard</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Matched &amp; confirmed reviews, top 15</p>
         </div>
         {techLeaderboard.length === 0 ? (
           <p className="px-5 py-4 text-sm text-gray-400">No matched reviews yet. Run matching first.</p>
