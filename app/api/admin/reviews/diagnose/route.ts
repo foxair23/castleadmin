@@ -121,7 +121,13 @@ export async function GET(req: NextRequest) {
       match_tokens:   sj.customerTokens,
       closed_at:      j.closed_at,
       is_deleted:     j.is_deleted,
-      excluded_from_matching: j.is_deleted,
+      excluded_from_matching: j.is_deleted || (j.closed_at
+        ? (new Date(j.closed_at).getTime() - new Date(reviewDate).getTime()) / 86400000 > 30
+        : false),
+      excluded_reason: j.is_deleted ? 'deleted'
+        : (j.closed_at && (new Date(j.closed_at).getTime() - new Date(reviewDate).getTime()) / 86400000 > 30)
+          ? 'closed_after_review'
+          : null,
       base_score:     Math.round(base * 100) / 100,
       date_bonus:     bonus,
       total_score:    Math.round(total * 100) / 100,

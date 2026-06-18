@@ -4,6 +4,8 @@ export interface MatchResult {
   matched: number
   candidates: number
   noMatch: number
+  writeErrors?: number
+  errors?: string[]
 }
 
 function db() {
@@ -252,7 +254,8 @@ export async function runMatchingPass(): Promise<MatchResult> {
 
   if (jobs.length === 0) return { matched: 0, candidates: 0, noMatch: reviews.length }
 
-  let matched = 0, candidates = 0, noMatch = 0
+  let matched = 0, candidates = 0, noMatch = 0, writeErrors = 0
+  const errors: string[] = []
 
   for (const review of reviews as Array<{ id: string; reviewer_name: string; created_at_google: string }>) {
     const rNorm   = normalize(review.reviewer_name)
@@ -262,6 +265,14 @@ export async function runMatchingPass(): Promise<MatchResult> {
     let bestJob: ScoreJob | null = null
 
     for (const job of jobs) {
+      // A reviewer cannot review a job that hasn't happened yet. Skip jobs whose
+      // closed_at is more than 30 days after the review date — this prevents
+      // future customer records from generating spurious candidate matches.
+      if (job.closed_at) {
+        const daysAfter = (new Date(job.closed_at).getTime() - new Date(review.created_at_google).getTime()) / 86400000
+        if (daysAfter > 30) continue
+      }
+
       const ns = scoreJob(rNorm, rTokens, job)
       if (ns === 0) continue
       const total = Math.min(ns + dateBonusDays(review.created_at_google, job.closed_at), 1.0)
@@ -272,26 +283,28 @@ export async function runMatchingPass(): Promise<MatchResult> {
     }
 
     if (bestScore >= AUTO_THRESHOLD && bestJob) {
-      await supabase.from('google_reviews').update({
+      const { error } = await supabase.from('google_reviews').update({
         match_status:        'auto',
         match_confidence:    'high',
         match_score:         bestScore,
         matched_customer_id: bestJob.customer_id,
         matched_job_id:      bestJob.id,
       }).eq('id', review.id)
-      matched++
+      if (error) { writeErrors++; if (errors.length < 5) errors.push(`${review.reviewer_name}: ${error.message}`) }
+      else matched++
     } else if (bestScore >= CANDIDATE_THRESHOLD && bestJob) {
-      await supabase.from('google_reviews').update({
+      const { error } = await supabase.from('google_reviews').update({
         match_confidence:    'low',
         match_score:         bestScore,
         matched_customer_id: bestJob.customer_id,
         matched_job_id:      bestJob.id,
       }).eq('id', review.id)
-      candidates++
+      if (error) { writeErrors++; if (errors.length < 5) errors.push(`${review.reviewer_name}: ${error.message}`) }
+      else candidates++
     } else {
       noMatch++
     }
   }
 
-  return { matched, candidates, noMatch }
+  return { matched, candidates, noMatch, writeErrors, errors }
 }
