@@ -587,15 +587,18 @@ export default function DashboardClient({
                 <p className="text-xs text-gray-400 mt-1">{fmt$(snapshotMetrics.openEstimatesValue)} total value</p>
               </Card>
 
-              {/* Outstanding A/R */}
-              <Card className="col-span-2 lg:col-span-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Outstanding A/R</p>
-                    <p className="text-2xl font-bold text-gray-900">{fmt$(snapshotMetrics.outstandingAR)}</p>
+              {/* Outstanding A/R — links to Action Items > Unpaid Jobs */}
+              <a href="/admin/action-items" className="col-span-2 lg:col-span-4 block">
+                <Card className="cursor-pointer hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1">Outstanding A/R</p>
+                      <p className="text-2xl font-bold text-gray-900">{fmt$(snapshotMetrics.outstandingAR)}</p>
+                    </div>
+                    <span className="text-xs text-indigo-600 font-medium">View unpaid jobs →</span>
                   </div>
-                </div>
-              </Card>
+                </Card>
+              </a>
             </div>
           </div>
 
