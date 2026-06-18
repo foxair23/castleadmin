@@ -65,11 +65,14 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Tech(s) who worked the matched job, via sf_job_techs
+  // Tech(s) who worked the matched job, via sf_job_techs. Also pull the job's
+  // own customer_name as a fallback display name — sf_customers is an incomplete
+  // cache, so many matched customers aren't in it and customerNameMap misses.
   const jobIds = [...new Set(
     rows.map(r => r.matched_job_id).filter((id): id is string => id != null)
   )]
   const jobTechMap: Record<string, string> = {}
+  const jobCustomerNameMap: Record<string, string> = {}
   if (jobIds.length > 0) {
     const { data: jobTechs } = await db
       .from('sf_job_techs')
@@ -84,11 +87,22 @@ export async function GET(req: NextRequest) {
     for (const [jobId, names] of Object.entries(byJob)) {
       jobTechMap[jobId] = [...new Set(names)].join(', ')
     }
+
+    const { data: jobRows } = await db
+      .from('sf_jobs')
+      .select('id, customer_name')
+      .in('id', jobIds)
+    for (const j of (jobRows ?? []) as Array<{ id: string; customer_name: string | null }>) {
+      if (j.customer_name) jobCustomerNameMap[j.id] = j.customer_name
+    }
   }
 
   const reviews = rows.map(r => ({
     ...r,
-    matched_customer_name: r.matched_customer_id ? (customerNameMap[r.matched_customer_id] ?? null) : null,
+    matched_customer_name:
+      (r.matched_customer_id ? customerNameMap[r.matched_customer_id] : null) ??
+      (r.matched_job_id ? jobCustomerNameMap[r.matched_job_id] : null) ??
+      null,
     matched_tech_name:     r.matched_job_id ? (jobTechMap[r.matched_job_id] ?? null) : null,
   }))
 
