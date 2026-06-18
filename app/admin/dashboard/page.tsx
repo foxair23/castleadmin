@@ -25,6 +25,7 @@ export default async function DashboardPage() {
   // windows and unbounded lists aren't truncated at PostgREST's 1000-row cap.
   // The JS aggregation below (daily/weekly grouping, rolling averages) is
   // order-independent, so ordering by id only serves stable pagination.
+  const todayStr = today()
   const [
     recentInvoices,
     { count: openJobsCount },
@@ -37,12 +38,15 @@ export default async function DashboardPage() {
     { data: annotations },
     { count: backlogCount },
     { data: lastSyncLog },
+    closedJobsRevenue,
   ] = await Promise.all([
     fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
       db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
-    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false),
+    // Only count open jobs created since the April 2024 acquisition — historical
+    // pre-acquisition jobs otherwise inflate this number into the thousands.
+    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('created_at_sf', '2024-04-24'),
     fetchAllRows<{ id: string; total: number | null; status: string | null; created_at_sf: string | null }>((f, t) =>
-      db.from('sf_estimates_cache').select('id, total, status, created_at_sf').not('status', 'in', '("accepted","declined","Accepted","Declined")').order('id', { ascending: true }).range(f, t)),
+      db.from('sf_estimates_cache').select('id, total, status, created_at_sf').not('status', 'in', '("accepted","declined","Accepted","Declined")').gte('created_at_sf', '2024-04-24').order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ balance_due: number | null }>((f, t) =>
       db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
@@ -54,26 +58,39 @@ export default async function DashboardPage() {
     fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null }>((f, t) =>
       db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, id').gte('observed_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
     db.from('dashboard_annotations').select('*').order('occurred_on'),
-    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('scheduled_at', today()).lte('scheduled_at', daysAgo(-7)),
+    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('scheduled_at', todayStr).lte('scheduled_at', daysAgo(-7)),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
+    // Revenue Today / This Week / 28-day avg — same logic as monthly_job_revenue RPC:
+    // sum(sf_jobs.total) bucketed by closed_at, excluding deleted + cancelled/void jobs.
+    fetchAllRows<{ closed_at: string | null; total: number | null }>((f, t) =>
+      db.from('sf_jobs')
+        .select('closed_at, total')
+        .eq('is_deleted', false)
+        .not('status', 'in', '("Cancelled","Void","Voided")')
+        .not('closed_at', 'is', null)
+        .gte('closed_at', daysAgo(90))
+        .order('id', { ascending: true })
+        .range(f, t)),
   ])
 
-  // Compute snapshot
-  const todayStr = today()
-  const todayInvoices = (recentInvoices ?? []).filter((r: { issued_at?: string | null; total?: number | null }) => r.issued_at?.slice(0, 10) === todayStr)
-  const revenueToday = todayInvoices.reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
+  // Compute snapshot — all three revenue metrics use the same source as the
+  // monthly_job_revenue RPC: sf_jobs.total bucketed by closed_at, excluding
+  // deleted + cancelled/void jobs.
+  const revenueToday = closedJobsRevenue
+    .filter(r => r.closed_at?.slice(0, 10) === todayStr)
+    .reduce((s, r) => s + (r.total ?? 0), 0)
 
-  const trailing28 = (recentInvoices ?? []).filter((r: { issued_at?: string | null }) => (r.issued_at ?? '') >= daysAgo(28))
-  const dailyTotals: Record<string, number> = {}
-  for (const r of trailing28 as { issued_at?: string | null; total?: number | null }[]) {
-    const d = r.issued_at?.slice(0, 10) ?? ''
-    if (d) dailyTotals[d] = (dailyTotals[d] ?? 0) + (r.total ?? 0)
+  const revenueWeek = closedJobsRevenue
+    .filter(r => (r.closed_at ?? '') >= daysAgo(7))
+    .reduce((s, r) => s + (r.total ?? 0), 0)
+
+  const dailyRevTotals: Record<string, number> = {}
+  for (const r of closedJobsRevenue.filter(r => (r.closed_at ?? '') >= daysAgo(28))) {
+    const d = r.closed_at?.slice(0, 10) ?? ''
+    if (d) dailyRevTotals[d] = (dailyRevTotals[d] ?? 0) + (r.total ?? 0)
   }
-  const dailyValues = Object.values(dailyTotals)
+  const dailyValues = Object.values(dailyRevTotals)
   const avgDailyRevenue = dailyValues.length > 0 ? dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length : 0
-
-  const weekInvoices = (recentInvoices ?? []).filter((r: { issued_at?: string | null }) => (r.issued_at ?? '') >= daysAgo(7))
-  const revenueWeek = weekInvoices.reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
 
   const outstandingAR = (arData ?? []).reduce((s: number, r: { balance_due?: number | null }) => s + (r.balance_due ?? 0), 0)
   const openEstimatesValue = (openEstimates ?? []).reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
@@ -158,15 +175,12 @@ export default async function DashboardPage() {
   // PostgREST's 1000-row response cap, which silently truncated the prior approach.
   const [
     { data: monthlyRevRows },
-    { data: pwJobsForChart },
+    pwJobsForChart,
     { data: techProfilesForChart },
   ] = await Promise.all([
     db.rpc('monthly_job_revenue'),
-    db.from('jobs')
-      .select('tech_id, sf_job_id, week_start_date')
-      .gte('week_start_date', '2025-01-01')
-      .not('sf_job_id', 'is', null)
-      .limit(10000),
+    fetchAllRows<{ tech_id: string | null; sf_job_id: string | null; week_start_date: string | null }>((f, t) =>
+      db.from('jobs').select('tech_id, sf_job_id, week_start_date').gte('week_start_date', '2024-04-24').not('sf_job_id', 'is', null).order('id', { ascending: true }).range(f, t)),
     db.from('profiles')
       .select('id, full_name')
       .eq('role', 'technician')
@@ -188,10 +202,17 @@ export default async function DashboardPage() {
   const chartSfJobIds = [...new Set(
     (pwJobsForChart ?? []).map((j: { sf_job_id?: string | null }) => j.sf_job_id).filter((id): id is string => !!id)
   )]
-  const { data: chartSfRevData } = chartSfJobIds.length > 0
-    ? await db.from('sf_jobs_cache').select('id, total_amount').in('id', chartSfJobIds).limit(10000)
-    : { data: [] as { id: string; total_amount: number | null }[] }
-  const chartSfRevMap = new Map((chartSfRevData ?? []).map((j: { id: string; total_amount?: number | null }) => [j.id, (j.total_amount ?? 0) as number]))
+  // Chunk the .in() to avoid URL length limits when there are many SF job IDs.
+  const chartSfRevMap = new Map<string, number>()
+  if (chartSfJobIds.length > 0) {
+    const CHUNK = 500
+    for (let i = 0; i < chartSfJobIds.length; i += CHUNK) {
+      const { data: chunk } = await db.from('sf_jobs_cache').select('id, total_amount').in('id', chartSfJobIds.slice(i, i + CHUNK))
+      for (const j of (chunk ?? []) as { id: string; total_amount: number | null }[]) {
+        chartSfRevMap.set(j.id, j.total_amount ?? 0)
+      }
+    }
+  }
 
   const techNameMap = new Map(
     (techProfilesForChart ?? []).map((p: { id: string; full_name?: string | null }) => [p.id, p.full_name ?? `Tech ${p.id.slice(0, 8)}`])
