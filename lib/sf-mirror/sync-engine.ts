@@ -426,6 +426,17 @@ async function syncJobChildren(jobs: Raw[]) {
   await supabase.from('sf_job_techs').delete().in('job_id', jobIds)
   if (techRows.length > 0) await supabase.from('sf_job_techs').insert(techRows)
 
+  // Agents (Service Fusion "Agent/Rep" — basis for commission tracking)
+  const agentRows = jobs.flatMap(j =>
+    (j.agents ?? []).map((a: Raw) => ({
+      job_id: toStr(j.id)!, agent_id: toStr(a.id)!,
+      agent_first_name: toStr(a.first_name), agent_last_name: toStr(a.last_name),
+      sf_synced_at: nowIso(),
+    }))
+  )
+  await supabase.from('sf_job_agents').delete().in('job_id', jobIds)
+  if (agentRows.length > 0) await supabase.from('sf_job_agents').insert(agentRows)
+
   // Payments
   const paymentRows = jobs.flatMap(j =>
     (j.payments ?? []).map((p: Raw) => ({
@@ -575,7 +586,7 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
   {
     entity: 'jobs', path: '/jobs', table: 'sf_jobs',
     filterKey: 'filters[updated_date][gte]',
-    expand: 'techs_assigned,payments,invoices,notes',
+    expand: 'techs_assigned,agents,payments,invoices,notes',
     mapper: mapJob,
     afterUpsert: async (items) => {
       await detectAndRecordReschedules(items)
