@@ -21,5 +21,6 @@ create index if not exists idx_sf_job_agents_agent on public.sf_job_agents(agent
 
 alter table public.sf_job_agents enable row level security;
 
+drop policy if exists "admin_all_sf_job_agents" on public.sf_job_agents;
 create policy "admin_all_sf_job_agents" on public.sf_job_agents
   for all using (public.is_admin());
