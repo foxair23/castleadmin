@@ -224,18 +224,46 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
           const d = (v.start_date ?? '').slice(0, 10)
           return d >= weekStartStr && d <= weekEndStr
         })
+
+        if (weekVisits.length === 0) {
+          // Visits exist in SF but none fall in this week — fall back to the
+          // job's own start_date and job-level tech assignment, same as the
+          // no-visits path above. This handles the case where a site visit is
+          // scheduled outside this week but the original job date is this week.
+          const jobDate = (job.start_date ?? '').slice(0, 10)
+          if (jobDate < weekStartStr || jobDate > weekEndStr) continue
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const jobTechs: any[] = job.techs_assigned ?? []
+          if (!jobTechs.some((t: any) => String(t.id) === sfTechId)) continue
+          results.push({
+            id: String(job.id),
+            jobNumber: job.number ?? String(job.id),
+            customerName: job.customer_name ?? `SF Job #${job.id}`,
+            scheduledDate: jobDate,
+            status,
+            statusLabel: statusStr,
+            description: job.description ?? null,
+            items: mappedItems,
+            visitIndex: 1,
+            visitTotal: 1,
+            visitNotes: null,
+          })
+          continue
+        }
+
         const visitTotal = weekVisits.length
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         weekVisits.forEach((visit: any, idx: number) => {
-          // Fall back to job-level techs when visit-level assignment is absent.
-          // SF only populates visit.techs_assigned for explicitly-scheduled
-          // additional visits; initial dispatches carry assignment at the job level.
+          // A tech qualifies for a visit if they appear at the visit level OR
+          // the job level. This ensures the job-level tech still gets credit
+          // even when a different tech is explicitly assigned to a site visit.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const visitTechs: any[] = (visit.techs_assigned?.length > 0)
-            ? visit.techs_assigned
-            : (job.techs_assigned ?? [])
-          if (!visitTechs.some((t: any) => String(t.id) === sfTechId)) return
+          const visitTechs: any[] = visit.techs_assigned?.length > 0 ? visit.techs_assigned : []
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const jobTechs: any[] = job.techs_assigned ?? []
+          const eligibleTechs = visitTechs.length > 0 ? [...visitTechs, ...jobTechs] : jobTechs
+          if (!eligibleTechs.some((t: any) => String(t.id) === sfTechId)) return
           results.push({
             id: String(job.id),
             jobNumber: job.number ?? String(job.id),
