@@ -27,16 +27,14 @@ function Stat({ label, value, sub, accent }: { label: string; value: string; sub
   )
 }
 
-// Cumulative pipeline buckets. Each job sits at one stage; a bucket includes
-// every job that has reached that stage or beyond.
-const STAGE_RANK: Record<Stage, number> = {
-  'Scheduled': 0, 'Completed': 1, 'Invoiced': 2, 'Payment Received': 3,
-}
-const BUCKETS: { label: string; minRank: number; accent?: 'green' }[] = [
-  { label: 'Job Sold', minRank: 0 },
-  { label: 'Job Completed', minRank: 1 },
-  { label: 'Job Invoiced', minRank: 2 },
-  { label: 'Payment Received', minRank: 3, accent: 'green' },
+// Mutually-exclusive pipeline buckets: each job sits in exactly one bucket —
+// its current stage — so the four buckets partition the jobs (and sum to the
+// whole pipeline).
+const BUCKETS: { label: string; stage: Stage; accent?: 'green' }[] = [
+  { label: 'Job Sold', stage: 'Scheduled' },
+  { label: 'Job Completed', stage: 'Completed' },
+  { label: 'Job Invoiced', stage: 'Invoiced' },
+  { label: 'Payment Received', stage: 'Payment Received', accent: 'green' },
 ]
 
 export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDetail }) {
@@ -46,7 +44,7 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
   const overTarget = target > 0 && s.eligible_revenue > target
 
   const buckets = BUCKETS.map(b => {
-    const jobs = detail.jobs.filter(j => STAGE_RANK[j.stage] >= b.minRank)
+    const jobs = detail.jobs.filter(j => j.stage === b.stage)
     return {
       label: b.label,
       accent: b.accent,
