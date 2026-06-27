@@ -302,9 +302,11 @@ export async function recomputeSnapshots(): Promise<{ snapshots: number }> {
       tech_user_id: b.tech_user_id,
       period_start: b.period_start,
       period_end: b.period_end,
-      eligible_revenue: res.eligible_revenue,
-      commission_earned: res.commission_earned,
-      commission_payable: res.commission_payable,
+      // Tier/commission are measured on RECEIVED revenue; the job is still
+      // attributed to its completion month (handled by the period grouping).
+      eligible_revenue: res.received_revenue,
+      commission_earned: res.commission_received,
+      commission_payable: res.commission_received,
       commission_pending: res.commission_pending,
       computed_at: now,
     })

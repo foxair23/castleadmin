@@ -1,16 +1,18 @@
 /**
- * Commission calculation engine (TRD §4).
+ * Commission calculation engine (TRD §4, revised).
  *
- * Pure functions — no I/O. Given a tech's eligible jobs for a period plus the
- * period's plan and any manual adjustments, compute the period rollup and each
- * job's per-job commission share. Because everything is a pure function of its
- * inputs, results are fully reproducible and auditable (§5.3).
+ * Pure functions — no I/O. The model:
+ *   • A job belongs to the month its work was COMPLETED (period attribution
+ *     lives in the engine; this file is period-agnostic).
+ *   • The sales target and the two-tier rate are measured against RECEIVED
+ *     (collected) revenue — a tech climbs toward the target, and into the
+ *     higher tier, only as customer payments come in.
+ *   • Commission is earned/payable on received revenue. Completed-but-unpaid
+ *     work shows a PROJECTED commission (what it will earn when paid), layered
+ *     on top of the received total so the real figures never move.
  *
- * Two-tier formula on the PERIOD TOTAL (not per job) (§4.3):
- *   commission_earned = min(R, target)·rate_below + max(0, R−target)·rate_above
- *
- * Per-job share = each job's MARGINAL contribution in recognition-date order
- * (§4.5), so the shares sum exactly to commission_earned.
+ * Two-tier formula on received revenue R (§4.3):
+ *   commission = min(R, target)·rate_below + max(0, R−target)·rate_above
  */
 
 export interface CommissionPlan {
@@ -21,136 +23,121 @@ export interface CommissionPlan {
 
 export interface EligibleJob {
   sf_job_id: string
-  /** 'YYYY-MM-DD' — drives ordering for the marginal split. */
+  /** 'YYYY-MM-DD' completion date — used for deterministic ordering. */
   recognition_date: string
-  /** Job total the commission is computed on (§4.2). */
   revenue: number
-  /** True once the job is collected (linked invoice is_paid). Gates payout (§4.6). */
+  /** True once the job's payment is received (collected). */
   collected: boolean
 }
 
 export interface JobCommission {
   sf_job_id: string
   revenue: number
-  /** This job's marginal commission within the period. */
+  /** Real commission (received jobs) or projected (completed-but-unpaid). */
   commission: number
   collected: boolean
-  /** commission if collected, else 0 (payout gated on collection). */
-  payable: number
+  /** True when the figure is a projection (job not yet paid). */
+  projected: boolean
 }
 
 export interface CommissionResult {
-  /** Sum of eligible revenue recognized in the period (R). */
-  eligible_revenue: number
-  /** Two-tier formula result on R (§4.3). */
-  commission_earned: number
-  /** Sum of collected jobs' commission + adjustments (§4.6, §4.7). */
-  commission_payable: number
-  /** Earned but not yet collected (commission_earned − collected portion). */
+  /** Revenue actually received — drives the target and the tier. */
+  received_revenue: number
+  /** All completed (eligible) revenue in the period, paid or not. */
+  completed_revenue: number
+  /** Commission on received revenue + adjustments (what's payable). */
+  commission_received: number
+  /** Projected commission on completed-but-unpaid jobs. */
   commission_pending: number
-  /** Signed manual adjustments total (§4.7). */
   adjustments_total: number
-  /** Per-job breakdown, in recognition-date order. */
+  /** Running tier base after received + unpaid-completed revenue, so callers
+   *  can layer further projections (scheduled/sold) on top. */
+  cumulative_after_completed: number
   jobs: JobCommission[]
 }
 
-/** Round to cents to avoid floating-point dust in stored/displayed figures. */
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
-/**
- * The two-tier commission on a period revenue total R (§4.3).
- * Exposed for the worked-example tests and the plan-screen live preview.
- */
+/** The two-tier commission on a revenue total R (§4.3). */
 export function commissionOnRevenue(R: number, plan: CommissionPlan): number {
-  const { sales_target: target, rate_below, rate_above } = plan
-  const below = Math.min(R, target) * rate_below
-  const above = Math.max(0, R - target) * rate_above
+  const below = Math.min(R, plan.sales_target) * plan.rate_below
+  const above = Math.max(0, R - plan.sales_target) * plan.rate_above
   return round2(below + above)
 }
 
-/**
- * Order jobs for the marginal split: recognition date ascending, then sf_job_id
- * for deterministic tie-breaking (§4.5).
- */
-function orderedForSplit(jobs: EligibleJob[]): EligibleJob[] {
+/** Marginal commission for revenue `v` added at running cumulative `from`. */
+export function marginal(from: number, v: number, plan: CommissionPlan): number {
+  const target = plan.sales_target
+  const below = Math.max(0, Math.min(from + v, target) - from)
+  const above = Math.max(0, from + v - Math.max(from, target))
+  return round2(below * plan.rate_below + above * plan.rate_above)
+}
+
+function ordered(jobs: EligibleJob[]): EligibleJob[] {
   return [...jobs].sort((a, b) => {
-    if (a.recognition_date !== b.recognition_date) {
-      return a.recognition_date < b.recognition_date ? -1 : 1
-    }
+    if (a.recognition_date !== b.recognition_date) return a.recognition_date < b.recognition_date ? -1 : 1
     return a.sf_job_id < b.sf_job_id ? -1 : a.sf_job_id > b.sf_job_id ? 1 : 0
   })
 }
 
 /**
- * Full period computation for one tech.
+ * Period computation for one tech.
  *
- * @param jobs        the tech's eligible jobs for the period (status='eligible')
- * @param plan        the tech's plan for the period, or null (no plan ⇒ $0, §6)
- * @param adjustments signed manual adjustment amounts for the period (§4.7)
+ * @param jobs        completed (eligible) jobs for the period, each flagged
+ *                    collected or not
+ * @param plan        the tech's plan, or null (no plan ⇒ $0 from the formula)
+ * @param adjustments signed manual adjustment amounts (§4.7)
  */
 export function computeCommission(
   jobs: EligibleJob[],
   plan: CommissionPlan | null,
   adjustments: number[] = [],
 ): CommissionResult {
+  const effPlan: CommissionPlan = plan ?? { sales_target: 0, rate_below: 0, rate_above: 0 }
   const adjustments_total = round2(adjustments.reduce((s, a) => s + a, 0))
 
-  // No plan ⇒ the tech earns nothing from the formula this period (§6), but
-  // adjustments still apply and revenue is still reported.
-  const effectivePlan: CommissionPlan = plan ?? { sales_target: 0, rate_below: 0, rate_above: 0 }
+  const received = ordered(jobs.filter(j => j.collected))
+  const unpaid = ordered(jobs.filter(j => !j.collected))
 
-  const ordered = orderedForSplit(jobs)
-  const eligible_revenue = round2(ordered.reduce((s, j) => s + j.revenue, 0))
+  const received_revenue = round2(received.reduce((s, j) => s + j.revenue, 0))
+  const completed_revenue = round2(jobs.reduce((s, j) => s + j.revenue, 0))
 
-  // Marginal per-job split in recognition order (§4.5). Running cumulative C.
-  const { sales_target: target, rate_below, rate_above } = effectivePlan
+  // Real per-job commission for received jobs — the tier fills as money arrives.
   let C = 0
-  const jobLines: JobCommission[] = ordered.map(j => {
-    const v = j.revenue
-    const belowPortion = Math.max(0, Math.min(C + v, target) - C)
-    const abovePortion = Math.max(0, C + v - Math.max(C, target))
-    const commission = round2(belowPortion * rate_below + abovePortion * rate_above)
-    C += v
-    return {
-      sf_job_id: j.sf_job_id,
-      revenue: v,
-      commission,
-      collected: j.collected,
-      payable: j.collected ? commission : 0,
-    }
+  const receivedLines: JobCommission[] = received.map(j => {
+    const commission = marginal(C, j.revenue, effPlan)
+    C += j.revenue
+    return { sf_job_id: j.sf_job_id, revenue: j.revenue, commission, collected: true, projected: false }
   })
 
-  // Earned is the formula on the period total — the authoritative figure (§4.3).
-  // Per-job shares sum to this (modulo cent rounding, reconciled below).
-  const commission_earned = commissionOnRevenue(eligible_revenue, effectivePlan)
+  // Projected commission for completed-but-unpaid jobs, layered above received.
+  const unpaidLines: JobCommission[] = unpaid.map(j => {
+    const commission = marginal(C, j.revenue, effPlan)
+    C += j.revenue
+    return { sf_job_id: j.sf_job_id, revenue: j.revenue, commission, collected: false, projected: true }
+  })
+  const cumulative_after_completed = C
 
-  // Reconcile rounding drift so the per-job shares sum exactly to earned: push
-  // any residual onto the last job line.
-  const lineSum = round2(jobLines.reduce((s, l) => s + l.commission, 0))
-  const drift = round2(commission_earned - lineSum)
-  if (drift !== 0 && jobLines.length > 0) {
-    const last = jobLines[jobLines.length - 1]
-    last.commission = round2(last.commission + drift)
-    last.payable = last.collected ? last.commission : 0
+  // Reconcile rounding so received lines sum exactly to the formula on R.
+  const receivedFormula = commissionOnRevenue(received_revenue, effPlan)
+  const receivedSum = round2(receivedLines.reduce((s, l) => s + l.commission, 0))
+  const drift = round2(receivedFormula - receivedSum)
+  if (drift !== 0 && receivedLines.length > 0) {
+    receivedLines[receivedLines.length - 1].commission = round2(receivedLines[receivedLines.length - 1].commission + drift)
   }
 
-  const collectedCommission = round2(
-    jobLines.reduce((s, l) => s + (l.collected ? l.commission : 0), 0),
-  )
-
-  // Payable = collected formula commission + adjustments (§4.6, §4.7).
-  const commission_payable = round2(collectedCommission + adjustments_total)
-  // Pending = earned but not yet collected (adjustments are immediately payable).
-  const commission_pending = round2(commission_earned - collectedCommission)
+  const commission_received = round2(receivedFormula + adjustments_total)
+  const commission_pending = round2(unpaidLines.reduce((s, l) => s + l.commission, 0))
 
   return {
-    eligible_revenue,
-    commission_earned,
-    commission_payable,
+    received_revenue,
+    completed_revenue,
+    commission_received,
     commission_pending,
     adjustments_total,
-    jobs: jobLines,
+    cumulative_after_completed,
+    jobs: [...receivedLines, ...unpaidLines],
   }
 }

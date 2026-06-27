@@ -13,7 +13,7 @@
  */
 
 import { type SupabaseClient } from '@supabase/supabase-js'
-import { computeCommission, type CommissionPlan, type EligibleJob } from './calc'
+import { computeCommission, marginal, type CommissionPlan, type EligibleJob } from './calc'
 import { type Period } from './periods'
 
 export type Stage = 'Sold' | 'Scheduled' | 'Completed' | 'Invoiced' | 'Payment Received'
@@ -76,14 +76,6 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
-/** Marginal commission for revenue `v` added at running cumulative `from`. */
-function marginal(from: number, v: number, plan: CommissionPlan): number {
-  const target = plan.sales_target
-  const below = Math.max(0, Math.min(from + v, target) - from)
-  const above = Math.max(0, from + v - Math.max(from, target))
-  return round2(below * plan.rate_below + above * plan.rate_above)
-}
-
 export async function computeTechPeriodDetail(
   db: SupabaseClient,
   techUserId: string,
@@ -128,7 +120,8 @@ export async function computeTechPeriodDetail(
   const metaById = new Map((jobMeta ?? []).map(j => [j.id, j]))
   const invoicedJobs = new Set((invMeta ?? []).map(i => i.job_id).filter(Boolean) as string[])
 
-  // 4. Real per-job commission for completed jobs (canonical, matches snapshots).
+  // 4. Per-job commission: received jobs earn real commission as money arrives;
+  //    completed-but-unpaid jobs show a projection (tier on received revenue).
   const eligibleJobs: EligibleJob[] = elig.map(e => ({
     sf_job_id: e.sf_job_id,
     recognition_date: e.recognition_date,
@@ -155,27 +148,22 @@ export async function computeTechPeriodDetail(
       revenue: e.revenue,
       commission: c?.commission ?? 0,
       received: e.revenue_frozen,
-      projected: false,
+      projected: c?.projected ?? false,
       stage: completedStage(e.sf_job_id, e.revenue_frozen),
     }
   })
 
   // 5. Open (not-yet-completed) jobs → projected commission, layered on top of
-  //    the completed revenue total so real figures are intact. Split into:
-  //    Scheduled (has a date in this period — expected to land this month) and
-  //    Sold (no date yet — backlog that shows in every month until scheduled).
-  const openLines = await loadOpenLines(db, techUserId, period, plan, result.eligible_revenue)
+  //    the received + unpaid-completed total so real figures are intact. Split
+  //    into Scheduled (dated, this period) and Sold (undated backlog).
+  const openLines = await loadOpenLines(db, techUserId, period, plan, result.cumulative_after_completed)
   const scheduledLines = openLines.filter(j => j.stage === 'Scheduled')
 
-  // 6. Summary (payout-centric).
-  const commission_received = result.commission_payable // collected + adjustments
-  const projected_scheduled = round2(scheduledLines.reduce((s, j) => s + j.commission, 0))
-  const commission_pending = round2(result.commission_pending + projected_scheduled)
-  const commission_total = round2(commission_received + commission_pending)
+  // 6. Summary.
+  const projected_open = round2(openLines.reduce((s, j) => s + j.commission, 0))
+  const commission_pending = round2(result.commission_pending + projected_open)
+  const commission_total = round2(result.commission_received + commission_pending)
   const scheduled_revenue = round2(scheduledLines.reduce((s, j) => s + j.revenue, 0))
-  const received_revenue = round2(
-    elig.filter(e => e.revenue_frozen).reduce((s, e) => s + e.revenue, 0),
-  )
 
   const jobs = [...completedLines, ...openLines].sort((a, b) =>
     (a.date ?? '') < (b.date ?? '') ? 1 : (a.date ?? '') > (b.date ?? '') ? -1 : 0,
@@ -184,12 +172,12 @@ export async function computeTechPeriodDetail(
   return {
     period: { start: period.start, end: period.end, label: period.label },
     summary: {
-      eligible_revenue: result.eligible_revenue,
-      received_revenue,
+      eligible_revenue: result.completed_revenue,
+      received_revenue: result.received_revenue,
       scheduled_revenue,
       sales_target: plan?.sales_target ?? null,
       has_plan: plan != null,
-      commission_received,
+      commission_received: result.commission_received,
       commission_pending,
       commission_total,
       adjustments_total: result.adjustments_total,
