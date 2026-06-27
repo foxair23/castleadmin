@@ -92,7 +92,8 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
     const below = parseFloat(d.below) / 100
     const above = parseFloat(d.above) / 100
     if ([target, below, above].some(n => isNaN(n))) return null
-    return commissionOnRevenue(row.eligible_revenue, { sales_target: target, rate_below: below, rate_above: above })
+    // Commission is earned on RECEIVED (collected) revenue, so preview on that.
+    return commissionOnRevenue(row.collected_revenue, { sales_target: target, rate_below: below, rate_above: above })
   }
 
   async function saveAll() {
