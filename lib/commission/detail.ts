@@ -16,7 +16,7 @@ import { type SupabaseClient } from '@supabase/supabase-js'
 import { computeCommission, type CommissionPlan, type EligibleJob } from './calc'
 import { type Period } from './periods'
 
-export type Stage = 'Scheduled' | 'Completed' | 'Invoiced' | 'Payment Received'
+export type Stage = 'Sold' | 'Scheduled' | 'Completed' | 'Invoiced' | 'Payment Received'
 
 export interface JobLine {
   sf_job_id: string
@@ -158,9 +158,12 @@ export async function computeTechPeriodDetail(
     }
   })
 
-  // 5. Scheduled (not-yet-completed) jobs in the period → projected commission,
-  //    layered on top of the completed revenue total so real figures are intact.
-  const scheduledLines = await loadScheduledLines(db, techUserId, period, plan, result.eligible_revenue)
+  // 5. Open (not-yet-completed) jobs → projected commission, layered on top of
+  //    the completed revenue total so real figures are intact. Split into:
+  //    Scheduled (has a date in this period — expected to land this month) and
+  //    Sold (no date yet — backlog that shows in every month until scheduled).
+  const openLines = await loadOpenLines(db, techUserId, period, plan, result.eligible_revenue)
+  const scheduledLines = openLines.filter(j => j.stage === 'Scheduled')
 
   // 6. Summary (payout-centric).
   const commission_received = result.commission_payable // collected + adjustments
@@ -169,7 +172,7 @@ export async function computeTechPeriodDetail(
   const commission_total = round2(commission_received + commission_pending)
   const scheduled_revenue = round2(scheduledLines.reduce((s, j) => s + j.revenue, 0))
 
-  const jobs = [...completedLines, ...scheduledLines].sort((a, b) =>
+  const jobs = [...completedLines, ...openLines].sort((a, b) =>
     (a.date ?? '') < (b.date ?? '') ? 1 : (a.date ?? '') > (b.date ?? '') ? -1 : 0,
   )
 
@@ -190,8 +193,16 @@ export async function computeTechPeriodDetail(
   }
 }
 
-/** Scheduled jobs (mapped agent, not completed) whose scheduled date is in the period. */
-async function loadScheduledLines(
+/**
+ * Open jobs (mapped agent, not completed), split into two stages:
+ *   • Scheduled — has a start_date within this period; expected to land revenue
+ *     this month if completed on time.
+ *   • Sold — no scheduled date yet; backlog shown in every period until it's
+ *     scheduled and we know which month it'll complete in.
+ * Jobs scheduled for a different period are omitted here (they appear in that
+ * period's Scheduled bucket).
+ */
+async function loadOpenLines(
   db: SupabaseClient,
   techUserId: string,
   period: Period,
@@ -217,13 +228,24 @@ async function loadScheduledLines(
     .is('closed_at', null)
     .eq('is_deleted', false)
     .not('status', 'in', EXCLUDED_STATUSES)
-    .gte('start_date', period.start)
-    .lte('start_date', period.end)
-    .order('start_date', { ascending: true })
 
-  // Layer projected commission on top of completed revenue, in scheduled-date order.
+  // Partition: Scheduled (dated, in this period) vs Sold (undated backlog).
+  // Drop jobs scheduled for a different period.
+  type Row = { id: string; number: string | null; customer_name: string | null; start_date: string | null; total: number | null }
+  const scheduled: Row[] = []
+  const sold: Row[] = []
+  for (const j of (openRows ?? []) as Row[]) {
+    const d = j.start_date
+    if (!d) sold.push(j)
+    else if (d >= period.start && d <= period.end) scheduled.push(j)
+    // else: scheduled for another period — skip here.
+  }
+  scheduled.sort((a, b) => (a.start_date! < b.start_date! ? -1 : 1))
+
+  // Layer projected commission on top of completed revenue: scheduled first
+  // (date order), then the undated sold backlog.
   let C = completedRevenueTotal
-  return (openRows ?? []).map(j => {
+  const project = (j: Row, stage: Stage): JobLine => {
     const revenue = j.total ?? 0
     const commission = plan ? marginal(C, revenue, plan) : 0
     C += revenue
@@ -231,12 +253,17 @@ async function loadScheduledLines(
       sf_job_id: j.id,
       job_number: j.number,
       customer_name: j.customer_name,
-      date: j.start_date,
+      date: stage === 'Scheduled' ? j.start_date : null,
       revenue,
       commission,
       received: false,
       projected: true,
-      stage: 'Scheduled' as Stage,
+      stage,
     }
-  })
+  }
+
+  return [
+    ...scheduled.map(j => project(j, 'Scheduled')),
+    ...sold.map(j => project(j, 'Sold')),
+  ]
 }

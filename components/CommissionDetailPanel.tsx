@@ -8,7 +8,8 @@ function StageBadge({ stage }: { stage: Stage }) {
     stage === 'Payment Received' ? 'bg-green-100 text-green-700' :
     stage === 'Invoiced' ? 'bg-blue-100 text-blue-700' :
     stage === 'Completed' ? 'bg-amber-100 text-amber-700' :
-    'bg-gray-100 text-gray-600' // Scheduled
+    stage === 'Scheduled' ? 'bg-purple-100 text-purple-700' :
+    'bg-gray-100 text-gray-600' // Sold
   return (
     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
       {stage}
@@ -31,7 +32,8 @@ function Stat({ label, value, sub, accent }: { label: string; value: string; sub
 // its current stage — so the four buckets partition the jobs (and sum to the
 // whole pipeline).
 const BUCKETS: { label: string; stage: Stage; accent?: 'green' }[] = [
-  { label: 'Job Sold', stage: 'Scheduled' },
+  { label: 'Job Sold', stage: 'Sold' },
+  { label: 'Job Scheduled', stage: 'Scheduled' },
   { label: 'Job Completed', stage: 'Completed' },
   { label: 'Job Invoiced', stage: 'Invoiced' },
   { label: 'Payment Received', stage: 'Payment Received', accent: 'green' },
@@ -91,7 +93,7 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
       {/* Pipeline funnel — commission at each stage. "Sold" is every job with
           the agent listed; each later bucket is the subset that's progressed
           that far. Payment Received is the actual payout. */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {buckets.map(b => (
           <Stat
             key={b.label}
@@ -103,8 +105,9 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
         ))}
       </div>
       <p className="text-xs text-gray-400 -mt-3">
-        Commission is only paid out once Castle receives the customer&rsquo;s payment. Earlier stages are
-        estimates of what&rsquo;s coming.
+        <strong>Sold</strong> jobs aren&rsquo;t scheduled yet, so they show every month until a date is set.
+        <strong> Scheduled</strong> jobs count toward this month if completed on time. Commission is only
+        paid out once Castle receives the customer&rsquo;s payment; earlier stages are estimates.
       </p>
 
       {/* Adjustments */}
