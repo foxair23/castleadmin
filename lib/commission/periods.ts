@@ -118,8 +118,11 @@ export function listPeriods(
   const last = periodForDate(throughDate.slice(0, 10), type)
   const out: Period[] = []
   let cur = periodForRecognitionDate(COMMISSION_START_DATE, type)!
+  // Compare against last.end, not last.start: the first period's start is
+  // clamped forward (e.g. 2026-06-22), so comparing clamped starts would wrongly
+  // exclude the current period when today falls inside that first clamped month.
   // Guard against runaway loops; 50 years of quarters is well beyond any real use.
-  for (let i = 0; i < 1000 && cur.start <= last.start; i++) {
+  for (let i = 0; i < 1000 && cur.start <= last.end; i++) {
     out.push(cur)
     cur = nextPeriod(cur)
   }

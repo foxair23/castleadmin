@@ -41,7 +41,7 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
   const [success, setSuccess] = useState('')
 
   const load = useCallback(async () => {
-    if (!period) return
+    if (!period) { setLoading(false); return }
     setLoading(true)
     setError('')
     try {

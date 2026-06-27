@@ -76,6 +76,19 @@ describe('listPeriods', () => {
     // first is the clamped partial month
     expect(periods[0].start).toBe(COMMISSION_START_DATE)
   })
+
+  it('includes the first period when the through-date is inside the clamped month', () => {
+    // Regression: today in June 2026 must still yield the June period even
+    // though its start is clamped forward to the 22nd.
+    const periods = listPeriods('2026-06-27', 'monthly')
+    expect(periods.map(p => p.key)).toEqual(['2026-06'])
+    expect(periods[0].start).toBe(COMMISSION_START_DATE)
+  })
+
+  it('quarterly: through-date inside the clamped first quarter still yields it', () => {
+    const periods = listPeriods('2026-06-27', 'quarterly')
+    expect(periods.map(p => p.key)).toEqual(['2026-Q2'])
+  })
 })
 
 describe('quarterly support (criterion 9)', () => {
