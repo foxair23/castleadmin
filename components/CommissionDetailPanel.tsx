@@ -70,8 +70,8 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
       {/* Payout-centric summary */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Stat label="Commission received" value={formatMoney(s.commission_received)} accent="green" sub="company has been paid" />
-        <Stat label="Payment pending" value={formatMoney(s.commission_pending)} accent="amber" sub="paid out when payment is received" />
-        <Stat label="Projected total" value={formatMoney(s.commission_total)} sub="if everything is paid" />
+        <Stat label="Payment pending" value={formatMoney(s.commission_pending)} accent="amber" sub="paid out when customer payment is received by Castle" />
+        <Stat label="Projected total" value={formatMoney(s.commission_total)} sub="if everything is paid by customer" />
       </div>
 
       {/* Adjustments */}
