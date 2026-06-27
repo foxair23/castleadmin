@@ -34,8 +34,10 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
 
   const [rows, setRows] = useState<PlanRow[]>([])
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
+  // Snapshot of drafts as loaded, to detect which rows changed.
+  const [baseline, setBaseline] = useState<Record<string, Draft>>({})
   const [loading, setLoading] = useState(true)
-  const [savingId, setSavingId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   const [copying, setCopying] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -59,6 +61,7 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
         }
       }
       setDrafts(d)
+      setBaseline(structuredClone(d))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
@@ -70,7 +73,16 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
 
   function setDraft(techId: string, field: keyof Draft, value: string) {
     setDrafts(prev => ({ ...prev, [techId]: { ...prev[techId], [field]: value } }))
+    setSuccess('')
   }
+
+  function isDirty(techId: string): boolean {
+    const d = drafts[techId], b = baseline[techId]
+    if (!d || !b) return false
+    return d.target !== b.target || d.below !== b.below || d.above !== b.above
+  }
+
+  const dirtyIds = rows.map(r => r.tech_user_id).filter(isDirty)
 
   // Live commission preview from the draft rates (§6).
   function previewCommission(row: PlanRow): number | null {
@@ -83,43 +95,51 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
     return commissionOnRevenue(row.eligible_revenue, { sales_target: target, rate_below: below, rate_above: above })
   }
 
-  async function saveRow(row: PlanRow) {
-    if (!period) return
-    const d = drafts[row.tech_user_id]
-    setSavingId(row.tech_user_id)
+  async function saveAll() {
+    if (!period || dirtyIds.length === 0) return
+    setSaving(true)
     setError('')
     setSuccess('')
-    try {
+
+    // A changed row with all three fields blank clears the plan; otherwise it's
+    // an upsert. (Blank fields default to 0 within a partially-filled row.)
+    const toSave: Array<{ tech_user_id: string; sales_target: number; rate_below: number; rate_above: number }> = []
+    const toClear: string[] = []
+    for (const techId of dirtyIds) {
+      const d = drafts[techId]
       const blank = d.target === '' && d.below === '' && d.above === ''
       if (blank) {
-        // Clearing the plan entirely.
-        const res = await fetch(
-          `/api/admin/commission/plans?tech_user_id=${row.tech_user_id}&period_start=${period.start}&period_end=${period.end}`,
-          { method: 'DELETE' },
-        )
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to clear')
+        toClear.push(techId)
       } else {
-        const res = await fetch('/api/admin/commission/plans', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'save',
-            tech_user_id: row.tech_user_id,
-            period_start: period.start,
-            period_end: period.end,
-            sales_target: d.target === '' ? 0 : parseFloat(d.target),
-            rate_below: d.below === '' ? 0 : parseFloat(d.below) / 100,
-            rate_above: d.above === '' ? 0 : parseFloat(d.above) / 100,
-          }),
+        toSave.push({
+          tech_user_id: techId,
+          sales_target: d.target === '' ? 0 : parseFloat(d.target),
+          rate_below: d.below === '' ? 0 : parseFloat(d.below) / 100,
+          rate_above: d.above === '' ? 0 : parseFloat(d.above) / 100,
         })
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to save')
       }
-      setSuccess(`Saved ${row.full_name}`)
+    }
+
+    try {
+      const res = await fetch('/api/admin/commission/plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'bulk',
+          period_start: period.start,
+          period_end: period.end,
+          rows: toSave,
+          clears: toClear,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to save')
+      setSuccess(`Saved ${dirtyIds.length} change${dirtyIds.length === 1 ? '' : 's'}`)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save')
     } finally {
-      setSavingId(null)
+      setSaving(false)
     }
   }
 
@@ -161,7 +181,10 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
           <label className="text-sm text-gray-600">Period</label>
           <select
             value={periodKey}
-            onChange={e => setPeriodKey(e.target.value)}
+            onChange={e => {
+              if (dirtyIds.length > 0 && !confirm('Discard unsaved changes and switch period?')) return
+              setPeriodKey(e.target.value)
+            }}
             className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400"
           >
             {periods.map(p => (
@@ -169,13 +192,27 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
             ))}
           </select>
         </div>
-        <button
-          onClick={copyLastPeriod}
-          disabled={copying}
-          className="border border-gray-300 text-gray-600 rounded px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-60"
-        >
-          {copying ? 'Copying…' : 'Copy last period'}
-        </button>
+        <div className="flex items-center gap-3">
+          {dirtyIds.length > 0 && (
+            <span className="text-xs text-amber-600">
+              {dirtyIds.length} unsaved change{dirtyIds.length === 1 ? '' : 's'}
+            </span>
+          )}
+          <button
+            onClick={copyLastPeriod}
+            disabled={copying || saving}
+            className="border border-gray-300 text-gray-600 rounded px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-60"
+          >
+            {copying ? 'Copying…' : 'Copy last period'}
+          </button>
+          <button
+            onClick={saveAll}
+            disabled={saving || dirtyIds.length === 0}
+            className="bg-red-600 text-white rounded px-4 py-1.5 text-sm font-medium hover:bg-red-700 disabled:opacity-60"
+          >
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
       </div>
 
       {success && (
@@ -197,19 +234,18 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Rate ≤ (%)</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Rate &gt; (%)</th>
                 <th className="text-right px-3 py-3 font-medium text-gray-600">Commission</th>
-                <th className="px-3 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">No active technicians.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">No active technicians.</td></tr>
               ) : rows.map(row => {
                 const d = drafts[row.tech_user_id] ?? { target: '', below: '', above: '' }
                 const preview = previewCommission(row)
                 return (
-                  <tr key={row.tech_user_id}>
+                  <tr key={row.tech_user_id} className={isDirty(row.tech_user_id) ? 'bg-amber-50' : ''}>
                     <td className="px-4 py-2 text-gray-900">{row.full_name}</td>
                     <td className="px-3 py-2 text-right text-gray-700">{formatMoney(row.eligible_revenue)}</td>
                     <td className="px-3 py-2 text-right text-gray-500">{formatMoney(row.collected_revenue)}</td>
@@ -236,15 +272,6 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
                     </td>
                     <td className="px-3 py-2 text-right text-gray-900 font-medium">
                       {preview != null ? formatMoney(preview) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={() => saveRow(row)}
-                        disabled={savingId === row.tech_user_id}
-                        className="text-red-600 hover:underline text-xs disabled:opacity-60"
-                      >
-                        {savingId === row.tech_user_id ? 'Saving…' : 'Save'}
-                      </button>
                     </td>
                   </tr>
                 )
