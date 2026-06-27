@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
 import CommissionLeaderboard from '@/components/CommissionLeaderboard'
-import TechCommissionTabs from '../TechCommissionTabs'
 
 export default async function TechLeaderboardPage() {
   const todayStr = new Date().toISOString().slice(0, 10)
@@ -16,11 +15,10 @@ export default async function TechLeaderboardPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-gray-900 mb-1">Commission</h1>
+      <h1 className="text-xl font-bold text-gray-900 mb-1">Sales Leaderboard</h1>
       <p className="text-sm text-gray-500 mb-4">
-        Sales leaderboard — see how everyone&rsquo;s tracking this period.
+        See how everyone&rsquo;s tracking on sales this period.
       </p>
-      <TechCommissionTabs />
       <CommissionLeaderboard todayStr={todayStr} highlightName={fullName} />
     </div>
   )

@@ -35,15 +35,15 @@ describe('monthly periods', () => {
   })
 })
 
-describe('recognition-date clamping (§3.5, criterion 4)', () => {
-  it('clamps the first period to the start date', () => {
+describe('recognition-date start cutoff (§3.5, criterion 4)', () => {
+  it('first period is the full month containing the start date', () => {
     const p = periodForRecognitionDate('2026-06-25', 'monthly')!
-    expect(p.start).toBe(COMMISSION_START_DATE) // 2026-06-22, not 2026-06-01
+    expect(p.start).toBe(COMMISSION_START_DATE) // 2026-06-01 (full June)
     expect(p.end).toBe('2026-06-30')
   })
 
   it('returns null for dates before the start date', () => {
-    expect(periodForRecognitionDate('2026-06-21', 'monthly')).toBeNull()
+    expect(periodForRecognitionDate('2026-05-31', 'monthly')).toBeNull()
     expect(periodForRecognitionDate('2025-12-31', 'monthly')).toBeNull()
   })
 
