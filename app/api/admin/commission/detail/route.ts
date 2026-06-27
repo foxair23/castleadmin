@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { requireCommissionAdmin } from '@/lib/commission/admin-auth'
 import { computeTechPeriodDetail } from '@/lib/commission/detail'
 import { periodForRecognitionDate } from '@/lib/commission/periods'
@@ -23,7 +23,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'invalid period' }, { status: 400 })
   }
 
-  const db = await createServiceClient()
+  const db = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  )
   const detail = await computeTechPeriodDetail(db, techUserId, period)
   return NextResponse.json(detail)
 }
