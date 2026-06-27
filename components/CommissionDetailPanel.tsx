@@ -42,8 +42,11 @@ const BUCKETS: { label: string; stage: Stage; accent?: 'green' }[] = [
 export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDetail }) {
   const s = detail.summary
   const target = s.sales_target ?? 0
-  const pct = target > 0 ? Math.min(100, (s.eligible_revenue / target) * 100) : 0
-  const overTarget = target > 0 && s.eligible_revenue > target
+  // Progress is measured on RECEIVED funds: the tech climbs toward the target —
+  // and the higher tier — only as customer payments come in.
+  const progressRevenue = s.received_revenue
+  const pct = target > 0 ? Math.min(100, (progressRevenue / target) * 100) : 0
+  const overTarget = target > 0 && progressRevenue > target
 
   const buckets = BUCKETS.map(b => {
     const jobs = detail.jobs.filter(j => j.stage === b.stage)
@@ -62,9 +65,9 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
       {s.has_plan ? (
         <div className="bg-white border border-gray-200 rounded-lg px-4 py-3">
           <div className="flex items-center justify-between text-sm mb-1.5">
-            <span className="text-gray-600">Progress to target (completed work)</span>
+            <span className="text-gray-600">Progress to target (payment received)</span>
             <span className="text-gray-900 font-medium">
-              {formatMoney(s.eligible_revenue)} of {formatMoney(target)}
+              {formatMoney(progressRevenue)} of {formatMoney(target)}
             </span>
           </div>
           <div className="h-2.5 w-full bg-gray-100 rounded-full overflow-hidden">

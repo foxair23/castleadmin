@@ -44,6 +44,8 @@ export interface TechPeriodDetail {
   summary: {
     /** Recognized (completed, eligible) revenue in the period — drives the tier. */
     eligible_revenue: number
+    /** Eligible revenue actually received (collected) — drives the progress bar. */
+    received_revenue: number
     /** Quoted value of scheduled-but-not-completed jobs in the period. */
     scheduled_revenue: number
     sales_target: number | null
@@ -171,6 +173,9 @@ export async function computeTechPeriodDetail(
   const commission_pending = round2(result.commission_pending + projected_scheduled)
   const commission_total = round2(commission_received + commission_pending)
   const scheduled_revenue = round2(scheduledLines.reduce((s, j) => s + j.revenue, 0))
+  const received_revenue = round2(
+    elig.filter(e => e.revenue_frozen).reduce((s, e) => s + e.revenue, 0),
+  )
 
   const jobs = [...completedLines, ...openLines].sort((a, b) =>
     (a.date ?? '') < (b.date ?? '') ? 1 : (a.date ?? '') > (b.date ?? '') ? -1 : 0,
@@ -180,6 +185,7 @@ export async function computeTechPeriodDetail(
     period: { start: period.start, end: period.end, label: period.label },
     summary: {
       eligible_revenue: result.eligible_revenue,
+      received_revenue,
       scheduled_revenue,
       sales_target: plan?.sales_target ?? null,
       has_plan: plan != null,
