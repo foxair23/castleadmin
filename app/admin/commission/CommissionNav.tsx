@@ -6,8 +6,9 @@ import { usePathname } from 'next/navigation'
 // Secondary nav for the admin Commission area. Tabs are added here as later
 // phases land (Review queue, Leaderboard).
 const TABS: { href: string; label: string; match: (p: string) => boolean }[] = [
-  { href: '/admin/commission', label: 'Plans', match: p => p === '/admin/commission' || p.startsWith('/admin/commission/plans') },
-  { href: '/admin/commission/techs', label: 'Technicians', match: p => p.startsWith('/admin/commission/techs') },
+  { href: '/admin/commission/techs', label: 'Technicians', match: p => p === '/admin/commission' || p.startsWith('/admin/commission/techs') },
+  { href: '/admin/commission/plans', label: 'Plans', match: p => p.startsWith('/admin/commission/plans') },
+  { href: '/admin/commission/leaderboard', label: 'Leaderboard', match: p => p.startsWith('/admin/commission/leaderboard') },
   { href: '/admin/commission/agents', label: 'Agent Mapping', match: p => p.startsWith('/admin/commission/agents') },
 ]
 
