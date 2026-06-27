@@ -37,11 +37,6 @@ const BUCKETS: { label: string; stage: Stage; accent?: 'green' }[] = [
   { label: 'Payment Received', stage: 'Payment Received', accent: 'green' },
 ]
 
-// Completed-or-later jobs have an eligibility row and can be accepted/denied.
-function isCompleted(stage: Stage): boolean {
-  return stage === 'Completed' || stage === 'Invoiced' || stage === 'Payment Received'
-}
-
 export interface AdminControls {
   techUserId: string
   periodStart: string
@@ -85,7 +80,7 @@ export default function CommissionDetailPanel({
       const res = await fetch('/api/admin/commission/eligibility', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sf_job_id: sfJobId, accepted }),
+        body: JSON.stringify({ sf_job_id: sfJobId, accepted, tech_user_id: admin.techUserId }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed')
       admin.onChanged()
@@ -201,21 +196,17 @@ export default function CommissionDetailPanel({
                     </td>
                     {admin && (
                       <td className="px-3 py-2 text-right">
-                        {isCompleted(j.stage) ? (
-                          <button
-                            disabled={busyJob === j.sf_job_id}
-                            onClick={() => toggleEligibility(j.sf_job_id, !j.accepted)}
-                            className={`text-xs px-2 py-0.5 rounded border disabled:opacity-50 ${
-                              j.accepted
-                                ? 'border-red-300 text-red-600 hover:bg-red-50'
-                                : 'border-green-300 text-green-700 hover:bg-green-50'
-                            }`}
-                          >
-                            {busyJob === j.sf_job_id ? '…' : j.accepted ? 'Deny' : 'Accept'}
-                          </button>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
+                        <button
+                          disabled={busyJob === j.sf_job_id}
+                          onClick={() => toggleEligibility(j.sf_job_id, !j.accepted)}
+                          className={`text-xs px-2 py-0.5 rounded border disabled:opacity-50 ${
+                            j.accepted
+                              ? 'border-red-300 text-red-600 hover:bg-red-50'
+                              : 'border-green-300 text-green-700 hover:bg-green-50'
+                          }`}
+                        >
+                          {busyJob === j.sf_job_id ? '…' : j.accepted ? 'Deny' : 'Accept'}
+                        </button>
                       </td>
                     )}
                   </tr>
@@ -286,6 +277,12 @@ function AdjustmentsSection({ detail, admin }: { detail: TechPeriodDetail; admin
   return (
     <div>
       <h3 className="text-sm font-semibold text-gray-700 mb-2">Adjustments</h3>
+      {admin && (
+        <p className="text-xs text-gray-400 mb-2">
+          Adjustments are entered as <strong>received revenue</strong> (a fake already-paid job): they
+          count toward the target and earn commission at the tier rate — not a flat dollar add to the payout.
+        </p>
+      )}
       <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
         {detail.adjustments.map(a => (
           <div key={a.id} className="flex items-center justify-between px-4 py-2 text-sm">
