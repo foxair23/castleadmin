@@ -8,7 +8,8 @@ function StageBadge({ stage }: { stage: Stage }) {
     stage === 'Payment Received' ? 'bg-green-100 text-green-700' :
     stage === 'Invoiced' ? 'bg-blue-100 text-blue-700' :
     stage === 'Completed' ? 'bg-amber-100 text-amber-700' :
-    'bg-gray-100 text-gray-600' // Scheduled
+    stage === 'Scheduled' ? 'bg-purple-100 text-purple-700' :
+    'bg-gray-100 text-gray-600' // Sold
   return (
     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
       {stage}
@@ -27,11 +28,33 @@ function Stat({ label, value, sub, accent }: { label: string; value: string; sub
   )
 }
 
+// Mutually-exclusive pipeline buckets: each job sits in exactly one bucket —
+// its current stage — so the four buckets partition the jobs (and sum to the
+// whole pipeline).
+const BUCKETS: { label: string; stage: Stage; accent?: 'green' }[] = [
+  { label: 'Job Sold', stage: 'Sold' },
+  { label: 'Job Scheduled', stage: 'Scheduled' },
+  { label: 'Job Completed', stage: 'Completed' },
+  { label: 'Job Invoiced', stage: 'Invoiced' },
+  { label: 'Payment Received', stage: 'Payment Received', accent: 'green' },
+]
+
 export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDetail }) {
   const s = detail.summary
   const target = s.sales_target ?? 0
   const pct = target > 0 ? Math.min(100, (s.eligible_revenue / target) * 100) : 0
   const overTarget = target > 0 && s.eligible_revenue > target
+
+  const buckets = BUCKETS.map(b => {
+    const jobs = detail.jobs.filter(j => j.stage === b.stage)
+    return {
+      label: b.label,
+      accent: b.accent,
+      count: jobs.length,
+      revenue: jobs.reduce((sum, j) => sum + j.revenue, 0),
+      commission: jobs.reduce((sum, j) => sum + j.commission, 0),
+    }
+  })
 
   return (
     <div className="space-y-6">
@@ -67,12 +90,25 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
         </div>
       )}
 
-      {/* Payout-centric summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Stat label="Commission received" value={formatMoney(s.commission_received)} accent="green" sub="company has been paid" />
-        <Stat label="Payment pending" value={formatMoney(s.commission_pending)} accent="amber" sub="paid out when payment is received" />
-        <Stat label="Projected total" value={formatMoney(s.commission_total)} sub="if everything is paid" />
+      {/* Pipeline funnel — commission at each stage. "Sold" is every job with
+          the agent listed; each later bucket is the subset that's progressed
+          that far. Payment Received is the actual payout. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {buckets.map(b => (
+          <Stat
+            key={b.label}
+            label={b.label}
+            value={formatMoney(b.commission)}
+            accent={b.accent}
+            sub={`${b.count} job${b.count === 1 ? '' : 's'} · ${formatMoney(b.revenue)}`}
+          />
+        ))}
       </div>
+      <p className="text-xs text-gray-400 -mt-3">
+        <strong>Sold</strong> jobs aren&rsquo;t scheduled yet, so they show every month until a date is set.
+        <strong> Scheduled</strong> jobs count toward this month if completed on time. Commission is only
+        paid out once Castle receives the customer&rsquo;s payment; earlier stages are estimates.
+      </p>
 
       {/* Adjustments */}
       {detail.adjustments.length > 0 && (
