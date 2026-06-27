@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runIncrementalSyncForEntity } from '@/lib/sf-mirror/sync-engine'
+import { refreshCommission } from '@/lib/commission/engine'
 
 // Syncs SF jobs updated in the last 48h — runs every hour so the availability
 // route always has fresh data for per-window capacity checks.
@@ -13,7 +14,15 @@ export async function GET(req: NextRequest) {
   const started = Date.now()
   try {
     const upserted = await runIncrementalSyncForEntity('jobs')
-    return NextResponse.json({ ok: true, upserted, ms: Date.now() - started })
+    // Keep commission in step with the hourly job refresh. Non-fatal.
+    let commission: unknown = null
+    try {
+      commission = await refreshCommission()
+    } catch (e) {
+      console.error('[sf-sync-jobs-hourly] commission refresh failed:', e)
+      commission = { error: String(e) }
+    }
+    return NextResponse.json({ ok: true, upserted, commission, ms: Date.now() - started })
   } catch (err) {
     console.error('[sf-sync-jobs-hourly] fatal:', err)
     return NextResponse.json({ ok: false, error: String(err), ms: Date.now() - started }, { status: 500 })
