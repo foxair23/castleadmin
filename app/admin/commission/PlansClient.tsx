@@ -247,7 +247,15 @@ export default function PlansClient({ todayStr }: { todayStr: string }) {
                 return (
                   <tr key={row.tech_user_id} className={isDirty(row.tech_user_id) ? 'bg-amber-50' : ''}>
                     <td className="px-4 py-2 text-gray-900">{row.full_name}</td>
-                    <td className="px-3 py-2 text-right text-gray-700">{formatMoney(row.eligible_revenue)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <a
+                        href={`/admin/commission/techs?tech=${row.tech_user_id}&period=${period?.key ?? ''}`}
+                        className="text-red-600 hover:underline"
+                        title="See the jobs that make up this revenue"
+                      >
+                        {formatMoney(row.eligible_revenue)}
+                      </a>
+                    </td>
                     <td className="px-3 py-2 text-right text-gray-500">{formatMoney(row.collected_revenue)}</td>
                     <td className="px-3 py-2 text-right">
                       <input
