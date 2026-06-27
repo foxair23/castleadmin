@@ -97,9 +97,21 @@ export async function GET(req: NextRequest) {
   )
   const paidJobs = new Set(paid.map(p => p.job_id).filter(Boolean) as string[])
 
-  // 5. Aggregate per tech (only jobs cleanly attributable to one rep).
+  // 4b. Denied jobs are excluded — a denied job wasn't really a sale.
+  const deniedRows = await fetchAll<{ sf_job_id: string }>((f, t) =>
+    db.from('commission_job_eligibility')
+      .select('sf_job_id')
+      .eq('status', 'not_accepted')
+      .in('sf_job_id', jobIds)
+      .order('sf_job_id', { ascending: true })
+      .range(f, t),
+  )
+  const denied = new Set(deniedRows.map(r => r.sf_job_id))
+
+  // 5. Aggregate per tech (only jobs cleanly attributable to one rep, not denied).
   const byTech = new Map<string, { sold: number; received: number }>()
   for (const jobId of jobIds) {
+    if (denied.has(jobId)) continue
     const cls = classifyJob(agentsByJob.get(jobId) ?? [], resolver)
     if (!cls || cls.status !== 'eligible' || !cls.tech_user_id) continue
     const total = totalById.get(jobId) ?? 0
