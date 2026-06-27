@@ -78,12 +78,7 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
           </div>
           {overTarget && (
             <div className="text-xs text-green-700 mt-1">
-              {formatMoney(s.eligible_revenue - target)} into the higher tier
-            </div>
-          )}
-          {s.scheduled_revenue > 0 && (
-            <div className="text-xs text-gray-400 mt-1">
-              + {formatMoney(s.scheduled_revenue)} scheduled (not yet completed)
+              {formatMoney(progressRevenue - target)} into the higher tier
             </div>
           )}
         </div>
@@ -93,24 +88,25 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
         </div>
       )}
 
-      {/* Pipeline funnel — commission at each stage. "Sold" is every job with
-          the agent listed; each later bucket is the subset that's progressed
-          that far. Payment Received is the actual payout. */}
+      {/* Pipeline funnel — total job/payment amount at each stage. "Sold" is
+          every job with the agent listed; each job sits in exactly one stage.
+          Payment Received is money actually collected. Revenue (not commission)
+          is shown, since the commission rate isn't known until funds arrive. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {buckets.map(b => (
           <Stat
             key={b.label}
             label={b.label}
-            value={formatMoney(b.commission)}
+            value={formatMoney(b.revenue)}
             accent={b.accent}
-            sub={`${b.count} job${b.count === 1 ? '' : 's'} · ${formatMoney(b.revenue)}`}
+            sub={`${b.count} job${b.count === 1 ? '' : 's'}`}
           />
         ))}
       </div>
       <p className="text-xs text-gray-400 -mt-3">
-        <strong>Sold</strong> jobs aren&rsquo;t scheduled yet, so they show every month until a date is set.
-        <strong> Scheduled</strong> jobs count toward this month if completed on time. Commission is only
-        paid out once Castle receives the customer&rsquo;s payment; earlier stages are estimates.
+        Amounts shown are total job value at each stage. <strong>Sold</strong> jobs aren&rsquo;t scheduled
+        yet, so they show every month until a date is set; <strong>Scheduled</strong> jobs count toward
+        this month if completed on time. Commission is paid only once Castle receives the customer&rsquo;s payment.
       </p>
 
       {/* Adjustments */}

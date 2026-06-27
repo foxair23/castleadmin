@@ -575,3 +575,113 @@ export async function getAwaitingPushLeads(): Promise<AwaitingPushResult> {
 
   return { items }
 }
+
+// ── Alert 8 — Commission Jobs Needing Review (§8.2) ──────────────────────────
+// Jobs the commission engine couldn't auto-credit: more than one agent, or an
+// agent not yet mapped to a technician. Held out of commission until resolved.
+
+export interface ReviewAgent {
+  agent_id: string | null
+  name: string
+  mapped_tech_user_id: string | null
+  mapped_tech_name: string | null
+}
+
+export interface CommissionReviewItem {
+  id: string                 // commission_job_eligibility.id
+  sf_job_id: string
+  job_number: string | null
+  customer_name: string | null
+  recognition_date: string
+  revenue: number
+  review_reason: 'multiple_agents' | 'unmapped_agent' | null
+  agents: ReviewAgent[]
+  days_pending: number
+}
+
+export interface CommissionReviewResult {
+  items: CommissionReviewItem[]
+  count: number
+  /** Active technicians, for the resolve dropdowns. */
+  techs: { id: string; full_name: string }[]
+}
+
+export async function getCommissionJobsNeedingReview(): Promise<CommissionReviewResult> {
+  const db = getAdminClient()
+
+  const { data: rows } = await db
+    .from('commission_job_eligibility')
+    .select('id, sf_job_id, recognition_date, revenue, review_reason, created_at')
+    .eq('status', 'needs_review')
+    .order('created_at', { ascending: true })
+    .limit(100)
+
+  const { data: techData } = await db
+    .from('profiles')
+    .select('id, full_name')
+    .eq('role', 'technician').eq('is_active', true)
+    .order('full_name')
+  const techs = (techData ?? []) as { id: string; full_name: string }[]
+
+  const list = rows ?? []
+  if (list.length === 0) return { items: [], count: 0, techs }
+
+  const jobIds = list.map(r => r.sf_job_id)
+  const [{ data: jobs }, { data: agents }, { data: maps }] = await Promise.all([
+    db.from('sf_jobs').select('id, number, customer_name').in('id', jobIds),
+    db.from('sf_job_agents').select('job_id, agent_id, agent_first_name, agent_last_name').in('job_id', jobIds),
+    db.from('commission_agent_map').select('tech_user_id, agent_id, agent_first_name, agent_last_name'),
+  ])
+
+  const jobMap = new Map((jobs ?? []).map(j => [j.id, j]))
+  const techNameById = new Map(techs.map(t => [t.id, t.full_name]))
+
+  // Resolve an agent → mapped tech (by id, then name).
+  const mapById = new Map<string, string>()
+  const mapByName = new Map<string, string>()
+  for (const m of maps ?? []) {
+    if (m.agent_id) mapById.set(m.agent_id, m.tech_user_id)
+    else if (m.agent_first_name && m.agent_last_name) {
+      mapByName.set(`${m.agent_first_name.toLowerCase()}|${m.agent_last_name.toLowerCase()}`, m.tech_user_id)
+    }
+  }
+  function mappedTech(agentId: string | null, first: string | null, last: string | null): string | null {
+    if (agentId && mapById.has(agentId)) return mapById.get(agentId)!
+    if (first && last) {
+      const k = `${first.toLowerCase()}|${last.toLowerCase()}`
+      if (mapByName.has(k)) return mapByName.get(k)!
+    }
+    return null
+  }
+
+  const agentsByJob = new Map<string, ReviewAgent[]>()
+  for (const a of agents ?? []) {
+    const techId = mappedTech(a.agent_id, a.agent_first_name, a.agent_last_name)
+    const entry: ReviewAgent = {
+      agent_id: a.agent_id,
+      name: [a.agent_first_name, a.agent_last_name].filter(Boolean).join(' ') || '(unnamed agent)',
+      mapped_tech_user_id: techId,
+      mapped_tech_name: techId ? (techNameById.get(techId) ?? null) : null,
+    }
+    const arr = agentsByJob.get(a.job_id) ?? []
+    arr.push(entry)
+    agentsByJob.set(a.job_id, arr)
+  }
+
+  const items: CommissionReviewItem[] = list.map(r => {
+    const job = jobMap.get(r.sf_job_id)
+    return {
+      id: r.id,
+      sf_job_id: r.sf_job_id,
+      job_number: job?.number ?? null,
+      customer_name: job?.customer_name ?? null,
+      recognition_date: r.recognition_date,
+      revenue: r.revenue ?? 0,
+      review_reason: r.review_reason,
+      agents: agentsByJob.get(r.sf_job_id) ?? [],
+      days_pending: daysBetween(r.created_at),
+    }
+  })
+
+  return { items, count: items.length, techs }
+}
