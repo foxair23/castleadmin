@@ -73,6 +73,47 @@ export async function POST(req: NextRequest) {
   const db = await createServiceClient()
   const now = new Date().toISOString()
 
+  if (body.action === 'bulk') {
+    // Save every changed row in one request, then recompute once.
+    const { period_start, period_end, rows, clears } = body as {
+      period_start: string; period_end: string
+      rows: Array<{ tech_user_id: string; sales_target: number; rate_below: number; rate_above: number }>
+      clears: string[]
+    }
+    if (!period_start || !period_end) {
+      return NextResponse.json({ error: 'Missing periods' }, { status: 400 })
+    }
+
+    if (Array.isArray(rows) && rows.length > 0) {
+      const upserts = rows.map(r => ({
+        tech_user_id: r.tech_user_id,
+        period_type: ACTIVE_PERIOD_TYPE,
+        period_start, period_end,
+        sales_target: r.sales_target ?? 0,
+        rate_below: r.rate_below ?? 0,
+        rate_above: r.rate_above ?? 0,
+        created_by: admin.id,
+        updated_at: now,
+      }))
+      const { error } = await db
+        .from('commission_plans')
+        .upsert(upserts, { onConflict: 'tech_user_id,period_start,period_end' })
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    if (Array.isArray(clears) && clears.length > 0) {
+      const { error } = await db
+        .from('commission_plans')
+        .delete()
+        .eq('period_start', period_start).eq('period_end', period_end)
+        .in('tech_user_id', clears)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    await recomputeSnapshots()
+    return NextResponse.json({ ok: true, saved: rows?.length ?? 0, cleared: clears?.length ?? 0 })
+  }
+
   if (body.action === 'copy') {
     const { from_start, from_end, period_start, period_end } = body
     if (!from_start || !from_end || !period_start || !period_end) {
