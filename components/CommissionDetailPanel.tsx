@@ -27,11 +27,34 @@ function Stat({ label, value, sub, accent }: { label: string; value: string; sub
   )
 }
 
+// Cumulative pipeline buckets. Each job sits at one stage; a bucket includes
+// every job that has reached that stage or beyond.
+const STAGE_RANK: Record<Stage, number> = {
+  'Scheduled': 0, 'Completed': 1, 'Invoiced': 2, 'Payment Received': 3,
+}
+const BUCKETS: { label: string; minRank: number; accent?: 'green' }[] = [
+  { label: 'Job Sold', minRank: 0 },
+  { label: 'Job Completed', minRank: 1 },
+  { label: 'Job Invoiced', minRank: 2 },
+  { label: 'Payment Received', minRank: 3, accent: 'green' },
+]
+
 export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDetail }) {
   const s = detail.summary
   const target = s.sales_target ?? 0
   const pct = target > 0 ? Math.min(100, (s.eligible_revenue / target) * 100) : 0
   const overTarget = target > 0 && s.eligible_revenue > target
+
+  const buckets = BUCKETS.map(b => {
+    const jobs = detail.jobs.filter(j => STAGE_RANK[j.stage] >= b.minRank)
+    return {
+      label: b.label,
+      accent: b.accent,
+      count: jobs.length,
+      revenue: jobs.reduce((sum, j) => sum + j.revenue, 0),
+      commission: jobs.reduce((sum, j) => sum + j.commission, 0),
+    }
+  })
 
   return (
     <div className="space-y-6">
@@ -67,12 +90,24 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
         </div>
       )}
 
-      {/* Payout-centric summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Stat label="Commission received" value={formatMoney(s.commission_received)} accent="green" sub="company has been paid" />
-        <Stat label="Payment pending" value={formatMoney(s.commission_pending)} accent="amber" sub="paid out when customer payment is received by Castle" />
-        <Stat label="Projected total" value={formatMoney(s.commission_total)} sub="if everything is paid by customer" />
+      {/* Pipeline funnel — commission at each stage. "Sold" is every job with
+          the agent listed; each later bucket is the subset that's progressed
+          that far. Payment Received is the actual payout. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {buckets.map(b => (
+          <Stat
+            key={b.label}
+            label={b.label}
+            value={formatMoney(b.commission)}
+            accent={b.accent}
+            sub={`${b.count} job${b.count === 1 ? '' : 's'} · ${formatMoney(b.revenue)}`}
+          />
+        ))}
       </div>
+      <p className="text-xs text-gray-400 -mt-3">
+        Commission is only paid out once Castle receives the customer&rsquo;s payment. Earlier stages are
+        estimates of what&rsquo;s coming.
+      </p>
 
       {/* Adjustments */}
       {detail.adjustments.length > 0 && (
