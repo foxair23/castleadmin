@@ -77,7 +77,15 @@ export default function AdminTechDetailClient({ techs, todayStr }: { techs: Tech
       ) : techs.length === 0 ? (
         <div className="text-center text-gray-400 py-10">No active technicians.</div>
       ) : detail ? (
-        <CommissionDetailPanel detail={detail} />
+        <CommissionDetailPanel
+          detail={detail}
+          admin={period ? {
+            techUserId: techId,
+            periodStart: period.start,
+            periodEnd: period.end,
+            onChanged: load,
+          } : undefined}
+        />
       ) : null}
     </div>
   )

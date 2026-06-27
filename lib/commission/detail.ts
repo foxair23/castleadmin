@@ -31,9 +31,14 @@ export interface JobLine {
   /** This commission is a projection (job not yet completed). */
   projected: boolean
   stage: Stage
+  /** False when an admin has denied commission on this job (not_accepted).
+   *  Denied jobs are excluded from totals/buckets but shown so admins can
+   *  re-accept. Scheduled/sold jobs are always accepted candidates. */
+  accepted: boolean
 }
 
 export interface AdjustmentLine {
+  id: string
   amount: number
   note: string
   created_at: string
@@ -86,7 +91,9 @@ export async function computeTechPeriodDetail(
     .from('commission_job_eligibility')
     .select('sf_job_id, recognition_date, revenue, revenue_frozen, status')
     .eq('tech_user_id', techUserId)
-    .eq('status', 'eligible')
+    // Include denied (not_accepted) jobs too, so admins can see and re-accept
+    // them; they're excluded from totals below.
+    .in('status', ['eligible', 'not_accepted'])
     .gte('recognition_date', period.start)
     .lte('recognition_date', period.end)
   const elig = (eligData ?? []) as EligRow[]
@@ -99,7 +106,7 @@ export async function computeTechPeriodDetail(
       .eq('tech_user_id', techUserId).eq('period_start', period.start).eq('period_end', period.end)
       .maybeSingle(),
     db.from('commission_adjustments')
-      .select('amount, note, created_at')
+      .select('id, amount, note, created_at')
       .eq('tech_user_id', techUserId).eq('period_start', period.start).eq('period_end', period.end)
       .order('created_at', { ascending: true }),
   ])
@@ -120,14 +127,16 @@ export async function computeTechPeriodDetail(
   const metaById = new Map((jobMeta ?? []).map(j => [j.id, j]))
   const invoicedJobs = new Set((invMeta ?? []).map(i => i.job_id).filter(Boolean) as string[])
 
-  // 4. Per-job commission: received jobs earn real commission as money arrives;
-  //    completed-but-unpaid jobs show a projection (tier on received revenue).
-  const eligibleJobs: EligibleJob[] = elig.map(e => ({
-    sf_job_id: e.sf_job_id,
-    recognition_date: e.recognition_date,
-    revenue: e.revenue,
-    collected: e.revenue_frozen,
-  }))
+  // 4. Per-job commission: only accepted (eligible) jobs feed the formula.
+  //    Received jobs earn real commission; completed-unpaid jobs project.
+  const eligibleJobs: EligibleJob[] = elig
+    .filter(e => e.status === 'eligible')
+    .map(e => ({
+      sf_job_id: e.sf_job_id,
+      recognition_date: e.recognition_date,
+      revenue: e.revenue,
+      collected: e.revenue_frozen,
+    }))
   const result = computeCommission(eligibleJobs, plan, adjustments.map(a => a.amount))
   const commByJob = new Map(result.jobs.map(j => [j.sf_job_id, j]))
 
@@ -140,16 +149,18 @@ export async function computeTechPeriodDetail(
   const completedLines: JobLine[] = elig.map(e => {
     const meta = metaById.get(e.sf_job_id)
     const c = commByJob.get(e.sf_job_id)
+    const accepted = e.status === 'eligible'
     return {
       sf_job_id: e.sf_job_id,
       job_number: meta?.number ?? null,
       customer_name: meta?.customer_name ?? null,
       date: e.recognition_date,
       revenue: e.revenue,
-      commission: c?.commission ?? 0,
+      commission: accepted ? (c?.commission ?? 0) : 0,
       received: e.revenue_frozen,
       projected: c?.projected ?? false,
       stage: completedStage(e.sf_job_id, e.revenue_frozen),
+      accepted,
     }
   })
 
@@ -253,6 +264,7 @@ async function loadOpenLines(
       received: false,
       projected: true,
       stage,
+      accepted: true,
     }
   }
 
