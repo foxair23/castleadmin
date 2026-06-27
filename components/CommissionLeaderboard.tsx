@@ -98,7 +98,8 @@ export default function CommissionLeaderboard({
         </div>
       </div>
       <p className="text-xs text-gray-400">
-        Dollars sold = completed jobs recognized this period. Dollars received = those paid by the customer.
+        Dollars sold = new business sold this period (by job date). Dollars received = of those, paid by the
+        customer. Counts sales regardless of completion, but excludes jobs an admin has denied.
       </p>
     </div>
   )
