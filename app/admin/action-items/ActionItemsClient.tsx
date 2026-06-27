@@ -18,7 +18,9 @@ import type {
   AwaitingSfJobResult,
   AwaitingPushLead,
   AwaitingPushResult,
+  CommissionReviewResult,
 } from '@/lib/analytics/alerts'
+import CommissionReviewTable from './CommissionReviewTable'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -534,6 +536,8 @@ interface Props {
   overdueCustomers: OverdueCustomersResult
   awaitingSfJob: AwaitingSfJobResult
   awaitingPushLeads: AwaitingPushResult
+  // Optional: only the admin page passes it (commission is admin-only).
+  commissionReview?: CommissionReviewResult
   notes: Record<string, string>
 }
 
@@ -641,7 +645,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'followup' | 'overdue' | 'awaiting-sf' | 'awaiting-push'
+type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'followup' | 'overdue' | 'awaiting-sf' | 'awaiting-push' | 'commission'
 
 export default function ActionItemsClient({
   unpaidJobs,
@@ -651,6 +655,7 @@ export default function ActionItemsClient({
   overdueCustomers,
   awaitingSfJob,
   awaitingPushLeads,
+  commissionReview,
   notes,
 }: Props) {
   const router = useRouter()
@@ -698,6 +703,7 @@ export default function ActionItemsClient({
   const filteredOverdueCustomers = filterByDays(overdueCustomers.items, 'days_overdue')
   const filteredAwaitingSfJob = filterByDays(awaitingSfJob.items, 'days_waiting')
   const filteredAwaitingPush = filterByDays(awaitingPushLeads.items, 'days_waiting')
+  const commissionItems = commissionReview?.items ?? []
 
   const totalCount =
     filteredUnpaid.length +
@@ -706,7 +712,8 @@ export default function ActionItemsClient({
     filteredFollowUp.length +
     filteredOverdueCustomers.length +
     filteredAwaitingSfJob.length +
-    filteredAwaitingPush.length
+    filteredAwaitingPush.length +
+    commissionItems.length
 
   async function handleRefresh() {
     setSyncing(true)
@@ -774,6 +781,7 @@ export default function ActionItemsClient({
     { key: 'overdue',      label: 'Overdue',        count: filteredOverdueCustomers.length },
     { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
     { key: 'awaiting-push',label: 'Awaiting Push',  count: filteredAwaitingPush.length },
+    ...(commissionReview ? [{ key: 'commission' as TabKey, label: 'Commission Review', count: commissionItems.length }] : []),
   ]
 
   return (
@@ -960,6 +968,17 @@ export default function ActionItemsClient({
           count={filteredAwaitingPush.length}
         >
           {filteredAwaitingPush.length === 0 ? <AllClear /> : <AwaitingPushTable items={filteredAwaitingPush} notes={notes} />}
+        </AlertSection>
+      )}
+
+      {activeTab === 'commission' && commissionReview && (
+        <AlertSection
+          title="Commission Jobs Needing Review"
+          count={commissionItems.length}
+        >
+          {commissionItems.length === 0
+            ? <AllClear />
+            : <CommissionReviewTable items={commissionItems} techs={commissionReview.techs} />}
         </AlertSection>
       )}
     </div>
