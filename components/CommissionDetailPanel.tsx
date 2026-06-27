@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { formatMoney } from '@/lib/week'
 import type { TechPeriodDetail, Stage } from '@/lib/commission/detail'
 
@@ -28,9 +29,6 @@ function Stat({ label, value, sub, accent }: { label: string; value: string; sub
   )
 }
 
-// Mutually-exclusive pipeline buckets: each job sits in exactly one bucket —
-// its current stage — so the four buckets partition the jobs (and sum to the
-// whole pipeline).
 const BUCKETS: { label: string; stage: Stage; accent?: 'green' }[] = [
   { label: 'Job Sold', stage: 'Sold' },
   { label: 'Job Scheduled', stage: 'Scheduled' },
@@ -39,29 +37,70 @@ const BUCKETS: { label: string; stage: Stage; accent?: 'green' }[] = [
   { label: 'Payment Received', stage: 'Payment Received', accent: 'green' },
 ]
 
-export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDetail }) {
+// Completed-or-later jobs have an eligibility row and can be accepted/denied.
+function isCompleted(stage: Stage): boolean {
+  return stage === 'Completed' || stage === 'Invoiced' || stage === 'Payment Received'
+}
+
+export interface AdminControls {
+  techUserId: string
+  periodStart: string
+  periodEnd: string
+  /** Re-fetch the detail after a change. */
+  onChanged: () => void
+}
+
+export default function CommissionDetailPanel({
+  detail,
+  admin,
+}: {
+  detail: TechPeriodDetail
+  admin?: AdminControls
+}) {
   const s = detail.summary
   const target = s.sales_target ?? 0
-  // Progress is measured on RECEIVED funds: the tech climbs toward the target —
-  // and the higher tier — only as customer payments come in.
   const progressRevenue = s.received_revenue
   const pct = target > 0 ? Math.min(100, (progressRevenue / target) * 100) : 0
   const overTarget = target > 0 && progressRevenue > target
 
+  // Buckets reflect commission-eligible pipeline → denied jobs excluded.
   const buckets = BUCKETS.map(b => {
-    const jobs = detail.jobs.filter(j => j.stage === b.stage)
+    const jobs = detail.jobs.filter(j => j.stage === b.stage && j.accepted)
     return {
       label: b.label,
       accent: b.accent,
       count: jobs.length,
       revenue: jobs.reduce((sum, j) => sum + j.revenue, 0),
-      commission: jobs.reduce((sum, j) => sum + j.commission, 0),
     }
   })
 
+  const [busyJob, setBusyJob] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  async function toggleEligibility(sfJobId: string, accepted: boolean) {
+    if (!admin) return
+    setBusyJob(sfJobId)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/commission/eligibility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sf_job_id: sfJobId, accepted }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
+      admin.onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusyJob(null)
+    }
+  }
+
+  const colSpan = admin ? 8 : 7
+
   return (
     <div className="space-y-6">
-      {/* Progress vs target (on completed/recognized revenue) */}
+      {/* Progress vs target (on received revenue) */}
       {s.has_plan ? (
         <div className="bg-white border border-gray-200 rounded-lg px-4 py-3">
           <div className="flex items-center justify-between text-sm mb-1.5">
@@ -88,10 +127,11 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
         </div>
       )}
 
-      {/* Pipeline funnel — total job/payment amount at each stage. "Sold" is
-          every job with the agent listed; each job sits in exactly one stage.
-          Payment Received is money actually collected. Revenue (not commission)
-          is shown, since the commission rate isn't known until funds arrive. */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded px-4 py-2 text-sm text-red-600">{error}</div>
+      )}
+
+      {/* Pipeline funnel — total job/payment amount at each stage. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {buckets.map(b => (
           <Stat
@@ -110,20 +150,8 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
       </p>
 
       {/* Adjustments */}
-      {detail.adjustments.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Adjustments</h3>
-          <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
-            {detail.adjustments.map((a, i) => (
-              <div key={i} className="flex items-center justify-between px-4 py-2 text-sm">
-                <span className="text-gray-600">{a.note}</span>
-                <span className={a.amount < 0 ? 'text-red-600' : 'text-green-700'}>
-                  {a.amount < 0 ? '−' : '+'}{formatMoney(Math.abs(a.amount))}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+      {(detail.adjustments.length > 0 || admin) && (
+        <AdjustmentsSection detail={detail} admin={admin} />
       )}
 
       {/* Unified job pipeline */}
@@ -143,27 +171,53 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
                   <th className="text-center px-3 py-3 font-medium text-gray-600">Status</th>
                   <th className="text-right px-3 py-3 font-medium text-gray-600">Commission</th>
                   <th className="text-left px-3 py-3 font-medium text-gray-600">Payment</th>
+                  {admin && <th className="text-right px-3 py-3 font-medium text-gray-600">Eligibility</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {detail.jobs.length === 0 ? (
-                  <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">No jobs this period.</td></tr>
+                  <tr><td colSpan={colSpan} className="px-4 py-6 text-center text-gray-400">No jobs this period.</td></tr>
                 ) : detail.jobs.map(j => (
-                  <tr key={j.sf_job_id}>
+                  <tr key={j.sf_job_id} className={j.accepted ? '' : 'bg-gray-50 opacity-60'}>
                     <td className="px-4 py-2 text-gray-900">{j.customer_name ?? '—'}</td>
                     <td className="px-3 py-2 text-gray-600">{j.job_number ?? j.sf_job_id}</td>
                     <td className="px-3 py-2 text-gray-600">{j.date ?? '—'}</td>
                     <td className="px-3 py-2 text-right text-gray-700">{formatMoney(j.revenue)}</td>
                     <td className="px-3 py-2 text-center"><StageBadge stage={j.stage} /></td>
                     <td className="px-3 py-2 text-right text-gray-900 font-medium">
-                      {formatMoney(j.commission)}
-                      {j.projected && <span className="ml-1 text-xs text-gray-400">(est.)</span>}
+                      {j.accepted ? (
+                        <>
+                          {formatMoney(j.commission)}
+                          {j.projected && <span className="ml-1 text-xs text-gray-400">(est.)</span>}
+                        </>
+                      ) : (
+                        <span className="text-xs text-gray-400">Denied</span>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       {j.received
                         ? <span className="text-xs text-green-600">Received</span>
                         : <span className="text-xs text-amber-600">Payment pending</span>}
                     </td>
+                    {admin && (
+                      <td className="px-3 py-2 text-right">
+                        {isCompleted(j.stage) ? (
+                          <button
+                            disabled={busyJob === j.sf_job_id}
+                            onClick={() => toggleEligibility(j.sf_job_id, !j.accepted)}
+                            className={`text-xs px-2 py-0.5 rounded border disabled:opacity-50 ${
+                              j.accepted
+                                ? 'border-red-300 text-red-600 hover:bg-red-50'
+                                : 'border-green-300 text-green-700 hover:bg-green-50'
+                            }`}
+                          >
+                            {busyJob === j.sf_job_id ? '…' : j.accepted ? 'Deny' : 'Accept'}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -175,6 +229,102 @@ export default function CommissionDetailPanel({ detail }: { detail: TechPeriodDe
           commission based on the quoted amount.
         </p>
       </div>
+    </div>
+  )
+}
+
+function AdjustmentsSection({ detail, admin }: { detail: TechPeriodDetail; admin?: AdminControls }) {
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function add() {
+    if (!admin) return
+    const amt = parseFloat(amount)
+    if (!isFinite(amt) || amt === 0) { setError('Enter a non-zero amount'); return }
+    if (!note.trim()) { setError('A note is required'); return }
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/commission/adjustments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tech_user_id: admin.techUserId,
+          period_start: admin.periodStart,
+          period_end: admin.periodEnd,
+          amount: amt,
+          note: note.trim(),
+        }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
+      setAmount(''); setNote('')
+      admin.onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove(id: string) {
+    if (!admin) return
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/commission/adjustments?id=${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
+      admin.onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-700 mb-2">Adjustments</h3>
+      <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
+        {detail.adjustments.map(a => (
+          <div key={a.id} className="flex items-center justify-between px-4 py-2 text-sm">
+            <span className="text-gray-600">{a.note}</span>
+            <div className="flex items-center gap-3">
+              <span className={a.amount < 0 ? 'text-red-600' : 'text-green-700'}>
+                {a.amount < 0 ? '−' : '+'}{formatMoney(Math.abs(a.amount))}
+              </span>
+              {admin && (
+                <button onClick={() => remove(a.id)} disabled={busy} className="text-gray-400 hover:text-red-600 disabled:opacity-50" title="Remove">×</button>
+              )}
+            </div>
+          </div>
+        ))}
+        {detail.adjustments.length === 0 && (
+          <div className="px-4 py-2 text-sm text-gray-400">No adjustments this period.</div>
+        )}
+        {admin && (
+          <div className="px-4 py-3 flex flex-wrap items-center gap-2">
+            <input
+              type="number" inputMode="decimal" placeholder="Amount (+/−)"
+              value={amount} onChange={e => setAmount(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 w-32 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <input
+              type="text" placeholder="Note (required)"
+              value={note} onChange={e => setNote(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 flex-1 min-w-[180px] focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <button
+              onClick={add} disabled={busy}
+              className="bg-red-600 text-white rounded px-3 py-1 text-sm font-medium hover:bg-red-700 disabled:opacity-60"
+            >
+              {busy ? 'Saving…' : 'Add adjustment'}
+            </button>
+          </div>
+        )}
+      </div>
+      {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
     </div>
   )
 }
