@@ -139,9 +139,10 @@ export default function CommissionDetailPanel({
         ))}
       </div>
       <p className="text-xs text-gray-400 -mt-3">
-        Amounts shown are total job value at each stage. <strong>Sold</strong> jobs aren&rsquo;t scheduled
-        yet, so they show every month until a date is set; <strong>Scheduled</strong> jobs count toward
-        this month if completed on time. Commission is paid only once Castle receives the customer&rsquo;s payment.
+        Amounts shown are total job value at each stage. <strong>Sold</strong>{' '}
+        jobs aren&rsquo;t scheduled yet, so they show every month until a date is set; <strong>Scheduled</strong>{' '}
+        jobs count toward this month if completed within the month scheduled, otherwise count towards the
+        month the job is completed in. Commission is paid only once Castle receives the customer&rsquo;s payment.
       </p>
 
       {/* Adjustments */}
