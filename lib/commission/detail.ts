@@ -234,6 +234,14 @@ async function loadOpenLines(
     .eq('is_deleted', false)
     .not('status', 'in', EXCLUDED_STATUSES)
 
+  // Admin denials of not-yet-completed jobs (status not_accepted).
+  const { data: deniedRows } = await db
+    .from('commission_job_eligibility')
+    .select('sf_job_id')
+    .eq('status', 'not_accepted')
+    .in('sf_job_id', candidateIds)
+  const denied = new Set((deniedRows ?? []).map(r => r.sf_job_id))
+
   // Partition: Scheduled (dated, in this period) vs Sold (undated backlog).
   // Drop jobs scheduled for a different period.
   type Row = { id: string; number: string | null; customer_name: string | null; start_date: string | null; total: number | null }
@@ -252,8 +260,10 @@ async function loadOpenLines(
   let C = completedRevenueTotal
   const project = (j: Row, stage: Stage): JobLine => {
     const revenue = j.total ?? 0
-    const commission = plan ? marginal(C, revenue, plan) : 0
-    C += revenue
+    const isDenied = denied.has(j.id)
+    // Denied jobs earn nothing and don't advance the tier.
+    const commission = isDenied ? 0 : (plan ? marginal(C, revenue, plan) : 0)
+    if (!isDenied) C += revenue
     return {
       sf_job_id: j.id,
       job_number: j.number,
@@ -264,7 +274,7 @@ async function loadOpenLines(
       received: false,
       projected: true,
       stage,
-      accepted: true,
+      accepted: !isDenied,
     }
   }
 

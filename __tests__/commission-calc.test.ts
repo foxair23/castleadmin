@@ -85,18 +85,28 @@ describe('computeCommission — tier on RECEIVED revenue', () => {
     expect(Number(sum.toFixed(2))).toBe(commissionOnRevenue(res.received_revenue, PLAN))
   })
 
-  it('adjustments add to commission_received', () => {
+  it('adjustments count as received revenue and earn at the tier rate', () => {
     const jobs = [job('a', '2026-07-01', 5000, true)]
     const res = computeCommission(jobs, PLAN, [-100, 50])
     expect(res.adjustments_total).toBe(-50)
-    expect(res.commission_received).toBe(450) // 500 − 50
+    // received_revenue = 5000 − 50 = 4950 → 4950 × 10% = 495
+    expect(res.received_revenue).toBe(4950)
+    expect(res.commission_received).toBe(495)
   })
 
-  it('no plan → nothing from the formula, adjustments still apply', () => {
+  it('a positive adjustment pushes received revenue toward the target', () => {
+    const jobs = [job('a', '2026-07-01', 8000, true)]
+    const res = computeCommission(jobs, PLAN, [4000])
+    // received = 8000 + 4000 = 12,000 → 10,000×10% + 2,000×15% = 1,300
+    expect(res.received_revenue).toBe(12000)
+    expect(res.commission_received).toBe(1300)
+  })
+
+  it('no plan → adjustments are revenue but earn nothing', () => {
     const jobs = [job('a', '2026-07-01', 5000, true)]
     const res = computeCommission(jobs, null, [25])
-    expect(res.received_revenue).toBe(5000)
-    expect(res.commission_received).toBe(25)
+    expect(res.received_revenue).toBe(5025)
+    expect(res.commission_received).toBe(0)
     expect(res.commission_pending).toBe(0)
   })
 

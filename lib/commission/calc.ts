@@ -96,16 +96,21 @@ export function computeCommission(
   adjustments: number[] = [],
 ): CommissionResult {
   const effPlan: CommissionPlan = plan ?? { sales_target: 0, rate_below: 0, rate_above: 0 }
+  // Adjustments are treated as received revenue ("fake already-received jobs"):
+  // they count toward the target/tier and earn commission like real receipts.
   const adjustments_total = round2(adjustments.reduce((s, a) => s + a, 0))
 
   const received = ordered(jobs.filter(j => j.collected))
   const unpaid = ordered(jobs.filter(j => !j.collected))
 
-  const received_revenue = round2(received.reduce((s, j) => s + j.revenue, 0))
+  const realReceived = round2(received.reduce((s, j) => s + j.revenue, 0))
+  const received_revenue = round2(realReceived + adjustments_total)
   const completed_revenue = round2(jobs.reduce((s, j) => s + j.revenue, 0))
 
-  // Real per-job commission for received jobs — the tier fills as money arrives.
-  let C = 0
+  // Adjustment revenue sits at the bottom of the received stack; real received
+  // jobs are positioned above it so they fill the tier accordingly.
+  const base = Math.max(0, adjustments_total)
+  let C = base
   const receivedLines: JobCommission[] = received.map(j => {
     const commission = marginal(C, j.revenue, effPlan)
     C += j.revenue
@@ -120,15 +125,9 @@ export function computeCommission(
   })
   const cumulative_after_completed = C
 
-  // Reconcile rounding so received lines sum exactly to the formula on R.
-  const receivedFormula = commissionOnRevenue(received_revenue, effPlan)
-  const receivedSum = round2(receivedLines.reduce((s, l) => s + l.commission, 0))
-  const drift = round2(receivedFormula - receivedSum)
-  if (drift !== 0 && receivedLines.length > 0) {
-    receivedLines[receivedLines.length - 1].commission = round2(receivedLines[receivedLines.length - 1].commission + drift)
-  }
-
-  const commission_received = round2(receivedFormula + adjustments_total)
+  // Payout is the two-tier formula on total received revenue (incl. adjustments),
+  // which is order-independent and therefore the source of truth.
+  const commission_received = round2(commissionOnRevenue(Math.max(0, received_revenue), effPlan))
   const commission_pending = round2(unpaidLines.reduce((s, l) => s + l.commission, 0))
 
   return {

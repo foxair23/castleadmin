@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { computeTechPeriodDetail } from '@/lib/commission/detail'
 import { periodForRecognitionDate } from '@/lib/commission/periods'
 
@@ -21,7 +22,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'invalid period' }, { status: 400 })
   }
 
-  const db = await createServiceClient()
+  // Use a TRUE service-role client (no user session) so the full detail is
+  // computed server-side regardless of RLS — the tech is authorized above and
+  // only ever sees their own id's derived result, never raw plan/rate rows.
+  const db = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  )
   const detail = await computeTechPeriodDetail(db, user.id, period)
   return NextResponse.json(detail)
 }
