@@ -24,7 +24,7 @@ export default async function ReviewsPage() {
   // Last sync run
   const { data: lastRun } = await db
     .from('review_sync_runs')
-    .select('status, ended_at, reviews_new, reviews_seen')
+    .select('status, ended_at, reviews_new, reviews_seen, errors_json')
     .order('started_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -32,7 +32,7 @@ export default async function ReviewsPage() {
   return (
     <ReviewsClient
       kpi={{ total, avgRating, fiveStars, oneStar }}
-      lastRun={lastRun as { status: string; ended_at: string | null; reviews_new: number | null; reviews_seen: number | null } | null}
+      lastRun={lastRun as { status: string; ended_at: string | null; reviews_new: number | null; reviews_seen: number | null; errors_json: string[] | null } | null}
     />
   )
 }
