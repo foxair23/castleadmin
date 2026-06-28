@@ -95,6 +95,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                 <NavLink href="/tech" current={pathname === '/tech' || pathname.startsWith('/tech/jobs')}>My Week</NavLink>
                 <NavLink href="/tech/history" current={pathname.startsWith('/tech/history')}>History</NavLink>
                 <NavLink href="/tech/commission" current={pathname.startsWith('/tech/commission')}>Commission</NavLink>
+                <NavLink href="/tech/leaderboard" current={pathname.startsWith('/tech/leaderboard')}>Leaderboard</NavLink>
               </>
             )}
           </div>

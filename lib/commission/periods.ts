@@ -28,8 +28,10 @@ export interface Period {
 /** The active period type. Flip to 'quarterly' to switch the whole module. */
 export const ACTIVE_PERIOD_TYPE: PeriodType = 'monthly'
 
-/** No job recognized before this date is ever commission-eligible (§3.5). */
-export const COMMISSION_START_DATE = '2026-06-22'
+/** No job before this date is commission-eligible / counted. Set to the start
+ *  of June 2026 so the first period is the full calendar month (commission and
+ *  the sales leaderboard both use all of June). */
+export const COMMISSION_START_DATE = '2026-06-01'
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
