@@ -42,6 +42,7 @@ interface LastRun {
   ended_at: string | null
   reviews_new: number | null
   reviews_seen: number | null
+  errors_json: string[] | null
 }
 
 interface Props {
@@ -381,6 +382,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
 
   // Sync + matching
   const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  const [matchError, setMatchError]         = useState<string | null>(null)
   const [matchResult, setMatchResult]       = useState<{ reviewsNew: number; reviewsUpdated: number; matched: number; candidates: number; noMatch: number } | null>(null)
 
   // Tab
@@ -423,14 +425,16 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   async function runSyncAndMatch() {
     setMatchingStatus('running')
     setMatchResult(null)
+    setMatchError(null)
     try {
       const res = await fetch('/api/admin/reviews/run-matching', { method: 'POST' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json()
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
       setMatchResult({ reviewsNew: json.reviewsNew, reviewsUpdated: json.reviewsUpdated, matched: json.matched, candidates: json.candidates, noMatch: json.noMatch })
       setMatchingStatus('done')
       load(page)
-    } catch {
+    } catch (e) {
+      setMatchError(e instanceof Error ? e.message : String(e))
       setMatchingStatus('error')
     }
   }
@@ -492,9 +496,31 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
           </span>
         )}
         {matchingStatus === 'error' && (
-          <span className="text-xs text-red-500">Matching failed</span>
+          <span className="text-xs text-red-500" title={matchError ?? undefined}>
+            {matchError ? `Failed: ${matchError}` : 'Matching failed'}
+          </span>
         )}
       </div>
+
+      {/* Automated sync failure banner — surfaces the daily cron's last error so
+          a silently-failing review pull (e.g. expired Google token) is visible. */}
+      {lastRun?.status === 'failed' && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+          <p className="text-sm font-semibold text-red-700">
+            Automated review sync failed{lastRun.ended_at ? ` (${fmtDate(lastRun.ended_at)})` : ''}
+          </p>
+          <p className="text-xs text-red-600 mt-1">
+            New reviews aren&rsquo;t being pulled in. Most often this is an expired Google OAuth token —
+            regenerate <code>GOOGLE_OAUTH_REFRESH_TOKEN</code> in Vercel (and set the OAuth app to
+            &ldquo;In production&rdquo; so it stops expiring).
+          </p>
+          {lastRun.errors_json && lastRun.errors_json.length > 0 && (
+            <pre className="text-xs text-red-700 mt-2 whitespace-pre-wrap break-all bg-red-100/60 rounded p-2">
+              {lastRun.errors_json.join('\n')}
+            </pre>
+          )}
+        </div>
+      )}
 
       {/* KPI tiles */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
