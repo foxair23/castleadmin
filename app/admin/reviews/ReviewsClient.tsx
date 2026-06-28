@@ -381,6 +381,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
 
   // Sync + matching
   const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  const [matchError, setMatchError]         = useState<string | null>(null)
   const [matchResult, setMatchResult]       = useState<{ reviewsNew: number; reviewsUpdated: number; matched: number; candidates: number; noMatch: number } | null>(null)
 
   // Tab
@@ -423,14 +424,16 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   async function runSyncAndMatch() {
     setMatchingStatus('running')
     setMatchResult(null)
+    setMatchError(null)
     try {
       const res = await fetch('/api/admin/reviews/run-matching', { method: 'POST' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json()
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
       setMatchResult({ reviewsNew: json.reviewsNew, reviewsUpdated: json.reviewsUpdated, matched: json.matched, candidates: json.candidates, noMatch: json.noMatch })
       setMatchingStatus('done')
       load(page)
-    } catch {
+    } catch (e) {
+      setMatchError(e instanceof Error ? e.message : String(e))
       setMatchingStatus('error')
     }
   }
@@ -492,7 +495,9 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
           </span>
         )}
         {matchingStatus === 'error' && (
-          <span className="text-xs text-red-500">Matching failed</span>
+          <span className="text-xs text-red-500" title={matchError ?? undefined}>
+            {matchError ? `Failed: ${matchError}` : 'Matching failed'}
+          </span>
         )}
       </div>
 

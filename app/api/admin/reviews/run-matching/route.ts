@@ -83,7 +83,15 @@ export async function POST() {
   }
 
   // ── Match ─────────────────────────────────────────────────────────────────
-  const matchResult = await runMatchingPass()
+  let matchResult
+  try {
+    matchResult = await runMatchingPass()
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Matching failed: ${err instanceof Error ? err.message : String(err)}`, reviewsNew, reviewsUpdated },
+      { status: 500 },
+    )
+  }
 
   return NextResponse.json({ ok: true, reviewsNew, reviewsUpdated, ...matchResult })
 }
