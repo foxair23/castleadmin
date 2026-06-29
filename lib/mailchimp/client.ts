@@ -110,6 +110,42 @@ async function getOrCreateSegment(tagName: string): Promise<string | null> {
   }
 }
 
+// Custom merge fields we populate on every push. Mailchimp silently drops
+// merge values whose field doesn't exist on the audience, so we create any
+// missing ones first. FNAME/LNAME/PHONE are Mailchimp defaults. All are 'text'
+// so values (incl. the YYYY-MM-DD last service date) render as-is in emails via
+// e.g. *|LASTSERV|*.
+const REQUIRED_MERGE_FIELDS: { tag: string; name: string }[] = [
+  { tag: 'CITY', name: 'City' },
+  { tag: 'ZIP', name: 'Zip' },
+  { tag: 'LEADSRC', name: 'Lead Source' },
+  { tag: 'LASTSERV', name: 'Last Serviced' },
+  { tag: 'BALANCE', name: 'Balance' },
+]
+
+/** Ensure the custom merge fields exist on the audience; create any missing. */
+async function ensureMergeFields(): Promise<void> {
+  try {
+    const res = await mcFetch(`/lists/${AUDIENCE_ID}/merge-fields?count=200&fields=merge_fields.tag`)
+    if (!res.ok) return
+    const data = await res.json()
+    const existing = new Set<string>((data.merge_fields ?? []).map((m: { tag: string }) => m.tag))
+    for (const f of REQUIRED_MERGE_FIELDS) {
+      if (existing.has(f.tag)) continue
+      const createRes = await mcFetch(`/lists/${AUDIENCE_ID}/merge-fields`, {
+        method: 'POST',
+        body: JSON.stringify({ tag: f.tag, name: f.name, type: 'text', required: false, public: false }),
+      })
+      if (!createRes.ok) {
+        const body = await createRes.json().catch(() => ({}))
+        console.error('[mailchimp] merge-field create failed:', f.tag, body?.detail ?? createRes.status)
+      }
+    }
+  } catch (e) {
+    console.error('[mailchimp] ensureMergeFields error:', e)
+  }
+}
+
 /** Bulk-add emails to a static segment (tag).
  *  Returns { tagged, failed } where tagged = emails successfully in the segment,
  *  failed = emails Mailchimp explicitly rejected (unsubscribed, invalid, etc.).
@@ -166,6 +202,10 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     result.errors = contacts.map(c => ({ email: c.email, error: 'Mailchimp not configured' }))
     return result
   }
+
+  // Make sure the custom merge fields (incl. LASTSERV) exist before we send
+  // values for them — otherwise Mailchimp drops them silently.
+  await ensureMergeFields()
 
   // ── Step 1: Upsert contacts into the Mailchimp audience ─────────────────
   // Adds new contacts, updates existing profile data. Unsubscribed / cleaned
