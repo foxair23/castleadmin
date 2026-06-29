@@ -130,12 +130,12 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
     const classification = classifyJob(agents, resolver)
     const existing = existingByJob.get(job.id)
 
-    // Job carries no agents → not commission-eligible. Drop any stale AUTO row
-    // (never touch a row an admin has explicitly resolved or rejected).
+    // Job carries no agents → not attributable to any rep, so it's not a
+    // commission job at all. Drop the eligibility row even if an admin had
+    // resolved/denied it: removing the agent in SF un-associates the job from
+    // the rep, so it should disappear from their commission tab entirely.
     if (!classification) {
-      if (existing && existing.status !== 'not_accepted' && !existing.resolved_at) {
-        deletes.push(job.id)
-      }
+      if (existing) deletes.push(job.id)
       continue
     }
 
