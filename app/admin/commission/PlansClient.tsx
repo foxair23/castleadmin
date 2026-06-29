@@ -22,8 +22,17 @@ interface Draft {
   above: string
 }
 
+// How many future months to offer for planning ahead.
+const FUTURE_MONTHS = 12
+
 export default function PlansClient({ todayStr }: { todayStr: string }) {
-  const periods = useMemo(() => listPeriods(todayStr).reverse(), [todayStr])
+  // Include future periods so admins can set plans for upcoming months.
+  const throughDate = useMemo(() => {
+    const d = new Date(todayStr + 'T00:00:00Z')
+    d.setUTCMonth(d.getUTCMonth() + FUTURE_MONTHS)
+    return d.toISOString().slice(0, 10)
+  }, [todayStr])
+  const periods = useMemo(() => listPeriods(throughDate).reverse(), [throughDate])
   const current = useMemo(() => periodForRecognitionDate(todayStr) ?? periods[0], [todayStr, periods])
   const [periodKey, setPeriodKey] = useState(current?.key ?? periods[0]?.key)
 
