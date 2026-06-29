@@ -21,6 +21,17 @@ interface ContactRow {
   account_balance: number | null
 }
 
+interface MarketingFilters {
+  recency?: string
+  dateFrom?: string
+  dateTo?: string
+  leadSources?: string[]
+  jobCategories?: string[]
+  paymentFilter?: string
+}
+
+const PAGE_SIZE = 250
+
 interface PushResult {
   total: number
   audience_added: number
@@ -62,12 +73,19 @@ export default function MarketingClient({
 
   // Results state
   const [contacts, setContacts] = useState<ContactRow[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [filtersApplied, setFiltersApplied] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  // The filters that produced the current results (used for "select all matching").
+  const [appliedFilters, setAppliedFilters] = useState<MarketingFilters | null>(null)
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  // When true, the send targets EVERY contact matching the applied filters
+  // (across all pages), not just the checked rows.
+  const [selectAllMatching, setSelectAllMatching] = useState(false)
 
   // Action bar state
   const [tag, setTag] = useState('')
@@ -95,24 +113,29 @@ export default function MarketingClient({
     })
   }
 
-  async function applyFilters() {
+  function buildFilters(): MarketingFilters {
+    return {
+      recency: recency === 'custom' ? undefined : (recency || undefined),
+      dateFrom: recency === 'custom' ? (customFrom || undefined) : undefined,
+      dateTo: recency === 'custom' ? (customTo || undefined) : undefined,
+      leadSources: Array.from(selectedSources),
+      jobCategories: Array.from(selectedCategories),
+      paymentFilter: outstandingOnly ? 'outstanding' : undefined,
+    }
+  }
+
+  async function loadPage(p: number, f: MarketingFilters) {
     setLoading(true)
     setFetchError(null)
-    setPushResult(null)
-    setSelectedIds(new Set())
-    setFiltersApplied(true)
-
     const params = new URLSearchParams()
-    if (recency === 'custom') {
-      if (customFrom) params.set('date_from', customFrom)
-      if (customTo) params.set('date_to', customTo)
-    } else if (recency) {
-      params.set('recency', recency)
-    }
-    if (selectedSources.size > 0) params.set('lead_sources', Array.from(selectedSources).join(','))
-    if (selectedCategories.size > 0) params.set('job_categories', Array.from(selectedCategories).join(','))
-    if (outstandingOnly) params.set('payment_filter', 'outstanding')
-
+    if (f.recency) params.set('recency', f.recency)
+    if (f.dateFrom) params.set('date_from', f.dateFrom)
+    if (f.dateTo) params.set('date_to', f.dateTo)
+    if (f.leadSources?.length) params.set('lead_sources', f.leadSources.join(','))
+    if (f.jobCategories?.length) params.set('job_categories', f.jobCategories.join(','))
+    if (f.paymentFilter) params.set('payment_filter', f.paymentFilter)
+    params.set('page', String(p))
+    params.set('page_size', String(PAGE_SIZE))
     try {
       const res = await fetch(`/api/admin/marketing/contacts?${params.toString()}`)
       const data = await res.json()
@@ -121,6 +144,8 @@ export default function MarketingClient({
         setContacts([])
       } else {
         setContacts(data.contacts ?? [])
+        setTotal(data.total ?? 0)
+        setPage(p)
       }
     } catch {
       setFetchError('Network error')
@@ -130,15 +155,31 @@ export default function MarketingClient({
     }
   }
 
-  function toggleSelectAll() {
-    if (selectedIds.size === contacts.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(contacts.map(c => c.customer_id)))
-    }
+  async function applyFilters() {
+    const f = buildFilters()
+    setAppliedFilters(f)
+    setPushResult(null)
+    setSelectedIds(new Set())
+    setSelectAllMatching(false)
+    setFiltersApplied(true)
+    await loadPage(1, f)
+  }
+
+  // Header checkbox toggles selection for the rows on the current page only.
+  function toggleSelectAllOnPage() {
+    const pageIds = contacts.map(c => c.customer_id)
+    const allOnPageSelected = pageIds.every(id => selectedIds.has(id))
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allOnPageSelected) pageIds.forEach(id => next.delete(id))
+      else pageIds.forEach(id => next.add(id))
+      return next
+    })
+    if (selectAllMatching) setSelectAllMatching(false)
   }
 
   function toggleRow(id: string) {
+    if (selectAllMatching) setSelectAllMatching(false)
     setSelectedIds(prev => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
@@ -146,8 +187,26 @@ export default function MarketingClient({
     })
   }
 
+  function clearSelection() {
+    setSelectedIds(new Set())
+    setSelectAllMatching(false)
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const pageIds = contacts.map(c => c.customer_id)
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id))
+  // Effective count being sent: all matching, or just the checked rows.
+  const effectiveCount = selectAllMatching ? total : selectedIds.size
+
+  // Body for push/csv: send filters when "all matching", else the checked ids.
+  function selectionBody() {
+    return selectAllMatching
+      ? { filters: appliedFilters, allMatching: true }
+      : { customerIds: Array.from(selectedIds) }
+  }
+
   async function handlePush() {
-    if (!tag.trim() || selectedIds.size === 0) return
+    if (!tag.trim() || effectiveCount === 0) return
     setPushing(true)
     setPushError(null)
     setPushResult(null)
@@ -157,7 +216,7 @@ export default function MarketingClient({
       const res = await fetch('/api/admin/marketing/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerIds: Array.from(selectedIds), tag: tag.trim() }),
+        body: JSON.stringify({ ...selectionBody(), tag: tag.trim() }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -179,13 +238,13 @@ export default function MarketingClient({
   }
 
   async function handleDownloadCSV() {
-    if (selectedIds.size === 0) return
+    if (effectiveCount === 0) return
     setDownloading(true)
     try {
       const res = await fetch('/api/admin/marketing/csv', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerIds: Array.from(selectedIds) }),
+        body: JSON.stringify(selectionBody()),
       })
       if (!res.ok) {
         const data = await res.json()
@@ -207,8 +266,7 @@ export default function MarketingClient({
     }
   }
 
-  const allSelected = contacts.length > 0 && selectedIds.size === contacts.length
-  const someSelected = selectedIds.size > 0
+  const someSelected = selectAllMatching || selectedIds.size > 0
   const selectedWithEmail = contacts.filter(c => selectedIds.has(c.customer_id) && c.email).length
   const selectedSmsOnly = selectedIds.size - selectedWithEmail
 
@@ -345,13 +403,53 @@ export default function MarketingClient({
 
           {!loading && filtersApplied && !fetchError && (
             <>
-              <div className="text-sm text-gray-400 mb-2">
-                Showing {contacts.length} contact{contacts.length !== 1 ? 's' : ''}
-                {contacts.length === 500 && <span className="ml-1 text-gray-500">(limit 500 — apply filters to narrow)</span>}
-                {selectedIds.size > 0 && (
-                  <span className="ml-3 text-white font-medium">{selectedIds.size} selected</span>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="text-sm text-gray-400">
+                  {total.toLocaleString()} contact{total !== 1 ? 's' : ''} match
+                  {total > 0 && (
+                    <span className="ml-1 text-gray-500">
+                      · showing {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, total)}
+                    </span>
+                  )}
+                  {effectiveCount > 0 && (
+                    <span className="ml-3 text-white font-medium">{effectiveCount.toLocaleString()} selected</span>
+                  )}
+                </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <button
+                      onClick={() => appliedFilters && loadPage(page - 1, appliedFilters)}
+                      disabled={page <= 1 || loading}
+                      className="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+                    >Prev</button>
+                    <span className="text-gray-400">Page {page} of {totalPages}</span>
+                    <button
+                      onClick={() => appliedFilters && loadPage(page + 1, appliedFilters)}
+                      disabled={page >= totalPages || loading}
+                      className="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+                    >Next</button>
+                  </div>
                 )}
               </div>
+
+              {/* Select-all-matching banner (Gmail style) */}
+              {contacts.length > 0 && (allOnPageSelected || selectAllMatching) && total > contacts.length && (
+                <div className="bg-blue-950/40 border border-blue-900 rounded px-3 py-2 mb-2 text-sm text-blue-200 flex items-center justify-between gap-3">
+                  {selectAllMatching ? (
+                    <>
+                      <span>All <strong>{total.toLocaleString()}</strong> contacts matching your filters are selected.</span>
+                      <button onClick={clearSelection} className="text-blue-300 hover:text-white underline">Clear selection</button>
+                    </>
+                  ) : (
+                    <>
+                      <span>All {contacts.length} on this page are selected.</span>
+                      <button onClick={() => setSelectAllMatching(true)} className="text-blue-300 hover:text-white underline">
+                        Select all {total.toLocaleString()} matching your filters
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
 
               {contacts.length === 0 ? (
                 <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 text-center text-gray-500">
@@ -366,8 +464,8 @@ export default function MarketingClient({
                           <th className="px-3 py-2 text-left">
                             <input
                               type="checkbox"
-                              checked={allSelected}
-                              onChange={toggleSelectAll}
+                              checked={allOnPageSelected || selectAllMatching}
+                              onChange={toggleSelectAllOnPage}
                               className="accent-red-500"
                             />
                           </th>
@@ -384,13 +482,13 @@ export default function MarketingClient({
                         {contacts.map(c => (
                           <tr
                             key={c.customer_id}
-                            className={`border-b border-gray-800 hover:bg-gray-800/50 cursor-pointer ${selectedIds.has(c.customer_id) ? 'bg-gray-800/70' : ''}`}
+                            className={`border-b border-gray-800 hover:bg-gray-800/50 cursor-pointer ${(selectAllMatching || selectedIds.has(c.customer_id)) ? 'bg-gray-800/70' : ''}`}
                             onClick={() => toggleRow(c.customer_id)}
                           >
                             <td className="px-3 py-2">
                               <input
                                 type="checkbox"
-                                checked={selectedIds.has(c.customer_id)}
+                                checked={selectAllMatching || selectedIds.has(c.customer_id)}
                                 onChange={() => toggleRow(c.customer_id)}
                                 onClick={e => e.stopPropagation()}
                                 className="accent-red-500"
@@ -422,7 +520,7 @@ export default function MarketingClient({
       {someSelected && (
         <div className="fixed bottom-0 left-0 right-0 bg-gray-950 border-t border-gray-800 px-6 py-4 z-10">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-4">
-            <span className="text-sm text-gray-400">{selectedIds.size} selected</span>
+            <span className="text-sm text-gray-400">{effectiveCount.toLocaleString()} selected</span>
 
             <div className="flex items-center gap-2">
               <label className="text-sm text-gray-300 whitespace-nowrap">Tag name:</label>
@@ -567,17 +665,26 @@ export default function MarketingClient({
                 <div className="bg-gray-800 rounded px-3 py-2 text-sm mb-6 space-y-1">
                   <div className="flex justify-between">
                     <span className="text-gray-400">Selected</span>
-                    <span className="text-white font-medium">{selectedIds.size}</span>
+                    <span className="text-white font-medium">{effectiveCount.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Email contacts</span>
-                    <span className="text-green-400 font-medium">{selectedWithEmail}</span>
-                  </div>
-                  {selectedSmsOnly > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">SMS-only (placeholder email)</span>
-                      <span className="text-gray-300 font-medium">{selectedSmsOnly}</span>
+                  {selectAllMatching ? (
+                    <div className="text-xs text-gray-500 pt-1">
+                      All contacts matching your filters (across every page). The email / SMS-only split is
+                      computed during the push.
                     </div>
+                  ) : (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Email contacts</span>
+                        <span className="text-green-400 font-medium">{selectedWithEmail}</span>
+                      </div>
+                      {selectedSmsOnly > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">SMS-only (placeholder email)</span>
+                          <span className="text-gray-300 font-medium">{selectedSmsOnly}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
                 <div className="flex gap-3 justify-end">
