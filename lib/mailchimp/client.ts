@@ -87,6 +87,21 @@ export interface PushResult {
 
 const BATCH_SIZE = 500
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+// Format a 'YYYY-MM-DD' date as e.g. "January 31, 2025" for the LASTSERV merge
+// field. Parsed from parts (not new Date) to avoid timezone shifts. Returns ''
+// for empty/invalid input.
+function formatLongDate(s: string | null | undefined): string {
+  if (!s) return ''
+  const [y, m, d] = s.slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d || m < 1 || m > 12) return ''
+  return `${MONTH_NAMES[m - 1]} ${d}, ${y}`
+}
+
 /** Get an existing static segment by name, or create it if it doesn't exist. Returns the segment ID. */
 async function getOrCreateSegment(tagName: string): Promise<string | null> {
   try {
@@ -222,7 +237,7 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
         CITY: c.city ?? '',
         ZIP: c.postal_code ?? '',
         LEADSRC: c.lead_source ?? '',
-        LASTSERV: c.last_serviced_date ?? '',
+        LASTSERV: formatLongDate(c.last_serviced_date),
         BALANCE: c.account_balance != null ? String(c.account_balance) : '',
       },
     }))
