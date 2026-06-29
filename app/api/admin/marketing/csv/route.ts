@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { fetchContactsForIds } from '../push/route'
+import { getMatchingCustomerIds, type MarketingFilters } from '@/lib/marketing/query'
+
+export const maxDuration = 300
 
 async function requireAdmin() {
   const supabase = await createClient()
@@ -26,10 +29,8 @@ export async function POST(req: NextRequest) {
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { customerIds } = body as { customerIds: string[] }
-
-  if (!Array.isArray(customerIds) || customerIds.length === 0) {
-    return NextResponse.json({ error: 'customerIds must be a non-empty array' }, { status: 400 })
+  const { customerIds, filters, allMatching } = body as {
+    customerIds?: string[]; filters?: MarketingFilters; allMatching?: boolean
   }
 
   const db = createAdminClient(
@@ -37,7 +38,20 @@ export async function POST(req: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const contacts = await fetchContactsForIds(db, customerIds)
+  let ids: string[]
+  if (allMatching && filters) {
+    ids = await getMatchingCustomerIds(db, filters)
+  } else if (Array.isArray(customerIds) && customerIds.length > 0) {
+    ids = customerIds
+  } else {
+    return NextResponse.json({ error: 'Provide customerIds or filters with allMatching' }, { status: 400 })
+  }
+
+  // Chunk the .in() reads for large sets.
+  const contacts = [] as Awaited<ReturnType<typeof fetchContactsForIds>>
+  for (let i = 0; i < ids.length; i += 1000) {
+    contacts.push(...await fetchContactsForIds(db, ids.slice(i, i + 1000)))
+  }
 
   const headers = ['Email', 'First Name', 'Last Name', 'Phone', 'City', 'Postal Code', 'Lead Source', 'Last Serviced Date']
   const rows: string[][] = [headers]

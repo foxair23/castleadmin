@@ -3,6 +3,11 @@ import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient, SupabaseClient } from '@supabase/supabase-js'
 import { pushContacts } from '@/lib/mailchimp/client'
 import type { MailchimpContact } from '@/lib/mailchimp/client'
+import { getMatchingCustomerIds, type MarketingFilters } from '@/lib/marketing/query'
+
+// Sending all matching leads can mean thousands of contacts (chunked DB reads +
+// batched Mailchimp calls), so allow up to 5 minutes.
+export const maxDuration = 300
 
 async function requireAdmin() {
   const supabase = await createClient()
@@ -11,6 +16,18 @@ async function requireAdmin() {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (profile?.role !== 'admin') return null
   return user
+}
+
+// fetchContactsForIds queries with .in(), so chunk large id sets to keep each
+// query bounded.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchContactsChunked(db: SupabaseClient<any>, ids: string[]): Promise<MailchimpContact[]> {
+  const CHUNK = 1000
+  const out: MailchimpContact[] = []
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    out.push(...await fetchContactsForIds(db, ids.slice(i, i + CHUNK)))
+  }
+  return out
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,25 +143,36 @@ export async function POST(req: NextRequest) {
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { customerIds, tag } = body as { customerIds: string[]; tag: string }
+  const { customerIds, tag, filters, allMatching } = body as {
+    customerIds?: string[]; tag: string; filters?: MarketingFilters; allMatching?: boolean
+  }
 
   if (!tag?.trim()) return NextResponse.json({ error: 'Tag is required' }, { status: 400 })
-  if (!Array.isArray(customerIds) || customerIds.length === 0) {
-    return NextResponse.json({ error: 'customerIds must be a non-empty array' }, { status: 400 })
-  }
 
   const db = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const contacts = await fetchContactsForIds(db, customerIds)
+  // Resolve the set of customer ids: either the explicit selection, or every
+  // customer matching the active filters ("select all matching").
+  let ids: string[]
+  if (allMatching && filters) {
+    ids = await getMatchingCustomerIds(db, filters)
+  } else if (Array.isArray(customerIds) && customerIds.length > 0) {
+    ids = customerIds
+  } else {
+    return NextResponse.json({ error: 'Provide customerIds or filters with allMatching' }, { status: 400 })
+  }
+  if (ids.length === 0) return NextResponse.json({ error: 'No contacts match' }, { status: 400 })
+
+  const contacts = await fetchContactsChunked(db, ids)
   const result = await pushContacts(contacts, tag.trim())
 
   await db.from('mailchimp_push_log').insert({
     pushed_at: new Date().toISOString(),
     tag: tag.trim(),
-    filter_criteria: { customer_ids_count: customerIds.length },
+    filter_criteria: allMatching ? { all_matching: true, filters, matched: ids.length } : { customer_ids_count: ids.length },
     contact_count: contacts.length,
     added_count: result.audience_added,
     updated_count: result.audience_updated,
