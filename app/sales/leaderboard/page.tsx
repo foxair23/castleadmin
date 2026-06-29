@@ -1,0 +1,25 @@
+import { createClient } from '@/lib/supabase/server'
+import LeaderboardClient from '@/components/LeaderboardClient'
+
+export default async function SalesLeaderboardPage() {
+  const todayStr = new Date().toISOString().slice(0, 10)
+
+  // Highlight the logged-in user's own row.
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  let fullName: string | undefined
+  if (user) {
+    const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).single()
+    fullName = profile?.full_name ?? undefined
+  }
+
+  return (
+    <div>
+      <h1 className="text-xl font-bold text-gray-900 mb-1">Leaderboard</h1>
+      <p className="text-sm text-gray-500 mb-4">
+        See how everyone&rsquo;s tracking on sales and reviews this period.
+      </p>
+      <LeaderboardClient todayStr={todayStr} highlightName={fullName} reviewsHref="/sales/reviews" />
+    </div>
+  )
+}

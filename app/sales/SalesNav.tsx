@@ -36,18 +36,31 @@ export default function SalesNav({ role, fullName }: SalesNavProps) {
             />
           </Link>
 
-          <Link
-            href="/sales"
-            className={`text-sm font-medium pb-0.5 transition-colors ${(pathname === '/sales' || (pathname.startsWith('/sales') && !pathname.startsWith('/sales/action-items'))) ? 'text-white [box-shadow:0_2px_0_0_#ef4444]' : 'text-gray-400 hover:text-white'}`}
-          >
-            Sales
-          </Link>
+          {(() => {
+            const OTHER = ['/sales/action-items', '/sales/leaderboard', '/sales/reviews']
+            const salesActive = pathname === '/sales' || (pathname.startsWith('/sales') && !OTHER.some(p => pathname.startsWith(p)))
+            return (
+              <Link
+                href="/sales"
+                className={`text-sm font-medium pb-0.5 transition-colors ${salesActive ? 'text-white [box-shadow:0_2px_0_0_#ef4444]' : 'text-gray-400 hover:text-white'}`}
+              >
+                Sales
+              </Link>
+            )
+          })()}
 
           <Link
             href="/sales/action-items"
             className={`text-sm font-medium pb-0.5 transition-colors ${pathname.startsWith('/sales/action-items') ? 'text-white [box-shadow:0_2px_0_0_#ef4444]' : 'text-gray-400 hover:text-white'}`}
           >
             Action Items
+          </Link>
+
+          <Link
+            href="/sales/leaderboard"
+            className={`text-sm font-medium pb-0.5 transition-colors ${pathname.startsWith('/sales/leaderboard') || pathname.startsWith('/sales/reviews') ? 'text-white [box-shadow:0_2px_0_0_#ef4444]' : 'text-gray-400 hover:text-white'}`}
+          >
+            Leaderboard
           </Link>
 
           {role === 'admin' && (
