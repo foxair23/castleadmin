@@ -25,15 +25,17 @@ export async function GET(req: NextRequest) {
 
   const supabase = db()
 
-  // Check latest completed run across all entities
+  // Check latest completed run across all entities. Count reconcile/backfill too
+  // (not just incremental): these entities are refreshed by the Sunday reconcile,
+  // so an incremental-only check falsely alarms every Sunday.
   const { data: runs } = await supabase
     .from('sf_sync_runs')
     .select('entity, status, started_at')
-    .eq('run_type', 'incremental')
+    .in('run_type', ['incremental', 'reconcile', 'backfill'])
     .eq('status', 'completed')
     .in('entity', SYNC_ENTITIES)
     .order('started_at', { ascending: false })
-    .limit(20)
+    .limit(40)
 
   const cutoff = Date.now() - STALE_HOURS * 3_600_000
   const latestByEntity: Record<string, string> = {}
