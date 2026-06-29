@@ -13,13 +13,16 @@ function db() {
 }
 
 export async function GET() {
+  // Count any real sync as fresh — not just incremental. These entities sync
+  // incrementally Mon–Sat and via the weekly reconcile on Sunday, so ignoring
+  // reconcile/backfill would falsely flag them as stale every Sunday.
   const { data: runs } = await db()
     .from('sf_sync_runs')
     .select('entity, run_type, status, started_at, error_message')
-    .eq('run_type', 'incremental')
+    .in('run_type', ['incremental', 'reconcile', 'backfill'])
     .in('entity', SYNC_ENTITIES)
     .order('started_at', { ascending: false })
-    .limit(40)
+    .limit(80)
 
   // Latest run per entity
   const latestByEntity: Record<string, { status: string; started_at: string; error_message: string | null }> = {}
