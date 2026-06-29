@@ -36,10 +36,24 @@ export async function POST() {
   const supabase = db()
   let reviewsNew = 0
   let reviewsUpdated = 0
+  let reviewsSeen = 0
+
+  // Record this run so the Reviews tab's last-sync status reflects manual syncs
+  // too (and a successful manual sync clears any prior failure banner).
+  const { data: run } = await supabase
+    .from('review_sync_runs')
+    .insert({ status: 'running' })
+    .select('id')
+    .single()
+  const runId = (run as { id: string } | null)?.id
+  async function finishRun(fields: Record<string, unknown>) {
+    if (runId) await supabase.from('review_sync_runs').update({ ended_at: new Date().toISOString(), ...fields }).eq('id', runId)
+  }
 
   // ── Ingest ────────────────────────────────────────────────────────────────
   try {
     const reviews = await (isConfigured() ? fetchAllReviews() : Promise.resolve(MOCK_REVIEWS))
+    reviewsSeen = reviews.length
 
     for (const r of reviews) {
       const matchStatus = isAnonymous(r.reviewerName) ? 'anonymous' : 'pending_review'
@@ -79,7 +93,9 @@ export async function POST() {
       }
     }
   } catch (err) {
-    return NextResponse.json({ error: `Ingest failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 })
+    const msg = `Ingest failed: ${err instanceof Error ? err.message : String(err)}`
+    await finishRun({ status: 'failed', errors_json: [msg] })
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 
   // ── Match ─────────────────────────────────────────────────────────────────
@@ -87,11 +103,11 @@ export async function POST() {
   try {
     matchResult = await runMatchingPass()
   } catch (err) {
-    return NextResponse.json(
-      { error: `Matching failed: ${err instanceof Error ? err.message : String(err)}`, reviewsNew, reviewsUpdated },
-      { status: 500 },
-    )
+    const msg = `Matching failed: ${err instanceof Error ? err.message : String(err)}`
+    await finishRun({ status: 'failed', reviews_seen: reviewsSeen, reviews_new: reviewsNew, reviews_updated: reviewsUpdated, errors_json: [msg] })
+    return NextResponse.json({ error: msg, reviewsNew, reviewsUpdated }, { status: 500 })
   }
 
+  await finishRun({ status: 'completed', reviews_seen: reviewsSeen, reviews_new: reviewsNew, reviews_updated: reviewsUpdated, errors_json: null })
   return NextResponse.json({ ok: true, reviewsNew, reviewsUpdated, ...matchResult })
 }

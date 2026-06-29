@@ -383,6 +383,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
   // Sync + matching
   const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [matchError, setMatchError]         = useState<string | null>(null)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
   const [matchResult, setMatchResult]       = useState<{ reviewsNew: number; reviewsUpdated: number; matched: number; candidates: number; noMatch: number } | null>(null)
 
   // Tab
@@ -432,6 +433,7 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
       setMatchResult({ reviewsNew: json.reviewsNew, reviewsUpdated: json.reviewsUpdated, matched: json.matched, candidates: json.candidates, noMatch: json.noMatch })
       setMatchingStatus('done')
+      setBannerDismissed(true) // a successful sync clears the prior failure banner
       load(page)
     } catch (e) {
       setMatchError(e instanceof Error ? e.message : String(e))
@@ -504,8 +506,15 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
 
       {/* Automated sync failure banner — surfaces the daily cron's last error so
           a silently-failing review pull (e.g. expired Google token) is visible. */}
-      {lastRun?.status === 'failed' && (
-        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+      {lastRun?.status === 'failed' && !bannerDismissed && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 relative">
+          <button
+            onClick={() => setBannerDismissed(true)}
+            className="absolute top-2 right-3 text-red-400 hover:text-red-600 text-lg leading-none"
+            title="Dismiss"
+          >
+            ×
+          </button>
           <p className="text-sm font-semibold text-red-700">
             Automated review sync failed{lastRun.ended_at ? ` (${fmtDate(lastRun.ended_at)})` : ''}
           </p>
