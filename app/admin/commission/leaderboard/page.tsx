@@ -1,16 +1,16 @@
 import CommissionNav from '../CommissionNav'
-import CommissionLeaderboard from '@/components/CommissionLeaderboard'
+import LeaderboardClient from '@/components/LeaderboardClient'
 
 export default function CommissionLeaderboardPage() {
   const todayStr = new Date().toISOString().slice(0, 10)
   return (
     <div>
-      <h1 className="text-xl font-bold text-gray-900 mb-1">Commission</h1>
+      <h1 className="text-xl font-bold text-gray-900 mb-1">Leaderboard</h1>
       <p className="text-sm text-gray-500 mb-4">
-        Sales leaderboard — dollars sold and received per technician. Visible to all techs.
+        Sales and reviews per technician for the period. Visible to all techs.
       </p>
       <CommissionNav />
-      <CommissionLeaderboard todayStr={todayStr} />
+      <LeaderboardClient todayStr={todayStr} reviewsHref="/admin/reviews" />
     </div>
   )
 }
