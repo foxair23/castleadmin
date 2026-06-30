@@ -46,6 +46,7 @@ interface PushResult {
 
 const RECENCY_OPTIONS = [
   { value: '', label: 'All time' },
+  { value: 'none', label: 'No service date' },
   { value: '30', label: 'Last 30 days' },
   { value: '90', label: 'Last 90 days' },
   { value: '180', label: 'Last 6 months' },
