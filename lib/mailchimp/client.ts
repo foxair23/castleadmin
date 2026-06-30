@@ -102,6 +102,25 @@ function formatLongDate(s: string | null | undefined): string {
   return `${MONTH_NAMES[m - 1]} ${d}, ${y}`
 }
 
+// Normalize a phone number to E.164 for Mailchimp's SMS phone (SMSPHONE) field.
+// Mailchimp requires SMS numbers in E.164 — e.g. +17605551234, not
+// (760) 555-1234. Returns '' when the input can't be confidently normalized
+// (wrong digit count) so we omit the field rather than send a value Mailchimp
+// would reject. Assumes US (+1) when no country code is present.
+function toE164(raw: string | null | undefined): string {
+  if (!raw) return ''
+  const trimmed = raw.trim()
+  // Already E.164-style: keep the leading + and strip any other punctuation.
+  if (trimmed.startsWith('+')) {
+    const digits = trimmed.slice(1).replace(/\D/g, '')
+    return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : ''
+  }
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 10) return `+1${digits}`                          // US 10-digit
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}` // US with country code
+  return '' // can't confidently normalize — omit rather than send an invalid number
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -250,15 +269,8 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
   // contacts cannot be re-subscribed via API and will appear in errors.
   for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
     const batch = contacts.slice(i, i + BATCH_SIZE)
-    const members = batch.map(c => ({
-      email_address: c.email,
-      status_if_new: 'subscribed',
-      // Apply the campaign tag (and "sms only" where relevant) atomically with
-      // the add/update. The batch endpoint supports per-member tags and
-      // auto-creates them — far more reliable than the separate segment-add
-      // step, which fails for members that aren't queryable yet.
-      tags: c.sms_only ? [tag, 'sms only'] : [tag],
-      merge_fields: {
+    const members = batch.map(c => {
+      const merge_fields: Record<string, string> = {
         FNAME: c.first_name ?? '',
         LNAME: c.last_name ?? '',
         PHONE: c.phone ?? '',
@@ -267,8 +279,26 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
         LEADSRC: c.lead_source ?? '',
         LASTSERV: formatLongDate(c.last_serviced_date),
         BALANCE: c.account_balance != null ? String(c.account_balance) : '',
-      },
-    }))
+      }
+      // Mailchimp's SMS phone field (SMSPHONE) is separate from the regular
+      // PHONE field and requires E.164. Only send it when we can produce a
+      // valid E.164 number; an empty/invalid value would error the member. The
+      // field only exists when SMS marketing is enabled on the audience —
+      // otherwise Mailchimp silently drops it (it's not in REQUIRED_MERGE_FIELDS
+      // because it's Mailchimp-managed and can't be created via merge-fields).
+      const smsPhone = toE164(c.phone)
+      if (smsPhone) merge_fields.SMSPHONE = smsPhone
+      return {
+        email_address: c.email,
+        status_if_new: 'subscribed',
+        // Apply the campaign tag (and "sms only" where relevant) atomically with
+        // the add/update. The batch endpoint supports per-member tags and
+        // auto-creates them — far more reliable than the separate segment-add
+        // step, which fails for members that aren't queryable yet.
+        tags: c.sms_only ? [tag, 'sms only'] : [tag],
+        merge_fields,
+      }
+    })
 
     const res = await mcFetch(`/lists/${AUDIENCE_ID}`, {
       method: 'POST',
