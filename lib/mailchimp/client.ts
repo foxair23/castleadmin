@@ -253,6 +253,11 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     const members = batch.map(c => ({
       email_address: c.email,
       status_if_new: 'subscribed',
+      // Apply the campaign tag (and "sms only" where relevant) atomically with
+      // the add/update. The batch endpoint supports per-member tags and
+      // auto-creates them — far more reliable than the separate segment-add
+      // step, which fails for members that aren't queryable yet.
+      tags: c.sms_only ? [tag, 'sms only'] : [tag],
       merge_fields: {
         FNAME: c.first_name ?? '',
         LNAME: c.last_name ?? '',
