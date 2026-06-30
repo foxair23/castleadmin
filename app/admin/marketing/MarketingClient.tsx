@@ -633,22 +633,25 @@ export default function MarketingClient({
                   <div className="w-8 h-8 rounded-full bg-green-900/60 flex items-center justify-center shrink-0">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   </div>
-                  <h2 className="text-base font-semibold text-white">Push complete</h2>
+                  <h2 className="text-base font-semibold text-white">
+                    {(pushResult.audience_added + pushResult.audience_updated + pushResult.audience_unchanged).toLocaleString()} contact
+                    {(pushResult.audience_added + pushResult.audience_updated + pushResult.audience_unchanged) !== 1 ? 's' : ''} pushed to Mailchimp
+                  </h2>
                 </div>
                 <div className="bg-gray-800 rounded px-3 py-3 text-sm space-y-2 mb-4">
                   {/* Audience upsert breakdown */}
                   <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Mailchimp audience</p>
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-400">New contacts added</span>
-                    <span className="text-green-400 font-medium">{pushResult.audience_added}</span>
+                    <span className="text-green-400 font-medium">{pushResult.audience_added.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-400">Existing — profile updated</span>
-                    <span className="text-gray-300">{pushResult.audience_updated}</span>
+                    <span className="text-gray-300">{pushResult.audience_updated.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-400">Existing — no change</span>
-                    <span className="text-gray-300">{pushResult.audience_unchanged}</span>
+                    <span className="text-gray-300">{pushResult.audience_unchanged.toLocaleString()}</span>
                   </div>
                   {pushResult.audience_skipped > 0 && (
                     <div className="flex justify-between text-xs">
@@ -667,7 +670,7 @@ export default function MarketingClient({
                   <p className="text-xs text-gray-500 uppercase tracking-wide font-medium pt-1">Tag</p>
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-400">Tag applied</span>
-                    <span className="text-green-400 font-medium">{pushResult.tagged}</span>
+                    <span className="text-green-400 font-medium">{pushResult.tagged.toLocaleString()}</span>
                   </div>
                   {pushResult.not_taggable > 0 && (
                     <div className="flex justify-between text-xs">
@@ -677,8 +680,8 @@ export default function MarketingClient({
                   )}
                   <div className="h-px bg-gray-700" />
                   <div className="flex justify-between text-xs text-gray-500">
-                    <span>Total selected</span>
-                    <span>{pushResult.total}</span>
+                    <span>Total processed</span>
+                    <span>{pushResult.total.toLocaleString()}</span>
                   </div>
                 </div>
                 {pushResult.errors.length > 0 && (
