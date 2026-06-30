@@ -42,11 +42,12 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
       db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
-    // Only count open jobs created since the April 2024 acquisition — historical
-    // pre-acquisition jobs otherwise inflate this number into the thousands.
-    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('created_at_sf', '2024-04-24'),
+    // Only count open jobs created since the April 24, 2026 acquisition —
+    // historical pre-acquisition jobs otherwise inflate this number into the
+    // thousands.
+    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('created_at_sf', '2026-04-24'),
     fetchAllRows<{ id: string; total: number | null; status: string | null; created_at_sf: string | null }>((f, t) =>
-      db.from('sf_estimates_cache').select('id, total, status, created_at_sf').not('status', 'in', '("accepted","declined","Accepted","Declined")').gte('created_at_sf', '2024-04-24').order('id', { ascending: true }).range(f, t)),
+      db.from('sf_estimates_cache').select('id, total, status, created_at_sf').not('status', 'in', '("accepted","declined","Accepted","Declined")').gte('created_at_sf', '2026-04-24').order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ balance_due: number | null }>((f, t) =>
       db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
@@ -180,7 +181,7 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     db.rpc('monthly_job_revenue'),
     fetchAllRows<{ tech_id: string | null; sf_job_id: string | null; week_start_date: string | null }>((f, t) =>
-      db.from('jobs').select('tech_id, sf_job_id, week_start_date').gte('week_start_date', '2024-04-24').not('sf_job_id', 'is', null).order('id', { ascending: true }).range(f, t)),
+      db.from('jobs').select('tech_id, sf_job_id, week_start_date').gte('week_start_date', '2026-04-24').not('sf_job_id', 'is', null).order('id', { ascending: true }).range(f, t)),
     db.from('profiles')
       .select('id, full_name')
       .eq('role', 'technician')
