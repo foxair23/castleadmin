@@ -46,6 +46,7 @@ interface PushResult {
 
 const RECENCY_OPTIONS = [
   { value: '', label: 'All time' },
+  { value: 'none', label: 'No service date' },
   { value: '30', label: 'Last 30 days' },
   { value: '90', label: 'Last 90 days' },
   { value: '180', label: 'Last 6 months' },
@@ -91,6 +92,7 @@ export default function MarketingClient({
   const [tag, setTag] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [pushing, setPushing] = useState(false)
+  const [pushProgress, setPushProgress] = useState<{ done: number; total: number } | null>(null)
   const [pushResult, setPushResult] = useState<PushResult | null>(null)
   const [pushError, setPushError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
@@ -205,29 +207,67 @@ export default function MarketingClient({
       : { customerIds: Array.from(selectedIds) }
   }
 
+  // Push in small batches so no single request runs long enough to hit a
+  // gateway timeout. The server resolves the selection to ids; the client then
+  // pushes 500 at a time, aggregating the per-batch results.
+  const PUSH_CHUNK = 500
   async function handlePush() {
     if (!tag.trim() || effectiveCount === 0) return
     setPushing(true)
     setPushError(null)
     setPushResult(null)
-    // Keep dialog open — it transitions to loading then result state
-
+    setPushProgress(null)
     try {
-      const res = await fetch('/api/admin/marketing/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...selectionBody(), tag: tag.trim() }),
+      // 1. Resolve the selection (or "all matching" filters) to a flat id list.
+      const idsRes = await fetch('/api/admin/marketing/ids', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selectionBody()),
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setPushError(data.error ?? 'Push failed')
-      } else {
-        setPushResult(data as PushResult)
+      const idsData = await idsRes.json()
+      if (!idsRes.ok) throw new Error(idsData.error ?? 'Failed to resolve contacts')
+      const ids: string[] = idsData.ids ?? []
+      if (ids.length === 0) { setPushError('No contacts to push'); setPushing(false); return }
+
+      // 2. Push in chunks, aggregating results.
+      const agg: PushResult = { total: 0, audience_added: 0, audience_updated: 0, audience_unchanged: 0, audience_skipped: 0, audience_errored: 0, tagged: 0, not_taggable: 0, errors: [] }
+      setPushProgress({ done: 0, total: ids.length })
+
+      for (let i = 0; i < ids.length; i += PUSH_CHUNK) {
+        const chunk = ids.slice(i, i + PUSH_CHUNK)
+        const batchNo = Math.floor(i / PUSH_CHUNK) + 1
+        let done = false
+        for (let attempt = 0; attempt < 2 && !done; attempt++) {
+          try {
+            const res = await fetch('/api/admin/marketing/push', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ customerIds: chunk, tag: tag.trim() }),
+            })
+            const data = await res.json()
+            if (!res.ok) {
+              agg.errors.push({ email: `(batch ${batchNo})`, error: data.error ?? `HTTP ${res.status}` })
+              done = true // don't retry a server-side error
+            } else {
+              const r = data as PushResult
+              agg.total += r.total; agg.audience_added += r.audience_added
+              agg.audience_updated += r.audience_updated; agg.audience_unchanged += r.audience_unchanged
+              agg.audience_skipped += r.audience_skipped; agg.audience_errored += r.audience_errored
+              agg.tagged += r.tagged; agg.not_taggable += r.not_taggable
+              if (r.errors?.length) agg.errors.push(...r.errors)
+              done = true
+            }
+          } catch {
+            if (attempt === 1) agg.errors.push({ email: `(batch ${batchNo})`, error: 'Network error on this batch' })
+            // otherwise fall through to one retry
+          }
+        }
+        setPushProgress({ done: Math.min(i + PUSH_CHUNK, ids.length), total: ids.length })
       }
-    } catch {
-      setPushError('Network error')
+      setPushResult(agg)
+    } catch (e) {
+      setPushError(e instanceof Error ? e.message : 'Network error')
     } finally {
       setPushing(false)
+      setPushProgress(null)
     }
   }
 
@@ -567,7 +607,22 @@ export default function MarketingClient({
             {pushing && (
               <div className="text-center py-6">
                 <div className="text-gray-300 text-sm mb-2">Pushing to Mailchimp…</div>
-                <div className="text-gray-500 text-xs">This may take a few seconds</div>
+                {pushProgress ? (
+                  <>
+                    <div className="text-gray-400 text-sm">
+                      {pushProgress.done.toLocaleString()} / {pushProgress.total.toLocaleString()}
+                    </div>
+                    <div className="mt-2 h-1.5 w-full bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 transition-all"
+                        style={{ width: `${pushProgress.total ? (pushProgress.done / pushProgress.total) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <div className="text-gray-500 text-xs mt-2">Keep this tab open until it finishes</div>
+                  </>
+                ) : (
+                  <div className="text-gray-500 text-xs">Preparing…</div>
+                )}
               </div>
             )}
 

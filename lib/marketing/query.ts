@@ -89,6 +89,7 @@ export async function getMatchingCustomerIds(db: SupabaseClient<any>, filters: M
   }
 
   const sources = (filters.leadSources ?? []).filter(Boolean)
+  const noServiceDate = filters.recency === 'none' // customers never serviced
 
   const rows = await fetchAll<{ id: string }>((from, to) => {
     let q = db
@@ -96,8 +97,12 @@ export async function getMatchingCustomerIds(db: SupabaseClient<any>, filters: M
       .select('id, last_serviced_date')
       .eq('is_deleted', false)
       .order('last_serviced_date', { ascending: false, nullsFirst: false })
-    if (dateRange.from) q = q.gte('last_serviced_date', dateRange.from)
-    if (dateRange.to) q = q.lte('last_serviced_date', dateRange.to)
+    if (noServiceDate) {
+      q = q.is('last_serviced_date', null)
+    } else {
+      if (dateRange.from) q = q.gte('last_serviced_date', dateRange.from)
+      if (dateRange.to) q = q.lte('last_serviced_date', dateRange.to)
+    }
     if (sources.length > 0) q = q.in('referral_source', sources)
     if (filters.paymentFilter === 'outstanding') q = q.gt('account_balance', 0)
     return q.range(from, to)
