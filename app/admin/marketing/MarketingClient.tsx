@@ -634,8 +634,8 @@ export default function MarketingClient({
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   </div>
                   <h2 className="text-base font-semibold text-white">
-                    {(pushResult.audience_added + pushResult.audience_updated + pushResult.audience_unchanged).toLocaleString()} contact
-                    {(pushResult.audience_added + pushResult.audience_updated + pushResult.audience_unchanged) !== 1 ? 's' : ''} pushed to Mailchimp
+                    {(pushResult.audience_added + pushResult.audience_updated + pushResult.audience_unchanged).toLocaleString()}
+                    {' of '}{pushResult.total.toLocaleString()} contacts pushed to Mailchimp
                   </h2>
                 </div>
                 <div className="bg-gray-800 rounded px-3 py-3 text-sm space-y-2 mb-4">
