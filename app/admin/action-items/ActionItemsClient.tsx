@@ -647,6 +647,10 @@ function Spinner() {
 
 type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'followup' | 'overdue' | 'awaiting-sf' | 'awaiting-push' | 'commission'
 
+// Acquisition cutoff. When the "exclude before" filter is on, rows whose event
+// date is on or after this day are kept (inclusive of the cutoff day itself).
+const CUTOFF_DATE = '2026-04-24'
+
 export default function ActionItemsClient({
   unpaidJobs,
   uninvoicedJobs,
@@ -666,6 +670,7 @@ export default function ActionItemsClient({
   const [daysFilter, setDaysFilter] = useState<number | null>(null)
   const [daysInput, setDaysInput] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('unpaid')
+  const [excludePreCutoff, setExcludePreCutoff] = useState(false)
 
   // '__blank__' is a sentinel for jobs with no source set
   const BLANK = '__blank__'
@@ -696,14 +701,25 @@ export default function ActionItemsClient({
     })
   }
 
-  const filteredUnpaid = filterByDays(filterBySource(unpaidJobs.items), 'days_outstanding')
-  const filteredUninvoiced = filterByDays(filterBySource(uninvoicedJobs.items), 'days_since_completion')
-  const filteredFollowUp = filterByDays(filterBySource(followUpJobs.items), 'days_open')
-  const filteredStaleEstimates = filterByDays(staleEstimates.items, 'days_outstanding')
-  const filteredOverdueCustomers = filterByDays(overdueCustomers.items, 'days_overdue')
-  const filteredAwaitingSfJob = filterByDays(awaitingSfJob.items, 'days_waiting')
-  const filteredAwaitingPush = filterByDays(awaitingPushLeads.items, 'days_waiting')
-  const commissionItems = commissionReview?.items ?? []
+  // Optionally exclude items whose event date is before the acquisition cutoff.
+  // Inclusive of the cutoff day; rows with no date are kept (can't confirm "before").
+  const filterByCutoff = <T,>(items: T[], dateKey: keyof T): T[] => {
+    if (!excludePreCutoff) return items
+    return items.filter(item => {
+      const v = item[dateKey]
+      if (v == null) return true
+      return String(v).slice(0, 10) >= CUTOFF_DATE
+    })
+  }
+
+  const filteredUnpaid = filterByCutoff(filterByDays(filterBySource(unpaidJobs.items), 'days_outstanding'), 'closed_at')
+  const filteredUninvoiced = filterByCutoff(filterByDays(filterBySource(uninvoicedJobs.items), 'days_since_completion'), 'closed_at')
+  const filteredFollowUp = filterByCutoff(filterByDays(filterBySource(followUpJobs.items), 'days_open'), 'start_date')
+  const filteredStaleEstimates = filterByCutoff(filterByDays(staleEstimates.items, 'days_outstanding'), 'created_at_sf')
+  const filteredOverdueCustomers = filterByCutoff(filterByDays(overdueCustomers.items, 'days_overdue'), 'oldest_overdue_date')
+  const filteredAwaitingSfJob = filterByCutoff(filterByDays(awaitingSfJob.items, 'days_waiting'), 'closed_at')
+  const filteredAwaitingPush = filterByCutoff(filterByDays(awaitingPushLeads.items, 'days_waiting'), 'created_at')
+  const commissionItems = filterByCutoff(commissionReview?.items ?? [], 'recognition_date')
 
   const totalCount =
     filteredUnpaid.length +
@@ -800,6 +816,15 @@ export default function ActionItemsClient({
               onChange={setSourcesFilter}
             />
           )}
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={excludePreCutoff}
+              onChange={e => setExcludePreCutoff(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+            />
+            Exclude before Apr 24, 2026
+          </label>
           <div className="flex items-center rounded-md border border-gray-300 bg-white shadow-sm overflow-hidden text-sm">
             {([null, 30, 60, 90, 120] as (number | null)[]).map(opt => (
               <button
