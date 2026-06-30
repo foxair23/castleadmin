@@ -102,24 +102,35 @@ function formatLongDate(s: string | null | undefined): string {
   return `${MONTH_NAMES[m - 1]} ${d}, ${y}`
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function findSegmentByName(tagName: string): Promise<string | null> {
+  const listRes = await mcFetch(`/lists/${AUDIENCE_ID}/segments?type=static&count=1000&fields=segments.id,segments.name`)
+  if (!listRes.ok) return null
+  const listData = await listRes.json()
+  const existing = (listData.segments ?? []).find((s: { id: number; name: string }) => s.name === tagName)
+  return existing ? String(existing.id) : null
+}
+
 /** Get an existing static segment by name, or create it if it doesn't exist. Returns the segment ID. */
 async function getOrCreateSegment(tagName: string): Promise<string | null> {
   try {
-    // Fetch up to 1000 existing static segments (tags)
-    const listRes = await mcFetch(`/lists/${AUDIENCE_ID}/segments?type=static&count=1000&fields=segments.id,segments.name`)
-    if (!listRes.ok) return null
-    const listData = await listRes.json()
-    const existing = (listData.segments ?? []).find((s: { id: number; name: string }) => s.name === tagName)
-    if (existing) return String(existing.id)
+    const found = await findSegmentByName(tagName)
+    if (found) return found
 
-    // Create it
     const createRes = await mcFetch(`/lists/${AUDIENCE_ID}/segments`, {
       method: 'POST',
       body: JSON.stringify({ name: tagName, type: 'static', static_segment: [] }),
     })
-    if (!createRes.ok) return null
-    const created = await createRes.json()
-    return created.id ? String(created.id) : null
+    if (createRes.ok) {
+      const created = await createRes.json()
+      if (created.id) return String(created.id)
+    }
+    // Create failed (e.g. name already exists from a concurrent/earlier batch) —
+    // re-fetch so a batch never silently skips tagging.
+    return await findSegmentByName(tagName)
   } catch {
     return null
   }
@@ -167,25 +178,37 @@ async function ensureMergeFields(): Promise<void> {
  *  Members already in the segment are silently accepted and counted as tagged.
  */
 async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<{ tagged: number; failed: number }> {
-  let failed = 0
-  for (let i = 0; i < emails.length; i += BATCH_SIZE) {
-    const chunk = emails.slice(i, i + BATCH_SIZE)
-    const res = await mcFetch(`/lists/${AUDIENCE_ID}/segments/${segmentId}`, {
-      method: 'POST',
-      body: JSON.stringify({ members_to_add: chunk }),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      // Each error entry covers one or more email addresses
-      for (const err of (data.errors ?? [])) {
-        failed += err.email_addresses?.length ?? 1
+  // One pass over a list; returns the emails Mailchimp rejected (e.g. not yet in
+  // the audience, unsubscribed, invalid).
+  async function addPass(list: string[]): Promise<string[]> {
+    const rejected: string[] = []
+    for (let i = 0; i < list.length; i += BATCH_SIZE) {
+      const chunk = list.slice(i, i + BATCH_SIZE)
+      const res = await mcFetch(`/lists/${AUDIENCE_ID}/segments/${segmentId}`, {
+        method: 'POST',
+        body: JSON.stringify({ members_to_add: chunk }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        for (const err of (data.errors ?? [])) {
+          for (const e of (err.email_addresses ?? [])) rejected.push(e)
+        }
+      } else {
+        rejected.push(...chunk)
       }
-    } else {
-      // Whole chunk failed — count all as failed
-      failed += chunk.length
     }
+    return rejected
   }
-  return { tagged: emails.length - failed, failed }
+
+  let rejected = await addPass(emails)
+  // Members just upserted in this batch may not be queryable instantly, so the
+  // segment add rejects them. Wait briefly and retry the rejects — this is the
+  // common reason contacts ended up in the audience but untagged.
+  for (let attempt = 0; attempt < 2 && rejected.length > 0; attempt++) {
+    await sleep(2500)
+    rejected = await addPass(rejected)
+  }
+  return { tagged: emails.length - rejected.length, failed: rejected.length }
 }
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
@@ -230,6 +253,11 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     const members = batch.map(c => ({
       email_address: c.email,
       status_if_new: 'subscribed',
+      // Apply the campaign tag (and "sms only" where relevant) atomically with
+      // the add/update. The batch endpoint supports per-member tags and
+      // auto-creates them — far more reliable than the separate segment-add
+      // step, which fails for members that aren't queryable yet.
+      tags: c.sms_only ? [tag, 'sms only'] : [tag],
       merge_fields: {
         FNAME: c.first_name ?? '',
         LNAME: c.last_name ?? '',
