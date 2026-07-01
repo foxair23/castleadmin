@@ -30,6 +30,18 @@ interface Props {
   capacityWeeks: { week: string; sameDayRate: number | null; medianLeadDays: number | null; totalJobs: number }[]
   jobsPerMonth: { month: string; jobs2025: number; jobs2026: number }[]
   schedulingByMonth: { ym: string; label: string; synced: number; partial: number }[]
+  schedulingDone: {
+    id: string
+    createdAt: string | null
+    customerName: string
+    serviceType: string | null
+    serviceCategory: string | null
+    appointmentDate: string | null
+    kind: 'synced' | 'partial'
+    sfJobId: string | null
+    acknowledgedAt: string | null
+    acknowledgedBy: string | null
+  }[]
   techScoreboard: {
     techId: string
     techName: string | null
@@ -354,6 +366,29 @@ function BackfillModal({ onClose }: { onClose: () => void }) {
 }
 
 const TECH_COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6']
+const SERVICE_CATEGORY_LABELS: Record<string, string> = {
+  repairs_service: 'Repairs & Service',
+  door_panel_replacement: 'Door / Panel Replacement',
+  opener_service: 'Opener Service / Replacement',
+  gate_opener_service: 'Gate Opener Service / Replacement',
+  new_gate_replacement: 'New Gate / Gate Replacement',
+  annual_maintenance: 'Annual Maintenance',
+}
+function fmtSchedDate(s: string | null): string {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+function fmtSchedDateTime(s: string | null): string {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/Los_Angeles',
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  })
+}
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 export default function DashboardClient({
@@ -362,6 +397,7 @@ export default function DashboardClient({
   capacityWeeks,
   jobsPerMonth,
   schedulingByMonth,
+  schedulingDone,
   techScoreboard,
   lastSync,
   monthlyRevenue,
@@ -755,33 +791,40 @@ export default function DashboardClient({
                   </div>
 
                   <div className="mt-4 overflow-x-auto">
+                    <p className="text-xs font-medium text-gray-500 mb-2">Acknowledged submissions ({schedulingDone.length})</p>
                     <table className="w-full text-sm">
                       <thead className="bg-gray-50 border-y border-gray-200">
                         <tr>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Month</th>
-                          <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Synced to SF</th>
-                          <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Partial Leads</th>
-                          <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</th>
+                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Submitted</th>
+                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
+                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Service</th>
+                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Appt Date</th>
+                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
+                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Marked Done</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {[...schedulingByMonth].reverse().map(m => (
-                          <tr key={m.ym} className="hover:bg-gray-50">
-                            <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{m.label}</td>
-                            <td className="px-4 py-2 text-right text-gray-700">{m.synced}</td>
-                            <td className="px-4 py-2 text-right text-gray-700">{m.partial}</td>
-                            <td className="px-4 py-2 text-right font-medium text-gray-900">{m.synced + m.partial}</td>
+                        {schedulingDone.map(l => (
+                          <tr key={l.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtSchedDateTime(l.createdAt)}</td>
+                            <td className="px-4 py-2 font-medium text-gray-900">{l.customerName}</td>
+                            <td className="px-4 py-2 text-gray-600">
+                              {l.serviceType == null
+                                ? <span className="text-gray-400">—</span>
+                                : <>{l.serviceType === 'gate' ? 'Gate' : 'Garage Door'}{l.serviceCategory ? ` — ${SERVICE_CATEGORY_LABELS[l.serviceCategory] ?? l.serviceCategory}` : ''}</>}
+                            </td>
+                            <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtSchedDate(l.appointmentDate)}</td>
+                            <td className="px-4 py-2">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${l.kind === 'synced' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {l.kind === 'synced' ? `Synced to SF${l.sfJobId ? ` · Job #${l.sfJobId}` : ''}` : 'Partial'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-gray-500 whitespace-nowrap">
+                              {fmtSchedDate(l.acknowledgedAt)}{l.acknowledgedBy ? ` · ${l.acknowledgedBy}` : ''}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
-                      <tfoot className="border-t-2 border-gray-200">
-                        <tr>
-                          <td className="px-4 py-2 font-semibold text-gray-900">Total</td>
-                          <td className="px-4 py-2 text-right font-semibold text-gray-900">{schedulingByMonth.reduce((s, m) => s + m.synced, 0)}</td>
-                          <td className="px-4 py-2 text-right font-semibold text-gray-900">{schedulingByMonth.reduce((s, m) => s + m.partial, 0)}</td>
-                          <td className="px-4 py-2 text-right font-semibold text-gray-900">{schedulingByMonth.reduce((s, m) => s + m.synced + m.partial, 0)}</td>
-                        </tr>
-                      </tfoot>
                     </table>
                   </div>
                 </>
