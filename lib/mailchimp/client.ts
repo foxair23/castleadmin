@@ -347,7 +347,7 @@ async function setSmsPhones(
 // truth (what /audiences returns, whether the POST succeeds, and the
 // effective SMS subscription status the contact ends up with). Intended for a
 // single manual test, not bulk use. Returns no secrets.
-export async function debugSms(email: string, phone: string): Promise<Record<string, unknown>> {
+export async function debugSms(email: string | null, phone: string | null): Promise<Record<string, unknown>> {
   const e164 = toE164(phone)
   const config = {
     hasApiKey: !!API_KEY,
@@ -385,7 +385,11 @@ export async function debugSms(email: string, phone: string): Promise<Record<str
 
   // 3. The actual SMS write — capture raw status + full body (incl. sms_channel
   //    with effective_subscription_status), whether it succeeds or errors.
-  if (!e164) {
+  //    Only runs when both email and a normalizable phone are supplied; without
+  //    them the read-only checks above still return useful info.
+  if (!email || !phone) {
+    steps.push({ step: 'POST contact', skipped: true, reason: 'pass ?email= and ?phone= to run the write test' })
+  } else if (!e164) {
     steps.push({ step: 'toE164', input: phone, result: 'could not normalize to E.164 — would be skipped' })
   } else {
     try {

@@ -16,12 +16,13 @@ export async function GET(req: NextRequest) {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (profile?.role !== 'admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const email = req.nextUrl.searchParams.get('email')
-  const phone = req.nextUrl.searchParams.get('phone')
-  if (!email || !phone) {
-    return NextResponse.json({ error: 'Provide ?email= and ?phone= query params' }, { status: 400 })
-  }
+  // Read params robustly (fall back to parsing the raw URL). Both are optional:
+  // with no params the read-only checks (env, audiences, list) still run; pass
+  // ?email= and ?phone= to also run the SMS write test.
+  const params = req.nextUrl?.searchParams ?? new URL(req.url).searchParams
+  const email = params.get('email')
+  const phone = params.get('phone')
 
   const result = await debugSms(email, phone)
-  return NextResponse.json(result, { status: 200 })
+  return NextResponse.json({ ...result, usage: 'Add ?email=you@example.com&phone=9514668995 to run the SMS write test' }, { status: 200 })
 }
