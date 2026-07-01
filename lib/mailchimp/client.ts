@@ -1,5 +1,7 @@
 // Server-side only — never import this in client components
 
+import { createHash } from 'crypto'
+
 const API_KEY = process.env.MAILCHIMP_API_KEY ?? ''
 const AUDIENCE_ID = process.env.MAILCHIMP_AUDIENCE_ID ?? ''
 const SERVER_PREFIX = process.env.MAILCHIMP_SERVER_PREFIX ?? ''
@@ -81,8 +83,12 @@ export interface PushResult {
   // ── Segment / tag (Step 2) ───────────────────────────────────────────────
   tagged: number         // confirmed in segment after this push
   not_taggable: number   // segment API rejected (unsubscribed, cleaned, etc.)
+  // ── SMS phone number (Step 4) ────────────────────────────────────────────
+  sms_set: number        // contacts whose SMS phone number was set (E.164)
+  sms_skipped: number    // no phone / couldn't normalize to E.164
+  sms_failed: number     // Mailchimp rejected the SMS update
   // ── Details ─────────────────────────────────────────────────────────────
-  errors: { email: string; error: string }[]  // hard errors from either step
+  errors: { email: string; error: string }[]  // hard errors from any step
 }
 
 const BATCH_SIZE = 500
@@ -102,11 +108,11 @@ function formatLongDate(s: string | null | undefined): string {
   return `${MONTH_NAMES[m - 1]} ${d}, ${y}`
 }
 
-// Normalize a phone number to E.164 for Mailchimp's SMS phone (SMSPHONE) field.
+// Normalize a phone number to E.164 for Mailchimp's SMS phone number field.
 // Mailchimp requires SMS numbers in E.164 — e.g. +17605551234, not
 // (760) 555-1234. Returns '' when the input can't be confidently normalized
-// (wrong digit count) so we omit the field rather than send a value Mailchimp
-// would reject. Assumes US (+1) when no country code is present.
+// (wrong digit count) so we skip the SMS update rather than send a value
+// Mailchimp would reject. Assumes US (+1) when no country code is present.
 function toE164(raw: string | null | undefined): string {
   if (!raw) return ''
   const trimmed = raw.trim()
@@ -230,6 +236,59 @@ async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<
   return { tagged: emails.length - rejected.length, failed: rejected.length }
 }
 
+// Mailchimp's subscriber hash is the MD5 of the lowercased email address.
+function subscriberHash(email: string): string {
+  return createHash('md5').update(email.trim().toLowerCase()).digest('hex')
+}
+
+// Set the SMS phone number (E.164) on contacts. This is NOT a merge field and
+// cannot go through the bulk import endpoint — it's a per-member attribute set
+// via PUT /lists/{id}/members/{hash}. We opt them into SMS marketing
+// (sms_subscription_status: 'subscribed'). Runs with limited concurrency to
+// respect Mailchimp's ~10 simultaneous-connection cap. Returns per-contact
+// outcome counts; hard rejections are surfaced in `errors`.
+async function setSmsPhones(
+  contacts: MailchimpContact[],
+): Promise<{ set: number; skipped: number; failed: number; errors: { email: string; error: string }[] }> {
+  const out = { set: 0, skipped: 0, failed: 0, errors: [] as { email: string; error: string }[] }
+
+  // Only contacts with a number we can normalize to E.164 are eligible.
+  const eligible = contacts
+    .map(c => ({ email: c.email, e164: toE164(c.phone) }))
+    .filter(c => c.e164)
+  out.skipped = contacts.length - eligible.length
+
+  const CONCURRENCY = 8
+  for (let i = 0; i < eligible.length; i += CONCURRENCY) {
+    const slice = eligible.slice(i, i + CONCURRENCY)
+    await Promise.all(slice.map(async ({ email, e164 }) => {
+      try {
+        const res = await mcFetch(`/lists/${AUDIENCE_ID}/members/${subscriberHash(email)}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            email_address: email,
+            status_if_new: 'subscribed',
+            sms_phone_number: e164,
+            sms_subscription_status: 'subscribed',
+          }),
+        })
+        if (res.ok) {
+          out.set++
+        } else {
+          out.failed++
+          const body = await res.json().catch(() => ({}))
+          const msg = body?.detail ?? body?.title ?? `HTTP ${res.status}`
+          out.errors.push({ email, error: `SMS phone: ${msg}` })
+        }
+      } catch (e) {
+        out.failed++
+        out.errors.push({ email, error: `SMS phone: ${e instanceof Error ? e.message : 'network error'}` })
+      }
+    }))
+  }
+  return out
+}
+
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
   // Deduplicate by email — Mailchimp rejects batches containing duplicate addresses.
   // Keep the first occurrence (primary contact wins).
@@ -251,6 +310,9 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
     audience_errored: 0,
     tagged: 0,
     not_taggable: 0,
+    sms_set: 0,
+    sms_skipped: 0,
+    sms_failed: 0,
     errors: [],
   }
 
@@ -269,8 +331,15 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
   // contacts cannot be re-subscribed via API and will appear in errors.
   for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
     const batch = contacts.slice(i, i + BATCH_SIZE)
-    const members = batch.map(c => {
-      const merge_fields: Record<string, string> = {
+    const members = batch.map(c => ({
+      email_address: c.email,
+      status_if_new: 'subscribed',
+      // Apply the campaign tag (and "sms only" where relevant) atomically with
+      // the add/update. The batch endpoint supports per-member tags and
+      // auto-creates them — far more reliable than the separate segment-add
+      // step, which fails for members that aren't queryable yet.
+      tags: c.sms_only ? [tag, 'sms only'] : [tag],
+      merge_fields: {
         FNAME: c.first_name ?? '',
         LNAME: c.last_name ?? '',
         PHONE: c.phone ?? '',
@@ -279,26 +348,10 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
         LEADSRC: c.lead_source ?? '',
         LASTSERV: formatLongDate(c.last_serviced_date),
         BALANCE: c.account_balance != null ? String(c.account_balance) : '',
-      }
-      // Mailchimp's SMS phone field (SMSPHONE) is separate from the regular
-      // PHONE field and requires E.164. Only send it when we can produce a
-      // valid E.164 number; an empty/invalid value would error the member. The
-      // field only exists when SMS marketing is enabled on the audience —
-      // otherwise Mailchimp silently drops it (it's not in REQUIRED_MERGE_FIELDS
-      // because it's Mailchimp-managed and can't be created via merge-fields).
-      const smsPhone = toE164(c.phone)
-      if (smsPhone) merge_fields.SMSPHONE = smsPhone
-      return {
-        email_address: c.email,
-        status_if_new: 'subscribed',
-        // Apply the campaign tag (and "sms only" where relevant) atomically with
-        // the add/update. The batch endpoint supports per-member tags and
-        // auto-creates them — far more reliable than the separate segment-add
-        // step, which fails for members that aren't queryable yet.
-        tags: c.sms_only ? [tag, 'sms only'] : [tag],
-        merge_fields,
-      }
-    })
+      },
+    }))
+    // NOTE: The SMS phone number is NOT a merge field and is NOT accepted by
+    // this bulk endpoint — it must be set per-member via PUT (see Step 4).
 
     const res = await mcFetch(`/lists/${AUDIENCE_ID}`, {
       method: 'POST',
@@ -367,6 +420,15 @@ export async function pushContacts(contacts: MailchimpContact[], tag: string): P
       await addEmailsToSegment(smsSegmentId, smsOnly.map(c => c.email))
     }
   }
+
+  // ── Step 4: Set the SMS phone number (E.164) per member ─────────────────
+  // Must be done after the audience upsert (Step 1) so the members exist, and
+  // via the per-member endpoint since the bulk import doesn't accept SMS fields.
+  const sms = await setSmsPhones(contacts)
+  result.sms_set = sms.set
+  result.sms_skipped = sms.skipped
+  result.sms_failed = sms.failed
+  result.errors.push(...sms.errors)
 
   return result
 }
