@@ -29,6 +29,7 @@ interface Props {
   }
   capacityWeeks: { week: string; sameDayRate: number | null; medianLeadDays: number | null; totalJobs: number }[]
   jobsPerMonth: { month: string; jobs2025: number; jobs2026: number }[]
+  schedulingByMonth: { ym: string; label: string; synced: number; partial: number }[]
   techScoreboard: {
     techId: string
     techName: string | null
@@ -360,6 +361,7 @@ export default function DashboardClient({
   snapshotMetrics,
   capacityWeeks,
   jobsPerMonth,
+  schedulingByMonth,
   techScoreboard,
   lastSync,
   monthlyRevenue,
@@ -727,6 +729,63 @@ export default function DashboardClient({
                 </div>
                 <p className="text-xs text-gray-400 mt-1">Completed jobs per month.</p>
               </Card>
+            </div>
+          </div>
+
+          {/* Section 5b — Online Scheduling Volume */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 mb-2">Online Scheduling — Jobs Synced to SF &amp; Partial Leads by Month</h2>
+            <div className="bg-white border border-gray-200 rounded-lg p-4">
+              {schedulingByMonth.length === 0 ? (
+                <p className="text-sm text-gray-400 py-12 text-center">No online scheduling activity yet.</p>
+              ) : (
+                <>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={schedulingByMonth} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="synced" name="Synced to SF" fill="#6366f1" radius={[2, 2, 0, 0]} />
+                        <Bar dataKey="partial" name="Partial Leads" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-y border-gray-200">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Month</th>
+                          <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Synced to SF</th>
+                          <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Partial Leads</th>
+                          <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {[...schedulingByMonth].reverse().map(m => (
+                          <tr key={m.ym} className="hover:bg-gray-50">
+                            <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{m.label}</td>
+                            <td className="px-4 py-2 text-right text-gray-700">{m.synced}</td>
+                            <td className="px-4 py-2 text-right text-gray-700">{m.partial}</td>
+                            <td className="px-4 py-2 text-right font-medium text-gray-900">{m.synced + m.partial}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="border-t-2 border-gray-200">
+                        <tr>
+                          <td className="px-4 py-2 font-semibold text-gray-900">Total</td>
+                          <td className="px-4 py-2 text-right font-semibold text-gray-900">{schedulingByMonth.reduce((s, m) => s + m.synced, 0)}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-gray-900">{schedulingByMonth.reduce((s, m) => s + m.partial, 0)}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-gray-900">{schedulingByMonth.reduce((s, m) => s + m.synced + m.partial, 0)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
