@@ -1,7 +1,5 @@
 // Server-side only — never import this in client components
 
-import { createHash } from 'crypto'
-
 const API_KEY = process.env.MAILCHIMP_API_KEY ?? ''
 const AUDIENCE_ID = process.env.MAILCHIMP_AUDIENCE_ID ?? ''
 const SERVER_PREFIX = process.env.MAILCHIMP_SERVER_PREFIX ?? ''
@@ -236,17 +234,38 @@ async function addEmailsToSegment(segmentId: string, emails: string[]): Promise<
   return { tagged: emails.length - rejected.length, failed: rejected.length }
 }
 
-// Mailchimp's subscriber hash is the MD5 of the lowercased email address.
-function subscriberHash(email: string): string {
-  return createHash('md5').update(email.trim().toLowerCase()).digest('hex')
+// The SMS phone number and its marketing consent can ONLY be written through
+// the omni-channel Audiences API (POST /audiences/{id}/contacts, sms_channel).
+// The classic /lists/{id}/members endpoints expose SMS fields as read-only, so
+// setting them there silently does nothing — which is why SMS never registered.
+//
+// The Audiences API uses its own audience id. In practice it equals the classic
+// list id, but resolve it defensively: prefer the audience whose id matches our
+// list id, then any SMS-enabled audience, then fall back to the list id.
+let cachedSmsAudienceId: string | null = null
+async function resolveSmsAudienceId(): Promise<string> {
+  if (cachedSmsAudienceId) return cachedSmsAudienceId
+  try {
+    const res = await mcFetch('/audiences?count=100&fields=audiences.id,audiences.enabled_channels')
+    if (res.ok) {
+      const data = await res.json()
+      const auds: { id: string; enabled_channels?: string[] }[] = data.audiences ?? []
+      const exact = auds.find(a => a.id === AUDIENCE_ID)
+      const smsEnabled = auds.find(a => (a.enabled_channels ?? []).some(c => c.toLowerCase().includes('sms')))
+      cachedSmsAudienceId = exact?.id ?? smsEnabled?.id ?? AUDIENCE_ID
+      return cachedSmsAudienceId
+    }
+  } catch { /* fall through */ }
+  cachedSmsAudienceId = AUDIENCE_ID
+  return cachedSmsAudienceId
 }
 
-// Set the SMS phone number (E.164) on contacts. This is NOT a merge field and
-// cannot go through the bulk import endpoint — it's a per-member attribute set
-// via PUT /lists/{id}/members/{hash}. We opt them into SMS marketing
-// (sms_subscription_status: 'subscribed'). Runs with limited concurrency to
-// respect Mailchimp's ~10 simultaneous-connection cap. Returns per-contact
-// outcome counts; hard rejections are surfaced in `errors`.
+// Add/refresh the SMS channel (E.164 number + marketing consent) for contacts
+// with a valid number, via the Audiences API. update_existing merges onto the
+// contact the classic upsert already created (matched by email), or creates it.
+// status 'consented' opts them into SMS marketing (single opt-in). Runs with
+// limited concurrency to respect Mailchimp's ~10 simultaneous-connection cap;
+// hard rejections are surfaced in `errors`.
 async function setSmsPhones(
   contacts: MailchimpContact[],
 ): Promise<{ set: number; skipped: number; failed: number; errors: { email: string; error: string }[] }> {
@@ -257,19 +276,29 @@ async function setSmsPhones(
     .map(c => ({ email: c.email, e164: toE164(c.phone) }))
     .filter(c => c.e164)
   out.skipped = contacts.length - eligible.length
+  if (eligible.length === 0) return out
+
+  const audienceId = await resolveSmsAudienceId()
+  const capturedAt = new Date().toISOString()
 
   const CONCURRENCY = 8
   for (let i = 0; i < eligible.length; i += CONCURRENCY) {
     const slice = eligible.slice(i, i + CONCURRENCY)
     await Promise.all(slice.map(async ({ email, e164 }) => {
       try {
-        const res = await mcFetch(`/lists/${AUDIENCE_ID}/members/${subscriberHash(email)}`, {
-          method: 'PUT',
+        const res = await mcFetch(`/audiences/${audienceId}/contacts`, {
+          method: 'POST',
           body: JSON.stringify({
-            email_address: email,
-            status_if_new: 'subscribed',
-            sms_phone_number: e164,
-            sms_subscription_status: 'subscribed',
+            email_channel: { email },
+            sms_channel: {
+              sms_phone: e164,
+              marketing_consent: {
+                status: 'consented',
+                source: { name: 'Castle Admin marketing push' },
+                captured_at: capturedAt,
+              },
+            },
+            update_existing: true,
           }),
         })
         if (res.ok) {
@@ -278,6 +307,7 @@ async function setSmsPhones(
           out.failed++
           const body = await res.json().catch(() => ({}))
           const msg = body?.detail ?? body?.title ?? `HTTP ${res.status}`
+          console.error('[mailchimp] sms_channel set failed:', email, msg)
           out.errors.push({ email, error: `SMS phone: ${msg}` })
         }
       } catch (e) {
