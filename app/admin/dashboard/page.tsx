@@ -39,6 +39,7 @@ export default async function DashboardPage() {
     jobVolumeRows,
     { data: lastSyncLog },
     closedJobsRevenue,
+    schedulerLeads,
   ] = await Promise.all([
     // Only count open jobs created since the acquisition — historical
     // pre-acquisition jobs otherwise inflate this number into the thousands.
@@ -70,6 +71,13 @@ export default async function DashboardPage() {
         .not('status', 'in', '("Cancelled","Void","Voided")')
         .not('closed_at', 'is', null)
         .gte('closed_at', daysAgo(90))
+        .order('id', { ascending: true })
+        .range(f, t)),
+    // Online scheduling leads — for the "Jobs Synced to SF vs Partial Leads by
+    // month" section. Bucketed by created_at (month the lead came in).
+    fetchAllRows<{ created_at: string | null; synced_at: string | null; is_partial: boolean | null }>((f, t) =>
+      db.from('scheduler_leads')
+        .select('created_at, synced_at, is_partial, id')
         .order('id', { ascending: true })
         .range(f, t)),
   ])
@@ -113,6 +121,21 @@ export default async function DashboardPage() {
     jobs2025: cntByYearMonth[2025][i],
     jobs2026: cntByYearMonth[2026][i],
   }))
+
+  // Online scheduling volume by month — leads synced to SF vs partial leads,
+  // bucketed by the month the lead came in (created_at). Synced and partial are
+  // disjoint (a synced lead has synced_at; a partial lead is incomplete).
+  const schedByMonth: Record<string, { synced: number; partial: number }> = {}
+  for (const l of schedulerLeads) {
+    const ym = l.created_at?.slice(0, 7)
+    if (!ym) continue
+    if (!schedByMonth[ym]) schedByMonth[ym] = { synced: 0, partial: 0 }
+    if (l.synced_at) schedByMonth[ym].synced++
+    else if (l.is_partial) schedByMonth[ym].partial++
+  }
+  const schedulingByMonth = Object.entries(schedByMonth)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([ym, v]) => ({ ym, label: monthLabelShort(ym), synced: v.synced, partial: v.partial }))
 
   // Capacity
   type CapWeek = { sameDayCount: number; total: number; leadTimeDays: number[] }
@@ -229,6 +252,7 @@ export default async function DashboardPage() {
       }}
       capacityWeeks={capacityWeeks}
       jobsPerMonth={jobsPerMonth}
+      schedulingByMonth={schedulingByMonth}
       techScoreboard={techScoreboard}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
@@ -274,6 +298,11 @@ function weekStartStr(d: Date): string {
   const diff = day === 0 ? -6 : 1 - day
   const mon = new Date(d); mon.setDate(d.getDate() + diff)
   return mon.toISOString().slice(0, 10)
+}
+function monthLabelShort(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  return `${names[(m ?? 1) - 1]} ${String(y).slice(2)}`
 }
 function medianOf(arr: number[]): number | null {
   if (!arr.length) return null
