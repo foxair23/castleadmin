@@ -42,7 +42,7 @@ interface Props {
     status: string | null
     observedAt: string | null
   }[]
-  weeklyJobVolume: { week: number; jobs2025: number; jobs2026: number }[]
+  jobsPerMonth: { month: string; jobs2025: number; jobs2026: number }[]
   techScoreboard: {
     techId: string
     techName: string | null
@@ -385,7 +385,7 @@ export default function DashboardClient({
   capacityWeeks,
   rescheduleTrend,
   rescheduleDetail,
-  weeklyJobVolume,
+  jobsPerMonth,
   techScoreboard,
   lastSync,
   monthlyRevenue,
@@ -805,20 +805,18 @@ export default function DashboardClient({
                 </div>
               </Card>
 
-              {/* Weekly Job Volume — completed jobs per week, 2025 vs 2026 */}
+              {/* Jobs per month — 2025 vs 2026 */}
               <Card className="md:col-span-2">
-                <p className="text-xs font-medium text-gray-700 mb-2">Weekly Job Volume</p>
+                <p className="text-xs font-medium text-gray-700 mb-2">Jobs per Month</p>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={weeklyJobVolume} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                    <LineChart data={jobsPerMonth} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="week" tick={{ fontSize: 10 }} tickLine={false} interval={3} tickFormatter={v => `W${v}`} />
+                      <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} />
                       <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
                       <Tooltip
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        formatter={(v: any, name: any) => [v, name]}
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        labelFormatter={(w: any) => `Week ${w}`}
+                        formatter={(v: any, name: any) => [`${v} jobs`, name]}
                       />
                       <Legend
                         wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
@@ -836,12 +834,12 @@ export default function DashboardClient({
                           </span>
                         )}
                       />
-                      <Line type="monotone" dataKey="jobs2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} hide={hiddenVolLines.has('jobs2025')} />
-                      <Line type="monotone" dataKey="jobs2026" name="2026" stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} hide={hiddenVolLines.has('jobs2026')} />
+                      <Line type="monotone" dataKey="jobs2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenVolLines.has('jobs2025')} />
+                      <Line type="monotone" dataKey="jobs2026" name="2026" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenVolLines.has('jobs2026')} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <p className="text-xs text-gray-400 mt-1">Completed jobs per week of the year.</p>
+                <p className="text-xs text-gray-400 mt-1">Completed jobs per month.</p>
               </Card>
             </div>
           </div>

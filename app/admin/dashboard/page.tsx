@@ -101,21 +101,23 @@ export default async function DashboardPage() {
   const outstandingAR = (arData ?? []).reduce((s: number, r: { balance_due?: number | null }) => s + (r.balance_due ?? 0), 0)
   const openEstimatesValue = (openEstimates ?? []).reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
 
-  // Weekly job volume — completed-job counts per week-of-year, split by year so
-  // 2025 and 2026 can be compared on the same axis (weeks 1–52).
-  const volByYearWeek: Record<number, Record<number, number>> = { 2025: {}, 2026: {} }
+  // Jobs per month — completed-job count for each month, split by year so 2025
+  // and 2026 can be compared on the same axis.
+  const cntByYearMonth: Record<number, number[]> = { 2025: Array(12).fill(0), 2026: Array(12).fill(0) }
   for (const r of jobVolumeRows) {
     const ymd = r.closed_at?.slice(0, 10)
     if (!ymd) continue
     const year = Number(ymd.slice(0, 4))
     if (year !== 2025 && year !== 2026) continue
-    const wk = weekOfYear(ymd)
-    volByYearWeek[year][wk] = (volByYearWeek[year][wk] ?? 0) + 1
+    const mo = Number(ymd.slice(5, 7)) - 1
+    if (mo >= 0 && mo < 12) cntByYearMonth[year][mo]++
   }
-  const weeklyJobVolume = Array.from({ length: 52 }, (_, i) => {
-    const week = i + 1
-    return { week, jobs2025: volByYearWeek[2025][week] ?? 0, jobs2026: volByYearWeek[2026][week] ?? 0 }
-  })
+  const MONTH_LABELS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const jobsPerMonth = MONTH_LABELS_SHORT.map((label, i) => ({
+    month: label,
+    jobs2025: cntByYearMonth[2025][i],
+    jobs2026: cntByYearMonth[2026][i],
+  }))
 
   // Capacity
   type CapWeek = { sameDayCount: number; total: number; leadTimeDays: number[] }
@@ -289,7 +291,7 @@ export default async function DashboardPage() {
       capacityWeeks={capacityWeeks}
       rescheduleTrend={rescheduleTrend}
       rescheduleDetail={rescheduleDetail}
-      weeklyJobVolume={weeklyJobVolume}
+      jobsPerMonth={jobsPerMonth}
       techScoreboard={techScoreboard}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
@@ -329,16 +331,6 @@ function daysAgo(n: number): string {
   const dt = new Date(Date.UTC(y, m - 1, d))
   dt.setUTCDate(dt.getUTCDate() - n)
   return dt.toISOString().slice(0, 10)
-}
-// Week-of-year (1–52) by day-of-year, so 2025 and 2026 line up on the same
-// axis. Week 53 is folded into 52. Parsed from the YYYY-MM-DD parts to avoid
-// timezone shifts.
-function weekOfYear(ymd: string): number {
-  const [y, m, d] = ymd.slice(0, 10).split('-').map(Number)
-  const start = Date.UTC(y, 0, 1)
-  const day = Date.UTC(y, m - 1, d)
-  const doy = Math.floor((day - start) / 86_400_000) + 1
-  return Math.min(52, Math.floor((doy - 1) / 7) + 1)
 }
 function weekStartStr(d: Date): string {
   const day = d.getDay()
