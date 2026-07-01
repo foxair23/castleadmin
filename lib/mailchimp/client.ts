@@ -281,6 +281,13 @@ async function setSmsPhones(
   const audienceId = await resolveSmsAudienceId()
   const capturedAt = new Date().toISOString()
 
+  // Tally the effective SMS subscription status Mailchimp reports back. A 2xx
+  // only means the number was accepted — the contact may still land as
+  // non-subscribed (e.g. audience needs opt-in confirmation, or SMS marketing
+  // isn't fully enabled). We surface that so a "success" that doesn't actually
+  // subscribe anyone is visible instead of silent.
+  const effStatus: Record<string, number> = {}
+
   const CONCURRENCY = 8
   for (let i = 0; i < eligible.length; i += CONCURRENCY) {
     const slice = eligible.slice(i, i + CONCURRENCY)
@@ -301,11 +308,13 @@ async function setSmsPhones(
             update_existing: true,
           }),
         })
+        const body = await res.json().catch(() => ({}))
         if (res.ok) {
           out.set++
+          const eff = body?.sms_channel?.effective_subscription_status
+          if (eff) effStatus[String(eff)] = (effStatus[String(eff)] ?? 0) + 1
         } else {
           out.failed++
-          const body = await res.json().catch(() => ({}))
           const msg = body?.detail ?? body?.title ?? `HTTP ${res.status}`
           console.error('[mailchimp] sms_channel set failed:', email, msg)
           out.errors.push({ email, error: `SMS phone: ${msg}` })
@@ -316,7 +325,99 @@ async function setSmsPhones(
       }
     }))
   }
+
+  // If numbers were accepted but Mailchimp reports them as anything other than
+  // subscribed, that's the real reason nothing "registers for SMS" — surface it.
+  const notSubscribed = Object.entries(effStatus).filter(([s]) => s.toLowerCase() !== 'subscribed')
+  if (notSubscribed.length > 0) {
+    const summary = notSubscribed.map(([s, n]) => `${n} ${s}`).join(', ')
+    console.error('[mailchimp] SMS numbers accepted but not subscribed:', summary)
+    out.errors.push({
+      email: '(sms)',
+      error: `SMS number saved but not subscribed for: ${summary}. The audience likely requires SMS opt-in confirmation or SMS marketing isn't fully enabled in Mailchimp.`,
+    })
+  }
   return out
+}
+
+// Read-only-ish SMS diagnostic. Exercises the exact SMS write path for one
+// contact and returns the RAW Mailchimp responses so we can see the ground
+// truth (what /audiences returns, whether the POST succeeds, and the
+// effective SMS subscription status the contact ends up with). Intended for a
+// single manual test, not bulk use. Returns no secrets.
+export async function debugSms(email: string, phone: string): Promise<Record<string, unknown>> {
+  const e164 = toE164(phone)
+  const config = {
+    hasApiKey: !!API_KEY,
+    hasServerPrefix: !!SERVER_PREFIX,
+    serverPrefix: SERVER_PREFIX || null,
+    audienceIdEnv: AUDIENCE_ID || null,
+    baseUrl: baseUrl(),
+  }
+  const steps: Record<string, unknown>[] = []
+
+  if (!API_KEY || !SERVER_PREFIX || !AUDIENCE_ID) {
+    return { config, e164, steps, fatal: 'Mailchimp env vars not fully configured' }
+  }
+
+  // 1. What audiences does this account expose, and which channels are enabled?
+  try {
+    const r = await mcFetch('/audiences?count=100&fields=audiences.id,audiences.name,audiences.enabled_channels,total_items')
+    const body = await r.json().catch(() => ({}))
+    steps.push({ step: 'GET /audiences', status: r.status, ok: r.ok, body })
+  } catch (e) {
+    steps.push({ step: 'GET /audiences', error: String(e) })
+  }
+
+  // 2. Confirm the classic list exists / its name.
+  try {
+    const r = await mcFetch(`/lists/${AUDIENCE_ID}?fields=id,name,stats.member_count`)
+    const body = await r.json().catch(() => ({}))
+    steps.push({ step: `GET /lists/${AUDIENCE_ID}`, status: r.status, ok: r.ok, body })
+  } catch (e) {
+    steps.push({ step: 'GET /lists/{id}', error: String(e) })
+  }
+
+  const audienceId = await resolveSmsAudienceId()
+  steps.push({ step: 'resolved audience id', audienceId, equalsListId: audienceId === AUDIENCE_ID })
+
+  // 3. The actual SMS write — capture raw status + full body (incl. sms_channel
+  //    with effective_subscription_status), whether it succeeds or errors.
+  if (!e164) {
+    steps.push({ step: 'toE164', input: phone, result: 'could not normalize to E.164 — would be skipped' })
+  } else {
+    try {
+      const r = await mcFetch(`/audiences/${audienceId}/contacts`, {
+        method: 'POST',
+        body: JSON.stringify({
+          email_channel: { email },
+          sms_channel: {
+            sms_phone: e164,
+            marketing_consent: {
+              status: 'consented',
+              source: { name: 'Castle Admin SMS debug' },
+              captured_at: new Date().toISOString(),
+            },
+          },
+          update_existing: true,
+        }),
+      })
+      const body = await r.json().catch(() => ({}))
+      steps.push({
+        step: `POST /audiences/${audienceId}/contacts`,
+        status: r.status,
+        ok: r.ok,
+        contactId: (body as { id?: string })?.id ?? null,
+        topStatus: (body as { status?: string })?.status ?? null,
+        sms_channel: (body as { sms_channel?: unknown })?.sms_channel ?? null,
+        fullBody: body,
+      })
+    } catch (e) {
+      steps.push({ step: 'POST contact', error: String(e) })
+    }
+  }
+
+  return { config, e164, resolvedAudienceId: audienceId, steps }
 }
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
