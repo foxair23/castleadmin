@@ -60,6 +60,7 @@ export async function GET(req: NextRequest) {
       appointmentDate: '—',
       reason: 'manual_push',
       adminUrl,
+      ackUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/scheduler/ack/${lead.id}`,
     })
     const subject = `Partial Lead: ${lead.customer_first_name?.trim() || 'Customer'} — ${fmtDate(lead.created_at)}`
 

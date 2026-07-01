@@ -23,7 +23,10 @@ export interface SchedulerLeadSyncedData {
   sfCustomerId: string
   notes: string        // full description/notes sent to SF
   adminUrl: string
+  ackUrl?: string      // "Done" acknowledgement link (requires Castle Admin login)
 }
+
+const DONE_BTN = `display:inline-block; background:#16a34a; color:#ffffff; padding:11px 22px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;`
 
 export function renderSchedulerLeadSynced(data: SchedulerLeadSyncedData): {
   subject: string
@@ -54,6 +57,9 @@ export function renderSchedulerLeadSynced(data: SchedulerLeadSyncedData): {
   <p style="${LABEL}">Notes sent to SF</p>
   <pre style="${NOTES_BOX}">${data.notes}</pre>
 
+  ${data.ackUrl ? `<p style="margin: 24px 0 4px;"><a href="${data.ackUrl}" style="${DONE_BTN}">✓ Done</a></p>
+  <p style="font-size: 12px; color: #9ca3af; margin: 0 0 8px;">Marks this lead acknowledged (requires Castle Admin login).</p>` : ''}
+
   <p style="${MUTED}">
     <a href="${data.adminUrl}" style="color: #dc2626;">View in Castle Admin →</a>
   </p>
@@ -70,6 +76,7 @@ export function renderSchedulerLeadSynced(data: SchedulerLeadSyncedData): {
     ``,
     `Notes sent to SF:`,
     data.notes,
+    ...(data.ackUrl ? ['', `Done (acknowledge, requires login): ${data.ackUrl}`] : []),
   ].join('\n')
 
   return { subject, bodyHtml, bodyText }

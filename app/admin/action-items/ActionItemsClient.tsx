@@ -16,8 +16,8 @@ import type {
   OverdueCustomersResult,
   AwaitingSfJobLead,
   AwaitingSfJobResult,
-  AwaitingPushLead,
-  AwaitingPushResult,
+  OnlineSchedulingLead,
+  OnlineSchedulingResult,
   CommissionReviewResult,
 } from '@/lib/analytics/alerts'
 import CommissionReviewTable from './CommissionReviewTable'
@@ -447,7 +447,38 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
   annual_maintenance: 'Annual Maintenance',
 }
 
-function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes: Record<string, string> }) {
+// "Done" button — acknowledges an Online Scheduling lead (requires login).
+function DoneButton({ leadId }: { leadId: string }) {
+  const router = useRouter()
+  const [busy, setBusy] = useState(false)
+
+  async function handleDone() {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/leads/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId }),
+      })
+      if (res.ok) router.refresh()
+      else setBusy(false)
+    } catch {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleDone}
+      disabled={busy}
+      className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-medium whitespace-nowrap"
+    >
+      {busy ? 'Saving…' : '✓ Done'}
+    </button>
+  )
+}
+
+function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
 
   return (
@@ -459,8 +490,8 @@ function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes:
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="sync_status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="days_waiting" label="Days Waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="kind" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="days_waiting" label="Age" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -470,29 +501,22 @@ function AwaitingPushTable({ items, notes }: { items: AwaitingPushLead[]; notes:
               <td className="px-4 py-2 font-medium text-gray-900">{lead.customer_name}</td>
               <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">
-                {lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}
-                {' — '}
-                {SERVICE_CATEGORY_LABELS[lead.service_category] ?? lead.service_category}
+                {lead.service_type == null
+                  ? <span className="text-gray-400">—</span>
+                  : <>{lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}{lead.service_category ? ` — ${SERVICE_CATEGORY_LABELS[lead.service_category] ?? lead.service_category}` : ''}</>}
               </td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(lead.appointment_date)}</td>
               <td className="px-4 py-2">
                 <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
-                  lead.sync_status === 'sync_failed'
-                    ? 'bg-red-100 text-red-700'
+                  lead.kind === 'synced'
+                    ? 'bg-green-100 text-green-700'
                     : 'bg-amber-100 text-amber-700'
                 }`}>
-                  {lead.sync_status === 'sync_failed' ? 'Sync Failed' : 'Not Pushed'}
+                  {lead.kind === 'synced' ? `Synced${lead.sf_job_id ? ` · Job #${lead.sf_job_id}` : ''}` : 'Partial'}
                 </span>
               </td>
               <td className="px-4 py-2"><AgingPill days={lead.days_waiting} /></td>
-              <td className="px-4 py-2 text-right">
-                <Link
-                  href="/admin/scheduler"
-                  className="text-xs text-red-600 hover:text-red-800 font-medium whitespace-nowrap"
-                >
-                  Push to SF →
-                </Link>
-              </td>
+              <td className="px-4 py-2 text-right"><DoneButton leadId={lead.id} /></td>
             </tr>
           ))}
         </tbody>
@@ -535,7 +559,7 @@ interface Props {
   followUpJobs: FollowUpJobsResult
   overdueCustomers: OverdueCustomersResult
   awaitingSfJob: AwaitingSfJobResult
-  awaitingPushLeads: AwaitingPushResult
+  onlineScheduling: OnlineSchedulingResult
   // Optional: only the admin page passes it (commission is admin-only).
   commissionReview?: CommissionReviewResult
   notes: Record<string, string>
@@ -645,7 +669,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'followup' | 'overdue' | 'awaiting-sf' | 'awaiting-push' | 'commission'
+type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'followup' | 'overdue' | 'awaiting-sf' | 'online-scheduling' | 'commission'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -658,7 +682,7 @@ export default function ActionItemsClient({
   followUpJobs,
   overdueCustomers,
   awaitingSfJob,
-  awaitingPushLeads,
+  onlineScheduling,
   commissionReview,
   notes,
 }: Props) {
@@ -718,7 +742,7 @@ export default function ActionItemsClient({
   const filteredStaleEstimates = filterByCutoff(filterByDays(staleEstimates.items, 'days_outstanding'), 'created_at_sf')
   const filteredOverdueCustomers = filterByCutoff(filterByDays(overdueCustomers.items, 'days_overdue'), 'oldest_overdue_date')
   const filteredAwaitingSfJob = filterByCutoff(filterByDays(awaitingSfJob.items, 'days_waiting'), 'closed_at')
-  const filteredAwaitingPush = filterByCutoff(filterByDays(awaitingPushLeads.items, 'days_waiting'), 'created_at')
+  const filteredOnlineScheduling = filterByCutoff(filterByDays(onlineScheduling.items, 'days_waiting'), 'created_at')
   const commissionItems = filterByCutoff(commissionReview?.items ?? [], 'recognition_date')
 
   const totalCount =
@@ -728,7 +752,7 @@ export default function ActionItemsClient({
     filteredFollowUp.length +
     filteredOverdueCustomers.length +
     filteredAwaitingSfJob.length +
-    filteredAwaitingPush.length +
+    filteredOnlineScheduling.length +
     commissionItems.length
 
   async function handleRefresh() {
@@ -796,7 +820,7 @@ export default function ActionItemsClient({
     { key: 'followup',     label: 'Follow-Up',      count: filteredFollowUp.length },
     { key: 'overdue',      label: 'Overdue',        count: filteredOverdueCustomers.length },
     { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
-    { key: 'awaiting-push',label: 'Awaiting Push',  count: filteredAwaitingPush.length },
+    { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
     ...(commissionReview ? [{ key: 'commission' as TabKey, label: 'Commission Review', count: commissionItems.length }] : []),
   ]
 
@@ -987,12 +1011,12 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
-      {activeTab === 'awaiting-push' && (
+      {activeTab === 'online-scheduling' && (
         <AlertSection
-          title="Scheduler Leads — Awaiting SF Push"
-          count={filteredAwaitingPush.length}
+          title="Online Scheduling — Leads Awaiting Acknowledgement"
+          count={filteredOnlineScheduling.length}
         >
-          {filteredAwaitingPush.length === 0 ? <AllClear /> : <AwaitingPushTable items={filteredAwaitingPush} notes={notes} />}
+          {filteredOnlineScheduling.length === 0 ? <AllClear /> : <OnlineSchedulingTable items={filteredOnlineScheduling} notes={notes} />}
         </AlertSection>
       )}
 
