@@ -20,7 +20,10 @@ export interface SchedulerLeadStuckData {
   reason: StuckReason
   errorMessage?: string
   adminUrl: string
+  ackUrl?: string      // "Done" acknowledgement link (requires Castle Admin login)
 }
+
+const DONE_BTN = `display:inline-block; background:#16a34a; color:#ffffff; padding:11px 22px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;`
 
 export function renderSchedulerLeadStuck(data: SchedulerLeadStuckData): {
   subject: string
@@ -54,6 +57,9 @@ export function renderSchedulerLeadStuck(data: SchedulerLeadStuckData): {
 
   ${data.errorMessage ? `<p style="${LABEL}">Error</p><p style="${VALUE}; color: #dc2626;">${data.errorMessage}</p>` : ''}
 
+  ${data.ackUrl ? `<p style="margin: 24px 0 4px;"><a href="${data.ackUrl}" style="${DONE_BTN}">✓ Done</a></p>
+  <p style="font-size: 12px; color: #9ca3af; margin: 0 0 8px;">Marks this lead acknowledged (requires Castle Admin login).</p>` : ''}
+
   <p style="${MUTED}">
     <a href="${data.adminUrl}" style="color: #dc2626;">View in Castle Admin → Scheduler →</a>
   </p>
@@ -69,6 +75,7 @@ export function renderSchedulerLeadStuck(data: SchedulerLeadStuckData): {
     `Appointment: ${data.appointmentDate}`,
   ]
   if (data.errorMessage) lines.push(`Error: ${data.errorMessage}`)
+  if (data.ackUrl) lines.push('', `Done (acknowledge, requires login): ${data.ackUrl}`)
 
   return { subject, bodyHtml, bodyText: lines.join('\n') }
 }

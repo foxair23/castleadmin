@@ -40,9 +40,12 @@ export async function proxy(request: NextRequest) {
     return supabaseResponse
   }
 
-  // Protected routes — redirect to login if not authenticated
+  // Protected routes — redirect to login if not authenticated, preserving the
+  // intended destination so e.g. an emailed "Done" link returns here post-login.
   if (!user) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('next', pathname + request.nextUrl.search)
+    return NextResponse.redirect(loginUrl)
   }
 
   return supabaseResponse

@@ -219,6 +219,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       sfCustomerId: sfCustomerId!,
       notes: descLines.join('\n'),
       adminUrl,
+      ackUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/scheduler/ack/${leadId}`,
     })
     await enqueueForSubscribers({
       notificationTypeKey: 'scheduler_lead_synced',

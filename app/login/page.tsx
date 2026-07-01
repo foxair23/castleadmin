@@ -23,7 +23,11 @@ export default function LoginPage() {
         setError(error.message)
         setLoading(false)
       } else {
-        router.push('/')
+        // Return to the intended destination if one was passed (e.g. an emailed
+        // "Done" link). Only honor safe relative paths to avoid open redirects.
+        const raw = new URLSearchParams(window.location.search).get('next')
+        const next = raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/'
+        router.push(next)
         router.refresh()
       }
     } catch {

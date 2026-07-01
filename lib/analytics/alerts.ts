@@ -522,53 +522,57 @@ export async function getOverdueCustomers(): Promise<OverdueCustomersResult> {
   return { items: limited, totalOverdue }
 }
 
-// ── Alert 7 — Scheduler Leads Awaiting Manual SF Push ────────────────────────
+// ── Alert 7 — Online Scheduling Leads Awaiting Acknowledgement ───────────────
 
-export interface AwaitingPushLead {
+export interface OnlineSchedulingLead {
   id: string
   customer_name: string
-  service_type: string
-  service_category: string
-  appointment_date: string
-  sync_status: string
+  service_type: string | null
+  service_category: string | null
+  appointment_date: string | null
+  kind: 'partial' | 'synced'
+  sf_job_id: string | null
   created_at: string
   days_waiting: number
 }
 
-export interface AwaitingPushResult {
-  items: AwaitingPushLead[]
+export interface OnlineSchedulingResult {
+  items: OnlineSchedulingLead[]
 }
 
-export async function getAwaitingPushLeads(): Promise<AwaitingPushResult> {
+// Leads that have "come in" — either a partial booking was created, or a lead
+// synced to Service Fusion — and have NOT yet been acknowledged (Done button).
+export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult> {
   const db = getAdminClient()
-
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString()
 
   const { data } = await db
     .from('scheduler_leads')
-    .select('id, customer_first_name, customer_last_name, service_type, service_category, appointment_date, sync_status, created_at')
-    .in('sync_status', ['not_attempted', 'sync_failed'])
+    .select('id, customer_first_name, customer_last_name, service_type, service_category, appointment_date, is_partial, synced_at, service_fusion_job_id, created_at')
+    .is('acknowledged_at', null)
     .neq('status', 'rejected')
-    .gte('created_at', thirtyDaysAgo)
+    .or('is_partial.eq.true,synced_at.not.is.null')
     .order('created_at', { ascending: false })
-    .limit(100)
+    .limit(200)
 
-  const items: AwaitingPushLead[] = (data ?? []).map((l: {
+  const items: OnlineSchedulingLead[] = (data ?? []).map((l: {
     id: string
-    customer_first_name: string
-    customer_last_name: string
-    service_type: string
-    service_category: string
-    appointment_date: string
-    sync_status: string
+    customer_first_name: string | null
+    customer_last_name: string | null
+    service_type: string | null
+    service_category: string | null
+    appointment_date: string | null
+    is_partial: boolean | null
+    synced_at: string | null
+    service_fusion_job_id: string | null
     created_at: string
   }) => ({
     id: l.id,
-    customer_name: [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' '),
+    customer_name: [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ') || 'Unknown',
     service_type: l.service_type,
     service_category: l.service_category,
     appointment_date: l.appointment_date,
-    sync_status: l.sync_status,
+    kind: (l.synced_at ? 'synced' : 'partial') as 'partial' | 'synced',
+    sf_job_id: l.service_fusion_job_id ?? null,
     created_at: l.created_at,
     days_waiting: daysBetween(l.created_at),
   }))
