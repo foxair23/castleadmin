@@ -11,7 +11,6 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  ReferenceLine,
   CartesianGrid,
   Legend,
 } from 'recharts'
@@ -28,13 +27,22 @@ interface Props {
     openEstimatesValue: number
     outstandingAR: number
   }
-  revenueTrend: { date: string; revenue: number; rolling28: number | null }[]
-  jobsTrend: { date: string; jobs: number; rolling28: number | null }[]
   capacityWeeks: { week: string; sameDayRate: number | null; medianLeadDays: number | null; totalJobs: number }[]
   rescheduleTrend: {
     trackingSince: string | null
-    weeks: { week: string; rescheduleRate: number | null; partsRescheduleRate: number | null }[]
+    months: { month: string; rescheduleRate: number | null; partsRescheduleRate: number | null }[]
   }
+  rescheduleDetail: {
+    jobId: string
+    number: string | null
+    customer: string | null
+    from: string | null
+    to: string | null
+    reason: string | null
+    status: string | null
+    observedAt: string | null
+  }[]
+  weeklyJobVolume: { week: number; jobs2025: number; jobs2026: number }[]
   techScoreboard: {
     techId: string
     techName: string | null
@@ -44,13 +52,6 @@ interface Props {
     baselineWeeklyRevenue: number
     revenueDeltaPct: number | null
   }[]
-  pipeline: {
-    totalOpen: number
-    totalValue: number
-    buckets: { fresh: number; aging: number; old: number; freshValue: number; agingValue: number; oldValue: number }
-  }
-  annotations: { id: string; occurred_on: string; title: string; note: string | null }[]
-  backlog: { count: number }
   lastSync: { sync_type: string; completed_at: string; records_synced: number } | null
   monthlyRevenue: { month: string; revenue2025: number; revenue2026: number }[]
   techMonthlyRevenue: { techId: string; techName: string; data: { yearMonth: string; revenue: number }[] }[]
@@ -74,9 +75,44 @@ function formatWeekLabel(w: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function formatDateLabel(d: string): string {
-  const dt = new Date(d + 'T00:00:00')
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function fmtReason(reason: string | null): string {
+  if (!reason) return '—'
+  return reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+function formatMonthLabel(ym: string): string {
+  const dt = new Date(ym + '-01T00:00:00')
+  return dt.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+}
+
+// Recent months as { value: 'YYYY-MM', label: 'July 2026' }, newest first.
+function getRecentMonths(n: number): { value: string; label: string }[] {
+  const now = new Date()
+  const out: { value: string; label: string }[] = []
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    out.push({ value, label: d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) })
+  }
+  return out
+}
+
+interface MonthJobRow {
+  id: string
+  number: string | null
+  customer: string | null
+  source: string | null
+  closedAt: string | null
+  revenue: number
+  amountDue: number
+  techs: string[]
 }
 
 // Delta badge component
@@ -98,16 +134,6 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
   return (
     <div className={`bg-white border border-gray-200 rounded-lg p-4 ${className}`}>
       {children}
-    </div>
-  )
-}
-
-// Chart legend
-function ChartLegend() {
-  return (
-    <div className="flex items-center gap-4 text-xs text-gray-500 mt-1">
-      <span className="flex items-center gap-1"><span className="inline-block w-6 border-t-2 border-red-500"></span> Actual</span>
-      <span className="flex items-center gap-1"><span className="inline-block w-6 border-t-2 border-dashed border-gray-400"></span> 28d avg</span>
     </div>
   )
 }
@@ -356,14 +382,11 @@ const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 export default function DashboardClient({
   hasData,
   snapshotMetrics,
-  revenueTrend,
-  jobsTrend,
   capacityWeeks,
   rescheduleTrend,
+  rescheduleDetail,
+  weeklyJobVolume,
   techScoreboard,
-  pipeline,
-  annotations,
-  backlog,
   lastSync,
   monthlyRevenue,
   techMonthlyRevenue,
@@ -379,6 +402,7 @@ export default function DashboardClient({
   const [techWeekLoading, setTechWeekLoading] = useState(false)
   const [techChartYear, setTechChartYear] = useState<2025 | 2026>(new Date().getFullYear() >= 2026 ? 2026 : 2025)
   const [hiddenRevLines, setHiddenRevLines] = useState<Set<string>>(new Set())
+  const [hiddenVolLines, setHiddenVolLines] = useState<Set<string>>(new Set())
 
   const fetchTechWeek = useCallback(async (wk: string) => {
     setTechWeekLoading(true)
@@ -397,16 +421,30 @@ export default function DashboardClient({
     fetchTechWeek(techWeekStart)
   }, [techWeekStart, fetchTechWeek])
 
-  // Annotations state (local editable copy)
-  const [annotationList, setAnnotationList] = useState(annotations)
-  const [newDate, setNewDate] = useState('')
-  const [newTitle, setNewTitle] = useState('')
-  const [newNote, setNewNote] = useState('')
-  const [savingAnnotation, setSavingAnnotation] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editDate, setEditDate] = useState('')
-  const [editTitle, setEditTitle] = useState('')
-  const [editNote, setEditNote] = useState('')
+  // Month-detail table (bottom section) — month picker + client fetch.
+  const monthOptions = getRecentMonths(18)
+  const [detailMonth, setDetailMonth] = useState(monthOptions[0].value)
+  const [monthRows, setMonthRows] = useState<MonthJobRow[] | null>(null)
+  const [monthTotals, setMonthTotals] = useState<{ count: number; totalRevenue: number; totalDue: number } | null>(null)
+  const [monthLoading, setMonthLoading] = useState(false)
+
+  const fetchMonthJobs = useCallback(async (m: string) => {
+    setMonthLoading(true)
+    try {
+      const res = await fetch(`/api/admin/dashboard/jobs-by-month?month=${m}`)
+      if (res.ok) {
+        const data = await res.json()
+        setMonthRows(data.rows ?? [])
+        setMonthTotals({ count: data.count ?? 0, totalRevenue: data.totalRevenue ?? 0, totalDue: data.totalDue ?? 0 })
+      }
+    } finally {
+      setMonthLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchMonthJobs(detailMonth)
+  }, [detailMonth, fetchMonthJobs])
 
   const handleSync = useCallback(async () => {
     setSyncing(true)
@@ -418,56 +456,6 @@ export default function DashboardClient({
     }
   }, [router])
 
-  async function fetchAnnotations() {
-    const res = await fetch('/api/admin/analytics/annotations')
-    if (res.ok) {
-      const data = await res.json()
-      setAnnotationList(data.annotations ?? [])
-    }
-  }
-
-  async function handleAddAnnotation(e: React.FormEvent) {
-    e.preventDefault()
-    if (!newDate || !newTitle) return
-    setSavingAnnotation(true)
-    try {
-      const res = await fetch('/api/admin/analytics/annotations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ occurred_on: newDate, title: newTitle, note: newNote || null }),
-      })
-      if (res.ok) {
-        setNewDate(''); setNewTitle(''); setNewNote('')
-        await fetchAnnotations()
-      }
-    } finally {
-      setSavingAnnotation(false)
-    }
-  }
-
-  async function handleDeleteAnnotation(id: string) {
-    await fetch(`/api/admin/analytics/annotations?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
-    await fetchAnnotations()
-  }
-
-  function startEdit(a: { id: string; occurred_on: string; title: string; note: string | null }) {
-    setEditingId(a.id)
-    setEditDate(a.occurred_on)
-    setEditTitle(a.title)
-    setEditNote(a.note ?? '')
-  }
-
-  async function handleSaveEdit(id: string) {
-    await fetch('/api/admin/analytics/annotations', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, occurred_on: editDate, title: editTitle, note: editNote || null }),
-    })
-    setEditingId(null)
-    await fetchAnnotations()
-  }
-
-  const annotationDates = annotationList.map(a => a.occurred_on)
   const capacityHealth = capacityHealth_calc(capacityWeeks)
 
   // Prepare capacity chart data — filter nulls for rendering
@@ -482,28 +470,11 @@ export default function DashboardClient({
     medianLeadDays: w.medianLeadDays !== null ? +w.medianLeadDays.toFixed(1) : null,
   }))
 
-  const reschedChartData = rescheduleTrend.weeks.map(w => ({
-    week: formatWeekLabel(w.week),
-    rescheduleRate: w.rescheduleRate !== null ? +(w.rescheduleRate * 100).toFixed(1) : null,
-    partsRescheduleRate: w.partsRescheduleRate !== null ? +(w.partsRescheduleRate * 100).toFixed(1) : null,
+  const reschedChartData = rescheduleTrend.months.map(m => ({
+    month: formatMonthLabel(m.month),
+    rescheduleRate: m.rescheduleRate !== null ? +(m.rescheduleRate * 100).toFixed(1) : null,
+    partsRescheduleRate: m.partsRescheduleRate !== null ? +(m.partsRescheduleRate * 100).toFixed(1) : null,
   }))
-
-  // Revenue trend — only keep every 7th label to avoid crowding
-  const revTrendData = revenueTrend.map((d, i) => ({
-    date: i % 14 === 0 ? formatDateLabel(d.date) : '',
-    rawDate: d.date,
-    revenue: d.revenue,
-    rolling28: d.rolling28 !== null ? +d.rolling28.toFixed(0) : null,
-  }))
-
-  const jobsTrendData = jobsTrend.map((d, i) => ({
-    date: i % 14 === 0 ? formatDateLabel(d.date) : '',
-    rawDate: d.date,
-    jobs: d.jobs,
-    rolling28: d.rolling28 !== null ? +d.rolling28.toFixed(2) : null,
-  }))
-
-  const sortedAnnotations = [...annotationList].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on))
 
   return (
     <div className="space-y-6">
@@ -599,120 +570,6 @@ export default function DashboardClient({
                   </div>
                 </Card>
               </a>
-            </div>
-          </div>
-
-          {/* Section 2 — Revenue & Job Volume Trend */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Revenue &amp; Job Volume (Last 90 Days)</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Revenue Chart */}
-              <Card>
-                <p className="text-xs font-medium text-gray-700 mb-2">Revenue per Day</p>
-                <ChartLegend />
-                <div className="h-52 mt-2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={revTrendData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} />
-                      <YAxis
-                        tick={{ fontSize: 10 }}
-                        tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
-                        width={40}
-                      />
-                      <Tooltip
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        formatter={(value: any, name: any) => [
-                          typeof value === 'number' ? fmt$(value) : value,
-                          name === 'revenue' ? 'Revenue' : '28d Avg',
-                        ]}
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        labelFormatter={(_: any, payload: readonly any[]) =>
-                          (payload as any[])?.[0]?.payload?.rawDate ?? ''
-                        }
-                      />
-                      {annotationDates.map(d => (
-                        <ReferenceLine
-                          key={d}
-                          x={d}
-                          stroke="#ef4444"
-                          strokeDasharray="4 2"
-                          label={{ value: '●', position: 'top', fontSize: 8, fill: '#ef4444' }}
-                        />
-                      ))}
-                      <Line
-                        type="monotone"
-                        dataKey="revenue"
-                        stroke="#dc2626"
-                        strokeWidth={1.5}
-                        dot={false}
-                        connectNulls={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="rolling28"
-                        stroke="#9ca3af"
-                        strokeWidth={1.5}
-                        strokeDasharray="5 3"
-                        dot={false}
-                        connectNulls={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </Card>
-
-              {/* Jobs Chart */}
-              <Card>
-                <p className="text-xs font-medium text-gray-700 mb-2">Jobs Completed per Day</p>
-                <ChartLegend />
-                <div className="h-52 mt-2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={jobsTrendData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} />
-                      <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
-                      <Tooltip
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        formatter={(value: any, name: any) => [
-                          typeof value === 'number' ? value.toFixed(1) : value,
-                          name === 'jobs' ? 'Jobs' : '28d Avg',
-                        ]}
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        labelFormatter={(_: any, payload: readonly any[]) =>
-                          (payload as any[])?.[0]?.payload?.rawDate ?? ''
-                        }
-                      />
-                      {annotationDates.map(d => (
-                        <ReferenceLine
-                          key={d}
-                          x={d}
-                          stroke="#ef4444"
-                          strokeDasharray="4 2"
-                          label={{ value: '●', position: 'top', fontSize: 8, fill: '#ef4444' }}
-                        />
-                      ))}
-                      <Line
-                        type="monotone"
-                        dataKey="jobs"
-                        stroke="#dc2626"
-                        strokeWidth={1.5}
-                        dot={false}
-                        connectNulls={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="rolling28"
-                        stroke="#9ca3af"
-                        strokeWidth={1.5}
-                        strokeDasharray="5 3"
-                        dot={false}
-                        connectNulls={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </Card>
             </div>
           </div>
 
@@ -866,14 +723,14 @@ export default function DashboardClient({
                 </div>
               </Card>
 
-              {/* Reschedule rate */}
+              {/* Reschedule rate (monthly) + detail table */}
               <Card className="md:col-span-2">
-                <p className="text-xs font-medium text-gray-700 mb-2">Reschedule Rate (Weekly)</p>
+                <p className="text-xs font-medium text-gray-700 mb-2">Reschedule Rate (Monthly)</p>
                 <div className="h-44">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={reschedChartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="week" tick={{ fontSize: 10 }} tickLine={false} />
+                      <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} />
                       <YAxis
                         tick={{ fontSize: 10 }}
                         tickFormatter={v => `${v}%`}
@@ -911,13 +768,80 @@ export default function DashboardClient({
                 {rescheduleTrend.trackingSince && (
                   <p className="text-xs text-gray-400 mt-1">Tracking since {rescheduleTrend.trackingSince}</p>
                 )}
+
+                {/* Reschedule detail table */}
+                <div className="mt-4 border-t border-gray-100 pt-3">
+                  <p className="text-xs font-medium text-gray-700 mb-2">Rescheduled Jobs (detail)</p>
+                  {rescheduleDetail.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-3 text-center">No reschedules recorded.</p>
+                  ) : (
+                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-white">
+                          <tr className="border-b border-gray-100">
+                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Job #</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Customer</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">From</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">To</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Reason</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">When</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {rescheduleDetail.map((r, i) => (
+                            <tr key={`${r.jobId}-${i}`} className="hover:bg-gray-50">
+                              <td className="py-2 px-3 text-xs font-medium text-gray-700">{r.number ?? '—'}</td>
+                              <td className="py-2 px-3 text-xs text-gray-700">{r.customer ?? '—'}</td>
+                              <td className="py-2 px-3 text-xs text-gray-500">{fmtDateTime(r.from)}</td>
+                              <td className="py-2 px-3 text-xs text-gray-500">{fmtDateTime(r.to)}</td>
+                              <td className="py-2 px-3 text-xs text-gray-500">{fmtReason(r.reason)}</td>
+                              <td className="py-2 px-3 text-xs text-gray-400">{fmtDateTime(r.observedAt)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </Card>
 
-              {/* Scheduled backlog */}
-              <Card>
-                <p className="text-xs text-gray-500 mb-1">Scheduled Backlog (Next 7 Days)</p>
-                <p className="text-2xl font-bold text-gray-900">{backlog.count}</p>
-                <p className="text-xs text-gray-400 mt-1">jobs scheduled</p>
+              {/* Weekly Job Volume — completed jobs per week, 2025 vs 2026 */}
+              <Card className="md:col-span-2">
+                <p className="text-xs font-medium text-gray-700 mb-2">Weekly Job Volume</p>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={weeklyJobVolume} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="week" tick={{ fontSize: 10 }} tickLine={false} interval={3} tickFormatter={v => `W${v}`} />
+                      <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
+                      <Tooltip
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        formatter={(v: any, name: any) => [v, name]}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        labelFormatter={(w: any) => `Week ${w}`}
+                      />
+                      <Legend
+                        wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                        onClick={(e) => {
+                          const key = e.dataKey as string
+                          setHiddenVolLines(prev => {
+                            const next = new Set(prev)
+                            next.has(key) ? next.delete(key) : next.add(key)
+                            return next
+                          })
+                        }}
+                        formatter={(value, entry) => (
+                          <span style={{ color: hiddenVolLines.has((entry as { dataKey?: string }).dataKey ?? '') ? '#d1d5db' : '#374151' }}>
+                            {value}
+                          </span>
+                        )}
+                      />
+                      <Line type="monotone" dataKey="jobs2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} hide={hiddenVolLines.has('jobs2025')} />
+                      <Line type="monotone" dataKey="jobs2026" name="2026" stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} hide={hiddenVolLines.has('jobs2026')} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Completed jobs per week of the year.</p>
               </Card>
             </div>
           </div>
@@ -1004,136 +928,65 @@ export default function DashboardClient({
             </Card>
           </div>
 
-          {/* Section 7 — Pipeline */}
+          {/* Section 7 — Jobs by Month (detail table) */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Pipeline</h2>
-            <div className="grid grid-cols-3 gap-3">
-              <Card>
-                <p className="text-xs text-gray-500 mb-1">Fresh (0–7d)</p>
-                <p className="text-xl font-bold text-gray-900">{pipeline.buckets.fresh}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{fmt$(pipeline.buckets.freshValue)}</p>
-              </Card>
-              <Card>
-                <p className="text-xs text-gray-500 mb-1">Aging (8–30d)</p>
-                <p className="text-xl font-bold text-yellow-700">{pipeline.buckets.aging}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{fmt$(pipeline.buckets.agingValue)}</p>
-              </Card>
-              <Card>
-                <p className="text-xs text-gray-500 mb-1">Old (30+d)</p>
-                <p className="text-xl font-bold text-red-600">{pipeline.buckets.old}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{fmt$(pipeline.buckets.oldValue)}</p>
-              </Card>
+            <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+              <h2 className="text-sm font-semibold text-gray-700">Jobs by Month</h2>
+              <select
+                value={detailMonth}
+                onChange={e => setDetailMonth(e.target.value)}
+                className="text-xs border border-gray-300 rounded-md px-2 py-1.5 text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
+              >
+                {monthOptions.map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
             </div>
-            <p className="text-xs text-gray-400 mt-2">
-              {pipeline.totalOpen} open estimates · {fmt$(pipeline.totalValue)} total value
-            </p>
-          </div>
-
-          {/* Section 8 — Annotations Manager */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Annotations</h2>
             <Card>
-              {/* Add annotation form */}
-              <form onSubmit={handleAddAnnotation} className="flex flex-col sm:flex-row gap-2 mb-4">
-                <input
-                  type="date"
-                  value={newDate}
-                  onChange={e => setNewDate(e.target.value)}
-                  required
-                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
-                />
-                <input
-                  type="text"
-                  value={newTitle}
-                  onChange={e => setNewTitle(e.target.value)}
-                  placeholder="Title"
-                  required
-                  className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
-                />
-                <input
-                  type="text"
-                  value={newNote}
-                  onChange={e => setNewNote(e.target.value)}
-                  placeholder="Note (optional)"
-                  className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-400"
-                />
-                <button
-                  type="submit"
-                  disabled={savingAnnotation}
-                  className="text-sm bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-md font-medium disabled:opacity-50 whitespace-nowrap"
-                >
-                  {savingAnnotation ? 'Saving…' : 'Add annotation'}
-                </button>
-              </form>
-
-              {/* Annotations list */}
-              {sortedAnnotations.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-4">No annotations yet.</p>
+              {monthLoading ? (
+                <p className="text-sm text-gray-400 py-4 text-center">Loading…</p>
+              ) : monthRows === null || monthRows.length === 0 ? (
+                <p className="text-sm text-gray-400 py-4 text-center">No jobs closed in this month.</p>
               ) : (
-                <div className="space-y-2">
-                  {sortedAnnotations.map(a => (
-                    <div key={a.id} className="flex items-start gap-3 py-2 border-b border-gray-100 last:border-0">
-                      {editingId === a.id ? (
-                        <div className="flex-1 flex flex-col sm:flex-row gap-2">
-                          <input
-                            type="date"
-                            value={editDate}
-                            onChange={e => setEditDate(e.target.value)}
-                            className="border border-gray-300 rounded px-2 py-1 text-xs"
-                          />
-                          <input
-                            type="text"
-                            value={editTitle}
-                            onChange={e => setEditTitle(e.target.value)}
-                            className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs"
-                          />
-                          <input
-                            type="text"
-                            value={editNote}
-                            onChange={e => setEditNote(e.target.value)}
-                            placeholder="Note"
-                            className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs"
-                          />
-                          <button
-                            onClick={() => handleSaveEdit(a.id)}
-                            className="text-xs bg-gray-900 text-white px-2 py-1 rounded font-medium"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => setEditingId(null)}
-                            className="text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <span className="shrink-0 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">
-                            {a.occurred_on}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900">{a.title}</p>
-                            {a.note && <p className="text-xs text-gray-500 mt-0.5">{a.note}</p>}
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button
-                              onClick={() => startEdit(a)}
-                              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteAnnotation(a.id)}
-                              className="text-xs text-red-600 hover:text-red-800 font-medium"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Customer</th>
+                        <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Job #</th>
+                        <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Source</th>
+                        <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Closed</th>
+                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Revenue</th>
+                        <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Amount Due</th>
+                        <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Tech(s)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {monthRows.map(r => (
+                        <tr key={r.id} className="hover:bg-gray-50">
+                          <td className="py-2 px-3 text-xs text-gray-700">{r.customer ?? '—'}</td>
+                          <td className="py-2 px-3 text-xs font-medium text-gray-700">{r.number ?? '—'}</td>
+                          <td className="py-2 px-3 text-xs text-gray-500">{r.source ?? '—'}</td>
+                          <td className="py-2 px-3 text-xs text-gray-500">{fmtDateTime(r.closedAt)}</td>
+                          <td className="py-2 px-3 text-right text-xs text-gray-700">{fmt$(r.revenue)}</td>
+                          <td className={`py-2 px-3 text-right text-xs ${r.amountDue > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
+                            {fmt$(r.amountDue)}
+                          </td>
+                          <td className="py-2 px-3 text-xs text-gray-500">{r.techs.length > 0 ? r.techs.join(', ') : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {monthTotals && (
+                      <tfoot>
+                        <tr className="border-t border-gray-200 font-medium">
+                          <td className="py-2 px-3 text-xs text-gray-700" colSpan={4}>{monthTotals.count} jobs</td>
+                          <td className="py-2 px-3 text-right text-xs text-gray-900">{fmt$(monthTotals.totalRevenue)}</td>
+                          <td className="py-2 px-3 text-right text-xs text-gray-900">{fmt$(monthTotals.totalDue)}</td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
                 </div>
               )}
             </Card>
