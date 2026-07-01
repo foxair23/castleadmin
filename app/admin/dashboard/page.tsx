@@ -73,11 +73,17 @@ export default async function DashboardPage() {
         .gte('closed_at', daysAgo(90))
         .order('id', { ascending: true })
         .range(f, t)),
-    // Online scheduling leads — for the "Jobs Synced to SF vs Partial Leads by
-    // month" section. Bucketed by created_at (month the lead came in).
-    fetchAllRows<{ created_at: string | null; synced_at: string | null; is_partial: boolean | null }>((f, t) =>
+    // Online scheduling leads that have been acknowledged ("Done"). These make
+    // up both the by-month bar chart and the per-submission table below it.
+    fetchAllRows<{
+      id: string; created_at: string | null; synced_at: string | null; is_partial: boolean | null
+      service_type: string | null; service_category: string | null; appointment_date: string | null
+      customer_first_name: string | null; customer_last_name: string | null
+      service_fusion_job_id: string | null; acknowledged_at: string | null; acknowledged_by: string | null
+    }>((f, t) =>
       db.from('scheduler_leads')
-        .select('created_at, synced_at, is_partial, id')
+        .select('id, created_at, synced_at, is_partial, service_type, service_category, appointment_date, customer_first_name, customer_last_name, service_fusion_job_id, acknowledged_at, acknowledged_by')
+        .not('acknowledged_at', 'is', null)
         .order('id', { ascending: true })
         .range(f, t)),
   ])
@@ -122,20 +128,47 @@ export default async function DashboardPage() {
     jobs2026: cntByYearMonth[2026][i],
   }))
 
-  // Online scheduling volume by month — leads synced to SF vs partial leads,
-  // bucketed by the month the lead came in (created_at). Synced and partial are
-  // disjoint (a synced lead has synced_at; a partial lead is incomplete).
+  // Online scheduling — acknowledged ("Done") submissions only. The bar chart
+  // aggregates these by month (synced to SF vs partial), and the table lists the
+  // individual submissions that make up those bars. A lead counts as 'synced'
+  // when synced_at is set, else 'partial' when incomplete (the two are disjoint).
+  const doneLeads = schedulerLeads.filter(l => l.synced_at || l.is_partial)
+
   const schedByMonth: Record<string, { synced: number; partial: number }> = {}
-  for (const l of schedulerLeads) {
+  for (const l of doneLeads) {
     const ym = l.created_at?.slice(0, 7)
     if (!ym) continue
     if (!schedByMonth[ym]) schedByMonth[ym] = { synced: 0, partial: 0 }
     if (l.synced_at) schedByMonth[ym].synced++
-    else if (l.is_partial) schedByMonth[ym].partial++
+    else schedByMonth[ym].partial++
   }
   const schedulingByMonth = Object.entries(schedByMonth)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([ym, v]) => ({ ym, label: monthLabelShort(ym), synced: v.synced, partial: v.partial }))
+
+  // Resolve acknowledger names for the per-submission table.
+  const ackByIds = [...new Set(doneLeads.map(l => l.acknowledged_by).filter((id): id is string => !!id))]
+  const ackNameMap = new Map<string, string>()
+  if (ackByIds.length > 0) {
+    const { data: ackProfiles } = await db.from('profiles').select('id, full_name').in('id', ackByIds)
+    for (const p of (ackProfiles ?? []) as { id: string; full_name: string | null }[]) {
+      ackNameMap.set(p.id, p.full_name ?? '')
+    }
+  }
+  const schedulingDone = [...doneLeads]
+    .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+    .map(l => ({
+      id: l.id,
+      createdAt: l.created_at,
+      customerName: [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ') || 'Unknown',
+      serviceType: l.service_type,
+      serviceCategory: l.service_category,
+      appointmentDate: l.appointment_date,
+      kind: (l.synced_at ? 'synced' : 'partial') as 'synced' | 'partial',
+      sfJobId: l.service_fusion_job_id ?? null,
+      acknowledgedAt: l.acknowledged_at,
+      acknowledgedBy: l.acknowledged_by ? (ackNameMap.get(l.acknowledged_by) ?? null) : null,
+    }))
 
   // Capacity
   type CapWeek = { sameDayCount: number; total: number; leadTimeDays: number[] }
@@ -253,6 +286,7 @@ export default async function DashboardPage() {
       capacityWeeks={capacityWeeks}
       jobsPerMonth={jobsPerMonth}
       schedulingByMonth={schedulingByMonth}
+      schedulingDone={schedulingDone}
       techScoreboard={techScoreboard}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
