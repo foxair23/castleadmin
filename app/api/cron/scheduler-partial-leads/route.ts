@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   const { data: leads } = await supabase
     .from('scheduler_leads')
-    .select('id, customer_first_name, customer_phone')
+    .select('id, customer_first_name, customer_phone, created_at')
     .eq('is_partial', true)
     .is('partial_notified_at', null)
     .lt('created_at', cutoff)
@@ -43,8 +43,16 @@ export async function GET(req: NextRequest) {
   const { data: salesUsers } = await supabase
     .from('profiles').select('id').eq('role', 'sales').eq('is_active', true)
 
+  // Lead date (when it came in), formatted in the business timezone.
+  const fmtDate = (iso: string | null) =>
+    iso
+      ? new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric',
+        }).format(new Date(iso))
+      : '—'
+
   let notified = 0
-  for (const lead of list as Array<{ id: string; customer_first_name: string | null; customer_phone: string | null }>) {
+  for (const lead of list as Array<{ id: string; customer_first_name: string | null; customer_phone: string | null; created_at: string | null }>) {
     const { bodyHtml, bodyText } = renderSchedulerLeadStuck({
       customerName: lead.customer_first_name ?? 'Customer',
       phoneNumber: lead.customer_phone ?? '—',
@@ -53,7 +61,7 @@ export async function GET(req: NextRequest) {
       reason: 'manual_push',
       adminUrl,
     })
-    const subject = 'Action Item: Partial Lead'
+    const subject = `Partial Lead: ${lead.customer_first_name?.trim() || 'Customer'} — ${fmtDate(lead.created_at)}`
 
     await enqueueForSubscribers({
       notificationTypeKey: 'scheduler_lead_stuck',
