@@ -101,9 +101,8 @@ export default async function DashboardPage() {
   const outstandingAR = (arData ?? []).reduce((s: number, r: { balance_due?: number | null }) => s + (r.balance_due ?? 0), 0)
   const openEstimatesValue = (openEstimates ?? []).reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
 
-  // Average weekly job volume by month — completed-job count for each month
-  // divided by the number of weeks in that month (days ÷ 7), split by year so
-  // 2025 and 2026 can be compared on the same axis.
+  // Jobs per month — completed-job count for each month, split by year so 2025
+  // and 2026 can be compared on the same axis.
   const cntByYearMonth: Record<number, number[]> = { 2025: Array(12).fill(0), 2026: Array(12).fill(0) }
   for (const r of jobVolumeRows) {
     const ymd = r.closed_at?.slice(0, 10)
@@ -113,12 +112,11 @@ export default async function DashboardPage() {
     const mo = Number(ymd.slice(5, 7)) - 1
     if (mo >= 0 && mo < 12) cntByYearMonth[year][mo]++
   }
-  const daysInMonth = (y: number, m0: number) => new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate()
   const MONTH_LABELS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-  const avgWeeklyVolume = MONTH_LABELS_SHORT.map((label, i) => ({
+  const jobsPerMonth = MONTH_LABELS_SHORT.map((label, i) => ({
     month: label,
-    avg2025: +(cntByYearMonth[2025][i] / (daysInMonth(2025, i) / 7)).toFixed(1),
-    avg2026: +(cntByYearMonth[2026][i] / (daysInMonth(2026, i) / 7)).toFixed(1),
+    jobs2025: cntByYearMonth[2025][i],
+    jobs2026: cntByYearMonth[2026][i],
   }))
 
   // Capacity
@@ -293,7 +291,7 @@ export default async function DashboardPage() {
       capacityWeeks={capacityWeeks}
       rescheduleTrend={rescheduleTrend}
       rescheduleDetail={rescheduleDetail}
-      avgWeeklyVolume={avgWeeklyVolume}
+      jobsPerMonth={jobsPerMonth}
       techScoreboard={techScoreboard}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
