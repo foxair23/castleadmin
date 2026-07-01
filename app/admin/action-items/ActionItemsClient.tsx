@@ -35,6 +35,17 @@ function fmtDate(dateStr: string | null | undefined): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// Date + time in the business timezone, e.g. "Jul 1, 2026, 2:34 PM".
+function fmtDateTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/Los_Angeles',
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  })
+}
+
 function AgingPill({ days }: { days: number }) {
   const cls =
     days <= 7
@@ -486,6 +497,7 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <SortTh col="created_at" label="Submitted" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -498,6 +510,7 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
         <tbody className="divide-y divide-gray-100">
           {sorted.map(lead => (
             <tr key={lead.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDateTime(lead.created_at)}</td>
               <td className="px-4 py-2 font-medium text-gray-900">{lead.customer_name}</td>
               <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">
