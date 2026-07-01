@@ -4,6 +4,11 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import DashboardClient from './DashboardClient'
 import { getTechScoreboard } from '@/lib/analytics/metrics'
 
+// Business acquisition date. Open-work and pipeline measures are scoped to
+// activity since this date so pre-acquisition Service Fusion history doesn't
+// inflate current counts.
+const ACQUISITION_DATE = '2026-04-24'
+
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -27,39 +32,31 @@ export default async function DashboardPage() {
   // order-independent, so ordering by id only serves stable pagination.
   const todayStr = today()
   const [
-    recentInvoices,
     { count: openJobsCount },
     openEstimates,
     arData,
-    revenueDays,
-    completedJobs,
     capacityJobs,
     schedHistory,
-    { data: annotations },
-    { count: backlogCount },
+    backlogJobs,
     { data: lastSyncLog },
     closedJobsRevenue,
   ] = await Promise.all([
-    fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
-      db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
-    // Only count open jobs created since the April 24, 2026 acquisition —
-    // historical pre-acquisition jobs otherwise inflate this number into the
-    // thousands.
-    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('created_at_sf', '2026-04-24'),
+    // Only count open jobs created since the acquisition — historical
+    // pre-acquisition jobs otherwise inflate this number into the thousands.
+    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('created_at_sf', ACQUISITION_DATE),
     fetchAllRows<{ id: string; total: number | null; status: string | null; created_at_sf: string | null }>((f, t) =>
-      db.from('sf_estimates_cache').select('id, total, status, created_at_sf').not('status', 'in', '("accepted","declined","Accepted","Declined")').gte('created_at_sf', '2026-04-24').order('id', { ascending: true }).range(f, t)),
+      db.from('sf_estimates_cache').select('id, total, status, created_at_sf').not('status', 'in', '("accepted","declined","Accepted","Declined")').gte('created_at_sf', ACQUISITION_DATE).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ balance_due: number | null }>((f, t) =>
       db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0).order('id', { ascending: true }).range(f, t)),
-    fetchAllRows<{ issued_at: string | null; total: number | null }>((f, t) =>
-      db.from('sf_invoices_cache').select('issued_at, total').gte('issued_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
-    fetchAllRows<{ completed_at: string | null }>((f, t) =>
-      db.from('sf_jobs_cache').select('completed_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ completed_at: string | null; original_scheduled_at: string | null }>((f, t) =>
       db.from('sf_jobs_cache').select('completed_at, original_scheduled_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).not('original_scheduled_at', 'is', null).order('id', { ascending: true }).range(f, t)),
-    fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null }>((f, t) =>
-      db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, id').gte('observed_at', daysAgo(90)).order('id', { ascending: true }).range(f, t)),
-    db.from('dashboard_annotations').select('*').order('occurred_on'),
-    db.from('sf_jobs_cache').select('id', { count: 'exact', head: true }).eq('is_closed', false).gte('scheduled_at', todayStr).lte('scheduled_at', daysAgo(-7)),
+    // Schedule-change history over ~6 months so the monthly reschedule trend and
+    // detail table have enough data.
+    fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null; scheduled_at: string | null; previous_scheduled_at: string | null; job_status_at_change: string | null }>((f, t) =>
+      db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, scheduled_at, previous_scheduled_at, job_status_at_change, id').gte('observed_at', daysAgo(180)).order('id', { ascending: true }).range(f, t)),
+    // Open jobs scheduled from today forward — bucketed by week for the backlog chart.
+    fetchAllRows<{ id: string; scheduled_at: string | null }>((f, t) =>
+      db.from('sf_jobs_cache').select('id, scheduled_at').eq('is_closed', false).gte('scheduled_at', todayStr).order('id', { ascending: true }).range(f, t)),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
     // Revenue Today / This Week / 28-day avg — same logic as monthly_job_revenue RPC:
     // sum(sf_jobs.total) bucketed by closed_at, excluding deleted + cancelled/void jobs.
@@ -96,29 +93,22 @@ export default async function DashboardPage() {
   const outstandingAR = (arData ?? []).reduce((s: number, r: { balance_due?: number | null }) => s + (r.balance_due ?? 0), 0)
   const openEstimatesValue = (openEstimates ?? []).reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
 
-  // Build revenue trend
-  const revByDay: Record<string, number> = {}
-  for (const r of (revenueDays ?? []) as { issued_at?: string | null; total?: number | null }[]) {
-    const d = r.issued_at?.slice(0, 10) ?? ''
-    if (d) revByDay[d] = (revByDay[d] ?? 0) + (r.total ?? 0)
+  // Scheduled backlog — open jobs per week going forward (next 8 weeks).
+  const BACKLOG_WEEKS = 8
+  const firstWeek = weekStartStr(new Date(todayStr + 'T00:00:00'))
+  const backlogByWeek: Record<string, number> = {}
+  for (let i = 0; i < BACKLOG_WEEKS; i++) {
+    const d = new Date(firstWeek + 'T00:00:00'); d.setDate(d.getDate() + i * 7)
+    backlogByWeek[d.toISOString().slice(0, 10)] = 0
   }
-  const revenueTrend = buildDayArray(90).map((date, i, arr) => {
-    const revenue = revByDay[date] ?? 0
-    const rolling28 = i >= 27 ? arr.slice(i - 27, i + 1).reduce((s, d) => s + (revByDay[d] ?? 0), 0) / 28 : null
-    return { date, revenue, rolling28 }
-  })
-
-  // Jobs trend
-  const jobsByDay: Record<string, number> = {}
-  for (const r of (completedJobs ?? []) as { completed_at?: string | null }[]) {
-    const d = r.completed_at?.slice(0, 10) ?? ''
-    if (d) jobsByDay[d] = (jobsByDay[d] ?? 0) + 1
+  for (const j of backlogJobs) {
+    if (!j.scheduled_at) continue
+    const w = weekStartStr(new Date(j.scheduled_at))
+    if (w in backlogByWeek) backlogByWeek[w]++
   }
-  const jobsTrend = buildDayArray(90).map((date, i, arr) => {
-    const jobs = jobsByDay[date] ?? 0
-    const rolling28 = i >= 27 ? arr.slice(i - 27, i + 1).reduce((s, d) => s + (jobsByDay[d] ?? 0), 0) / 28 : null
-    return { date, jobs, rolling28 }
-  })
+  const backlogWeeks = Object.entries(backlogByWeek)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([week, count]) => ({ week, count }))
 
   // Capacity
   type CapWeek = { sameDayCount: number; total: number; leadTimeDays: number[] }
@@ -141,30 +131,61 @@ export default async function DashboardPage() {
     totalJobs: v.total,
   }))
 
-  // Reschedule trend
-  const schedHistoryTyped = (schedHistory ?? []) as { sf_job_id?: string | null; change_type?: string | null; reschedule_reason?: string | null; observed_at?: string | null }[]
+  // Reschedule trend — bucketed by MONTH now (was weekly).
+  const schedHistoryTyped = (schedHistory ?? []) as { sf_job_id?: string | null; change_type?: string | null; reschedule_reason?: string | null; observed_at?: string | null; scheduled_at?: string | null; previous_scheduled_at?: string | null; job_status_at_change?: string | null }[]
   const firstInitial = schedHistoryTyped.find(r => r.change_type === 'initial')
   const trackingSince = firstInitial?.observed_at?.slice(0, 10) ?? null
-  type RWeek = { rescheduled: number; partsRescheduled: number; totalInitial: number }
-  const reschedByWeek: Record<string, RWeek> = {}
+  type RMonth = { rescheduled: number; partsRescheduled: number; totalInitial: number }
+  const reschedByMonth: Record<string, RMonth> = {}
   for (const row of schedHistoryTyped) {
     if (!row.observed_at) continue
-    const w = weekStartStr(new Date(row.observed_at))
-    if (!reschedByWeek[w]) reschedByWeek[w] = { rescheduled: 0, partsRescheduled: 0, totalInitial: 0 }
-    if (row.change_type === 'initial') reschedByWeek[w].totalInitial++
+    const m = row.observed_at.slice(0, 7) // YYYY-MM
+    if (!reschedByMonth[m]) reschedByMonth[m] = { rescheduled: 0, partsRescheduled: 0, totalInitial: 0 }
+    if (row.change_type === 'initial') reschedByMonth[m].totalInitial++
     if (row.change_type === 'rescheduled') {
-      reschedByWeek[w].rescheduled++
-      if (row.reschedule_reason === 'parts_or_incomplete') reschedByWeek[w].partsRescheduled++
+      reschedByMonth[m].rescheduled++
+      if (row.reschedule_reason === 'parts_or_incomplete') reschedByMonth[m].partsRescheduled++
     }
   }
   const rescheduleTrend = {
     trackingSince,
-    weeks: Object.entries(reschedByWeek).sort(([a], [b]) => a.localeCompare(b)).map(([week, v]) => ({
-      week,
+    months: Object.entries(reschedByMonth).sort(([a], [b]) => a.localeCompare(b)).map(([month, v]) => ({
+      month,
       rescheduleRate: v.totalInitial > 0 ? v.rescheduled / v.totalInitial : null,
       partsRescheduleRate: v.totalInitial > 0 ? v.partsRescheduled / v.totalInitial : null,
     })),
   }
+
+  // Reschedule detail — one row per reschedule event (most recent first),
+  // enriched with the job's customer + number so it can be looked into.
+  const reschedEvents = schedHistoryTyped
+    .filter(r => r.change_type === 'rescheduled' && r.observed_at)
+    .sort((a, b) => (b.observed_at ?? '').localeCompare(a.observed_at ?? ''))
+    .slice(0, 200)
+  const reschedJobIds = [...new Set(reschedEvents.map(r => r.sf_job_id).filter((id): id is string => !!id))]
+  const reschedJobInfo = new Map<string, { number: string | null; customer_name: string | null }>()
+  if (reschedJobIds.length > 0) {
+    const CHUNK = 500
+    for (let i = 0; i < reschedJobIds.length; i += CHUNK) {
+      const { data } = await db.from('sf_jobs').select('id, number, customer_name').in('id', reschedJobIds.slice(i, i + CHUNK))
+      for (const j of (data ?? []) as { id: string; number: string | null; customer_name: string | null }[]) {
+        reschedJobInfo.set(j.id, { number: j.number, customer_name: j.customer_name })
+      }
+    }
+  }
+  const rescheduleDetail = reschedEvents.map(r => {
+    const info = r.sf_job_id ? reschedJobInfo.get(r.sf_job_id) : undefined
+    return {
+      jobId: r.sf_job_id ?? '',
+      number: info?.number ?? null,
+      customer: info?.customer_name ?? null,
+      from: r.previous_scheduled_at ?? null,
+      to: r.scheduled_at ?? null,
+      reason: r.reschedule_reason ?? null,
+      status: r.job_status_at_change ?? null,
+      observedAt: r.observed_at ?? null,
+    }
+  })
 
   // Tech scoreboard
   const currentWeekStart = weekStartStr(new Date())
@@ -245,17 +266,6 @@ export default async function DashboardPage() {
       return totalB - totalA
     })
 
-  // Pipeline buckets
-  const now = Date.now()
-  const buckets = { fresh: 0, aging: 0, old: 0, freshValue: 0, agingValue: 0, oldValue: 0 }
-  for (const est of (openEstimates ?? []) as { total?: number | null; created_at_sf?: string | null }[]) {
-    const age = est.created_at_sf ? (now - new Date(est.created_at_sf).getTime()) / 86_400_000 : 999
-    const val = est.total ?? 0
-    if (age <= 7) { buckets.fresh++; buckets.freshValue += val }
-    else if (age <= 30) { buckets.aging++; buckets.agingValue += val }
-    else { buckets.old++; buckets.oldValue += val }
-  }
-
   return (
     <DashboardClient
       hasData={hasData}
@@ -269,14 +279,11 @@ export default async function DashboardPage() {
         openEstimatesValue,
         outstandingAR,
       }}
-      revenueTrend={revenueTrend}
-      jobsTrend={jobsTrend}
       capacityWeeks={capacityWeeks}
       rescheduleTrend={rescheduleTrend}
+      rescheduleDetail={rescheduleDetail}
+      backlogWeeks={backlogWeeks}
       techScoreboard={techScoreboard}
-      pipeline={{ totalOpen: openEstimates?.length ?? 0, totalValue: openEstimatesValue, buckets }}
-      annotations={(annotations ?? []) as { id: string; occurred_on: string; title: string; note: string | null }[]}
-      backlog={{ count: backlogCount ?? 0 }}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
       techMonthlyRevenue={techMonthlyRevenue}
@@ -300,10 +307,21 @@ async function fetchAllRows<T>(
   return out
 }
 
-function today(): string { return new Date().toISOString().slice(0, 10) }
-function daysAgo(n: number): string { return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10) }
-function buildDayArray(days: number): string[] {
-  return Array.from({ length: days + 1 }, (_, i) => daysAgo(days - i))
+// Dates are computed in America/Los_Angeles because Service Fusion stores job
+// timestamps as Pacific wall-clock (no offset), so closed_at's date portion is
+// the PT calendar date. Using UTC here made "today" roll over ~4–5pm PT, which
+// is why Revenue Today read $0 whenever the dashboard was viewed in the
+// afternoon/evening.
+function today(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+function daysAgo(n: number): string {
+  const [y, m, d] = today().split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() - n)
+  return dt.toISOString().slice(0, 10)
 }
 function weekStartStr(d: Date): string {
   const day = d.getDay()
