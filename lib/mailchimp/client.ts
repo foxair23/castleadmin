@@ -260,12 +260,47 @@ async function resolveSmsAudienceId(): Promise<string> {
   return cachedSmsAudienceId
 }
 
+// The marketing_consent status Mailchimp accepts depends on the audience's
+// opt-in configuration. Single opt-in audiences REJECT 'consented' ("not
+// supported for single optin audience") and 'confirmed' (that's for double
+// opt-in), so 'unknown' is the accepted value there — the single-opt-in config
+// itself drives the subscription. Double opt-in audiences use 'confirmed'.
+let cachedConsentStatus: string | null = null
+async function resolveConsentStatus(): Promise<string> {
+  if (cachedConsentStatus) return cachedConsentStatus
+  let doubleOptin = false
+  try {
+    const r = await mcFetch(`/lists/${AUDIENCE_ID}?fields=double_optin`)
+    if (r.ok) doubleOptin = !!(await r.json()).double_optin
+  } catch { /* default to single opt-in */ }
+  cachedConsentStatus = doubleOptin ? 'confirmed' : 'unknown'
+  return cachedConsentStatus
+}
+
+// POST a contact with an SMS channel + marketing consent to the Audiences API.
+// Returns the parsed response so callers can inspect effective_subscription_status.
+async function postAudienceContact(
+  audienceId: string, email: string, e164: string, consentStatus: string, sourceName: string, capturedAt: string,
+): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
+  const consent = { status: consentStatus, source: { name: sourceName }, captured_at: capturedAt }
+  const res = await mcFetch(`/audiences/${audienceId}/contacts`, {
+    method: 'POST',
+    body: JSON.stringify({
+      email_channel: { email, marketing_consent: consent },
+      sms_channel: { sms_phone: e164, marketing_consent: consent },
+      update_existing: true,
+    }),
+  })
+  const body = await res.json().catch(() => ({}))
+  return { ok: res.ok, status: res.status, body }
+}
+
 // Add/refresh the SMS channel (E.164 number + marketing consent) for contacts
 // with a valid number, via the Audiences API. update_existing merges onto the
 // contact the classic upsert already created (matched by email), or creates it.
-// status 'consented' opts them into SMS marketing (single opt-in). Runs with
-// limited concurrency to respect Mailchimp's ~10 simultaneous-connection cap;
-// hard rejections are surfaced in `errors`.
+// The consent status is chosen to match the audience's opt-in config (see
+// resolveConsentStatus). Runs with limited concurrency to respect Mailchimp's
+// ~10 simultaneous-connection cap; hard rejections are surfaced in `errors`.
 async function setSmsPhones(
   contacts: MailchimpContact[],
 ): Promise<{ set: number; skipped: number; failed: number; errors: { email: string; error: string }[] }> {
@@ -279,6 +314,7 @@ async function setSmsPhones(
   if (eligible.length === 0) return out
 
   const audienceId = await resolveSmsAudienceId()
+  const consentStatus = await resolveConsentStatus()
   const capturedAt = new Date().toISOString()
 
   // Tally the effective SMS subscription status Mailchimp reports back. A 2xx
@@ -293,31 +329,16 @@ async function setSmsPhones(
     const slice = eligible.slice(i, i + CONCURRENCY)
     await Promise.all(slice.map(async ({ email, e164 }) => {
       try {
-        const consent = {
-          status: 'consented',
-          source: { name: 'Castle Admin marketing push' },
-          captured_at: capturedAt,
-        }
-        const res = await mcFetch(`/audiences/${audienceId}/contacts`, {
-          method: 'POST',
-          body: JSON.stringify({
-            // email_channel.marketing_consent is required by this endpoint even
-            // though the spec marks it optional (Mailchimp returns a 400
-            // otherwise). These contacts are already email-subscribed via the
-            // classic upsert, so 'consented' just affirms that.
-            email_channel: { email, marketing_consent: consent },
-            sms_channel: { sms_phone: e164, marketing_consent: consent },
-            update_existing: true,
-          }),
-        })
-        const body = await res.json().catch(() => ({}))
-        if (res.ok) {
+        const { ok, status, body } = await postAudienceContact(
+          audienceId, email, e164, consentStatus, 'Castle Admin marketing push', capturedAt,
+        )
+        if (ok) {
           out.set++
-          const eff = body?.sms_channel?.effective_subscription_status
+          const eff = (body as { sms_channel?: { effective_subscription_status?: string } })?.sms_channel?.effective_subscription_status
           if (eff) effStatus[String(eff)] = (effStatus[String(eff)] ?? 0) + 1
         } else {
           out.failed++
-          const msg = body?.detail ?? body?.title ?? `HTTP ${res.status}`
+          const msg = (body as { detail?: string; title?: string })?.detail ?? (body as { title?: string })?.title ?? `HTTP ${status}`
           console.error('[mailchimp] sms_channel set failed:', email, msg)
           out.errors.push({ email, error: `SMS phone: ${msg}` })
         }
@@ -381,47 +402,41 @@ export async function debugSms(email: string | null, phone: string | null): Prom
   }
 
   const audienceId = await resolveSmsAudienceId()
-  steps.push({ step: 'resolved audience id', audienceId, equalsListId: audienceId === AUDIENCE_ID })
+  const consentStatus = await resolveConsentStatus()
+  steps.push({ step: 'resolved audience id', audienceId, equalsListId: audienceId === AUDIENCE_ID, consentStatusUsedByPush: consentStatus })
 
-  // 3. The actual SMS write — capture raw status + full body (incl. sms_channel
-  //    with effective_subscription_status), whether it succeeds or errors.
-  //    Only runs when both email and a normalizable phone are supplied; without
-  //    them the read-only checks above still return useful info.
+  // 3. The actual SMS write. Try each supported consent value and report the
+  //    resulting effective_subscription_status so we can see which one actually
+  //    subscribes the contact for THIS audience's opt-in config. Only runs when
+  //    both email and a normalizable phone are supplied.
   if (!email || !phone) {
     steps.push({ step: 'POST contact', skipped: true, reason: 'pass ?email= and ?phone= to run the write test' })
   } else if (!e164) {
     steps.push({ step: 'toE164', input: phone, result: 'could not normalize to E.164 — would be skipped' })
   } else {
-    try {
-      const consent = {
-        status: 'consented',
-        source: { name: 'Castle Admin SMS debug' },
-        captured_at: new Date().toISOString(),
+    const capturedAt = new Date().toISOString()
+    const attempts: Record<string, unknown>[] = []
+    for (const status of ['unknown', 'confirmed', 'consented'] as const) {
+      try {
+        const { ok, status: httpStatus, body } = await postAudienceContact(
+          audienceId, email, e164, status, 'Castle Admin SMS debug', capturedAt,
+        )
+        const sms = (body as { sms_channel?: { effective_subscription_status?: string } })?.sms_channel
+        attempts.push({
+          consentStatusSent: status,
+          httpStatus,
+          ok,
+          effective_subscription_status: sms?.effective_subscription_status ?? null,
+          error: ok ? null : ((body as { detail?: string })?.detail ?? (body as { title?: string })?.title ?? null),
+        })
+      } catch (e) {
+        attempts.push({ consentStatusSent: status, error: String(e) })
       }
-      const r = await mcFetch(`/audiences/${audienceId}/contacts`, {
-        method: 'POST',
-        body: JSON.stringify({
-          email_channel: { email, marketing_consent: consent },
-          sms_channel: { sms_phone: e164, marketing_consent: consent },
-          update_existing: true,
-        }),
-      })
-      const body = await r.json().catch(() => ({}))
-      steps.push({
-        step: `POST /audiences/${audienceId}/contacts`,
-        status: r.status,
-        ok: r.ok,
-        contactId: (body as { id?: string })?.id ?? null,
-        topStatus: (body as { status?: string })?.status ?? null,
-        sms_channel: (body as { sms_channel?: unknown })?.sms_channel ?? null,
-        fullBody: body,
-      })
-    } catch (e) {
-      steps.push({ step: 'POST contact', error: String(e) })
     }
+    steps.push({ step: `POST /audiences/${audienceId}/contacts (consent-value sweep)`, attempts })
   }
 
-  return { config, e164, resolvedAudienceId: audienceId, steps }
+  return { config, e164, resolvedAudienceId: audienceId, consentStatusUsedByPush: consentStatus, steps }
 }
 
 export async function pushContacts(contacts: MailchimpContact[], tag: string): Promise<PushResult> {
