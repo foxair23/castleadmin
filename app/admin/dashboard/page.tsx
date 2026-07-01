@@ -50,10 +50,10 @@ export default async function DashboardPage() {
       db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ completed_at: string | null; original_scheduled_at: string | null }>((f, t) =>
       db.from('sf_jobs_cache').select('completed_at, original_scheduled_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).not('original_scheduled_at', 'is', null).order('id', { ascending: true }).range(f, t)),
-    // Schedule-change history over ~6 months so the monthly reschedule trend and
-    // detail table have enough data.
+    // Schedule-change history since the acquisition — the monthly reschedule
+    // trend and detail table only reflect activity under current ownership.
     fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null; scheduled_at: string | null; previous_scheduled_at: string | null; job_status_at_change: string | null }>((f, t) =>
-      db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, scheduled_at, previous_scheduled_at, job_status_at_change, id').gte('observed_at', daysAgo(180)).order('id', { ascending: true }).range(f, t)),
+      db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, scheduled_at, previous_scheduled_at, job_status_at_change, id').gte('observed_at', ACQUISITION_DATE).order('id', { ascending: true }).range(f, t)),
     // Job volume by week for 2025 + 2026 — count of completed jobs, bucketed by
     // week of closed_at (same completion basis as Monthly Revenue).
     fetchAllRows<{ closed_at: string | null }>((f, t) =>
