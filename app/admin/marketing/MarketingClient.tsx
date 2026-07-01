@@ -41,6 +41,9 @@ interface PushResult {
   audience_errored: number
   tagged: number
   not_taggable: number
+  sms_set: number
+  sms_skipped: number
+  sms_failed: number
   errors: { email: string; error: string }[]
 }
 
@@ -229,7 +232,7 @@ export default function MarketingClient({
       if (ids.length === 0) { setPushError('No contacts to push'); setPushing(false); return }
 
       // 2. Push in chunks, aggregating results.
-      const agg: PushResult = { total: 0, audience_added: 0, audience_updated: 0, audience_unchanged: 0, audience_skipped: 0, audience_errored: 0, tagged: 0, not_taggable: 0, errors: [] }
+      const agg: PushResult = { total: 0, audience_added: 0, audience_updated: 0, audience_unchanged: 0, audience_skipped: 0, audience_errored: 0, tagged: 0, not_taggable: 0, sms_set: 0, sms_skipped: 0, sms_failed: 0, errors: [] }
       setPushProgress({ done: 0, total: ids.length })
 
       for (let i = 0; i < ids.length; i += PUSH_CHUNK) {
@@ -252,6 +255,7 @@ export default function MarketingClient({
               agg.audience_updated += r.audience_updated; agg.audience_unchanged += r.audience_unchanged
               agg.audience_skipped += r.audience_skipped; agg.audience_errored += r.audience_errored
               agg.tagged += r.tagged; agg.not_taggable += r.not_taggable
+              agg.sms_set += r.sms_set ?? 0; agg.sms_skipped += r.sms_skipped ?? 0; agg.sms_failed += r.sms_failed ?? 0
               if (r.errors?.length) agg.errors.push(...r.errors)
               done = true
             }
@@ -676,6 +680,25 @@ export default function MarketingClient({
                     <div className="flex justify-between text-xs">
                       <span className="text-yellow-500">Could not be tagged (unsubscribed / bounced)</span>
                       <span className="text-yellow-400">{pushResult.not_taggable}</span>
+                    </div>
+                  )}
+                  <div className="h-px bg-gray-700" />
+                  {/* SMS phone breakdown */}
+                  <p className="text-xs text-gray-500 uppercase tracking-wide font-medium pt-1">SMS phone</p>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">SMS number set (E.164)</span>
+                    <span className="text-green-400 font-medium">{pushResult.sms_set.toLocaleString()}</span>
+                  </div>
+                  {pushResult.sms_skipped > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">No / invalid phone (skipped)</span>
+                      <span className="text-gray-400">{pushResult.sms_skipped.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {pushResult.sms_failed > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-yellow-500">SMS update rejected</span>
+                      <span className="text-yellow-400">{pushResult.sms_failed.toLocaleString()}</span>
                     </div>
                   )}
                   <div className="h-px bg-gray-700" />
