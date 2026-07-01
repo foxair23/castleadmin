@@ -293,18 +293,20 @@ async function setSmsPhones(
     const slice = eligible.slice(i, i + CONCURRENCY)
     await Promise.all(slice.map(async ({ email, e164 }) => {
       try {
+        const consent = {
+          status: 'consented',
+          source: { name: 'Castle Admin marketing push' },
+          captured_at: capturedAt,
+        }
         const res = await mcFetch(`/audiences/${audienceId}/contacts`, {
           method: 'POST',
           body: JSON.stringify({
-            email_channel: { email },
-            sms_channel: {
-              sms_phone: e164,
-              marketing_consent: {
-                status: 'consented',
-                source: { name: 'Castle Admin marketing push' },
-                captured_at: capturedAt,
-              },
-            },
+            // email_channel.marketing_consent is required by this endpoint even
+            // though the spec marks it optional (Mailchimp returns a 400
+            // otherwise). These contacts are already email-subscribed via the
+            // classic upsert, so 'consented' just affirms that.
+            email_channel: { email, marketing_consent: consent },
+            sms_channel: { sms_phone: e164, marketing_consent: consent },
             update_existing: true,
           }),
         })
@@ -387,18 +389,16 @@ export async function debugSms(email: string, phone: string): Promise<Record<str
     steps.push({ step: 'toE164', input: phone, result: 'could not normalize to E.164 — would be skipped' })
   } else {
     try {
+      const consent = {
+        status: 'consented',
+        source: { name: 'Castle Admin SMS debug' },
+        captured_at: new Date().toISOString(),
+      }
       const r = await mcFetch(`/audiences/${audienceId}/contacts`, {
         method: 'POST',
         body: JSON.stringify({
-          email_channel: { email },
-          sms_channel: {
-            sms_phone: e164,
-            marketing_consent: {
-              status: 'consented',
-              source: { name: 'Castle Admin SMS debug' },
-              captured_at: new Date().toISOString(),
-            },
-          },
+          email_channel: { email, marketing_consent: consent },
+          sms_channel: { sms_phone: e164, marketing_consent: consent },
           update_existing: true,
         }),
       })
