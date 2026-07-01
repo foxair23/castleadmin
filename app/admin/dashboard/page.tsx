@@ -37,7 +37,7 @@ export default async function DashboardPage() {
     arData,
     capacityJobs,
     schedHistory,
-    backlogJobs,
+    jobVolumeRows,
     { data: lastSyncLog },
     closedJobsRevenue,
   ] = await Promise.all([
@@ -54,9 +54,17 @@ export default async function DashboardPage() {
     // detail table have enough data.
     fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null; scheduled_at: string | null; previous_scheduled_at: string | null; job_status_at_change: string | null }>((f, t) =>
       db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, scheduled_at, previous_scheduled_at, job_status_at_change, id').gte('observed_at', daysAgo(180)).order('id', { ascending: true }).range(f, t)),
-    // Open jobs scheduled from today forward — bucketed by week for the backlog chart.
-    fetchAllRows<{ id: string; scheduled_at: string | null }>((f, t) =>
-      db.from('sf_jobs_cache').select('id, scheduled_at').eq('is_closed', false).gte('scheduled_at', todayStr).order('id', { ascending: true }).range(f, t)),
+    // Job volume by week for 2025 + 2026 — count of completed jobs, bucketed by
+    // week of closed_at (same completion basis as Monthly Revenue).
+    fetchAllRows<{ closed_at: string | null }>((f, t) =>
+      db.from('sf_jobs')
+        .select('closed_at')
+        .eq('is_deleted', false)
+        .not('status', 'in', '("Cancelled","Void","Voided")')
+        .gte('closed_at', '2025-01-01')
+        .lt('closed_at', '2027-01-01')
+        .order('id', { ascending: true })
+        .range(f, t)),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
     // Revenue Today / This Week / 28-day avg — same logic as monthly_job_revenue RPC:
     // sum(sf_jobs.total) bucketed by closed_at, excluding deleted + cancelled/void jobs.
@@ -93,22 +101,21 @@ export default async function DashboardPage() {
   const outstandingAR = (arData ?? []).reduce((s: number, r: { balance_due?: number | null }) => s + (r.balance_due ?? 0), 0)
   const openEstimatesValue = (openEstimates ?? []).reduce((s: number, r: { total?: number | null }) => s + (r.total ?? 0), 0)
 
-  // Scheduled backlog — open jobs per week going forward (next 8 weeks).
-  const BACKLOG_WEEKS = 8
-  const firstWeek = weekStartStr(new Date(todayStr + 'T00:00:00'))
-  const backlogByWeek: Record<string, number> = {}
-  for (let i = 0; i < BACKLOG_WEEKS; i++) {
-    const d = new Date(firstWeek + 'T00:00:00'); d.setDate(d.getDate() + i * 7)
-    backlogByWeek[d.toISOString().slice(0, 10)] = 0
+  // Weekly job volume — completed-job counts per week-of-year, split by year so
+  // 2025 and 2026 can be compared on the same axis (weeks 1–52).
+  const volByYearWeek: Record<number, Record<number, number>> = { 2025: {}, 2026: {} }
+  for (const r of jobVolumeRows) {
+    const ymd = r.closed_at?.slice(0, 10)
+    if (!ymd) continue
+    const year = Number(ymd.slice(0, 4))
+    if (year !== 2025 && year !== 2026) continue
+    const wk = weekOfYear(ymd)
+    volByYearWeek[year][wk] = (volByYearWeek[year][wk] ?? 0) + 1
   }
-  for (const j of backlogJobs) {
-    if (!j.scheduled_at) continue
-    const w = weekStartStr(new Date(j.scheduled_at))
-    if (w in backlogByWeek) backlogByWeek[w]++
-  }
-  const backlogWeeks = Object.entries(backlogByWeek)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([week, count]) => ({ week, count }))
+  const weeklyJobVolume = Array.from({ length: 52 }, (_, i) => {
+    const week = i + 1
+    return { week, jobs2025: volByYearWeek[2025][week] ?? 0, jobs2026: volByYearWeek[2026][week] ?? 0 }
+  })
 
   // Capacity
   type CapWeek = { sameDayCount: number; total: number; leadTimeDays: number[] }
@@ -282,7 +289,7 @@ export default async function DashboardPage() {
       capacityWeeks={capacityWeeks}
       rescheduleTrend={rescheduleTrend}
       rescheduleDetail={rescheduleDetail}
-      backlogWeeks={backlogWeeks}
+      weeklyJobVolume={weeklyJobVolume}
       techScoreboard={techScoreboard}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
@@ -322,6 +329,16 @@ function daysAgo(n: number): string {
   const dt = new Date(Date.UTC(y, m - 1, d))
   dt.setUTCDate(dt.getUTCDate() - n)
   return dt.toISOString().slice(0, 10)
+}
+// Week-of-year (1–52) by day-of-year, so 2025 and 2026 line up on the same
+// axis. Week 53 is folded into 52. Parsed from the YYYY-MM-DD parts to avoid
+// timezone shifts.
+function weekOfYear(ymd: string): number {
+  const [y, m, d] = ymd.slice(0, 10).split('-').map(Number)
+  const start = Date.UTC(y, 0, 1)
+  const day = Date.UTC(y, m - 1, d)
+  const doy = Math.floor((day - start) / 86_400_000) + 1
+  return Math.min(52, Math.floor((doy - 1) / 7) + 1)
 }
 function weekStartStr(d: Date): string {
   const day = d.getDay()

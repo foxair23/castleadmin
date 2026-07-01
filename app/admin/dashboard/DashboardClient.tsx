@@ -42,7 +42,7 @@ interface Props {
     status: string | null
     observedAt: string | null
   }[]
-  backlogWeeks: { week: string; count: number }[]
+  weeklyJobVolume: { week: number; jobs2025: number; jobs2026: number }[]
   techScoreboard: {
     techId: string
     techName: string | null
@@ -385,7 +385,7 @@ export default function DashboardClient({
   capacityWeeks,
   rescheduleTrend,
   rescheduleDetail,
-  backlogWeeks,
+  weeklyJobVolume,
   techScoreboard,
   lastSync,
   monthlyRevenue,
@@ -402,6 +402,7 @@ export default function DashboardClient({
   const [techWeekLoading, setTechWeekLoading] = useState(false)
   const [techChartYear, setTechChartYear] = useState<2025 | 2026>(new Date().getFullYear() >= 2026 ? 2026 : 2025)
   const [hiddenRevLines, setHiddenRevLines] = useState<Set<string>>(new Set())
+  const [hiddenVolLines, setHiddenVolLines] = useState<Set<string>>(new Set())
 
   const fetchTechWeek = useCallback(async (wk: string) => {
     setTechWeekLoading(true)
@@ -473,11 +474,6 @@ export default function DashboardClient({
     month: formatMonthLabel(m.month),
     rescheduleRate: m.rescheduleRate !== null ? +(m.rescheduleRate * 100).toFixed(1) : null,
     partsRescheduleRate: m.partsRescheduleRate !== null ? +(m.partsRescheduleRate * 100).toFixed(1) : null,
-  }))
-
-  const backlogChartData = backlogWeeks.map(w => ({
-    week: formatWeekLabel(w.week),
-    count: w.count,
   }))
 
   return (
@@ -809,21 +805,43 @@ export default function DashboardClient({
                 </div>
               </Card>
 
-              {/* Scheduled backlog — jobs per week */}
+              {/* Weekly Job Volume — completed jobs per week, 2025 vs 2026 */}
               <Card className="md:col-span-2">
-                <p className="text-xs font-medium text-gray-700 mb-2">Scheduled Backlog (Jobs per Week)</p>
-                <div className="h-44">
+                <p className="text-xs font-medium text-gray-700 mb-2">Weekly Job Volume</p>
+                <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={backlogChartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                    <LineChart data={weeklyJobVolume} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="week" tick={{ fontSize: 10 }} tickLine={false} />
+                      <XAxis dataKey="week" tick={{ fontSize: 10 }} tickLine={false} interval={3} tickFormatter={v => `W${v}`} />
                       <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
-                      <Tooltip formatter={(v: any) => [v, 'Jobs scheduled']} />
-                      <Bar dataKey="count" fill="#dc2626" radius={[2, 2, 0, 0]} />
-                    </BarChart>
+                      <Tooltip
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        formatter={(v: any, name: any) => [v, name]}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        labelFormatter={(w: any) => `Week ${w}`}
+                      />
+                      <Legend
+                        wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                        onClick={(e) => {
+                          const key = e.dataKey as string
+                          setHiddenVolLines(prev => {
+                            const next = new Set(prev)
+                            next.has(key) ? next.delete(key) : next.add(key)
+                            return next
+                          })
+                        }}
+                        formatter={(value, entry) => (
+                          <span style={{ color: hiddenVolLines.has((entry as { dataKey?: string }).dataKey ?? '') ? '#d1d5db' : '#374151' }}>
+                            {value}
+                          </span>
+                        )}
+                      />
+                      <Line type="monotone" dataKey="jobs2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} hide={hiddenVolLines.has('jobs2025')} />
+                      <Line type="monotone" dataKey="jobs2026" name="2026" stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} hide={hiddenVolLines.has('jobs2026')} />
+                    </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <p className="text-xs text-gray-400 mt-1">Open jobs by scheduled week, starting this week.</p>
+                <p className="text-xs text-gray-400 mt-1">Completed jobs per week of the year.</p>
               </Card>
             </div>
           </div>
