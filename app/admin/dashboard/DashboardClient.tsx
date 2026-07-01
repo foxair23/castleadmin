@@ -28,20 +28,6 @@ interface Props {
     outstandingAR: number
   }
   capacityWeeks: { week: string; sameDayRate: number | null; medianLeadDays: number | null; totalJobs: number }[]
-  rescheduleTrend: {
-    trackingSince: string | null
-    months: { month: string; rescheduleRate: number | null; partsRescheduleRate: number | null }[]
-  }
-  rescheduleDetail: {
-    jobId: string
-    number: string | null
-    customer: string | null
-    from: string | null
-    to: string | null
-    reason: string | null
-    status: string | null
-    observedAt: string | null
-  }[]
   jobsPerMonth: { month: string; jobs2025: number; jobs2026: number }[]
   techScoreboard: {
     techId: string
@@ -80,16 +66,6 @@ function fmtDateTime(iso: string | null): string {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return '—'
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function fmtReason(reason: string | null): string {
-  if (!reason) return '—'
-  return reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
-
-function formatMonthLabel(ym: string): string {
-  const dt = new Date(ym + '-01T00:00:00')
-  return dt.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
 }
 
 // Recent months as { value: 'YYYY-MM', label: 'July 2026' }, newest first.
@@ -383,8 +359,6 @@ export default function DashboardClient({
   hasData,
   snapshotMetrics,
   capacityWeeks,
-  rescheduleTrend,
-  rescheduleDetail,
   jobsPerMonth,
   techScoreboard,
   lastSync,
@@ -468,12 +442,6 @@ export default function DashboardClient({
   const leadTimeChartData = capacityWeeks.map(w => ({
     week: formatWeekLabel(w.week),
     medianLeadDays: w.medianLeadDays !== null ? +w.medianLeadDays.toFixed(1) : null,
-  }))
-
-  const reschedChartData = rescheduleTrend.months.map(m => ({
-    month: formatMonthLabel(m.month),
-    rescheduleRate: m.rescheduleRate !== null ? +(m.rescheduleRate * 100).toFixed(1) : null,
-    partsRescheduleRate: m.partsRescheduleRate !== null ? +(m.partsRescheduleRate * 100).toFixed(1) : null,
   }))
 
   return (
@@ -720,88 +688,6 @@ export default function DashboardClient({
                       />
                     </LineChart>
                   </ResponsiveContainer>
-                </div>
-              </Card>
-
-              {/* Reschedule rate (monthly) + detail table */}
-              <Card className="md:col-span-2">
-                <p className="text-xs font-medium text-gray-700 mb-2">Reschedule Rate (Monthly)</p>
-                <div className="h-44">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={reschedChartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} />
-                      <YAxis
-                        tick={{ fontSize: 10 }}
-                        tickFormatter={v => `${v}%`}
-                        width={36}
-                      />
-                      <Tooltip formatter={(v: any, name: any) => [
-                        `${v}%`,
-                        name === 'rescheduleRate' ? 'Total reschedule rate' : 'Parts/incomplete rate',
-                      ]} />
-                      <Legend
-                        formatter={(value: string) =>
-                          value === 'rescheduleRate' ? 'Total reschedule' : 'Parts/incomplete'
-                        }
-                        wrapperStyle={{ fontSize: 11 }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="rescheduleRate"
-                        stroke="#6b7280"
-                        strokeWidth={1.5}
-                        dot={{ r: 3 }}
-                        connectNulls={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="partsRescheduleRate"
-                        stroke="#f97316"
-                        strokeWidth={1.5}
-                        dot={{ r: 3 }}
-                        connectNulls={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                {rescheduleTrend.trackingSince && (
-                  <p className="text-xs text-gray-400 mt-1">Tracking since {rescheduleTrend.trackingSince}</p>
-                )}
-
-                {/* Reschedule detail table */}
-                <div className="mt-4 border-t border-gray-100 pt-3">
-                  <p className="text-xs font-medium text-gray-700 mb-2">Rescheduled Jobs (detail)</p>
-                  {rescheduleDetail.length === 0 ? (
-                    <p className="text-sm text-gray-400 py-3 text-center">No reschedules recorded.</p>
-                  ) : (
-                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                      <table className="w-full text-sm">
-                        <thead className="sticky top-0 bg-white">
-                          <tr className="border-b border-gray-100">
-                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Job #</th>
-                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Customer</th>
-                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">From</th>
-                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">To</th>
-                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Reason</th>
-                            <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">When</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50">
-                          {rescheduleDetail.map((r, i) => (
-                            <tr key={`${r.jobId}-${i}`} className="hover:bg-gray-50">
-                              <td className="py-2 px-3 text-xs font-medium text-gray-700">{r.number ?? '—'}</td>
-                              <td className="py-2 px-3 text-xs text-gray-700">{r.customer ?? '—'}</td>
-                              <td className="py-2 px-3 text-xs text-gray-500">{fmtDateTime(r.from)}</td>
-                              <td className="py-2 px-3 text-xs text-gray-500">{fmtDateTime(r.to)}</td>
-                              <td className="py-2 px-3 text-xs text-gray-500">{fmtReason(r.reason)}</td>
-                              <td className="py-2 px-3 text-xs text-gray-400">{fmtDateTime(r.observedAt)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
                 </div>
               </Card>
 

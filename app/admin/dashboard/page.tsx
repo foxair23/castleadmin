@@ -36,7 +36,6 @@ export default async function DashboardPage() {
     openEstimates,
     arData,
     capacityJobs,
-    schedHistory,
     jobVolumeRows,
     { data: lastSyncLog },
     closedJobsRevenue,
@@ -50,10 +49,6 @@ export default async function DashboardPage() {
       db.from('sf_invoices_cache').select('balance_due').gt('balance_due', 0).order('id', { ascending: true }).range(f, t)),
     fetchAllRows<{ completed_at: string | null; original_scheduled_at: string | null }>((f, t) =>
       db.from('sf_jobs_cache').select('completed_at, original_scheduled_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).not('original_scheduled_at', 'is', null).order('id', { ascending: true }).range(f, t)),
-    // Schedule-change history since the acquisition — the monthly reschedule
-    // trend and detail table only reflect activity under current ownership.
-    fetchAllRows<{ sf_job_id: string | null; change_type: string | null; reschedule_reason: string | null; observed_at: string | null; scheduled_at: string | null; previous_scheduled_at: string | null; job_status_at_change: string | null }>((f, t) =>
-      db.from('sf_job_schedule_history').select('sf_job_id, change_type, reschedule_reason, observed_at, scheduled_at, previous_scheduled_at, job_status_at_change, id').gte('observed_at', ACQUISITION_DATE).order('id', { ascending: true }).range(f, t)),
     // Job volume by week for 2025 + 2026 — count of completed jobs, bucketed by
     // week of closed_at (same completion basis as Monthly Revenue).
     fetchAllRows<{ closed_at: string | null }>((f, t) =>
@@ -139,62 +134,6 @@ export default async function DashboardPage() {
     medianLeadDays: medianOf(v.leadTimeDays),
     totalJobs: v.total,
   }))
-
-  // Reschedule trend — bucketed by MONTH now (was weekly).
-  const schedHistoryTyped = (schedHistory ?? []) as { sf_job_id?: string | null; change_type?: string | null; reschedule_reason?: string | null; observed_at?: string | null; scheduled_at?: string | null; previous_scheduled_at?: string | null; job_status_at_change?: string | null }[]
-  const firstInitial = schedHistoryTyped.find(r => r.change_type === 'initial')
-  const trackingSince = firstInitial?.observed_at?.slice(0, 10) ?? null
-  type RMonth = { rescheduled: number; partsRescheduled: number; totalInitial: number }
-  const reschedByMonth: Record<string, RMonth> = {}
-  for (const row of schedHistoryTyped) {
-    if (!row.observed_at) continue
-    const m = row.observed_at.slice(0, 7) // YYYY-MM
-    if (!reschedByMonth[m]) reschedByMonth[m] = { rescheduled: 0, partsRescheduled: 0, totalInitial: 0 }
-    if (row.change_type === 'initial') reschedByMonth[m].totalInitial++
-    if (row.change_type === 'rescheduled') {
-      reschedByMonth[m].rescheduled++
-      if (row.reschedule_reason === 'parts_or_incomplete') reschedByMonth[m].partsRescheduled++
-    }
-  }
-  const rescheduleTrend = {
-    trackingSince,
-    months: Object.entries(reschedByMonth).sort(([a], [b]) => a.localeCompare(b)).map(([month, v]) => ({
-      month,
-      rescheduleRate: v.totalInitial > 0 ? v.rescheduled / v.totalInitial : null,
-      partsRescheduleRate: v.totalInitial > 0 ? v.partsRescheduled / v.totalInitial : null,
-    })),
-  }
-
-  // Reschedule detail — one row per reschedule event (most recent first),
-  // enriched with the job's customer + number so it can be looked into.
-  const reschedEvents = schedHistoryTyped
-    .filter(r => r.change_type === 'rescheduled' && r.observed_at)
-    .sort((a, b) => (b.observed_at ?? '').localeCompare(a.observed_at ?? ''))
-    .slice(0, 200)
-  const reschedJobIds = [...new Set(reschedEvents.map(r => r.sf_job_id).filter((id): id is string => !!id))]
-  const reschedJobInfo = new Map<string, { number: string | null; customer_name: string | null }>()
-  if (reschedJobIds.length > 0) {
-    const CHUNK = 500
-    for (let i = 0; i < reschedJobIds.length; i += CHUNK) {
-      const { data } = await db.from('sf_jobs').select('id, number, customer_name').in('id', reschedJobIds.slice(i, i + CHUNK))
-      for (const j of (data ?? []) as { id: string; number: string | null; customer_name: string | null }[]) {
-        reschedJobInfo.set(j.id, { number: j.number, customer_name: j.customer_name })
-      }
-    }
-  }
-  const rescheduleDetail = reschedEvents.map(r => {
-    const info = r.sf_job_id ? reschedJobInfo.get(r.sf_job_id) : undefined
-    return {
-      jobId: r.sf_job_id ?? '',
-      number: info?.number ?? null,
-      customer: info?.customer_name ?? null,
-      from: r.previous_scheduled_at ?? null,
-      to: r.scheduled_at ?? null,
-      reason: r.reschedule_reason ?? null,
-      status: r.job_status_at_change ?? null,
-      observedAt: r.observed_at ?? null,
-    }
-  })
 
   // Tech scoreboard
   const currentWeekStart = weekStartStr(new Date())
@@ -289,8 +228,6 @@ export default async function DashboardPage() {
         outstandingAR,
       }}
       capacityWeeks={capacityWeeks}
-      rescheduleTrend={rescheduleTrend}
-      rescheduleDetail={rescheduleDetail}
       jobsPerMonth={jobsPerMonth}
       techScoreboard={techScoreboard}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
