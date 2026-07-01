@@ -260,22 +260,14 @@ async function resolveSmsAudienceId(): Promise<string> {
   return cachedSmsAudienceId
 }
 
-// The marketing_consent status Mailchimp accepts depends on the audience's
-// opt-in configuration. Single opt-in audiences REJECT 'consented' ("not
-// supported for single optin audience") and 'confirmed' (that's for double
-// opt-in), so 'unknown' is the accepted value there — the single-opt-in config
-// itself drives the subscription. Double opt-in audiences use 'confirmed'.
-let cachedConsentStatus: string | null = null
-async function resolveConsentStatus(): Promise<string> {
-  if (cachedConsentStatus) return cachedConsentStatus
-  let doubleOptin = false
-  try {
-    const r = await mcFetch(`/lists/${AUDIENCE_ID}?fields=double_optin`)
-    if (r.ok) doubleOptin = !!(await r.json()).double_optin
-  } catch { /* default to single opt-in */ }
-  cachedConsentStatus = doubleOptin ? 'confirmed' : 'unknown'
-  return cachedConsentStatus
-}
+// marketing_consent status for the SMS/email channels. Verified empirically via
+// the diagnostic consent-value sweep against the (single opt-in) "Castle Garage"
+// audience: 'consented' → 400 (rejected for single opt-in); 'unknown' → 200 but
+// effective status stays 'nonsubscribed'; 'confirmed' → 200 AND effective status
+// 'subscribed'. 'confirmed' is also the documented value for double opt-in
+// audiences, so it's correct in both cases. (The OpenAPI spec's claim that
+// single opt-in should use 'consented' is wrong — the live API rejects it.)
+const CONSENT_STATUS = 'confirmed'
 
 // POST a contact with an SMS channel + marketing consent to the Audiences API.
 // Returns the parsed response so callers can inspect effective_subscription_status.
@@ -314,7 +306,7 @@ async function setSmsPhones(
   if (eligible.length === 0) return out
 
   const audienceId = await resolveSmsAudienceId()
-  const consentStatus = await resolveConsentStatus()
+  const consentStatus = CONSENT_STATUS
   const capturedAt = new Date().toISOString()
 
   // Tally the effective SMS subscription status Mailchimp reports back. A 2xx
@@ -402,7 +394,7 @@ export async function debugSms(email: string | null, phone: string | null): Prom
   }
 
   const audienceId = await resolveSmsAudienceId()
-  const consentStatus = await resolveConsentStatus()
+  const consentStatus = CONSENT_STATUS
   steps.push({ step: 'resolved audience id', audienceId, equalsListId: audienceId === AUDIENCE_ID, consentStatusUsedByPush: consentStatus })
 
   // 3. The actual SMS write. Try each supported consent value and report the
