@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient, SupabaseClient } from '@supabase/supabase-js'
 import { pushContacts } from '@/lib/mailchimp/client'
 import type { MailchimpContact } from '@/lib/mailchimp/client'
-import { getMatchingCustomerIds, type MarketingFilters } from '@/lib/marketing/query'
+import { getMatchingCustomerIds, lastServicedByCustomer, type MarketingFilters } from '@/lib/marketing/query'
 
 // Sending all matching leads can mean thousands of contacts (chunked DB reads +
 // batched Mailchimp calls), so allow up to 5 minutes.
@@ -110,6 +110,10 @@ export async function fetchContactsForIds(db: SupabaseClient<any>, customerIds: 
     locationMap.set(l.customer_id, { city: l.city ?? null, postal_code: l.postal_code ?? null })
   }
 
+  // Use the job-derived last service date (same source as the filter), not the
+  // stale sf_customers.last_serviced_date, for the Mailchimp LASTSERV field.
+  const lastServiceMap = await lastServicedByCustomer(db, customerIds)
+
   type RawCustomer = { id: string; referral_source: string | null; last_serviced_date: string | null; account_balance: number | null }
   const contacts: MailchimpContact[] = []
 
@@ -129,7 +133,7 @@ export async function fetchContactsForIds(db: SupabaseClient<any>, customerIds: 
       city: location?.city ?? null,
       postal_code: location?.postal_code ?? null,
       lead_source: c.referral_source ?? null,
-      last_serviced_date: c.last_serviced_date ?? null,
+      last_serviced_date: lastServiceMap.get(c.id) ?? c.last_serviced_date ?? null,
       account_balance: c.account_balance ?? null,
       sms_only: smsOnly,
     })
