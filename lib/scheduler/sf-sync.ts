@@ -1,5 +1,6 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { sfPost, sfGet } from '@/lib/crm/service-fusion'
+import { findExistingSfCustomer, updateExistingCustomerContactInfo } from '@/lib/scheduler/sf-customer-match'
 import { enqueueForSubscribers, hasRecentNotification } from '@/lib/notifications/enqueue'
 import { renderSchedulerLeadSynced } from '@/lib/notifications/templates/scheduler-lead-synced'
 import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
@@ -73,36 +74,51 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     if (!openStatus) throw new Error('No job statuses found in Service Fusion account')
     const sfStatusId: number = openStatus.id
     const sfStatusName: string = openStatus.name
-    // ── 1. Create customer ──────────────────────────────────────────────────
-    const customerPayload = {
-      customer_name: l.customer_last_name
-        ? `${l.customer_first_name} ${l.customer_last_name}`
-        : l.customer_first_name,
-      contacts: [
-        {
-          fname: l.customer_first_name,
-          lname: l.customer_last_name || '.',
-          is_primary: 1,
-          phones: [{ phone: l.customer_phone, type: 'Mobile' }],
-          ...(l.customer_email ? { emails: [{ email: l.customer_email }] } : {}),
-        },
-      ],
-      locations: [
-        {
-          street_1: l.address_line1,
-          ...(l.address_line2 ? { street_2: l.address_line2 } : {}),
-          city: l.address_city,
-          state_prov: l.address_state,
-          postal_code: l.address_zip,
-        },
-      ],
-    }
+    // ── 1. Match an existing customer by email/phone, else create one ────────
+    // Returning customers should attach to their existing SF profile rather than
+    // spawn a duplicate. The matcher fails safe (any error ⇒ null ⇒ create new).
+    let matchedExisting = false
+    const existingCustomerId = await findExistingSfCustomer(supabase, l.customer_email, l.customer_phone)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const customerResp = (await sfPost('/customers', customerPayload)) as any
-    sfCustomerId = String(customerResp?.id ?? customerResp?.customer?.id ?? '')
-    if (!sfCustomerId || sfCustomerId === 'undefined') {
-      throw new Error('No customer ID returned from Service Fusion')
+    if (existingCustomerId) {
+      sfCustomerId = existingCustomerId
+      matchedExisting = true
+      // Best-effort: add this booking's email/phone/address to the existing
+      // profile when missing. Never blocks the sync — the job still attaches.
+      await updateExistingCustomerContactInfo(existingCustomerId, l).catch(err =>
+        console.error('[sf-sync] existing-customer info update (non-fatal):', err instanceof Error ? err.message : err),
+      )
+    } else {
+      const customerPayload = {
+        customer_name: l.customer_last_name
+          ? `${l.customer_first_name} ${l.customer_last_name}`
+          : l.customer_first_name,
+        contacts: [
+          {
+            fname: l.customer_first_name,
+            lname: l.customer_last_name || '.',
+            is_primary: 1,
+            phones: [{ phone: l.customer_phone, type: 'Mobile' }],
+            ...(l.customer_email ? { emails: [{ email: l.customer_email }] } : {}),
+          },
+        ],
+        locations: [
+          {
+            street_1: l.address_line1,
+            ...(l.address_line2 ? { street_2: l.address_line2 } : {}),
+            city: l.address_city,
+            state_prov: l.address_state,
+            postal_code: l.address_zip,
+          },
+        ],
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const customerResp = (await sfPost('/customers', customerPayload)) as any
+      sfCustomerId = String(customerResp?.id ?? customerResp?.customer?.id ?? '')
+      if (!sfCustomerId || sfCustomerId === 'undefined') {
+        throw new Error('No customer ID returned from Service Fusion')
+      }
     }
 
     // ── 2. Build description ───────────────────────────────────────────────
@@ -185,7 +201,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
         synced_at: new Date().toISOString(),
         sync_attempts: [
           ...prevAttempts,
-          { at: attemptAt, ok: true, sf_customer_id: sfCustomerId, sf_job_id: sfJobId },
+          { at: attemptAt, ok: true, sf_customer_id: sfCustomerId, sf_job_id: sfJobId, matched_existing_customer: matchedExisting },
         ],
       })
       .eq('id', leadId)
