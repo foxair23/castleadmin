@@ -41,7 +41,7 @@ export function renderCommissionAcceptanceEmail(params: {
 
   <p style="${MUTED}">
     Agreement version ${escape(legalVersion)} · Accepted ${escape(acceptedAt)}${ip ? ` · IP ${escape(ip)}` : ''}.<br/>
-    Castle Garage Doors &amp; Gates. If you did not accept this, contact your administrator immediately.
+    Castle Garage Inc. If you did not accept this, contact your administrator immediately.
   </p>
 </div>`.trim()
 
@@ -88,7 +88,7 @@ export function renderCommissionPromptEmail(params: {
   <p style="margin:20px 0;">
     <a href="${escape(link)}" style="display:inline-block;background:#dc2626;color:#fff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px;">Review &amp; accept →</a>
   </p>
-  <p style="${MUTED}">Castle Garage Doors &amp; Gates · My Commission</p>
+  <p style="${MUTED}">Castle Garage Inc · My Commission</p>
 </div>`.trim()
 
   const text = [
