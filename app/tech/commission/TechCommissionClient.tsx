@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import CommissionDetailPanel from '@/components/CommissionDetailPanel'
+import CommissionAcceptancePanel, { type AcceptanceInfo } from '@/components/CommissionAcceptancePanel'
 import type { TechPeriodDetail } from '@/lib/commission/detail'
 import { listPeriods, periodForRecognitionDate } from '@/lib/commission/periods'
 
@@ -12,6 +13,7 @@ export default function TechCommissionClient({ todayStr }: { todayStr: string })
   const period = useMemo(() => periods.find(p => p.key === periodKey), [periods, periodKey])
 
   const [detail, setDetail] = useState<TechPeriodDetail | null>(null)
+  const [acceptance, setAcceptance] = useState<AcceptanceInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -23,7 +25,13 @@ export default function TechCommissionClient({ todayStr }: { todayStr: string })
       const res = await fetch(`/api/tech/commission?period_start=${period.start}&period_end=${period.end}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to load')
-      setDetail(data)
+      if (data && data.needsAcceptance) {
+        setAcceptance(data as AcceptanceInfo)
+        setDetail(null)
+      } else {
+        setDetail(data as TechPeriodDetail)
+        setAcceptance(null)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
@@ -52,6 +60,8 @@ export default function TechCommissionClient({ todayStr }: { todayStr: string })
 
       {loading ? (
         <div className="text-center text-gray-400 py-10">Loading…</div>
+      ) : acceptance ? (
+        <CommissionAcceptancePanel info={acceptance} onAccepted={load} />
       ) : detail ? (
         <CommissionDetailPanel detail={detail} />
       ) : null}

@@ -6,6 +6,7 @@ export async function sendEmail(params: {
   html: string
   text: string
   replyTo?: string
+  bcc?: string | string[]
 }): Promise<void> {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -20,6 +21,7 @@ export async function sendEmail(params: {
       html: params.html,
       text: params.text,
       ...(params.replyTo ? { reply_to: params.replyTo } : {}),
+      ...(params.bcc ? { bcc: params.bcc } : {}),
     }),
   })
 
