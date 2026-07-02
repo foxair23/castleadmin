@@ -91,23 +91,47 @@ export async function getMatchingCustomerIds(db: SupabaseClient<any>, filters: M
   const sources = (filters.leadSources ?? []).filter(Boolean)
   const noServiceDate = filters.recency === 'none' // customers never serviced
 
-  const rows = await fetchAll<{ id: string }>((from, to) => {
-    let q = db
-      .from('sf_customers')
-      .select('id, last_serviced_date')
-      .eq('is_deleted', false)
-      .order('last_serviced_date', { ascending: false, nullsFirst: false })
-    if (noServiceDate) {
-      q = q.is('last_serviced_date', null)
-    } else {
-      if (dateRange.from) q = q.gte('last_serviced_date', dateRange.from)
-      if (dateRange.to) q = q.lte('last_serviced_date', dateRange.to)
-    }
-    if (sources.length > 0) q = q.in('referral_source', sources)
-    if (filters.paymentFilter === 'outstanding') q = q.gt('account_balance', 0)
-    return q.range(from, to)
-  })
+  // Match on the JOB-DERIVED last service date (max sf_jobs.closed_at), not the
+  // stale sf_customers.last_serviced_date, via the marketing_customer_ids()
+  // function. This is the same source the UI/CSV display, so filter and display
+  // always agree.
+  const rows = await fetchAll<{ id: string }>((from, to) =>
+    db.rpc('marketing_customer_ids', {
+      p_date_from: dateRange.from,
+      p_date_to: dateRange.to,
+      p_none: noServiceDate,
+      p_sources: sources.length > 0 ? sources : null,
+      p_payment_outstanding: filters.paymentFilter === 'outstanding',
+    }).range(from, to),
+  )
 
   const ids = rows.map(r => r.id)
   return categorySet ? ids.filter(id => categorySet!.has(id)) : ids
+}
+
+// Job-derived last service date (YYYY-MM-DD) per customer — max sf_jobs.closed_at.
+// The single source of truth for "last serviced" shown/exported, so it always
+// matches what the filter selects on. Customers with no closed job are absent.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function lastServicedByCustomer(db: SupabaseClient<any>, customerIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  const CHUNK = 300
+  for (let i = 0; i < customerIds.length; i += CHUNK) {
+    const slice = customerIds.slice(i, i + CHUNK)
+    if (slice.length === 0) continue
+    const rows = await fetchAll<{ customer_id: string; closed_at: string }>((from, to) =>
+      db.from('sf_jobs')
+        .select('customer_id, closed_at')
+        .in('customer_id', slice)
+        .eq('is_deleted', false)
+        .not('closed_at', 'is', null)
+        .order('closed_at', { ascending: false })
+        .range(from, to),
+    )
+    for (const r of rows) {
+      // Rows arrive newest-first, so the first per customer is their latest.
+      if (!map.has(r.customer_id)) map.set(r.customer_id, r.closed_at.slice(0, 10))
+    }
+  }
+  return map
 }
