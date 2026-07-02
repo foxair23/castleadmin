@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { requireCommissionAdmin } from '@/lib/commission/admin-auth'
 import { recomputeSnapshots } from '@/lib/commission/engine'
 import { ACTIVE_PERIOD_TYPE } from '@/lib/commission/periods'
+import { sendAcceptancePrompts } from '@/lib/commission/notify'
 
 export const maxDuration = 300
 
@@ -111,6 +112,9 @@ export async function POST(req: NextRequest) {
     }
 
     await recomputeSnapshots()
+    if (Array.isArray(rows) && rows.length > 0) {
+      await sendAcceptancePrompts(rows.map(r => ({ tech_user_id: r.tech_user_id, period_start, period_end })))
+    }
     return NextResponse.json({ ok: true, saved: rows?.length ?? 0, cleared: clears?.length ?? 0 })
   }
 
@@ -140,6 +144,9 @@ export async function POST(req: NextRequest) {
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     }
     await recomputeSnapshots()
+    if (rows.length > 0) {
+      await sendAcceptancePrompts(rows.map(r => ({ tech_user_id: r.tech_user_id, period_start, period_end })))
+    }
     return NextResponse.json({ ok: true, copied: rows.length })
   }
 
@@ -164,6 +171,7 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   await recomputeSnapshots()
+  await sendAcceptancePrompts([{ tech_user_id, period_start, period_end }])
   return NextResponse.json({ ok: true })
 }
 
