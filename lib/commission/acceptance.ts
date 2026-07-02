@@ -4,7 +4,7 @@
 // confirmation email so there is a single source of truth.
 
 import { createHash } from 'crypto'
-import { LEGAL_VERSION, LEGAL_SECTIONS } from './legal-agreement'
+import { LEGAL_VERSION, LEGAL_SECTIONS, LEGAL_TITLE } from './legal-agreement'
 
 export interface PlanTerms {
   sales_target: number
@@ -72,7 +72,8 @@ function substitute(text: string, tokens: Record<string, string>): string {
 
 // Full legal text with tokens substituted, as an HTML fragment.
 export function renderLegalHtml(tokens: Record<string, string>): string {
-  return LEGAL_SECTIONS.map(s =>
+  const title = `<h2 style="font-size:17px;font-weight:700;margin:0 0 12px;color:#111827;">${esc(LEGAL_TITLE)}</h2>`
+  return title + LEGAL_SECTIONS.map(s =>
     `<h3 style="font-size:15px;font-weight:700;margin:16px 0 6px;color:#111827;">${esc(s.heading)}</h3>` +
     `<p style="font-size:13px;line-height:1.6;color:#374151;margin:0 0 8px;white-space:pre-wrap;">${substitute(s.body, tokens)}</p>`,
   ).join('')
@@ -85,7 +86,7 @@ export function renderTermsSummaryHtml(t: PlanTerms, tokens: Record<string, stri
     `<td style="padding:4px 0;font-weight:600;font-size:13px;color:#111827;">${esc(v)}</td></tr>`
   return (
     `<table style="border-collapse:collapse;margin:4px 0 8px;">` +
-    row('Period', tokens.PERIOD) +
+    row('Plan Period', tokens.PERIOD) +
     row('Sales target', tokens.SALES_TARGET) +
     row('Rate up to target', tokens.RATE_BELOW) +
     row('Rate above target', tokens.RATE_ABOVE) +
