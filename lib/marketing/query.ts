@@ -119,6 +119,13 @@ export async function getMatchingCustomerIds(db: SupabaseClient<any>, filters: M
   return categorySet ? ids.filter(id => categorySet!.has(id)) : ids
 }
 
+// Treat epoch/zero placeholder dates (Service Fusion stores 1970-01-01 when a
+// date is unknown) as "no date". Matches the SQL filter's `>= 2000-01-01` guard.
+export function realServiceDate(d: string | null | undefined): string | null {
+  if (!d) return null
+  return d.slice(0, 10) >= '2000-01-01' ? d.slice(0, 10) : null
+}
+
 // The later of two 'YYYY-MM-DD' dates (lexical compare is valid for that format),
 // ignoring nulls. The effective "last serviced" = later of SF's stored date and
 // the job-derived date, matching marketing_customer_ids().
@@ -144,6 +151,7 @@ export async function lastServicedByCustomer(db: SupabaseClient<any>, customerId
         .in('customer_id', slice)
         .eq('is_deleted', false)
         .not('closed_at', 'is', null)
+        .gt('closed_at', '2000-01-01')   // skip epoch-zero placeholder dates
         .order('closed_at', { ascending: false })
         .range(from, to),
     )
