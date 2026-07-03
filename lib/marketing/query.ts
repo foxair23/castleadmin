@@ -94,18 +94,28 @@ export async function getMatchingCustomerIds(db: SupabaseClient<any>, filters: M
   // Match on the JOB-DERIVED last service date (max sf_jobs.closed_at), not the
   // stale sf_customers.last_serviced_date, via the marketing_customer_ids()
   // function. This is the same source the UI/CSV display, so filter and display
-  // always agree.
-  const rows = await fetchAll<{ id: string }>((from, to) =>
-    db.rpc('marketing_customer_ids', {
-      p_date_from: dateRange.from,
-      p_date_to: dateRange.to,
-      p_none: noServiceDate,
-      p_sources: sources.length > 0 ? sources : null,
-      p_payment_outstanding: filters.paymentFilter === 'outstanding',
-    }).range(from, to),
-  )
+  // always agree. Errors are surfaced (not swallowed) so a missing migration or
+  // bad call can't masquerade as "no contacts match".
+  const ids: string[] = []
+  const PAGE = 1000
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await db
+      .rpc('marketing_customer_ids', {
+        p_date_from: dateRange.from,
+        p_date_to: dateRange.to,
+        p_none: noServiceDate,
+        p_sources: sources.length > 0 ? sources : null,
+        p_payment_outstanding: filters.paymentFilter === 'outstanding',
+      })
+      .range(from, from + PAGE - 1)
+    if (error) {
+      throw new Error(`marketing_customer_ids failed: ${error.message}. Has migration 047 been applied?`)
+    }
+    const rows = (data ?? []) as { id: string }[]
+    for (const r of rows) ids.push(r.id)
+    if (rows.length < PAGE) break
+  }
 
-  const ids = rows.map(r => r.id)
   return categorySet ? ids.filter(id => categorySet!.has(id)) : ids
 }
 
