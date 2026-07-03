@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { filtersFromParams, getMatchingCustomerIds } from '@/lib/marketing/query'
+import { filtersFromParams, getMatchingCustomerIds, laterDate } from '@/lib/marketing/query'
 
 async function requireAdmin() {
   const supabase = await createClient()
@@ -156,7 +156,7 @@ export async function GET(req: NextRequest) {
       city: location?.city ?? null,
       postal_code: location?.postal_code ?? null,
       lead_source: c.referral_source ?? null,
-      last_serviced_date: lastServiceMap.get(id) ?? c.last_serviced_date ?? null,
+      last_serviced_date: laterDate(lastServiceMap.get(id) ?? null, c.last_serviced_date ?? null),
       account_balance: c.account_balance ?? null,
     })
   }

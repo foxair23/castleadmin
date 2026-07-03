@@ -119,6 +119,15 @@ export async function getMatchingCustomerIds(db: SupabaseClient<any>, filters: M
   return categorySet ? ids.filter(id => categorySet!.has(id)) : ids
 }
 
+// The later of two 'YYYY-MM-DD' dates (lexical compare is valid for that format),
+// ignoring nulls. The effective "last serviced" = later of SF's stored date and
+// the job-derived date, matching marketing_customer_ids().
+export function laterDate(a: string | null, b: string | null): string | null {
+  if (!a) return b ?? null
+  if (!b) return a
+  return a >= b ? a : b
+}
+
 // Job-derived last service date (YYYY-MM-DD) per customer — max sf_jobs.closed_at.
 // The single source of truth for "last serviced" shown/exported, so it always
 // matches what the filter selects on. Customers with no closed job are absent.
