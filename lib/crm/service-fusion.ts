@@ -151,15 +151,26 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
   }
 
   async listTechnicians(): Promise<CrmTechnician[]> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const json = (await sfGet('/techs', { perPage: '100' })) as any
-    const items: unknown[] = json?.items ?? []
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return items.map((t: any) => ({
-      id: String(t.id),
-      name: `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim(),
-    }))
+    // Page through the FULL tech roster. A single capped call (the old
+    // `perPage: '100'` — wrong param name, so SF used its small default) dropped
+    // any tech beyond the first page, so newly-added SF techs never appeared in
+    // the mapping dropdown. Use the documented `per-page` param and follow
+    // `_meta.pageCount`, mirroring listJobsForTech.
+    const out: CrmTechnician[] = []
+    let page = 1
+    for (;;) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const json = (await sfGet('/techs', { 'per-page': '100', page: String(page) })) as any
+      const items: unknown[] = json?.items ?? []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const t of items as any[]) {
+        out.push({ id: String(t.id), name: `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim() })
+      }
+      const meta = json?._meta
+      if (!meta || page >= (meta.pageCount ?? 1)) break
+      page++
+    }
+    return out
   }
 
   async listJobsForTech(
