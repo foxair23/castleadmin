@@ -5,13 +5,6 @@ import SFConnectionClient from '../sf/SFConnectionClient'
 import SfSyncClient from '../sf-sync/SfSyncClient'
 import MailchimpClient from '../mailchimp/MailchimpClient'
 
-interface AppTech {
-  id: string
-  full_name: string
-  is_active: boolean
-  sf_technician_id: string | null
-}
-
 interface SyncRun {
   entity: string
   run_type: string
@@ -36,7 +29,6 @@ interface PushLogRow {
 }
 
 interface Props {
-  techs: AppTech[]
   runs: SyncRun[]
   counts: Record<string, number>
   pushLog: PushLogRow[]
@@ -45,7 +37,7 @@ interface Props {
 
 type Tab = 'service-fusion' | 'mailchimp'
 
-export default function IntegrationsClient({ techs, runs, counts, pushLog, serverPrefix }: Props) {
+export default function IntegrationsClient({ runs, counts, pushLog, serverPrefix }: Props) {
   const [tab, setTab] = useState<Tab>('service-fusion')
 
   return (
@@ -65,7 +57,7 @@ export default function IntegrationsClient({ techs, runs, counts, pushLog, serve
         <div className="space-y-10">
           <SfSyncClient runs={runs} counts={counts} />
           <div className="border-t border-gray-200 pt-8">
-            <SFConnectionClient initialTechs={techs} />
+            <SFConnectionClient />
           </div>
         </div>
       )}
