@@ -23,12 +23,7 @@ export default async function IntegrationsPage() {
   const { data: profile } = await database.from('profiles').select('role').eq('id', user.id).single()
   if (profile?.role !== 'admin') redirect('/admin')
 
-  const [techsRes, runs, counts, pushLogRes] = await Promise.all([
-    database
-      .from('profiles')
-      .select('id, full_name, is_active, sf_technician_id')
-      .eq('role', 'technician')
-      .order('full_name'),
+  const [runs, counts, pushLogRes] = await Promise.all([
     getSyncStatus(),
     getMirrorCounts(),
     database
@@ -40,8 +35,6 @@ export default async function IntegrationsPage() {
 
   return (
     <IntegrationsClient
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      techs={(techsRes.data ?? []) as any[]}
       runs={runs}
       counts={counts}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
