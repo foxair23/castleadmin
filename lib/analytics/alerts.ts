@@ -155,7 +155,8 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   // Matching is strictly on sf_invoices.job_id — the ±60-day same-customer
   // window this used to fall back on hid genuinely uninvoiced jobs whenever the
   // same customer had any other invoice (e.g. one invoiced + one missed job).
-  // $0 jobs are skipped — there is nothing to invoice.
+  // $0 jobs ARE included for completeness (owner request); the UI offers a
+  // "hide $0 jobs" filter.
   const closed = await fetchAll<{
     id: string; number: string | null; customer_name: string | null
     customer_id: string | null; closed_at: string; total: number | null; source: string | null
@@ -164,7 +165,6 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
       .select('id, number, customer_name, customer_id, closed_at, total, source')
       .not('closed_at', 'is', null)
       .gte('closed_at', UNINVOICED_SINCE)
-      .gt('total', 0)
       .not('status', 'in', '("Cancelled","Void","Voided")')
       .eq('is_deleted', false)
       .order('id', { ascending: true })

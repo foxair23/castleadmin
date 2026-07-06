@@ -708,6 +708,8 @@ export default function ActionItemsClient({
   const [daysInput, setDaysInput] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('unpaid')
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
+  // Never Invoiced: $0 jobs are listed for completeness; this hides them on demand.
+  const [hideZeroUninvoiced, setHideZeroUninvoiced] = useState(false)
 
   // '__blank__' is a sentinel for jobs with no source set
   const BLANK = '__blank__'
@@ -751,6 +753,7 @@ export default function ActionItemsClient({
 
   const filteredUnpaid = filterByCutoff(filterByDays(filterBySource(unpaidJobs.items), 'days_outstanding'), 'closed_at')
   const filteredUninvoiced = filterByCutoff(filterByDays(filterBySource(uninvoicedJobs.items), 'days_since_completion'), 'closed_at')
+    .filter(j => !hideZeroUninvoiced || (j.total ?? 0) > 0)
   const filteredFollowUp = filterByCutoff(filterByDays(filterBySource(followUpJobs.items), 'days_open'), 'start_date')
   const filteredStaleEstimates = filterByCutoff(filterByDays(staleEstimates.items, 'days_outstanding'), 'created_at_sf')
   const filteredOverdueCustomers = filterByCutoff(filterByDays(overdueCustomers.items, 'days_overdue'), 'oldest_overdue_date')
@@ -963,11 +966,22 @@ export default function ActionItemsClient({
           title="Completed but Never Invoiced"
           count={filteredUninvoiced.length}
           summary={
-            filteredUninvoiced.length > 0 ? (
-              <span className="text-sm text-gray-600">
-                Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(filteredUninvoiced.reduce((s, j) => s + (j.total ?? 0), 0))}</span>
-              </span>
-            ) : undefined
+            <span className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-sm text-gray-600 whitespace-nowrap cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={hideZeroUninvoiced}
+                  onChange={e => setHideZeroUninvoiced(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                Hide $0 jobs
+              </label>
+              {filteredUninvoiced.length > 0 && (
+                <span className="text-sm text-gray-600 whitespace-nowrap">
+                  Uninvoiced total: <span className="font-semibold text-amber-700">{fmtMoney(filteredUninvoiced.reduce((s, j) => s + (j.total ?? 0), 0))}</span>
+                </span>
+              )}
+            </span>
           }
         >
           {filteredUninvoiced.length === 0 ? <AllClear /> : <UninvoicedJobsTable items={filteredUninvoiced} notes={notes} />}
