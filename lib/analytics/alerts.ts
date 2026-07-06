@@ -141,15 +141,21 @@ export interface UninvoicedJobsResult {
   totalUninvoiced: number
 }
 
+// Scope to post-acquisition work: pre-acquisition uninvoiced jobs belong to the
+// previous owner and aren't actionable. Matches the acquisition cutoff used
+// elsewhere (dashboard, action-items toggle). The daily jobs reconcile rebuilds
+// job↔invoice links (invoice expand) 120 days back, so links are reliable for
+// this entire window.
+const UNINVOICED_SINCE = '2026-04-24'
+
 export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   const db = getAdminClient()
 
-  // Fetch ALL completed jobs and ALL invoice job_ids, then subtract. Both queries
-  // paginate with a stable order('id') because PostgREST caps any single response
-  // at 1000 rows — a plain .limit(5000) silently returned only 1000 invoices, so
-  // recently-invoiced jobs were wrongly flagged as never invoiced.
-  const oneYearAgo = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10)
-
+  // Rule (per owner): a completed job with no invoice LINKED to it is flagged.
+  // Matching is strictly on sf_invoices.job_id — the ±60-day same-customer
+  // window this used to fall back on hid genuinely uninvoiced jobs whenever the
+  // same customer had any other invoice (e.g. one invoiced + one missed job).
+  // $0 jobs are skipped — there is nothing to invoice.
   const closed = await fetchAll<{
     id: string; number: string | null; customer_name: string | null
     customer_id: string | null; closed_at: string; total: number | null; source: string | null
@@ -157,7 +163,8 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     db.from('sf_jobs')
       .select('id, number, customer_name, customer_id, closed_at, total, source')
       .not('closed_at', 'is', null)
-      .gte('closed_at', oneYearAgo)
+      .gte('closed_at', UNINVOICED_SINCE)
+      .gt('total', 0)
       .not('status', 'in', '("Cancelled","Void","Voided")')
       .eq('is_deleted', false)
       .order('id', { ascending: true })
@@ -165,44 +172,21 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   )
   if (closed.length === 0) return { items: [], totalUninvoiced: 0 }
 
-  const invoiceRows = await fetchAll<{ job_id: string | null; customer_id: string | null; date: string | null }>((from, to) =>
+  const invoiceRows = await fetchAll<{ job_id: string | null }>((from, to) =>
     db.from('sf_invoices')
-      .select('job_id, customer_id, date')
+      .select('job_id, id')
       .eq('is_deleted', false)
+      .not('job_id', 'is', null)
       .order('id', { ascending: true })
       .range(from, to)
   )
+  const invoicedJobIds = new Set(invoiceRows.map(inv => inv.job_id))
 
-  // Primary match: invoice has explicit job_id link
-  const invoicedJobIds = new Set(invoiceRows.map(inv => inv.job_id).filter(Boolean))
-
-  // Secondary match: invoice linked only by customer_id (job_id NULL — happens when
-  // invoices are re-synced via the invoices endpoint without job expand, clearing the
-  // job_id that was previously set). Group by customer for fast lookup.
-  const invoicesByCustomer = new Map<string, string[]>()
-  for (const inv of invoiceRows) {
-    if (!inv.customer_id || !inv.date) continue
-    const arr = invoicesByCustomer.get(inv.customer_id) ?? []
-    arr.push(inv.date.slice(0, 10))
-    invoicesByCustomer.set(inv.customer_id, arr)
-  }
-
-  // Keep jobs with no invoice, newest completion first, cap at 100.
+  // Newest completion first; generous cap (was 100, which silently truncated).
   const uninvoiced = closed
-    .filter(j => {
-      if (invoicedJobIds.has(j.id)) return false
-      // Secondary: any invoice for same customer within 60 days of closed_at
-      if (j.customer_id) {
-        const closedYmd = j.closed_at.slice(0, 10)
-        const closedMs = new Date(closedYmd).getTime()
-        const window = 60 * 86_400_000
-        const custInvDates = invoicesByCustomer.get(j.customer_id) ?? []
-        if (custInvDates.some(d => Math.abs(new Date(d).getTime() - closedMs) <= window)) return false
-      }
-      return true
-    })
+    .filter(j => !invoicedJobIds.has(j.id))
     .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
-  const limited = uninvoiced.slice(0, 100)
+  const limited = uninvoiced.slice(0, 500)
   const jobIds = limited.map((j: { id: string }) => j.id)
   const techMap = await fetchTechNamesByJobIds(db, jobIds)
 
