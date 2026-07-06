@@ -609,6 +609,11 @@ interface IncrementalEntityConfig {
   table: string
   filterKey?: string  // omit for entities that don't support date filtering (e.g. customers)
   expand?: string
+  // Paginate from the LAST page backwards. For endpoints SF returns oldest-first
+  // with no sort support (/invoices rejects sort), the newest records live on
+  // the highest page numbers — walking backwards means a deadline-limited run
+  // always covers the newest records instead of re-fetching the oldest forever.
+  reversePages?: boolean
   mapper: (r: Raw) => unknown
   afterUpsert?: (items: Raw[]) => Promise<void>
 }
@@ -633,7 +638,9 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
   },
   {
     entity: 'invoices', path: '/invoices', table: 'sf_invoices',
-    // SF /invoices does not support updated_date filtering — sync all each run
+    // SF /invoices supports neither updated_date filtering nor sort — sync all
+    // each run, newest pages first so the deadline never cuts off recent invoices.
+    reversePages: true,
     mapper: (r) => mapInvoice(r),
   },
   {
@@ -657,15 +664,38 @@ async function runIncrementalSyncForConfig(cfg: IncrementalEntityConfig, deadlin
     if (cfg.expand) params['expand'] = cfg.expand
 
     const allItems: Raw[] = []
-    for await (const { items, page } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
-      allItems.push(...items)
-      fetched += items.length
-      pages = page
-      await updateRunProgress(handle, page, fetched, upserted)
-      if (deadlineMs && Date.now() >= deadlineMs) {
-        hitDeadline = true
-        console.warn(`[sf-sync] ${cfg.entity}: soft deadline reached at page ${page}, stopping early`)
-        break
+    if (cfg.reversePages) {
+      // Newest-last endpoints: fetch page 1 for the page count, then walk from
+      // the last page (newest records) backwards so a deadline-limited run
+      // always covers recent data first.
+      const first = (await sfMirrorGet(cfg.path, { ...params, page: '1' })) as { items?: Raw[]; _meta?: { pageCount?: number } }
+      const totalPages = first._meta?.pageCount ?? 1
+      for (let p = totalPages; p >= 1; p--) {
+        const json = p === 1
+          ? first
+          : (await sfMirrorGet(cfg.path, { ...params, page: String(p) })) as { items?: Raw[] }
+        const items = json.items ?? []
+        allItems.push(...items)
+        fetched += items.length
+        pages++
+        await updateRunProgress(handle, p, fetched, upserted)
+        if (deadlineMs && Date.now() >= deadlineMs) {
+          hitDeadline = true
+          console.warn(`[sf-sync] ${cfg.entity}: soft deadline reached at page ${p}/${totalPages} (reverse), stopping early`)
+          break
+        }
+      }
+    } else {
+      for await (const { items, page } of sfMirrorPaginateAll<Raw>(cfg.path, params)) {
+        allItems.push(...items)
+        fetched += items.length
+        pages = page
+        await updateRunProgress(handle, page, fetched, upserted)
+        if (deadlineMs && Date.now() >= deadlineMs) {
+          hitDeadline = true
+          console.warn(`[sf-sync] ${cfg.entity}: soft deadline reached at page ${page}, stopping early`)
+          break
+        }
       }
     }
 
