@@ -256,7 +256,10 @@ export async function getStaleEstimates(): Promise<StaleEstimatesResult> {
   const { data } = await db
     .from('sf_estimates')
     .select('id, number, customer_name, customer_id, created_at_sf, total, status')
-    .not('status', 'in', '("accepted","declined","Accepted","Declined","Closed")')
+    // Exclude resolved estimates — stale means "given and never followed up on",
+    // so won/lost outcomes don't belong here. SF statuses are freeform text;
+    // listing case variants is harmless when a variant doesn't exist.
+    .not('status', 'in', '("accepted","declined","Accepted","Declined","Closed","Estimate Won","estimate won","Won","won","Estimate Lost","estimate lost","Lost","lost")')
     .lt('created_at_sf', fourteenDaysAgo)
     .eq('is_deleted', false)
     .order('created_at_sf', { ascending: false })
