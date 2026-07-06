@@ -278,7 +278,9 @@ function mapEstimate(r: Raw) {
 
 function mapInvoice(r: Raw, jobId?: string) {
   return {
-    id: toStr(r.id)!, job_id: jobId ?? toStr(r.job_id) ?? null,
+    // Job link: the jobs-sync expand passes jobId explicitly; the /invoices
+    // endpoint may name it job_id or jobs_id (calendar-tasks use jobs_id).
+    id: toStr(r.id)!, job_id: jobId ?? toStr(r.job_id ?? r.jobs_id) ?? null,
     customer_id: toStr(r.customer ?? r.customer_id) ?? null,
     number: toStr(r.number), total: toNum(r.total),
     is_paid: toBool(r.is_paid), date: toStr(r.date),
@@ -508,6 +510,15 @@ const BATCH_SIZE = 200
 
 async function batchUpsert(table: string, rows: unknown[], conflictCol = 'id') {
   if (rows.length === 0) return 0
+  // The /invoices endpoint doesn't return the job link — only the jobs-sync
+  // expand sets sf_invoices.job_id. A plain upsert from the invoices entity
+  // sync/reconcile therefore overwrote every existing job_id with NULL each
+  // run, which broke every job↔invoice join (e.g. "Completed but Never
+  // Invoiced" falsely flagging invoiced jobs). Backfill incoming null job_ids
+  // from the rows already stored before writing.
+  if (table === 'sf_invoices') {
+    await preserveExistingInvoiceJobIds(rows as Record<string, unknown>[])
+  }
   const supabase = db()
   let upserted = 0
   for (const batch of chunk(rows as Record<string, unknown>[], BATCH_SIZE)) {
@@ -516,6 +527,28 @@ async function batchUpsert(table: string, rows: unknown[], conflictCol = 'id') {
     upserted += batch.length
   }
   return upserted
+}
+
+// For invoice rows about to be upserted with job_id = null, restore the job_id
+// already stored in sf_invoices (set by the jobs-sync invoice expand) so the
+// link survives re-syncs from the link-less /invoices endpoint.
+async function preserveExistingInvoiceJobIds(rows: Record<string, unknown>[]) {
+  const nullRows = rows.filter(r => r.job_id == null && r.id != null)
+  if (nullRows.length === 0) return
+  const supabase = db()
+  for (const batch of chunk(nullRows, 500)) {
+    const ids = batch.map(r => String(r.id))
+    const { data } = await supabase
+      .from('sf_invoices')
+      .select('id, job_id')
+      .in('id', ids)
+      .not('job_id', 'is', null)
+    const existing = new Map((data ?? []).map((r: { id: string; job_id: string }) => [r.id, r.job_id]))
+    for (const row of batch) {
+      const kept = existing.get(String(row.id))
+      if (kept) row.job_id = kept
+    }
+  }
 }
 
 // ─── Reference sync (small tables, fully re-pulled daily) ─────────────────
