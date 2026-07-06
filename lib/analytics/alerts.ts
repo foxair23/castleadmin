@@ -141,15 +141,15 @@ export interface UninvoicedJobsResult {
   totalUninvoiced: number
 }
 
-// Scope to post-acquisition work: pre-acquisition uninvoiced jobs belong to the
-// previous owner and aren't actionable. Matches the acquisition cutoff used
-// elsewhere (dashboard, action-items toggle). The daily jobs reconcile rebuilds
-// job↔invoice links (invoice expand) 120 days back, so links are reliable for
-// this entire window.
-const UNINVOICED_SINCE = '2026-04-24'
-
 export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   const db = getAdminClient()
+
+  // Rolling 12-month window (owner wants pre-acquisition completeness too; the
+  // tab's "exclude pre-acquisition" toggle handles hiding those on demand).
+  // Link coverage: the daily jobs reconcile maintains job↔invoice links 120
+  // days back; older links are restored via the "Rebuild invoice links" button
+  // on the SF sync page.
+  const oneYearAgo = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10)
 
   // Rule (per owner): a completed job with no invoice LINKED to it is flagged.
   // Matching is strictly on sf_invoices.job_id — the ±60-day same-customer
@@ -164,7 +164,7 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     db.from('sf_jobs')
       .select('id, number, customer_name, customer_id, closed_at, total, source')
       .not('closed_at', 'is', null)
-      .gte('closed_at', UNINVOICED_SINCE)
+      .gte('closed_at', oneYearAgo)
       .not('status', 'in', '("Cancelled","Void","Voided")')
       .eq('is_deleted', false)
       .order('id', { ascending: true })
