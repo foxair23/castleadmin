@@ -10,7 +10,10 @@ export async function GET(req: NextRequest) {
 
   const started = Date.now()
   try {
-    const upserted = await runWeeklyReconcileForEntity('invoices')
+    // concurrency=3: like the jobs reconcile, fetch pages in parallel so the
+    // full invoice scan finishes inside 800s. Sequential runs were killed by
+    // Vercel mid-pagination, so the mirror never held the newest invoices.
+    const upserted = await runWeeklyReconcileForEntity('invoices', { concurrency: 3 })
     return NextResponse.json({ ok: true, upserted, ms: Date.now() - started })
   } catch (err) {
     console.error('[sf-reconcile-invoices] fatal:', err)

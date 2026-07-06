@@ -153,12 +153,18 @@ export function createSfMirrorClient(opts: SfMirrorClientOptions) {
 /**
  * Apply mandatory defaults before any request:
  *   - /jobs always gets sort=-start_date (Known Issue: hangs without sort)
+ *   - /invoices always gets sort=-date: SF's default is oldest-first, so the
+ *     deadline-limited daily sync re-fetched the same oldest pages every run
+ *     and never reached recent invoices (which broke the "Completed but Never
+ *     Invoiced" alert). Newest-first puts the invoices that actually change
+ *     inside the sync window.
  *   - per-page defaults to 50 (the API maximum)
  */
 function applyDefaults(path: string, params: Record<string, string>): Record<string, string> {
   const out = { ...params }
   if (!out['per-page']) out['per-page'] = '50'
   if (path.startsWith('/jobs') && !out['sort']) out['sort'] = '-start_date'
+  if (path.startsWith('/invoices') && !out['sort']) out['sort'] = '-date'
   return out
 }
 
