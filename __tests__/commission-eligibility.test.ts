@@ -74,3 +74,58 @@ describe('classifyJob — agent-count rules (§3.3, criterion 3)', () => {
     expect(classifyJob([], resolver)).toBeNull()
   })
 })
+
+// ── Note tokens ($kyle$-style tags) ──────────────────────────────────────────
+
+import { buildTokenMap, classifyJobWithTokens, extractNoteTokens } from '@/lib/commission/eligibility'
+
+const TOKENS = buildTokenMap([
+  { token: 'kyle', tech_user_id: KYLE },
+  { token: 'maria', tech_user_id: MARIA },
+])
+
+describe('extractNoteTokens', () => {
+  it('finds $token$ tags across fields, case-insensitively, deduped', () => {
+    expect(extractNoteTokens('Fixed spring $Kyle$', 'done $kyle$ thanks')).toEqual(['kyle'])
+    expect(extractNoteTokens('$kyle$ and $maria$ split')).toEqual(['kyle', 'maria'])
+  })
+
+  it('ignores plain dollar amounts and null fields', () => {
+    expect(extractNoteTokens('collected $150 cash, quoted $1,200', null)).toEqual([])
+    expect(extractNoteTokens(null, undefined)).toEqual([])
+  })
+
+  it('does not treat $100 and $ alone as tokens but allows digits inside a tag', () => {
+    // "$100 and $" — the text between the two $ signs contains spaces → no match.
+    expect(extractNoteTokens('$100 and $')).toEqual([])
+    expect(extractNoteTokens('$davidv2$')).toEqual(['davidv2'])
+  })
+})
+
+describe('classifyJobWithTokens — token beats agent, fallback otherwise', () => {
+  const resolver = buildResolver(MAP)
+  const unmappedAgent = [agent(null, 'Random', 'Person')]
+
+  it('one known token → eligible for that tech, even when agents disagree', () => {
+    const c = classifyJobWithTokens(['maria'], TOKENS, [agent('980496477', 'Kyle', 'Hefner')], resolver)
+    expect(c).toEqual({ status: 'eligible', review_reason: null, tech_user_id: MARIA })
+  })
+
+  it('unknown token → needs_review / unmapped_token (typos surface, not silently dropped)', () => {
+    const c = classifyJobWithTokens(['kylee'], TOKENS, [], resolver)
+    expect(c).toEqual({ status: 'needs_review', review_reason: 'unmapped_token', tech_user_id: null })
+  })
+
+  it('tokens for two different techs → needs_review / multiple_tokens', () => {
+    const c = classifyJobWithTokens(['kyle', 'maria'], TOKENS, [], resolver)
+    expect(c).toEqual({ status: 'needs_review', review_reason: 'multiple_tokens', tech_user_id: null })
+  })
+
+  it('no tokens → falls back to agent classification', () => {
+    expect(classifyJobWithTokens([], TOKENS, [agent('980496477', 'Kyle', 'Hefner')], resolver))
+      .toEqual({ status: 'eligible', review_reason: null, tech_user_id: KYLE })
+    expect(classifyJobWithTokens([], TOKENS, unmappedAgent, resolver))
+      .toEqual({ status: 'needs_review', review_reason: 'unmapped_agent', tech_user_id: null })
+    expect(classifyJobWithTokens([], TOKENS, [], resolver)).toBeNull()
+  })
+})

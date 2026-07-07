@@ -7,7 +7,7 @@
  */
 
 export type EligibilityStatus = 'eligible' | 'not_accepted' | 'needs_review'
-export type ReviewReason = 'multiple_agents' | 'unmapped_agent'
+export type ReviewReason = 'multiple_agents' | 'unmapped_agent' | 'multiple_tokens' | 'unmapped_token'
 
 export interface AgentOnJob {
   agent_id: string | null
@@ -85,4 +85,58 @@ export function classifyJob(agents: AgentOnJob[], resolver: AgentResolver): Clas
     return { status: 'eligible', review_reason: null, tech_user_id: tech }
   }
   return { status: 'needs_review', review_reason: 'unmapped_agent', tech_user_id: null }
+}
+
+// ── Note tokens ($kyle$-style tags in job notes) ─────────────────────────────
+
+export interface TokenMapping {
+  token: string
+  tech_user_id: string
+}
+
+/** token (lowercased) → tech user id. */
+export function buildTokenMap(mappings: TokenMapping[]): Map<string, string> {
+  return new Map(mappings.map(m => [m.token.trim().toLowerCase(), m.tech_user_id]))
+}
+
+/**
+ * Extract $token$ tags from job text fields. Tokens are letters/digits/_/-
+ * between two $ signs, matched case-insensitively, deduped.
+ */
+export function extractNoteTokens(...texts: (string | null | undefined)[]): string[] {
+  const found = new Set<string>()
+  for (const t of texts) {
+    if (!t) continue
+    for (const m of t.matchAll(/\$([a-z0-9_-]+)\$/gi)) found.add(m[1].toLowerCase())
+  }
+  return [...found]
+}
+
+/**
+ * Classify a job with note tokens taking precedence over the Agent field:
+ *   • one or more tokens present:
+ *       – any token unknown            → needs_review / unmapped_token (typo-proof:
+ *                                        surfaces instead of silently dropping)
+ *       – tokens resolve to ≥2 techs   → needs_review / multiple_tokens
+ *       – all resolve to one tech      → eligible, credits that tech
+ *   • no tokens → fall back to agent classification (classifyJob), so existing
+ *     agent-attributed jobs keep working unchanged.
+ */
+export function classifyJobWithTokens(
+  tokens: string[],
+  tokenMap: Map<string, string>,
+  agents: AgentOnJob[],
+  resolver: AgentResolver,
+): Classification | null {
+  if (tokens.length > 0) {
+    if (tokens.some(t => !tokenMap.has(t))) {
+      return { status: 'needs_review', review_reason: 'unmapped_token', tech_user_id: null }
+    }
+    const techIds = [...new Set(tokens.map(t => tokenMap.get(t)!))]
+    if (techIds.length > 1) {
+      return { status: 'needs_review', review_reason: 'multiple_tokens', tech_user_id: null }
+    }
+    return { status: 'eligible', review_reason: null, tech_user_id: techIds[0] }
+  }
+  return classifyJob(agents, resolver)
 }

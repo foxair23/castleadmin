@@ -107,7 +107,10 @@ export default function LeaderboardClient({
           </div>
         </div>
         <p className="text-xs text-gray-400">
-          Dollars sold = new business sold this period. Dollars received = of those, paid by the customer.
+          Credited by <span className="font-medium">sale date</span> — every job sold (created) this period counts,
+          including work not yet completed. Dollars received = sold jobs the customer has paid.
+          Commission is figured separately by <span className="font-medium">completion date</span>, so these totals
+          won&rsquo;t match the Commission tab&rsquo;s detail — that&rsquo;s expected.
         </p>
       </section>
 

@@ -15,7 +15,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { COMMISSION_START_DATE, periodForRecognitionDate } from './periods'
-import { buildResolver, classifyJob, type AgentMapping, type AgentOnJob } from './eligibility'
+import { buildResolver, buildTokenMap, classifyJobWithTokens, extractNoteTokens, type AgentMapping, type AgentOnJob, type TokenMapping } from './eligibility'
 import { computeCommission, type CommissionPlan, type EligibleJob } from './calc'
 
 function db(): SupabaseClient {
@@ -46,7 +46,7 @@ async function fetchAll<T>(
   return out
 }
 
-interface JobRow { id: string; closed_at: string | null; total: number | null }
+interface JobRow { id: string; closed_at: string | null; total: number | null; tech_notes: string | null; completion_notes: string | null }
 interface AgentRow { job_id: string; agent_id: string | null; agent_first_name: string | null; agent_last_name: string | null }
 interface EligRow {
   sf_job_id: string
@@ -71,11 +71,18 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
   if (mapErr) throw new Error(`load agent map: ${mapErr.message}`)
   const resolver = buildResolver((mapData ?? []) as AgentMapping[])
 
+  // 1b. Note-token map ($kyle$-style tags in job notes take precedence over agents).
+  const { data: tokenData, error: tokenErr } = await supabase
+    .from('commission_note_tokens')
+    .select('token, tech_user_id')
+  if (tokenErr) throw new Error(`load note tokens: ${tokenErr.message}`)
+  const tokenMap = buildTokenMap((tokenData ?? []) as TokenMapping[])
+
   // 2. Candidate jobs: completed on/after the start date, not cancelled/deleted.
   const jobs = await fetchAll<JobRow>((from, to) =>
     supabase
       .from('sf_jobs')
-      .select('id, closed_at, total')
+      .select('id, closed_at, total, tech_notes, completion_notes')
       .eq('is_deleted', false)
       .not('status', 'in', `(${EXCLUDED_STATUSES.map(s => `"${s}"`).join(',')})`)
       .gte('closed_at', COMMISSION_START_DATE)
@@ -127,7 +134,8 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
 
   for (const job of jobs) {
     const agents = agentsByJob.get(job.id) ?? []
-    const classification = classifyJob(agents, resolver)
+    const tokens = extractNoteTokens(job.tech_notes, job.completion_notes)
+    const classification = classifyJobWithTokens(tokens, tokenMap, agents, resolver)
     const existing = existingByJob.get(job.id)
 
     // Job carries no agents → not attributable to any rep, so it's not a
