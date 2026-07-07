@@ -595,7 +595,7 @@ export interface CommissionReviewItem {
   customer_name: string | null
   recognition_date: string
   revenue: number
-  review_reason: 'multiple_agents' | 'unmapped_agent' | null
+  review_reason: 'multiple_agents' | 'unmapped_agent' | 'multiple_tokens' | 'unmapped_token' | null
   agents: ReviewAgent[]
   days_pending: number
 }

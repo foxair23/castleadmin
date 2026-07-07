@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient, type SupabaseClient } from '@supabase/supabase-js'
 import { periodForRecognitionDate } from '@/lib/commission/periods'
-import { buildResolver, classifyJob, type AgentMapping, type AgentOnJob } from '@/lib/commission/eligibility'
+import { buildResolver, buildTokenMap, classifyJobWithTokens, extractNoteTokens, type AgentMapping, type AgentOnJob, type TokenMapping } from '@/lib/commission/eligibility'
 
 // GET ?period_start=&period_end= — SALES leaderboard (TRD §9).
 //
@@ -55,11 +55,15 @@ export async function GET(req: NextRequest) {
     .from('commission_agent_map')
     .select('tech_user_id, agent_id, agent_first_name, agent_last_name')
   const resolver = buildResolver((maps ?? []) as AgentMapping[])
+  const { data: tokenRows } = await db
+    .from('commission_note_tokens')
+    .select('token, tech_user_id')
+  const tokenMap = buildTokenMap((tokenRows ?? []) as TokenMapping[])
 
   // 2. Jobs SOLD (created) in the period — full day range on created_at_sf.
-  const jobs = await fetchAll<{ id: string; total: number | null }>((f, t) =>
+  const jobs = await fetchAll<{ id: string; total: number | null; tech_notes: string | null; completion_notes: string | null }>((f, t) =>
     db.from('sf_jobs')
-      .select('id, total')
+      .select('id, total, tech_notes, completion_notes')
       .eq('is_deleted', false)
       .not('status', 'in', EXCLUDED_STATUSES)
       .gte('created_at_sf', `${start}T00:00:00`)
@@ -69,6 +73,7 @@ export async function GET(req: NextRequest) {
   )
   const jobIds = jobs.map(j => j.id)
   const totalById = new Map(jobs.map(j => [j.id, j.total ?? 0]))
+  const tokensById = new Map(jobs.map(j => [j.id, extractNoteTokens(j.tech_notes, j.completion_notes)]))
   if (jobIds.length === 0) return NextResponse.json({ rows: [] })
 
   // 3. Agents per job → resolve the selling rep (single mapped agent only).
@@ -112,7 +117,7 @@ export async function GET(req: NextRequest) {
   const byTech = new Map<string, { sold: number; received: number }>()
   for (const jobId of jobIds) {
     if (denied.has(jobId)) continue
-    const cls = classifyJob(agentsByJob.get(jobId) ?? [], resolver)
+    const cls = classifyJobWithTokens(tokensById.get(jobId) ?? [], tokenMap, agentsByJob.get(jobId) ?? [], resolver)
     if (!cls || cls.status !== 'eligible' || !cls.tech_user_id) continue
     const total = totalById.get(jobId) ?? 0
     const cur = byTech.get(cls.tech_user_id) ?? { sold: 0, received: 0 }

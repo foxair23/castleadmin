@@ -23,10 +23,11 @@ export async function GET() {
 
   const db = await createServiceClient()
 
-  const [{ data: agentRows }, { data: maps }, { data: techs }] = await Promise.all([
+  const [{ data: agentRows }, { data: maps }, { data: techs }, { data: tokens }] = await Promise.all([
     db.from('sf_job_agents').select('agent_id, agent_first_name, agent_last_name'),
     db.from('commission_agent_map').select('id, tech_user_id, agent_id, agent_first_name, agent_last_name'),
     db.from('profiles').select('id, full_name').eq('role', 'technician').eq('is_active', true).order('full_name'),
+    db.from('commission_note_tokens').select('tech_user_id, token'),
   ])
 
   // Distinct agents with job counts.
@@ -54,7 +55,7 @@ export async function GET() {
     }))
     .sort((a, b) => b.job_count - a.job_count)
 
-  return NextResponse.json({ agents, techs: techs ?? [] })
+  return NextResponse.json({ agents, techs: techs ?? [], tokens: tokens ?? [] })
 }
 
 // POST — set or clear the mapping for a single agent. A null/empty

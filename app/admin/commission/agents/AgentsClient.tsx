@@ -27,6 +27,9 @@ export default function AgentsClient() {
   const [savingKey, setSavingKey] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  // Note tokens: tech_user_id → token (edited locally, saved per tech).
+  const [tokens, setTokens] = useState<Record<string, string>>({})
+  const [savingToken, setSavingToken] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -37,12 +40,37 @@ export default function AgentsClient() {
       if (!res.ok) throw new Error(data.error || 'Failed to load')
       setAgents(data.agents)
       setTechs(data.techs)
+      const tok: Record<string, string> = {}
+      for (const t of (data.tokens ?? []) as { tech_user_id: string; token: string }[]) {
+        tok[t.tech_user_id] = t.token
+      }
+      setTokens(tok)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
       setLoading(false)
     }
   }, [])
+
+  async function saveToken(techId: string) {
+    setSavingToken(techId)
+    setError('')
+    setSuccess('')
+    try {
+      const res = await fetch('/api/admin/commission/tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tech_user_id: techId, token: tokens[techId] ?? '' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to save token')
+      setSuccess(data.recompute_error ? 'Token saved (recompute will retry on next sync)' : 'Token saved')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save token')
+    } finally {
+      setSavingToken(null)
+    }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -84,6 +112,41 @@ export default function AgentsClient() {
       {error && (
         <div className="bg-red-50 border border-red-200 rounded px-4 py-2 text-sm text-red-600">{error}</div>
       )}
+
+      {/* Note tokens — $token$ tags techs write in SF job notes */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-800">Note Tokens</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            A tech writes their token — e.g. <code className="bg-gray-100 px-1 rounded">$kyle$</code> — in a job&rsquo;s
+            Tech Notes or Completion Notes in Service Fusion to claim it for commission. A token beats the Agent
+            field; jobs without one still use the Agent mapping below. Tokens must be unique (mind the two Davids).
+          </p>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {techs.map(t => (
+            <div key={t.id} className="flex items-center gap-3 px-4 py-2">
+              <span className="text-sm text-gray-900 font-medium w-48 shrink-0">{t.full_name}</span>
+              <span className="text-gray-400 text-sm">$</span>
+              <input
+                type="text"
+                value={tokens[t.id] ?? ''}
+                onChange={e => setTokens(prev => ({ ...prev, [t.id]: e.target.value }))}
+                placeholder="no token"
+                className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 w-40 focus:outline-none focus:ring-2 focus:ring-red-400"
+              />
+              <span className="text-gray-400 text-sm">$</span>
+              <button
+                onClick={() => saveToken(t.id)}
+                disabled={savingToken === t.id}
+                className="text-xs bg-red-600 text-white px-3 py-1.5 rounded hover:bg-red-700 disabled:opacity-60"
+              >
+                {savingToken === t.id ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {!loading && (
         <p className="text-sm text-gray-500">
