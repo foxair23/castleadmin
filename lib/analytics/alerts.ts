@@ -141,15 +141,15 @@ export interface UninvoicedJobsResult {
   totalUninvoiced: number
 }
 
-// Scope to post-acquisition work: pre-acquisition uninvoiced jobs belong to the
-// previous owner and aren't actionable. Matches the acquisition cutoff used
-// elsewhere (dashboard, action-items toggle). The daily jobs reconcile rebuilds
-// job↔invoice links (invoice expand) 120 days back, so links are reliable for
-// this entire window.
-const UNINVOICED_SINCE = '2026-04-24'
-
 export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   const db = getAdminClient()
+
+  // Rolling 12-month window (owner wants pre-acquisition completeness too; the
+  // tab's "exclude pre-acquisition" toggle handles hiding those on demand).
+  // Link coverage: the daily jobs reconcile maintains job↔invoice links 120
+  // days back; older links are restored via the "Rebuild invoice links" button
+  // on the SF sync page.
+  const oneYearAgo = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10)
 
   // Rule (per owner): a completed job with no invoice LINKED to it is flagged.
   // Matching is strictly on sf_invoices.job_id — the ±60-day same-customer
@@ -157,19 +157,29 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   // same customer had any other invoice (e.g. one invoiced + one missed job).
   // $0 jobs ARE included for completeness (owner request); the UI offers a
   // "hide $0 jobs" filter.
-  const closed = await fetchAll<{
+  //
+  // "Completed" means closed_at is set OR the status says Completed — SF jobs
+  // marked Completed but never moved to a closed status have closed_at = NULL,
+  // and those are precisely the ones most likely to have skipped invoicing.
+  // For date purposes (window, sort, aging) such jobs fall back to start_date.
+  const closedRaw = await fetchAll<{
     id: string; number: string | null; customer_name: string | null
-    customer_id: string | null; closed_at: string; total: number | null; source: string | null
+    customer_id: string | null; closed_at: string | null; start_date: string | null
+    total: number | null; source: string | null
   }>((from, to) =>
     db.from('sf_jobs')
-      .select('id, number, customer_name, customer_id, closed_at, total, source')
-      .not('closed_at', 'is', null)
-      .gte('closed_at', UNINVOICED_SINCE)
+      .select('id, number, customer_name, customer_id, closed_at, start_date, total, source')
+      .or(`closed_at.gte.${oneYearAgo},and(closed_at.is.null,status.ilike.*complete*,start_date.gte.${oneYearAgo})`)
       .not('status', 'in', '("Cancelled","Void","Voided")')
       .eq('is_deleted', false)
       .order('id', { ascending: true })
       .range(from, to)
   )
+  // Effective completion date: closed_at, else start_date. Skip the (rare) rows
+  // with neither — no way to place them in time.
+  const closed = closedRaw
+    .map(j => ({ ...j, closed_at: j.closed_at ?? j.start_date }))
+    .filter((j): j is typeof j & { closed_at: string } => !!j.closed_at)
   if (closed.length === 0) return { items: [], totalUninvoiced: 0 }
 
   const invoiceRows = await fetchAll<{ job_id: string | null }>((from, to) =>

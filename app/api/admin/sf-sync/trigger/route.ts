@@ -12,7 +12,9 @@ import {
   reprocessCustomerChildren,
 } from '@/lib/sf-mirror/sync-engine'
 
-export const maxDuration = 300
+// 800s: the 12-month invoice-link rebuild (reconcile-scoped, days=365) re-pulls
+// every job in the window with its invoice expand and needs more than 300s.
+export const maxDuration = 800
 
 async function requireAdmin() {
   const supabase = await createClient()

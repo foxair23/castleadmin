@@ -78,6 +78,31 @@ export default function SfSyncClient({ runs, counts }: Props) {
   const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [health, setHealth] = useState<{ stale: boolean; staleEntities: string[]; errors: string[] } | null>(null)
+  const [rebuildingLinks, setRebuildingLinks] = useState(false)
+  const [rebuildResult, setRebuildResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  // Re-pull the last 12 months of jobs WITH their invoices so every invoice's
+  // job link is restored (the /invoices endpoint carries no job reference —
+  // links only come from the jobs expand). Slow: up to ~10 minutes.
+  async function handleRebuildLinks() {
+    if (!confirm('Rebuild invoice links for the last 12 months of jobs? This re-pulls each job with its invoices from Service Fusion and can take up to ~10 minutes.')) return
+    setRebuildingLinks(true)
+    setRebuildResult(null)
+    try {
+      const res = await fetch('/api/admin/sf-sync/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reconcile-scoped', days: 365, entities: ['jobs'] }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'Rebuild failed')
+      setRebuildResult({ ok: true, message: `Done — re-pulled ${data.counts?.jobs ?? '?'} jobs with their invoices.` })
+      router.refresh()
+    } catch (e) {
+      setRebuildResult({ ok: false, message: e instanceof Error ? e.message : 'Rebuild failed' })
+    }
+    setRebuildingLinks(false)
+  }
 
   useEffect(() => {
     fetch('/api/admin/sf-sync/health')
@@ -206,6 +231,34 @@ export default function SfSyncClient({ runs, counts }: Props) {
           </div>
         </div>
       )}
+
+      {/* Maintenance — invoice link rebuild */}
+      <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-800 mb-1">Rebuild Invoice Links</h2>
+          <p className="text-xs text-gray-500">
+            Re-pulls the last 12 months of jobs with their invoices so every invoice is linked to its job
+            (used by Action Items → Completed but Never Invoiced). Run this if invoiced jobs are being
+            flagged as never invoiced. Takes up to ~10 minutes.
+          </p>
+        </div>
+        {rebuildResult && (
+          <div className={`text-sm px-3 py-2 rounded border ${
+            rebuildResult.ok
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : 'bg-red-50 border-red-200 text-red-700'
+          }`}>
+            {rebuildResult.message}
+          </div>
+        )}
+        <button
+          onClick={handleRebuildLinks}
+          disabled={rebuildingLinks || syncing}
+          className="bg-gray-800 text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-gray-900 disabled:opacity-60"
+        >
+          {rebuildingLinks ? 'Rebuilding… (up to ~10 minutes, keep this tab open)' : 'Rebuild Invoice Links (12 months)'}
+        </button>
+      </div>
 
       {/* Mirror Record Counts */}
       <section>
