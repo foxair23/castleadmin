@@ -157,19 +157,29 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   // same customer had any other invoice (e.g. one invoiced + one missed job).
   // $0 jobs ARE included for completeness (owner request); the UI offers a
   // "hide $0 jobs" filter.
-  const closed = await fetchAll<{
+  //
+  // "Completed" means closed_at is set OR the status says Completed — SF jobs
+  // marked Completed but never moved to a closed status have closed_at = NULL,
+  // and those are precisely the ones most likely to have skipped invoicing.
+  // For date purposes (window, sort, aging) such jobs fall back to start_date.
+  const closedRaw = await fetchAll<{
     id: string; number: string | null; customer_name: string | null
-    customer_id: string | null; closed_at: string; total: number | null; source: string | null
+    customer_id: string | null; closed_at: string | null; start_date: string | null
+    total: number | null; source: string | null
   }>((from, to) =>
     db.from('sf_jobs')
-      .select('id, number, customer_name, customer_id, closed_at, total, source')
-      .not('closed_at', 'is', null)
-      .gte('closed_at', oneYearAgo)
+      .select('id, number, customer_name, customer_id, closed_at, start_date, total, source')
+      .or(`closed_at.gte.${oneYearAgo},and(closed_at.is.null,status.ilike.*complete*,start_date.gte.${oneYearAgo})`)
       .not('status', 'in', '("Cancelled","Void","Voided")')
       .eq('is_deleted', false)
       .order('id', { ascending: true })
       .range(from, to)
   )
+  // Effective completion date: closed_at, else start_date. Skip the (rare) rows
+  // with neither — no way to place them in time.
+  const closed = closedRaw
+    .map(j => ({ ...j, closed_at: j.closed_at ?? j.start_date }))
+    .filter((j): j is typeof j & { closed_at: string } => !!j.closed_at)
   if (closed.length === 0) return { items: [], totalUninvoiced: 0 }
 
   const invoiceRows = await fetchAll<{ job_id: string | null }>((from, to) =>
