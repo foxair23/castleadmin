@@ -18,8 +18,8 @@ import type {
   AwaitingSfJobResult,
   OnlineSchedulingLead,
   OnlineSchedulingResult,
-  WonEstimateNoJob,
-  WonEstimatesResult,
+  AcceptedEstimateAwaitingJob,
+  AcceptedEstimatesResult,
   CommissionReviewResult,
 } from '@/lib/analytics/alerts'
 import CommissionReviewTable from './CommissionReviewTable'
@@ -317,9 +317,9 @@ function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: 
 }
 
 
-// ── Alert 9 — Won Estimates With No Job ──────────────────────────────────────
+// ── Alert 9 — Accepted Estimates Awaiting Job ────────────────────────────────
 
-function WonEstimatesTable({ items, notes }: { items: WonEstimateNoJob[]; notes: Record<string, string> }) {
+function AcceptedEstimatesTable({ items, notes }: { items: AcceptedEstimateAwaitingJob[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_since_update')
 
   return (
@@ -613,7 +613,7 @@ interface Props {
   overdueCustomers: OverdueCustomersResult
   awaitingSfJob: AwaitingSfJobResult
   onlineScheduling: OnlineSchedulingResult
-  wonEstimates: WonEstimatesResult
+  acceptedEstimates: AcceptedEstimatesResult
   // Optional: only the admin page passes it (commission is admin-only).
   commissionReview?: CommissionReviewResult
   notes: Record<string, string>
@@ -723,7 +723,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'won-no-job' | 'followup' | 'overdue' | 'awaiting-sf' | 'online-scheduling' | 'commission'
+type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'overdue' | 'awaiting-sf' | 'online-scheduling' | 'commission'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -737,7 +737,7 @@ export default function ActionItemsClient({
   overdueCustomers,
   awaitingSfJob,
   onlineScheduling,
-  wonEstimates,
+  acceptedEstimates,
   commissionReview,
   notes,
 }: Props) {
@@ -801,7 +801,7 @@ export default function ActionItemsClient({
   const filteredOverdueCustomers = filterByCutoff(filterByDays(overdueCustomers.items, 'days_overdue'), 'oldest_overdue_date')
   const filteredAwaitingSfJob = filterByCutoff(filterByDays(awaitingSfJob.items, 'days_waiting'), 'closed_at')
   const filteredOnlineScheduling = filterByCutoff(filterByDays(onlineScheduling.items, 'days_waiting'), 'created_at')
-  const filteredWonEstimates = filterByCutoff(filterByDays(wonEstimates.items, 'days_since_update'), 'created_at_sf')
+  const filteredAcceptedEstimates = filterByCutoff(filterByDays(acceptedEstimates.items, 'days_since_update'), 'created_at_sf')
   const commissionItems = filterByCutoff(commissionReview?.items ?? [], 'recognition_date')
 
   const totalCount =
@@ -812,7 +812,7 @@ export default function ActionItemsClient({
     filteredOverdueCustomers.length +
     filteredAwaitingSfJob.length +
     filteredOnlineScheduling.length +
-    filteredWonEstimates.length +
+    filteredAcceptedEstimates.length +
     commissionItems.length
 
   async function handleRefresh() {
@@ -877,7 +877,7 @@ export default function ActionItemsClient({
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
     { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
     { key: 'estimates',    label: 'Stale Estimates',count: filteredStaleEstimates.length },
-    { key: 'won-no-job',   label: 'Won, No Job',    count: filteredWonEstimates.length },
+    { key: 'accepted-no-job', label: 'Accepted, No Job', count: filteredAcceptedEstimates.length },
     { key: 'followup',     label: 'Follow-Up',      count: filteredFollowUp.length },
     { key: 'overdue',      label: 'Overdue',        count: filteredOverdueCustomers.length },
     { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
@@ -1049,24 +1049,24 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
-      {activeTab === 'won-no-job' && (
+      {activeTab === 'accepted-no-job' && (
         <AlertSection
-          title="Won Estimates With No Job"
-          count={filteredWonEstimates.length}
+          title="Accepted Estimates Awaiting Job"
+          count={filteredAcceptedEstimates.length}
           summary={
-            filteredWonEstimates.length > 0 ? (
+            filteredAcceptedEstimates.length > 0 ? (
               <span className="text-sm text-gray-600">
-                Value at risk: <span className="font-semibold text-amber-700">{fmtMoney(filteredWonEstimates.reduce((s, e) => s + (e.total ?? 0), 0))}</span>
+                Value at risk: <span className="font-semibold text-amber-700">{fmtMoney(filteredAcceptedEstimates.reduce((s, e) => s + (e.total ?? 0), 0))}</span>
               </span>
             ) : undefined
           }
         >
           <p className="text-xs text-gray-400 mb-2">
-            Won/accepted estimates where the customer has no job created on or after the estimate date.
-            SF doesn&rsquo;t expose the conversion link, so verify in Service Fusion before acting —
-            a customer with several jobs can occasionally hide a converted one.
+            Estimates in <span className="font-medium">Estimate Accepted</span> — the customer said yes but the
+            estimate hasn&rsquo;t been converted to a job. Converting it in Service Fusion moves it to
+            Estimate Won and clears it from this list.
           </p>
-          {filteredWonEstimates.length === 0 ? <AllClear /> : <WonEstimatesTable items={filteredWonEstimates} notes={notes} />}
+          {filteredAcceptedEstimates.length === 0 ? <AllClear /> : <AcceptedEstimatesTable items={filteredAcceptedEstimates} notes={notes} />}
         </AlertSection>
       )}
 
