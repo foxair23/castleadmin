@@ -9,6 +9,7 @@ import {
   getOverdueCustomers,
   getAwaitingSfJob,
   getOnlineSchedulingLeads,
+  getWonEstimatesWithoutJob,
   getCommissionJobsNeedingReview,
 } from '@/lib/analytics/alerts'
 import ActionItemsClient from './ActionItemsClient'
@@ -31,7 +32,7 @@ export default async function ActionItemsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, overdueCustomers, awaitingSfJob, onlineScheduling, commissionReview, notesResult] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, overdueCustomers, awaitingSfJob, onlineScheduling, wonEstimates, commissionReview, notesResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -40,6 +41,7 @@ export default async function ActionItemsPage() {
       getOverdueCustomers(),
       getAwaitingSfJob(),
       getOnlineSchedulingLeads(),
+      getWonEstimatesWithoutJob(),
       getCommissionJobsNeedingReview(),
       db.from('action_item_notes').select('entity_type, entity_id, note'),
     ])
@@ -58,6 +60,7 @@ export default async function ActionItemsPage() {
       overdueCustomers={overdueCustomers}
       awaitingSfJob={awaitingSfJob}
       onlineScheduling={onlineScheduling}
+      wonEstimates={wonEstimates}
       commissionReview={commissionReview}
       notes={notes}
     />

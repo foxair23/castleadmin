@@ -686,3 +686,87 @@ export async function getCommissionJobsNeedingReview(): Promise<CommissionReview
 
   return { items, count: items.length, techs }
 }
+
+// ── Alert 9 — Won Estimates With No Job ──────────────────────────────────────
+// SF's API exposes no estimate→job conversion link (verified against the raw
+// payload), so this is a conservative heuristic: a won/accepted estimate is
+// flagged only when its customer has NO job created on/after the estimate date.
+// A multi-job customer can occasionally hide a real miss; anything flagged is
+// worth checking, and anything converted normally will not appear.
+
+export interface WonEstimateNoJob {
+  id: string
+  number: string | null
+  customer_name: string | null
+  customer_id: string | null
+  status: string | null
+  total: number | null
+  created_at_sf: string
+  updated_at_sf: string | null
+  /** Days since the estimate last changed (≈ when it was marked won). */
+  days_since_update: number
+}
+
+export interface WonEstimatesResult {
+  items: WonEstimateNoJob[]
+  totalValue: number
+}
+
+export async function getWonEstimatesWithoutJob(): Promise<WonEstimatesResult> {
+  const db = getAdminClient()
+
+  const { data } = await db
+    .from('sf_estimates')
+    .select('id, number, customer_id, customer_name, status, total, created_at_sf, updated_at_sf')
+    .in('status', ['Estimate Won', 'Estimate Accepted'])
+    .eq('is_deleted', false)
+    .order('updated_at_sf', { ascending: false })
+    .limit(1000)
+
+  const estimates = (data ?? []) as Array<{
+    id: string; number: string | null; customer_id: string | null; customer_name: string | null
+    status: string | null; total: number | null; created_at_sf: string; updated_at_sf: string | null
+  }>
+  if (estimates.length === 0) return { items: [], totalValue: 0 }
+
+  // Job creation dates per customer (only the customers we need, chunked).
+  const customerIds = [...new Set(estimates.map(e => e.customer_id).filter((c): c is string => !!c))]
+  const jobDatesByCustomer = new Map<string, string[]>()
+  const CHUNK = 200
+  for (let i = 0; i < customerIds.length; i += CHUNK) {
+    const slice = customerIds.slice(i, i + CHUNK)
+    const jobs = await fetchAll<{ customer_id: string; created_at_sf: string | null }>((from, to) =>
+      db.from('sf_jobs')
+        .select('id, customer_id, created_at_sf')
+        .in('customer_id', slice)
+        .eq('is_deleted', false)
+        .not('status', 'in', '("Cancelled","Void","Voided")')
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
+    for (const j of jobs) {
+      if (!j.created_at_sf) continue
+      const arr = jobDatesByCustomer.get(j.customer_id) ?? []
+      arr.push(j.created_at_sf)
+      jobDatesByCustomer.set(j.customer_id, arr)
+    }
+  }
+
+  // Converted ⇢ some job for the customer was created on/after the estimate
+  // (1-day slack for clock ordering around same-day conversions).
+  const SLACK_MS = 86_400_000
+  const items: WonEstimateNoJob[] = estimates
+    .filter(e => {
+      if (!e.customer_id) return true // no customer to match — surface it
+      const cutoff = new Date(e.created_at_sf).getTime() - SLACK_MS
+      const dates = jobDatesByCustomer.get(e.customer_id) ?? []
+      return !dates.some(d => new Date(d).getTime() >= cutoff)
+    })
+    .map(e => ({
+      ...e,
+      days_since_update: daysBetween(e.updated_at_sf ?? e.created_at_sf),
+    }))
+
+  const totalValue = items.reduce((s, i) => s + (i.total ?? 0), 0)
+  return { items, totalValue }
+}
