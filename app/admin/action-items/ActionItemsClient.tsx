@@ -257,6 +257,7 @@ function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: 
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_since_completion" label="Days Since Completion" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Job Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
           </tr>
         </thead>
@@ -270,6 +271,7 @@ function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: 
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_since_completion} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(job.total)}</td>
+              <td className={`px-4 py-2 font-medium ${(job.due_total ?? 0) > 0 ? 'text-red-700' : 'text-gray-400'}`}>{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
             </tr>
           ))}
