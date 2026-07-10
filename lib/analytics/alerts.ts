@@ -131,6 +131,7 @@ export interface UninvoicedJob {
   customer_id: string | null
   closed_at: string
   total: number | null
+  due_total: number | null
   source: string | null
   tech_names: string[]
   days_since_completion: number
@@ -165,10 +166,10 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
   const closedRaw = await fetchAll<{
     id: string; number: string | null; customer_name: string | null
     customer_id: string | null; closed_at: string | null; start_date: string | null
-    total: number | null; source: string | null
+    total: number | null; due_total: number | null; source: string | null
   }>((from, to) =>
     db.from('sf_jobs')
-      .select('id, number, customer_name, customer_id, closed_at, start_date, total, source')
+      .select('id, number, customer_name, customer_id, closed_at, start_date, total, due_total, source')
       .or(`closed_at.gte.${oneYearAgo},and(closed_at.is.null,status.ilike.*complete*,start_date.gte.${oneYearAgo})`)
       .not('status', 'in', '("Cancelled","Void","Voided")')
       .eq('is_deleted', false)
@@ -207,6 +208,7 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     customer_id: string | null
     closed_at: string
     total: number | null
+    due_total: number | null
     source: string | null
   }) => ({
     id: j.id,
@@ -215,6 +217,7 @@ export async function getUninvoicedJobs(): Promise<UninvoicedJobsResult> {
     customer_id: j.customer_id,
     closed_at: j.closed_at,
     total: j.total,
+    due_total: j.due_total,
     source: j.source ?? null,
     tech_names: techMap.get(j.id) ?? [],
     days_since_completion: daysBetween(j.closed_at),
