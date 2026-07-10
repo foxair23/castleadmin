@@ -686,3 +686,52 @@ export async function getCommissionJobsNeedingReview(): Promise<CommissionReview
 
   return { items, count: items.length, techs }
 }
+
+// ── Alert 9 — Accepted Estimates Awaiting Job ────────────────────────────────
+// In this account's workflow, converting an estimate to a job moves its status
+// to 'Estimate Won' (SF shows "Converted to Job #…" on those), while
+// 'Estimate Accepted' means the customer said yes but the estimate has NOT been
+// converted yet (confirmed against the SF UI). The API exposes no conversion
+// link, but the status encodes it — so the watch-list is exactly the estimates
+// still sitting in 'Estimate Accepted'.
+
+export interface AcceptedEstimateAwaitingJob {
+  id: string
+  number: string | null
+  customer_name: string | null
+  customer_id: string | null
+  status: string | null
+  total: number | null
+  created_at_sf: string
+  updated_at_sf: string | null
+  /** Days since the estimate last changed (≈ when it was accepted). */
+  days_since_update: number
+}
+
+export interface AcceptedEstimatesResult {
+  items: AcceptedEstimateAwaitingJob[]
+  totalValue: number
+}
+
+export async function getAcceptedEstimatesAwaitingJob(): Promise<AcceptedEstimatesResult> {
+  const db = getAdminClient()
+
+  const { data } = await db
+    .from('sf_estimates')
+    .select('id, number, customer_id, customer_name, status, total, created_at_sf, updated_at_sf')
+    .eq('status', 'Estimate Accepted')
+    .eq('is_deleted', false)
+    .order('updated_at_sf', { ascending: false })
+    .limit(500)
+
+  const items: AcceptedEstimateAwaitingJob[] = ((data ?? []) as Array<{
+    id: string; number: string | null; customer_id: string | null; customer_name: string | null
+    status: string | null; total: number | null; created_at_sf: string; updated_at_sf: string | null
+  }>).map(e => ({
+    ...e,
+    days_since_update: daysBetween(e.updated_at_sf ?? e.created_at_sf),
+  }))
+
+  const totalValue = items.reduce((s, i) => s + (i.total ?? 0), 0)
+  return { items, totalValue }
+}
