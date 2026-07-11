@@ -52,7 +52,12 @@ export async function POST(req: NextRequest) {
 
     if (action === 'sync-entity') {
       if (!entity) return NextResponse.json({ ok: false, error: 'entity required' }, { status: 400 })
-      const upserted = await runIncrementalSyncForEntity(entity)
+      // Optional soft time cap. For newest-first entities (invoices) a capped
+      // run still covers the most recent records — ideal for manual refreshes.
+      const deadline = typeof body.maxSeconds === 'number' && body.maxSeconds > 0
+        ? Date.now() + body.maxSeconds * 1000
+        : undefined
+      const upserted = await runIncrementalSyncForEntity(entity, deadline)
       counts = { [entity]: upserted }
     } else if (action === 'sync-now') {
       // Reference + incremental — same as the daily cron
