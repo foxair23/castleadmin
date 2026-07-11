@@ -711,9 +711,13 @@ function SourceFilterDropdown({
   )
 }
 
-const RECONCILE_STEPS = [
-  { label: 'jobs (last 120 days)', entities: ['jobs'] },
-  { label: 'estimates (last 120 days)', entities: ['estimates'] },
+// Each step posts its own trigger body. Invoices sync newest-first, so the
+// 180s cap still covers all recent invoices (full exactness comes from the
+// Sunday reconcile).
+const RECONCILE_STEPS: { label: string; body: Record<string, unknown> }[] = [
+  { label: 'jobs (last 120 days)', body: { action: 'reconcile-scoped', days: 120, entities: ['jobs'] } },
+  { label: 'estimates', body: { action: 'reconcile-scoped', days: 120, entities: ['estimates'] } },
+  { label: 'invoices (newest first)', body: { action: 'sync-entity', entity: 'invoices', maxSeconds: 180 } },
 ]
 
 function Spinner() {
@@ -847,7 +851,7 @@ export default function ActionItemsClient({
           const res = await fetch('/api/admin/sf-sync/trigger', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'reconcile-scoped', days: 120, entities: step.entities }),
+            body: JSON.stringify(step.body),
           })
           const text = await res.text()
 
