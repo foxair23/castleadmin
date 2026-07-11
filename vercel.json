@@ -17,6 +17,7 @@
     { "path": "/api/cron/sync-not-run", "schedule": "0 17 * * *" },
     { "path": "/api/cron/ingest-google-reviews", "schedule": "0 11 * * *" },
     { "path": "/api/cron/scheduler-partial-leads", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/daily-action-items", "schedule": "0 14 * * 1-6" }
+    { "path": "/api/cron/daily-action-items", "schedule": "0 14 * * 1-6" },
+    { "path": "/api/cron/action-items-checkin", "schedule": "0 22 * * 1-6" }
   ]
 }
