@@ -17,7 +17,7 @@ import {
   getOnlineSchedulingLeads,
   getAcceptedEstimatesAwaitingJob,
 } from '@/lib/analytics/alerts'
-import { ACTION_TAB_CONFIG, todayPT } from './config'
+import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT } from './config'
 
 export interface Line { text: string; sub?: string }
 export interface TabBucket { tab: string; label: string; newLines: Line[]; dueLines: Line[] }
@@ -68,10 +68,14 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
 
   function bucketize<T extends { id: string }>(
     tab: string, label: string, items: T[], line: (item: T) => string,
+    dateOf?: (item: T) => string | null,
   ): TabBucket {
     const cfg = ACTION_TAB_CONFIG[tab]
     const out: TabBucket = { tab, label, newLines: [], dueLines: [] }
     for (const item of items) {
+      // Pre-acquisition items are informational only — never in the to-do.
+      const d = dateOf?.(item)
+      if (d && d.slice(0, 10) < ACQUISITION_CUTOFF) continue
       const rec = cfg ? actionByKey.get(`${cfg.entity}:${item.id}`) : undefined
       if (!rec) {
         out.newLines.push({ text: line(item) })
@@ -87,17 +91,17 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
 
   const buckets: TabBucket[] = [
     bucketize('uninvoiced', 'Never Invoiced', uninvoiced.items,
-      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_since_completion}d`),
+      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_since_completion}d`, i => i.closed_at),
     bucketize('unpaid', 'Unpaid Jobs', unpaid.items,
-      i => `${i.customer_name ?? '—'} — ${money(i.due_total)} due — ${i.days_outstanding}d`),
+      i => `${i.customer_name ?? '—'} — ${money(i.due_total)} due — ${i.days_outstanding}d`, i => i.closed_at),
     bucketize('accepted-no-job', 'Accepted, No Job', accepted.items,
-      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_since_update}d`),
+      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_since_update}d`, i => i.created_at_sf),
     bucketize('awaiting-sf', 'Awaiting SF Job', awaitingSf.items,
-      i => `${i.customer_name ?? '—'} — ${i.days_waiting}d`),
+      i => `${i.customer_name ?? '—'} — ${i.days_waiting}d`, i => i.closed_at),
     bucketize('estimates', 'Stale Estimates', stale.items,
-      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_outstanding}d`),
+      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_outstanding}d`, i => i.created_at_sf),
     bucketize('followup', 'Follow-Up', followUp.items,
-      i => `${i.customer_name ?? '—'} — ${i.days_open}d open`),
+      i => `${i.customer_name ?? '—'} — ${i.days_open}d open`, i => i.start_date),
   ]
 
   // Online Scheduling has its own Done flow — every listed lead needs a first touch.

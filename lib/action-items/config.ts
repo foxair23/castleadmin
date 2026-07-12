@@ -5,6 +5,10 @@
 // appears in the daily to-do email. Pure data — imported by client, API, and
 // the digest cron.
 
+// Items dated before the acquisition are informational only — no action is
+// prompted for them (previous owner's history).
+export const ACQUISITION_CUTOFF = '2026-04-24'
+
 export interface ActionTabConfig {
   /** Button label — also the recorded action. */
   button: string

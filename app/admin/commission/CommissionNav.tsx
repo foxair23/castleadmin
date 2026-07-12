@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
 const TABS: { href: string; label: string; match: (p: string) => boolean }[] = [
   { href: '/admin/commission/techs', label: 'Technicians', match: p => p === '/admin/commission' || p.startsWith('/admin/commission/techs') },
   { href: '/admin/commission/plans', label: 'Plans', match: p => p.startsWith('/admin/commission/plans') },
+  { href: '/admin/commission/review', label: 'Review', match: p => p.startsWith('/admin/commission/review') },
   { href: '/admin/commission/acceptances', label: 'Acceptances', match: p => p.startsWith('/admin/commission/acceptances') },
   { href: '/admin/commission/leaderboard', label: 'Leaderboard', match: p => p.startsWith('/admin/commission/leaderboard') },
   { href: '/admin/commission/agents', label: 'Agent Mapping', match: p => p.startsWith('/admin/commission/agents') },
