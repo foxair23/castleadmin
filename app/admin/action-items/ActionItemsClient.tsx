@@ -239,7 +239,7 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
           disabled={busy}
           className="text-xs bg-red-600 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded shadow-sm disabled:opacity-50 whitespace-nowrap"
         >
-          {busy ? 'Saving…' : `▶ ${cfg.button}`}
+          {busy ? 'Saving…' : `✎ ${cfg.button}`}
         </button>
       </td>
     )
@@ -586,6 +586,7 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-green-700 uppercase tracking-wide whitespace-nowrap">Done</th>
             <SortTh col="created_at" label="Submitted" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
@@ -593,12 +594,12 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="kind" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Age" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-4 py-2" />
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map(lead => (
             <tr key={lead.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 whitespace-nowrap"><DoneButton leadId={lead.id} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDateTime(lead.created_at)}</td>
               <td className="px-4 py-2 font-medium text-gray-900">{lead.customer_name}</td>
               <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
@@ -618,7 +619,6 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
                 </span>
               </td>
               <td className="px-4 py-2"><AgingPill days={lead.days_waiting} /></td>
-              <td className="px-4 py-2 text-right"><DoneButton leadId={lead.id} /></td>
             </tr>
           ))}
         </tbody>
