@@ -798,7 +798,7 @@ export default function ActionItemsClient({
   const [sourcesFilter, setSourcesFilter] = useState<string[]>([])
   const [daysFilter, setDaysFilter] = useState<number | null>(null)
   const [daysInput, setDaysInput] = useState('')
-  const [activeTab, setActiveTab] = useState<TabKey>('unpaid')
+  const [activeTab, setActiveTab] = useState<TabKey>('online-scheduling')
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
   // Never Invoiced: $0 jobs are listed for completeness; this hides them on demand.
   const [hideZeroUninvoiced, setHideZeroUninvoiced] = useState(false)
@@ -932,13 +932,14 @@ export default function ActionItemsClient({
   }
 
   const TABS: { key: TabKey; label: string; count: number }[] = [
+    // Ordered by business importance (owner-specified).
+    { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
     { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
+    { key: 'accepted-no-job', label: 'Accepted Estimate - No Job', count: filteredAcceptedEstimates.length },
     { key: 'estimates',    label: 'Stale Estimates',count: filteredStaleEstimates.length },
-    { key: 'accepted-no-job', label: 'Accepted, No Job', count: filteredAcceptedEstimates.length },
+    { key: 'awaiting-sf',  label: 'Marketing Lead - Awaiting SF Job', count: filteredAwaitingSfJob.length },
     { key: 'followup',     label: 'Follow-Up',      count: filteredFollowUp.length },
-    { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
-    { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
   ]
 
   return (
@@ -1119,7 +1120,7 @@ export default function ActionItemsClient({
 
       {activeTab === 'accepted-no-job' && (
         <AlertSection
-          title="Accepted Estimates Awaiting Job"
+          title="Accepted Estimate — No Job"
           count={filteredAcceptedEstimates.length}
           summary={
             filteredAcceptedEstimates.length > 0 ? (
@@ -1150,7 +1151,7 @@ export default function ActionItemsClient({
 
       {activeTab === 'awaiting-sf' && (
         <AlertSection
-          title="Closed Won — Awaiting SF Job"
+          title="Marketing Lead — Awaiting SF Job"
           count={filteredAwaitingSfJob.length}
         >
           <p className="text-xs text-gray-400 mb-2">A row clears automatically when an SF job is recorded for the won lead.</p>
