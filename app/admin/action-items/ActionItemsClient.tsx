@@ -28,8 +28,15 @@ function fmtMoney(n: number | null | undefined): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
 function fmtDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—'
+  // Date-only values (e.g. appointment_date '2026-07-13') must be formatted
+  // from their parts: new Date() would parse them as UTC midnight, which shows
+  // as the PREVIOUS day in Pacific time (appointments looked a day early).
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr)
+  if (m) return `${MONTHS_SHORT[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`
   const d = new Date(dateStr)
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
