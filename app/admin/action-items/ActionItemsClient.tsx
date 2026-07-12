@@ -209,10 +209,14 @@ function NotesCell({ entityType, entityId, initialNote }: {
 // Pressing again on a due item restarts the clock (e.g. second payment request).
 
 function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId: string; record?: ActionRecord; itemDate?: string | null }) {
-  const router = useRouter()
+  // Optimistic: the chip appears the moment the button is pressed; the POST
+  // runs in the background and rolls back on failure. No router.refresh() —
+  // re-running every alert query made each click take 2-3s.
+  const [localRecord, setLocalRecord] = useState<ActionRecord | null>(null)
   const [busy, setBusy] = useState(false)
   const cfg = ACTION_TAB_CONFIG[tab]
   if (!cfg) return <td className="px-4 py-2" />
+  const rec = localRecord ?? record
 
   // Pre-acquisition items are informational only — don't prompt an action.
   if (itemDate && itemDate.slice(0, 10) < ACQUISITION_CUTOFF && !record) {
@@ -224,21 +228,30 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
   }
 
   async function press() {
+    if (busy) return
     setBusy(true)
+    const prev = rec ?? null
+    const [y, m, d] = todayPT().split('-').map(Number)
+    setLocalRecord({
+      action_label: cfg.button,
+      actioned_at: new Date().toISOString(),
+      actioned_by_name: null,
+      follow_up_on: new Date(Date.UTC(y, m - 1, d + cfg.days)).toISOString().slice(0, 10),
+    })
     try {
       const res = await fetch('/api/admin/action-item-actions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tab, entity_id: entityId }),
       })
-      if (res.ok) router.refresh()
-      else setBusy(false)
+      if (!res.ok) setLocalRecord(prev)
     } catch {
-      setBusy(false)
+      setLocalRecord(prev)
     }
+    setBusy(false)
   }
 
-  if (!record) {
+  if (!rec) {
     return (
       <td className="px-4 py-2 whitespace-nowrap">
         <button
@@ -252,7 +265,7 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
     )
   }
 
-  const due = record.follow_up_on <= todayPT()
+  const due = rec.follow_up_on <= todayPT()
   return (
     <td className="px-4 py-2 whitespace-nowrap">
       <div className="flex flex-col gap-0.5">
@@ -267,11 +280,11 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
           </button>
         ) : (
           <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap">
-            ⏳ Waiting til {fmtDate(record.follow_up_on + 'T12:00:00')}
+            ⏳ Waiting til {fmtDate(rec.follow_up_on + 'T12:00:00')}
           </span>
         )}
         <span className="text-[11px] text-gray-400 whitespace-nowrap">
-          {record.action_label} · {fmtDate(record.actioned_at)}{record.actioned_by_name ? ` · ${record.actioned_by_name}` : ''}
+          {rec.action_label} · {fmtDate(rec.actioned_at)}{rec.actioned_by_name ? ` · ${rec.actioned_by_name}` : ''}
         </span>
       </div>
     </td>
@@ -556,31 +569,38 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
 
 // "Done" button — acknowledges an Online Scheduling lead (requires login).
 function DoneButton({ leadId }: { leadId: string }) {
-  const router = useRouter()
-  const [busy, setBusy] = useState(false)
+  // Optimistic: flip to the acknowledged chip immediately; the row clears on
+  // the next page load. Rolls back if the request fails.
+  const [done, setDone] = useState(false)
 
   async function handleDone() {
-    setBusy(true)
+    if (done) return
+    setDone(true)
     try {
       const res = await fetch('/api/leads/ack', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leadId }),
       })
-      if (res.ok) router.refresh()
-      else setBusy(false)
+      if (!res.ok) setDone(false)
     } catch {
-      setBusy(false)
+      setDone(false)
     }
   }
 
+  if (done) {
+    return (
+      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 whitespace-nowrap">
+        ✓ Done
+      </span>
+    )
+  }
   return (
     <button
       onClick={handleDone}
-      disabled={busy}
-      className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-medium whitespace-nowrap"
+      className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-green-600 hover:bg-green-700 text-white text-xs font-medium whitespace-nowrap"
     >
-      {busy ? 'Saving…' : '✓ Done'}
+      ✓ Done
     </button>
   )
 }

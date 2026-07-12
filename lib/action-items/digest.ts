@@ -89,17 +89,19 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
     return out
   }
 
+  // Same order as the Action Items tabs (Online Scheduling is prepended at
+  // render time, ahead of these).
   const buckets: TabBucket[] = [
-    bucketize('uninvoiced', 'Never Invoiced', uninvoiced.items,
-      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_since_completion}d`, i => i.closed_at),
     bucketize('unpaid', 'Unpaid Jobs', unpaid.items,
       i => `${i.customer_name ?? '—'} — ${money(i.due_total)} due — ${i.days_outstanding}d`, i => i.closed_at),
-    bucketize('accepted-no-job', 'Accepted, No Job', accepted.items,
+    bucketize('uninvoiced', 'Never Invoiced', uninvoiced.items,
+      i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_since_completion}d`, i => i.closed_at),
+    bucketize('accepted-no-job', 'Accepted Estimate - No Job', accepted.items,
       i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_since_update}d`, i => i.created_at_sf),
-    bucketize('awaiting-sf', 'Awaiting SF Job', awaitingSf.items,
-      i => `${i.customer_name ?? '—'} — ${i.days_waiting}d`, i => i.closed_at),
     bucketize('estimates', 'Stale Estimates', stale.items,
       i => `${i.customer_name ?? '—'} — ${money(i.total)} — ${i.days_outstanding}d`, i => i.created_at_sf),
+    bucketize('awaiting-sf', 'Marketing Lead - Awaiting SF Job', awaitingSf.items,
+      i => `${i.customer_name ?? '—'} — ${i.days_waiting}d`, i => i.closed_at),
     bucketize('followup', 'Follow-Up', followUp.items,
       i => `${i.customer_name ?? '—'} — ${i.days_open}d open`, i => i.start_date),
   ]
@@ -167,8 +169,8 @@ export function renderTodoEmail(d: TodoDigest, opts: {
 }): { html: string; text: string } {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'
   const newGroups = [
-    ...d.buckets.map(b => ({ label: b.label, lines: b.newLines })),
     { label: 'Online Scheduling (press Done after handling)', lines: d.schedulingLines },
+    ...d.buckets.map(b => ({ label: b.label, lines: b.newLines })),
   ]
   const dueGroups = d.buckets.map(b => ({ label: b.label, lines: b.dueLines }))
 
