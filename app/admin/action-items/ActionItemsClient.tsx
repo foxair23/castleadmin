@@ -12,8 +12,6 @@ import type {
   StaleEstimatesResult,
   FollowUpJob,
   FollowUpJobsResult,
-  OverdueCustomer,
-  OverdueCustomersResult,
   AwaitingSfJobLead,
   AwaitingSfJobResult,
   OnlineSchedulingLead,
@@ -23,6 +21,7 @@ import type {
   CommissionReviewResult,
 } from '@/lib/analytics/alerts'
 import CommissionReviewTable from './CommissionReviewTable'
+import { ACTION_TAB_CONFIG, todayPT, type ActionRecord } from '@/lib/action-items/config'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -199,9 +198,75 @@ function NotesCell({ entityType, entityId, initialNote }: {
   )
 }
 
+// ── Action button / status chip ──────────────────────────────────────────────
+// One action per tab (no dropdown). Pressing records who/when and sets the
+// follow-up date from the tab's cadence; the chip shows the waiting/due state.
+// Pressing again on a due item restarts the clock (e.g. second payment request).
+
+function ActionCell({ tab, entityId, record }: { tab: string; entityId: string; record?: ActionRecord }) {
+  const router = useRouter()
+  const [busy, setBusy] = useState(false)
+  const cfg = ACTION_TAB_CONFIG[tab]
+  if (!cfg) return <td className="px-4 py-2" />
+
+  async function press() {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/admin/action-item-actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab, entity_id: entityId }),
+      })
+      if (res.ok) router.refresh()
+      else setBusy(false)
+    } catch {
+      setBusy(false)
+    }
+  }
+
+  if (!record) {
+    return (
+      <td className="px-4 py-2 whitespace-nowrap">
+        <button
+          onClick={press}
+          disabled={busy}
+          className="text-xs border border-red-300 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
+        >
+          {busy ? 'Saving…' : cfg.button}
+        </button>
+      </td>
+    )
+  }
+
+  const due = record.follow_up_on <= todayPT()
+  return (
+    <td className="px-4 py-2 whitespace-nowrap">
+      <div className="flex flex-col gap-0.5">
+        {due ? (
+          <button
+            onClick={press}
+            disabled={busy}
+            title={`Records another "${cfg.button}" and restarts the ${cfg.days}-day clock`}
+            className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
+          >
+            {busy ? 'Saving…' : `🔔 Due — ${cfg.button} again`}
+          </button>
+        ) : (
+          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap">
+            ⏳ Waiting til {fmtDate(record.follow_up_on + 'T12:00:00')}
+          </span>
+        )}
+        <span className="text-[11px] text-gray-400 whitespace-nowrap">
+          {record.action_label} · {fmtDate(record.actioned_at)}{record.actioned_by_name ? ` · ${record.actioned_by_name}` : ''}
+        </span>
+      </div>
+    </td>
+  )
+}
+
 // ── Alert 1 — Completed but Unpaid Jobs ──────────────────────────────────────
 
-function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<string, string> }) {
+function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_outstanding')
 
   return (
@@ -218,6 +283,7 @@ function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<s
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="payment_status" label="Payment Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -232,6 +298,7 @@ function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<s
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.payment_status ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
+              <ActionCell tab="unpaid" entityId={job.id} record={actions[`sf_job:${job.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -242,7 +309,7 @@ function UnpaidJobsTable({ items, notes }: { items: UnpaidJob[]; notes: Record<s
 
 // ── Alert 2 — Completed but Never Invoiced ────────────────────────────────────
 
-function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: Record<string, string> }) {
+function UninvoicedJobsTable({ items, notes, actions }: { items: UninvoicedJob[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_since_completion')
 
   return (
@@ -259,6 +326,7 @@ function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: 
             <SortTh col="total" label="Job Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -273,6 +341,7 @@ function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: 
               <td className="px-4 py-2 text-gray-700">{fmtMoney(job.total)}</td>
               <td className={`px-4 py-2 font-medium ${(job.due_total ?? 0) > 0 ? 'text-red-700' : 'text-gray-400'}`}>{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
+              <ActionCell tab="uninvoiced" entityId={job.id} record={actions[`sf_job:${job.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -283,7 +352,7 @@ function UninvoicedJobsTable({ items, notes }: { items: UninvoicedJob[]; notes: 
 
 // ── Alert 3 — Stale Estimates ─────────────────────────────────────────────────
 
-function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: Record<string, string> }) {
+function StaleEstimatesTable({ items, notes, actions }: { items: StaleEstimate[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_outstanding')
 
   return (
@@ -298,6 +367,7 @@ function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: 
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -310,6 +380,7 @@ function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: 
               <td className="px-4 py-2"><AgingPill days={est.days_outstanding} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(est.total)}</td>
               <td className="px-4 py-2 text-gray-600">{est.status ?? '—'}</td>
+              <ActionCell tab="estimates" entityId={est.id} record={actions[`sf_estimate:${est.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -321,7 +392,7 @@ function StaleEstimatesTable({ items, notes }: { items: StaleEstimate[]; notes: 
 
 // ── Alert 9 — Accepted Estimates Awaiting Job ────────────────────────────────
 
-function AcceptedEstimatesTable({ items, notes }: { items: AcceptedEstimateAwaitingJob[]; notes: Record<string, string> }) {
+function AcceptedEstimatesTable({ items, notes, actions }: { items: AcceptedEstimateAwaitingJob[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_since_update')
 
   return (
@@ -336,6 +407,7 @@ function AcceptedEstimatesTable({ items, notes }: { items: AcceptedEstimateAwait
             <SortTh col="updated_at_sf" label="Last Updated" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_since_update" label="Days" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Value" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -348,6 +420,7 @@ function AcceptedEstimatesTable({ items, notes }: { items: AcceptedEstimateAwait
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(est.updated_at_sf)}</td>
               <td className="px-4 py-2"><AgingPill days={est.days_since_update} /></td>
               <td className="px-4 py-2 text-gray-700 font-medium">{fmtMoney(est.total)}</td>
+              <ActionCell tab="accepted-no-job" entityId={est.id} record={actions[`sf_estimate:${est.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -358,7 +431,7 @@ function AcceptedEstimatesTable({ items, notes }: { items: AcceptedEstimateAwait
 
 // ── Alert 4 — Jobs Flagged for Follow-Up ─────────────────────────────────────
 
-function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Record<string, string> }) {
+function FollowUpJobsTable({ items, notes, actions }: { items: FollowUpJob[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_open')
 
   return (
@@ -375,6 +448,7 @@ function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Reco
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">SF Note</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -391,43 +465,7 @@ function FollowUpJobsTable({ items, notes }: { items: FollowUpJob[]; notes: Reco
               <td className="px-4 py-2 text-gray-600 max-w-xs truncate">
                 {job.note_to_customer || job.tech_notes || '—'}
               </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-// ── Alert 5 — Customers Overdue Past Payment Terms ────────────────────────────
-
-function OverdueCustomersTable({ items, notes }: { items: OverdueCustomer[]; notes: Record<string, string> }) {
-  const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_overdue')
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-50 border-y border-gray-200">
-          <tr>
-            <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="account_balance" label="Balance" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
-            <SortTh col="payment_terms" label="Payment Terms" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="oldest_overdue_date" label="Oldest Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="days_overdue" label="Days Overdue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="overdue_invoice_count" label="Invoices" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {sorted.map(cust => (
-            <tr key={cust.id} className="hover:bg-gray-50">
-              <td className="px-4 py-2 font-medium text-gray-900">{cust.customer_name ?? '—'}</td>
-              <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(cust.account_balance)}</td>
-              <NotesCell entityType="sf_customer" entityId={cust.id} initialNote={notes[`sf_customer:${cust.id}`] ?? ''} />
-              <td className="px-4 py-2 text-gray-600">{cust.payment_terms ?? '—'}</td>
-              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(cust.oldest_overdue_date)}</td>
-              <td className="px-4 py-2"><AgingPill days={cust.days_overdue} /></td>
-              <td className="px-4 py-2 text-gray-600">{cust.overdue_invoice_count}</td>
+              <ActionCell tab="followup" entityId={job.id} record={actions[`sf_job:${job.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -440,7 +478,7 @@ function OverdueCustomersTable({ items, notes }: { items: OverdueCustomer[]; not
 
 // ── Alert 6 — Closed Won Awaiting SF Job ─────────────────────────────────────
 
-function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; notes: Record<string, string> }) {
+function AwaitingSfJobTable({ items, notes, actions }: { items: AwaitingSfJobLead[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
 
   return (
@@ -456,6 +494,7 @@ function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; note
             <SortTh col="closed_at" label="Won" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Days waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2" />
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -481,6 +520,7 @@ function AwaitingSfJobTable({ items, notes }: { items: AwaitingSfJobLead[]; note
                   View lead →
                 </Link>
               </td>
+              <ActionCell tab="awaiting-sf" entityId={l.id} record={actions[`sales_lead:${l.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -612,9 +652,9 @@ interface Props {
   uninvoicedJobs: UninvoicedJobsResult
   staleEstimates: StaleEstimatesResult
   followUpJobs: FollowUpJobsResult
-  overdueCustomers: OverdueCustomersResult
   awaitingSfJob: AwaitingSfJobResult
   onlineScheduling: OnlineSchedulingResult
+  actions: Record<string, ActionRecord>
   acceptedEstimates: AcceptedEstimatesResult
   // Optional: only the admin page passes it (commission is admin-only).
   commissionReview?: CommissionReviewResult
@@ -729,7 +769,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'overdue' | 'awaiting-sf' | 'online-scheduling' | 'commission'
+type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'commission'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -740,10 +780,10 @@ export default function ActionItemsClient({
   uninvoicedJobs,
   staleEstimates,
   followUpJobs,
-  overdueCustomers,
   awaitingSfJob,
   onlineScheduling,
   acceptedEstimates,
+  actions,
   commissionReview,
   notes,
 }: Props) {
@@ -758,6 +798,16 @@ export default function ActionItemsClient({
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
   // Never Invoiced: $0 jobs are listed for completeness; this hides them on demand.
   const [hideZeroUninvoiced, setHideZeroUninvoiced] = useState(false)
+  // Hide items that were actioned and are still inside their follow-up window.
+  const [hideWaiting, setHideWaiting] = useState(false)
+
+  const todayStr = todayPT()
+  const isWaiting = (entity: string, id: string) => {
+    const a = actions[`${entity}:${id}`]
+    return !!a && a.follow_up_on > todayStr
+  }
+  const notWaiting = <T extends { id: string }>(items: T[], entity: string): T[] =>
+    hideWaiting ? items.filter(i => !isWaiting(entity, i.id)) : items
 
   // '__blank__' is a sentinel for jobs with no source set
   const BLANK = '__blank__'
@@ -799,15 +849,16 @@ export default function ActionItemsClient({
     })
   }
 
-  const filteredUnpaid = filterByCutoff(filterByDays(filterBySource(unpaidJobs.items), 'days_outstanding'), 'closed_at')
-  const filteredUninvoiced = filterByCutoff(filterByDays(filterBySource(uninvoicedJobs.items), 'days_since_completion'), 'closed_at')
-    .filter(j => !hideZeroUninvoiced || (j.total ?? 0) > 0)
-  const filteredFollowUp = filterByCutoff(filterByDays(filterBySource(followUpJobs.items), 'days_open'), 'start_date')
-  const filteredStaleEstimates = filterByCutoff(filterByDays(staleEstimates.items, 'days_outstanding'), 'created_at_sf')
-  const filteredOverdueCustomers = filterByCutoff(filterByDays(overdueCustomers.items, 'days_overdue'), 'oldest_overdue_date')
-  const filteredAwaitingSfJob = filterByCutoff(filterByDays(awaitingSfJob.items, 'days_waiting'), 'closed_at')
+  const filteredUnpaid = notWaiting(filterByCutoff(filterByDays(filterBySource(unpaidJobs.items), 'days_outstanding'), 'closed_at'), 'sf_job')
+  const filteredUninvoiced = notWaiting(
+    filterByCutoff(filterByDays(filterBySource(uninvoicedJobs.items), 'days_since_completion'), 'closed_at')
+      .filter(j => !hideZeroUninvoiced || (j.total ?? 0) > 0),
+    'sf_job')
+  const filteredFollowUp = notWaiting(filterByCutoff(filterByDays(filterBySource(followUpJobs.items), 'days_open'), 'start_date'), 'sf_job')
+  const filteredStaleEstimates = notWaiting(filterByCutoff(filterByDays(staleEstimates.items, 'days_outstanding'), 'created_at_sf'), 'sf_estimate')
+  const filteredAwaitingSfJob = notWaiting(filterByCutoff(filterByDays(awaitingSfJob.items, 'days_waiting'), 'closed_at'), 'sales_lead')
   const filteredOnlineScheduling = filterByCutoff(filterByDays(onlineScheduling.items, 'days_waiting'), 'created_at')
-  const filteredAcceptedEstimates = filterByCutoff(filterByDays(acceptedEstimates.items, 'days_since_update'), 'created_at_sf')
+  const filteredAcceptedEstimates = notWaiting(filterByCutoff(filterByDays(acceptedEstimates.items, 'days_since_update'), 'created_at_sf'), 'sf_estimate')
   const commissionItems = filterByCutoff(commissionReview?.items ?? [], 'recognition_date')
 
   const totalCount =
@@ -815,7 +866,6 @@ export default function ActionItemsClient({
     filteredUninvoiced.length +
     filteredStaleEstimates.length +
     filteredFollowUp.length +
-    filteredOverdueCustomers.length +
     filteredAwaitingSfJob.length +
     filteredOnlineScheduling.length +
     filteredAcceptedEstimates.length +
@@ -885,7 +935,6 @@ export default function ActionItemsClient({
     { key: 'estimates',    label: 'Stale Estimates',count: filteredStaleEstimates.length },
     { key: 'accepted-no-job', label: 'Accepted, No Job', count: filteredAcceptedEstimates.length },
     { key: 'followup',     label: 'Follow-Up',      count: filteredFollowUp.length },
-    { key: 'overdue',      label: 'Overdue',        count: filteredOverdueCustomers.length },
     { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
     ...(commissionReview ? [{ key: 'commission' as TabKey, label: 'Commission Review', count: commissionItems.length }] : []),
@@ -915,6 +964,15 @@ export default function ActionItemsClient({
               className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
             />
             Exclude before Apr 24, 2026
+          </label>
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideWaiting}
+              onChange={e => setHideWaiting(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+            />
+            Hide ⏳ waiting
           </label>
           <div className="flex items-center rounded-md border border-gray-300 bg-white shadow-sm overflow-hidden text-sm">
             {([null, 30, 60, 90, 120] as (number | null)[]).map(opt => (
@@ -1008,7 +1066,8 @@ export default function ActionItemsClient({
             ) : undefined
           }
         >
-          {filteredUnpaid.length === 0 ? <AllClear /> : <UnpaidJobsTable items={filteredUnpaid} notes={notes} />}
+          <p className="text-xs text-gray-400 mb-2">A row clears automatically when the job&rsquo;s balance reaches $0 in Service Fusion.</p>
+          {filteredUnpaid.length === 0 ? <AllClear /> : <UnpaidJobsTable items={filteredUnpaid} notes={notes} actions={actions} />}
         </AlertSection>
       )}
 
@@ -1035,7 +1094,8 @@ export default function ActionItemsClient({
             </span>
           }
         >
-          {filteredUninvoiced.length === 0 ? <AllClear /> : <UninvoicedJobsTable items={filteredUninvoiced} notes={notes} />}
+          <p className="text-xs text-gray-400 mb-2">A row clears automatically when an invoice is created on the job in Service Fusion.</p>
+          {filteredUninvoiced.length === 0 ? <AllClear /> : <UninvoicedJobsTable items={filteredUninvoiced} notes={notes} actions={actions} />}
         </AlertSection>
       )}
 
@@ -1051,7 +1111,8 @@ export default function ActionItemsClient({
             ) : undefined
           }
         >
-          {filteredStaleEstimates.length === 0 ? <AllClear /> : <StaleEstimatesTable items={filteredStaleEstimates} notes={notes} />}
+          <p className="text-xs text-gray-400 mb-2">A row clears automatically when the estimate moves to Estimate Accepted, Estimate Won, or Lost in Service Fusion.</p>
+          {filteredStaleEstimates.length === 0 ? <AllClear /> : <StaleEstimatesTable items={filteredStaleEstimates} notes={notes} actions={actions} />}
         </AlertSection>
       )}
 
@@ -1069,10 +1130,10 @@ export default function ActionItemsClient({
         >
           <p className="text-xs text-gray-400 mb-2">
             Estimates in <span className="font-medium">Estimate Accepted</span> — the customer said yes but the
-            estimate hasn&rsquo;t been converted to a job. Converting it in Service Fusion moves it to
-            Estimate Won and clears it from this list.
+            estimate hasn&rsquo;t been converted to a job. Converting it in Service Fusion (status moves to
+            Estimate Won) — or marking it Lost — clears it from this list automatically.
           </p>
-          {filteredAcceptedEstimates.length === 0 ? <AllClear /> : <AcceptedEstimatesTable items={filteredAcceptedEstimates} notes={notes} />}
+          {filteredAcceptedEstimates.length === 0 ? <AllClear /> : <AcceptedEstimatesTable items={filteredAcceptedEstimates} notes={notes} actions={actions} />}
         </AlertSection>
       )}
 
@@ -1081,23 +1142,8 @@ export default function ActionItemsClient({
           title="Jobs Flagged for Follow-Up"
           count={filteredFollowUp.length}
         >
-          {filteredFollowUp.length === 0 ? <AllClear /> : <FollowUpJobsTable items={filteredFollowUp} notes={notes} />}
-        </AlertSection>
-      )}
-
-      {activeTab === 'overdue' && (
-        <AlertSection
-          title="Customers Overdue Past Payment Terms"
-          count={filteredOverdueCustomers.length}
-          summary={
-            filteredOverdueCustomers.length > 0 ? (
-              <span className="text-sm text-gray-600">
-                Total overdue: <span className="font-semibold text-red-700">{fmtMoney(filteredOverdueCustomers.reduce((s, c) => s + (c.account_balance ?? 0), 0))}</span>
-              </span>
-            ) : undefined
-          }
-        >
-          {filteredOverdueCustomers.length === 0 ? <AllClear /> : <OverdueCustomersTable items={filteredOverdueCustomers} notes={notes} />}
+          <p className="text-xs text-gray-400 mb-2">A row clears automatically when the follow-up flag is removed from the job in Service Fusion.</p>
+          {filteredFollowUp.length === 0 ? <AllClear /> : <FollowUpJobsTable items={filteredFollowUp} notes={notes} actions={actions} />}
         </AlertSection>
       )}
 
@@ -1106,7 +1152,8 @@ export default function ActionItemsClient({
           title="Closed Won — Awaiting SF Job"
           count={filteredAwaitingSfJob.length}
         >
-          {filteredAwaitingSfJob.length === 0 ? <AllClear /> : <AwaitingSfJobTable items={filteredAwaitingSfJob} notes={notes} />}
+          <p className="text-xs text-gray-400 mb-2">A row clears automatically when an SF job is recorded for the won lead.</p>
+          {filteredAwaitingSfJob.length === 0 ? <AllClear /> : <AwaitingSfJobTable items={filteredAwaitingSfJob} notes={notes} actions={actions} />}
         </AlertSection>
       )}
 
@@ -1115,6 +1162,7 @@ export default function ActionItemsClient({
           title="Online Scheduling — Leads Awaiting Acknowledgement"
           count={filteredOnlineScheduling.length}
         >
+          <p className="text-xs text-gray-400 mb-2">A row clears when someone presses Done (in the email or here).</p>
           {filteredOnlineScheduling.length === 0 ? <AllClear /> : <OnlineSchedulingTable items={filteredOnlineScheduling} notes={notes} />}
         </AlertSection>
       )}

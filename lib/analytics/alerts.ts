@@ -256,7 +256,7 @@ export async function getStaleEstimates(): Promise<StaleEstimatesResult> {
     // Exclude resolved estimates — stale means "given and never followed up on",
     // so won/lost outcomes don't belong here. SF statuses are freeform text;
     // listing case variants is harmless when a variant doesn't exist.
-    .not('status', 'in', '("accepted","declined","Accepted","Declined","Closed","Estimate Won","estimate won","Won","won","Estimate Lost","estimate lost","Lost","lost")')
+    .not('status', 'in', '("accepted","declined","Accepted","Declined","Closed","Estimate Won","estimate won","Won","won","Estimate Lost","estimate lost","Lost","lost","Estimate Accepted","estimate accepted")')
     .lt('created_at_sf', fourteenDaysAgo)
     .eq('is_deleted', false)
     .order('created_at_sf', { ascending: false })
@@ -420,106 +420,6 @@ export async function getAwaitingSfJob(): Promise<AwaitingSfJobResult> {
   })
 
   return { items }
-}
-
-export interface OverdueCustomer {
-  id: string
-  customer_name: string | null
-  account_balance: number
-  payment_terms: string | null
-  oldest_overdue_date: string
-  days_overdue: number
-  overdue_invoice_count: number
-}
-
-export interface OverdueCustomersResult {
-  items: OverdueCustomer[]
-  totalOverdue: number
-}
-
-function parseDueDays(terms: string | null): number {
-  if (!terms) return 30
-  const t = terms.trim().toLowerCase()
-  if (t.includes('receipt') || t.includes('upon') || t.includes('due on')) return 0
-  const m = t.match(/(\d+)/)
-  return m ? parseInt(m[1]) : 30
-}
-
-export async function getOverdueCustomers(): Promise<OverdueCustomersResult> {
-  const db = getAdminClient()
-
-  // 1. Fetch customers with balance > 0
-  const { data: customers } = await db
-    .from('sf_customers')
-    .select('id, customer_name, account_balance, payment_terms')
-    .gt('account_balance', 0)
-    .eq('is_deleted', false)
-    .limit(500)
-
-  const custList = customers ?? []
-  if (custList.length === 0) return { items: [], totalOverdue: 0 }
-
-  const customerIds = custList.map((c: { id: string }) => c.id)
-
-  // 2. Fetch unpaid invoices for those customers (paginate past the 1000-row cap
-  //    so customers with many unpaid invoices aren't undercounted).
-  const invList = await fetchAll<{ customer_id: string; date: string; payment_terms: string | null; total: number | null }>((from, to) =>
-    db.from('sf_invoices')
-      .select('id, customer_id, date, payment_terms, total')
-      .in('customer_id', customerIds)
-      .eq('is_paid', false)
-      .eq('is_deleted', false)
-      .order('id', { ascending: true })
-      .range(from, to)
-  )
-  const now = Date.now()
-
-  // Group invoices by customer_id
-  const invByCustomer = new Map<string, Array<{ date: string; payment_terms: string | null; total: number | null }>>()
-  for (const inv of invList as { customer_id: string; date: string; payment_terms: string | null; total: number | null }[]) {
-    const existing = invByCustomer.get(inv.customer_id) ?? []
-    existing.push(inv)
-    invByCustomer.set(inv.customer_id, existing)
-  }
-
-  const items: OverdueCustomer[] = []
-
-  for (const cust of custList as { id: string; customer_name: string | null; account_balance: number; payment_terms: string | null }[]) {
-    const custInvoices = invByCustomer.get(cust.id) ?? []
-
-    // Filter to past-due invoices
-    const pastDue = custInvoices.filter(inv => {
-      const dueDays = parseDueDays(inv.payment_terms)
-      const dueAt = new Date(inv.date).getTime() + dueDays * 86_400_000
-      return dueAt < now
-    })
-
-    if (pastDue.length === 0) continue
-
-    // Find oldest past-due invoice date
-    const sortedByDate = [...pastDue].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    const oldest = sortedByDate[0]
-    const oldestDueDays = parseDueDays(oldest.payment_terms)
-    const oldestDueAt = new Date(oldest.date).getTime() + oldestDueDays * 86_400_000
-    const daysOverdue = Math.floor((now - oldestDueAt) / 86_400_000)
-
-    items.push({
-      id: cust.id,
-      customer_name: cust.customer_name,
-      account_balance: cust.account_balance,
-      payment_terms: cust.payment_terms,
-      oldest_overdue_date: oldest.date,
-      days_overdue: daysOverdue,
-      overdue_invoice_count: pastDue.length,
-    })
-  }
-
-  // Sort by days_overdue descending, limit 100
-  items.sort((a, b) => b.days_overdue - a.days_overdue)
-  const limited = items.slice(0, 100)
-
-  const totalOverdue = limited.reduce((s, i) => s + i.account_balance, 0)
-  return { items: limited, totalOverdue }
 }
 
 // ── Alert 7 — Online Scheduling Leads Awaiting Acknowledgement ───────────────
