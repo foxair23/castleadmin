@@ -376,6 +376,12 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
 }
 function fmtSchedDate(s: string | null): string {
   if (!s) return '—'
+  // Date-only strings would parse as UTC midnight and render a day early in PT.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (m) {
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    return `${names[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`
+  }
   const d = new Date(s)
   if (isNaN(d.getTime())) return '—'
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
