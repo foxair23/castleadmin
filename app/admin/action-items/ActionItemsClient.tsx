@@ -18,10 +18,8 @@ import type {
   OnlineSchedulingResult,
   AcceptedEstimateAwaitingJob,
   AcceptedEstimatesResult,
-  CommissionReviewResult,
 } from '@/lib/analytics/alerts'
-import CommissionReviewTable from './CommissionReviewTable'
-import { ACTION_TAB_CONFIG, todayPT, type ActionRecord } from '@/lib/action-items/config'
+import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -203,11 +201,20 @@ function NotesCell({ entityType, entityId, initialNote }: {
 // follow-up date from the tab's cadence; the chip shows the waiting/due state.
 // Pressing again on a due item restarts the clock (e.g. second payment request).
 
-function ActionCell({ tab, entityId, record }: { tab: string; entityId: string; record?: ActionRecord }) {
+function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId: string; record?: ActionRecord; itemDate?: string | null }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const cfg = ACTION_TAB_CONFIG[tab]
   if (!cfg) return <td className="px-4 py-2" />
+
+  // Pre-acquisition items are informational only — don't prompt an action.
+  if (itemDate && itemDate.slice(0, 10) < ACQUISITION_CUTOFF && !record) {
+    return (
+      <td className="px-4 py-2 whitespace-nowrap" title="Pre-acquisition — no action prompted">
+        <span className="text-xs text-gray-300">—</span>
+      </td>
+    )
+  }
 
   async function press() {
     setBusy(true)
@@ -230,9 +237,9 @@ function ActionCell({ tab, entityId, record }: { tab: string; entityId: string; 
         <button
           onClick={press}
           disabled={busy}
-          className="text-xs border border-red-300 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
+          className="text-xs bg-red-600 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded shadow-sm disabled:opacity-50 whitespace-nowrap"
         >
-          {busy ? 'Saving…' : cfg.button}
+          {busy ? 'Saving…' : `▶ ${cfg.button}`}
         </button>
       </td>
     )
@@ -274,6 +281,7 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
@@ -283,12 +291,12 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="payment_status" label="Payment Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map(job => (
             <tr key={job.id} className="hover:bg-gray-50">
+              <ActionCell tab="unpaid" entityId={job.id} record={actions[`sf_job:${job.id}`]} itemDate={job.closed_at} />
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
               <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
@@ -298,7 +306,6 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.payment_status ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
-              <ActionCell tab="unpaid" entityId={job.id} record={actions[`sf_job:${job.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -317,6 +324,7 @@ function UninvoicedJobsTable({ items, notes, actions }: { items: UninvoicedJob[]
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
@@ -326,12 +334,12 @@ function UninvoicedJobsTable({ items, notes, actions }: { items: UninvoicedJob[]
             <SortTh col="total" label="Job Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map(job => (
             <tr key={job.id} className="hover:bg-gray-50">
+              <ActionCell tab="uninvoiced" entityId={job.id} record={actions[`sf_job:${job.id}`]} itemDate={job.closed_at} />
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
               <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
@@ -341,7 +349,6 @@ function UninvoicedJobsTable({ items, notes, actions }: { items: UninvoicedJob[]
               <td className="px-4 py-2 text-gray-700">{fmtMoney(job.total)}</td>
               <td className={`px-4 py-2 font-medium ${(job.due_total ?? 0) > 0 ? 'text-red-700' : 'text-gray-400'}`}>{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
-              <ActionCell tab="uninvoiced" entityId={job.id} record={actions[`sf_job:${job.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -360,6 +367,7 @@ function StaleEstimatesTable({ items, notes, actions }: { items: StaleEstimate[]
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Estimate #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
@@ -367,12 +375,12 @@ function StaleEstimatesTable({ items, notes, actions }: { items: StaleEstimate[]
             <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Total" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map(est => (
             <tr key={est.id} className="hover:bg-gray-50">
+              <ActionCell tab="estimates" entityId={est.id} record={actions[`sf_estimate:${est.id}`]} itemDate={est.created_at_sf} />
               <td className="px-4 py-2 font-medium text-gray-900">{est.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{est.number ?? '—'}</td>
               <NotesCell entityType="sf_estimate" entityId={est.id} initialNote={notes[`sf_estimate:${est.id}`] ?? ''} />
@@ -380,7 +388,6 @@ function StaleEstimatesTable({ items, notes, actions }: { items: StaleEstimate[]
               <td className="px-4 py-2"><AgingPill days={est.days_outstanding} /></td>
               <td className="px-4 py-2 text-gray-700">{fmtMoney(est.total)}</td>
               <td className="px-4 py-2 text-gray-600">{est.status ?? '—'}</td>
-              <ActionCell tab="estimates" entityId={est.id} record={actions[`sf_estimate:${est.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -400,6 +407,7 @@ function AcceptedEstimatesTable({ items, notes, actions }: { items: AcceptedEsti
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Estimate #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
@@ -407,12 +415,12 @@ function AcceptedEstimatesTable({ items, notes, actions }: { items: AcceptedEsti
             <SortTh col="updated_at_sf" label="Last Updated" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_since_update" label="Days" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="total" label="Value" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map(est => (
             <tr key={est.id} className="hover:bg-gray-50">
+              <ActionCell tab="accepted-no-job" entityId={est.id} record={actions[`sf_estimate:${est.id}`]} itemDate={est.created_at_sf} />
               <td className="px-4 py-2 font-medium text-gray-900">{est.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{est.number ?? '—'}</td>
               <NotesCell entityType="sf_estimate" entityId={est.id} initialNote={notes[`sf_estimate:${est.id}`] ?? ''} />
@@ -420,7 +428,6 @@ function AcceptedEstimatesTable({ items, notes, actions }: { items: AcceptedEsti
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(est.updated_at_sf)}</td>
               <td className="px-4 py-2"><AgingPill days={est.days_since_update} /></td>
               <td className="px-4 py-2 text-gray-700 font-medium">{fmtMoney(est.total)}</td>
-              <ActionCell tab="accepted-no-job" entityId={est.id} record={actions[`sf_estimate:${est.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -439,6 +446,7 @@ function FollowUpJobsTable({ items, notes, actions }: { items: FollowUpJob[]; no
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
@@ -448,12 +456,12 @@ function FollowUpJobsTable({ items, notes, actions }: { items: FollowUpJob[]; no
             <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">SF Note</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map(job => (
             <tr key={job.id} className="hover:bg-gray-50">
+              <ActionCell tab="followup" entityId={job.id} record={actions[`sf_job:${job.id}`]} itemDate={job.start_date} />
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
               <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
@@ -465,7 +473,6 @@ function FollowUpJobsTable({ items, notes, actions }: { items: FollowUpJob[]; no
               <td className="px-4 py-2 text-gray-600 max-w-xs truncate">
                 {job.note_to_customer || job.tech_notes || '—'}
               </td>
-              <ActionCell tab="followup" entityId={job.id} record={actions[`sf_job:${job.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -486,6 +493,7 @@ function AwaitingSfJobTable({ items, notes, actions }: { items: AwaitingSfJobLea
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="account_number" label="Account #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
@@ -494,12 +502,12 @@ function AwaitingSfJobTable({ items, notes, actions }: { items: AwaitingSfJobLea
             <SortTh col="closed_at" label="Won" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Days waiting" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2" />
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map(l => (
             <tr key={l.id} className="hover:bg-gray-50">
+              <ActionCell tab="awaiting-sf" entityId={l.id} record={actions[`sales_lead:${l.id}`]} itemDate={l.closed_at} />
               <td className="px-4 py-2 font-medium text-gray-900">{l.customer_name ?? '—'}</td>
               <td className="px-4 py-2 font-mono text-xs text-gray-600">{l.account_number ?? '—'}</td>
               <NotesCell entityType="sales_lead" entityId={l.id} initialNote={notes[`sales_lead:${l.id}`] ?? ''} />
@@ -520,7 +528,6 @@ function AwaitingSfJobTable({ items, notes, actions }: { items: AwaitingSfJobLea
                   View lead →
                 </Link>
               </td>
-              <ActionCell tab="awaiting-sf" entityId={l.id} record={actions[`sales_lead:${l.id}`]} />
             </tr>
           ))}
         </tbody>
@@ -656,8 +663,6 @@ interface Props {
   onlineScheduling: OnlineSchedulingResult
   actions: Record<string, ActionRecord>
   acceptedEstimates: AcceptedEstimatesResult
-  // Optional: only the admin page passes it (commission is admin-only).
-  commissionReview?: CommissionReviewResult
   notes: Record<string, string>
 }
 
@@ -769,7 +774,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'commission'
+type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -784,7 +789,6 @@ export default function ActionItemsClient({
   onlineScheduling,
   acceptedEstimates,
   actions,
-  commissionReview,
   notes,
 }: Props) {
   const router = useRouter()
@@ -859,7 +863,6 @@ export default function ActionItemsClient({
   const filteredAwaitingSfJob = notWaiting(filterByCutoff(filterByDays(awaitingSfJob.items, 'days_waiting'), 'closed_at'), 'sales_lead')
   const filteredOnlineScheduling = filterByCutoff(filterByDays(onlineScheduling.items, 'days_waiting'), 'created_at')
   const filteredAcceptedEstimates = notWaiting(filterByCutoff(filterByDays(acceptedEstimates.items, 'days_since_update'), 'created_at_sf'), 'sf_estimate')
-  const commissionItems = filterByCutoff(commissionReview?.items ?? [], 'recognition_date')
 
   const totalCount =
     filteredUnpaid.length +
@@ -868,8 +871,7 @@ export default function ActionItemsClient({
     filteredFollowUp.length +
     filteredAwaitingSfJob.length +
     filteredOnlineScheduling.length +
-    filteredAcceptedEstimates.length +
-    commissionItems.length
+    filteredAcceptedEstimates.length
 
   async function handleRefresh() {
     setSyncing(true)
@@ -937,7 +939,6 @@ export default function ActionItemsClient({
     { key: 'followup',     label: 'Follow-Up',      count: filteredFollowUp.length },
     { key: 'awaiting-sf',  label: 'Awaiting SF Job',count: filteredAwaitingSfJob.length },
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
-    ...(commissionReview ? [{ key: 'commission' as TabKey, label: 'Commission Review', count: commissionItems.length }] : []),
   ]
 
   return (
@@ -1167,16 +1168,6 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
-      {activeTab === 'commission' && commissionReview && (
-        <AlertSection
-          title="Commission Jobs Needing Review"
-          count={commissionItems.length}
-        >
-          {commissionItems.length === 0
-            ? <AllClear />
-            : <CommissionReviewTable items={commissionItems} techs={commissionReview.techs} />}
-        </AlertSection>
-      )}
     </div>
   )
 }
