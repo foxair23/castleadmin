@@ -129,3 +129,14 @@ describe('classifyJobWithTokens — token beats agent, fallback otherwise', () =
     expect(classifyJobWithTokens([], TOKENS, [], resolver)).toBeNull()
   })
 })
+
+describe('extractNoteTokens — Notes-tab entry patterns (real field data)', () => {
+  it('finds the token in "$juan$ sold springs 586$" without false-matching the price', () => {
+    expect(extractNoteTokens('$juan$ sold springs 586$')).toEqual(['juan'])
+  })
+
+  it('scans multiple note entries like the raw notes array', () => {
+    const entries = ['Tune up on big door', '$kyle$', 'Left voicemail']
+    expect(extractNoteTokens(...entries)).toEqual(['kyle'])
+  })
+})
