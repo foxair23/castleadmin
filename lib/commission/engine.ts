@@ -46,7 +46,11 @@ async function fetchAll<T>(
   return out
 }
 
-interface JobRow { id: string; closed_at: string | null; total: number | null; tech_notes: string | null; completion_notes: string | null }
+interface JobRow {
+  id: string; closed_at: string | null; total: number | null; tech_notes: string | null
+  /** Notes-tab entries (raw_data->notes) — where field techs add notes. */
+  notes_entries: unknown
+}
 interface AgentRow { job_id: string; agent_id: string | null; agent_first_name: string | null; agent_last_name: string | null }
 interface EligRow {
   sf_job_id: string
@@ -82,7 +86,7 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
   const jobs = await fetchAll<JobRow>((from, to) =>
     supabase
       .from('sf_jobs')
-      .select('id, closed_at, total, tech_notes, completion_notes')
+      .select('id, closed_at, total, tech_notes, notes_entries:raw_data->notes')
       .eq('is_deleted', false)
       .not('status', 'in', `(${EXCLUDED_STATUSES.map(s => `"${s}"`).join(',')})`)
       .gte('closed_at', COMMISSION_START_DATE)
@@ -134,7 +138,11 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
 
   for (const job of jobs) {
     const agents = agentsByJob.get(job.id) ?? []
-    const tokens = extractNoteTokens(job.tech_notes, job.completion_notes)
+    // Tokens come from the job's Notes-tab entries (where field techs add
+    // notes from the app) plus the Notes-for-Techs field. Completion notes are
+    // deliberately excluded (owner decision).
+    const noteEntries = Array.isArray(job.notes_entries) ? (job.notes_entries as { notes?: string | null }[]) : []
+    const tokens = extractNoteTokens(job.tech_notes, ...noteEntries.map(n => n?.notes))
     const classification = classifyJobWithTokens(tokens, tokenMap, agents, resolver)
     const existing = existingByJob.get(job.id)
 
