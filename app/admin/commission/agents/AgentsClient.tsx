@@ -119,7 +119,7 @@ export default function AgentsClient() {
           <h2 className="text-sm font-semibold text-gray-800">Note Tokens</h2>
           <p className="text-xs text-gray-500 mt-0.5">
             A tech writes their token — e.g. <code className="bg-gray-100 px-1 rounded">$kyle$</code> — in a job&rsquo;s
-            Tech Notes or Completion Notes in Service Fusion to claim it for commission. A token beats the Agent
+            Notes field in Service Fusion to claim it for commission (completion notes don&rsquo;t count). A token beats the Agent
             field; jobs without one still use the Agent mapping below. Tokens must be unique (mind the two Davids).
           </p>
         </div>

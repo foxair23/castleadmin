@@ -61,9 +61,9 @@ export async function GET(req: NextRequest) {
   const tokenMap = buildTokenMap((tokenRows ?? []) as TokenMapping[])
 
   // 2. Jobs SOLD (created) in the period — full day range on created_at_sf.
-  const jobs = await fetchAll<{ id: string; total: number | null; tech_notes: string | null; completion_notes: string | null }>((f, t) =>
+  const jobs = await fetchAll<{ id: string; total: number | null; tech_notes: string | null }>((f, t) =>
     db.from('sf_jobs')
-      .select('id, total, tech_notes, completion_notes')
+      .select('id, total, tech_notes')
       .eq('is_deleted', false)
       .not('status', 'in', EXCLUDED_STATUSES)
       .gte('created_at_sf', `${start}T00:00:00`)
@@ -73,7 +73,8 @@ export async function GET(req: NextRequest) {
   )
   const jobIds = jobs.map(j => j.id)
   const totalById = new Map(jobs.map(j => [j.id, j.total ?? 0]))
-  const tokensById = new Map(jobs.map(j => [j.id, extractNoteTokens(j.tech_notes, j.completion_notes)]))
+  // Regular Notes field only — completion notes are excluded from attribution.
+  const tokensById = new Map(jobs.map(j => [j.id, extractNoteTokens(j.tech_notes)]))
   if (jobIds.length === 0) return NextResponse.json({ rows: [] })
 
   // 3. Agents per job → resolve the selling rep (single mapped agent only).
