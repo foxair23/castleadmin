@@ -140,3 +140,14 @@ describe('extractNoteTokens — Notes-tab entry patterns (real field data)', () 
     expect(extractNoteTokens(...entries)).toEqual(['kyle'])
   })
 })
+
+describe('extractNoteTokens — dollar figures never parse as tokens', () => {
+  it('ignores price ranges like "$500-$700" (would otherwise yield token "500-")', () => {
+    expect(extractNoteTokens('quoted $500-$700 for two springs')).toEqual([])
+    expect(extractNoteTokens('range $75-$150, call office')).toEqual([])
+  })
+
+  it('still accepts real tokens beside prices', () => {
+    expect(extractNoteTokens('$kyle$ quoted $500-$700')).toEqual(['kyle'])
+  })
+})
