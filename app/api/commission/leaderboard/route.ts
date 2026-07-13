@@ -106,30 +106,31 @@ export async function GET(req: NextRequest) {
   )
   const paidJobs = new Set(paid.map(p => p.job_id).filter(Boolean) as string[])
 
-  // 4b. Eligibility decisions: denied jobs are excluded (not really a sale),
-  // and admin credits made in the Commission Review queue OVERRIDE the live
-  // agent/token classification — so the board attributes exactly like the
-  // Commission tab, which reads these rows.
-  const eligRows = await fetchAll<{ sf_job_id: string; tech_user_id: string | null; status: string; resolved_at: string | null }>((f, t) =>
+  // 4b. Eligibility rows are the ATTRIBUTION SOURCE OF TRUTH wherever they
+  // exist — the Commission tab reads exactly these rows, so the board uses
+  // them verbatim (auto-classified and admin-credited alike). Denied jobs are
+  // excluded; needs_review jobs are held out until resolved. Only jobs with NO
+  // eligibility row (open / not yet completed) are classified live.
+  const eligRows = await fetchAll<{ sf_job_id: string; tech_user_id: string | null; status: string }>((f, t) =>
     db.from('commission_job_eligibility')
-      .select('sf_job_id, tech_user_id, status, resolved_at')
+      .select('sf_job_id, tech_user_id, status')
       .in('sf_job_id', jobIds)
       .order('sf_job_id', { ascending: true })
       .range(f, t),
   )
-  const denied = new Set(eligRows.filter(r => r.status === 'not_accepted').map(r => r.sf_job_id))
-  const manualCredit = new Map(
-    eligRows
-      .filter(r => r.status === 'eligible' && r.resolved_at && r.tech_user_id)
-      .map(r => [r.sf_job_id, r.tech_user_id!] as const),
-  )
+  const eligByJob = new Map(eligRows.map(r => [r.sf_job_id, r]))
 
   // 5. Aggregate per tech (only jobs cleanly attributable to one rep, not denied).
   const byTech = new Map<string, { sold: number; received: number }>()
   for (const jobId of jobIds) {
-    if (denied.has(jobId)) continue
-    let techId = manualCredit.get(jobId) ?? null
-    if (!techId) {
+    const elig = eligByJob.get(jobId)
+    let techId: string | null = null
+    if (elig) {
+      // Completed job with an engine/admin decision — mirror the Commission tab.
+      if (elig.status !== 'eligible' || !elig.tech_user_id) continue
+      techId = elig.tech_user_id
+    } else {
+      // Open job — classify live from tokens/agents.
       const cls = classifyJobWithTokens(tokensById.get(jobId) ?? [], tokenMap, agentsByJob.get(jobId) ?? [], resolver)
       if (!cls || cls.status !== 'eligible' || !cls.tech_user_id) continue
       techId = cls.tech_user_id
