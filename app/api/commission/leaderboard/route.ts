@@ -106,28 +106,39 @@ export async function GET(req: NextRequest) {
   )
   const paidJobs = new Set(paid.map(p => p.job_id).filter(Boolean) as string[])
 
-  // 4b. Denied jobs are excluded — a denied job wasn't really a sale.
-  const deniedRows = await fetchAll<{ sf_job_id: string }>((f, t) =>
+  // 4b. Eligibility decisions: denied jobs are excluded (not really a sale),
+  // and admin credits made in the Commission Review queue OVERRIDE the live
+  // agent/token classification — so the board attributes exactly like the
+  // Commission tab, which reads these rows.
+  const eligRows = await fetchAll<{ sf_job_id: string; tech_user_id: string | null; status: string; resolved_at: string | null }>((f, t) =>
     db.from('commission_job_eligibility')
-      .select('sf_job_id')
-      .eq('status', 'not_accepted')
+      .select('sf_job_id, tech_user_id, status, resolved_at')
       .in('sf_job_id', jobIds)
       .order('sf_job_id', { ascending: true })
       .range(f, t),
   )
-  const denied = new Set(deniedRows.map(r => r.sf_job_id))
+  const denied = new Set(eligRows.filter(r => r.status === 'not_accepted').map(r => r.sf_job_id))
+  const manualCredit = new Map(
+    eligRows
+      .filter(r => r.status === 'eligible' && r.resolved_at && r.tech_user_id)
+      .map(r => [r.sf_job_id, r.tech_user_id!] as const),
+  )
 
   // 5. Aggregate per tech (only jobs cleanly attributable to one rep, not denied).
   const byTech = new Map<string, { sold: number; received: number }>()
   for (const jobId of jobIds) {
     if (denied.has(jobId)) continue
-    const cls = classifyJobWithTokens(tokensById.get(jobId) ?? [], tokenMap, agentsByJob.get(jobId) ?? [], resolver)
-    if (!cls || cls.status !== 'eligible' || !cls.tech_user_id) continue
+    let techId = manualCredit.get(jobId) ?? null
+    if (!techId) {
+      const cls = classifyJobWithTokens(tokensById.get(jobId) ?? [], tokenMap, agentsByJob.get(jobId) ?? [], resolver)
+      if (!cls || cls.status !== 'eligible' || !cls.tech_user_id) continue
+      techId = cls.tech_user_id
+    }
     const total = totalById.get(jobId) ?? 0
-    const cur = byTech.get(cls.tech_user_id) ?? { sold: 0, received: 0 }
+    const cur = byTech.get(techId) ?? { sold: 0, received: 0 }
     cur.sold += total
     if (paidJobs.has(jobId)) cur.received += total
-    byTech.set(cls.tech_user_id, cur)
+    byTech.set(techId, cur)
   }
 
   const techIds = Array.from(byTech.keys())
