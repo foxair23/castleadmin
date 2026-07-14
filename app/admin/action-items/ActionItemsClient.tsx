@@ -826,6 +826,14 @@ export default function ActionItemsClient({
   const [daysFilter, setDaysFilter] = useState<number | null>(null)
   const [daysInput, setDaysInput] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('online-scheduling')
+  // Deep-link support: the daily digest emails link to ?tab=<key> so a click
+  // lands on the relevant tab. Read it once on mount (client-only, so no
+  // useSearchParams Suspense boundary needed).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    const valid: TabKey[] = ['unpaid', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling']
+    if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
+  }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
   // Never Invoiced: $0 jobs are listed for completeness; this hides them on demand.
   const [hideZeroUninvoiced, setHideZeroUninvoiced] = useState(false)
