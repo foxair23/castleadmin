@@ -263,6 +263,7 @@ export async function runMatchingPass(): Promise<MatchResult> {
 
     let bestScore = 0
     let bestJob: ScoreJob | null = null
+    let bestCloseness = Number.MAX_SAFE_INTEGER
 
     for (const job of jobs) {
       // A reviewer cannot review a job that hasn't happened yet. Skip jobs whose
@@ -276,9 +277,18 @@ export async function runMatchingPass(): Promise<MatchResult> {
       const ns = scoreJob(rNorm, rTokens, job)
       if (ns === 0) continue
       const total = Math.min(ns + dateBonusDays(review.created_at_google, job.closed_at), 1.0)
-      if (total > bestScore) {
+      // Tie-break: a repeat customer's jobs all carry the same name score (and
+      // an equal — often zero — date bonus once they're months old), and the
+      // strict > kept whichever job happened to come FIRST, i.e. the oldest.
+      // Reviews are about the most recent visit, so on equal score prefer the
+      // job whose completion date is CLOSEST to the review date.
+      const closeness = job.closed_at
+        ? Math.abs(new Date(review.created_at_google).getTime() - new Date(job.closed_at).getTime())
+        : Number.MAX_SAFE_INTEGER
+      if (total > bestScore || (total === bestScore && closeness < bestCloseness)) {
         bestScore = total
         bestJob = job
+        bestCloseness = closeness
       }
     }
 
