@@ -126,24 +126,46 @@ export default function CommissionDetailPanel({
         <div className="bg-red-50 border border-red-200 rounded px-4 py-2 text-sm text-red-600">{error}</div>
       )}
 
-      {/* Pipeline funnel — total job/payment amount at each stage. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {buckets.map(b => (
-          <Stat
-            key={b.label}
-            label={b.label}
-            value={formatMoney(b.revenue)}
-            accent={b.accent}
-            sub={`${b.count} job${b.count === 1 ? '' : 's'}`}
-          />
-        ))}
+      {/* Pipeline chevrons — a job sits in exactly ONE stage and moves left→right
+          as it progresses, so the arrows read as a flow, not five separate piles. */}
+      <div>
+        <div className="flex gap-[3px] overflow-x-auto pb-1">
+          {buckets.map((b, i) => {
+            const active = b.count > 0
+            const isFirst = i === 0
+            const isLast = i === buckets.length - 1
+            const clip = isFirst
+              ? 'polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%)'
+              : isLast
+              ? 'polygon(0 0, 100% 0, 100% 100%, 0 100%, 14px 50%)'
+              : 'polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%, 14px 50%)'
+            const cls = active
+              ? b.accent === 'green'
+                ? 'bg-green-600 text-white'
+                : 'bg-red-600 text-white'
+              : 'bg-gray-100 text-gray-400'
+            return (
+              <div
+                key={b.label}
+                className={`flex-1 min-w-[140px] px-5 py-3 ${cls}`}
+                style={{ clipPath: clip }}
+              >
+                <div className={`text-xs whitespace-nowrap ${active ? 'text-white/90' : ''}`}>{b.label}</div>
+                <div className="text-lg font-bold whitespace-nowrap">{formatMoney(b.revenue)}</div>
+                <div className={`text-xs whitespace-nowrap ${active ? 'text-white/80' : ''}`}>{b.count} job{b.count === 1 ? '' : 's'}</div>
+              </div>
+            )
+          })}
+        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          A job sits in exactly <strong>one</strong> stage and moves left to right as it progresses.{' '}
+          <strong>Sold</strong> = created, no date yet (shows every month until scheduled) ·{' '}
+          <strong>Scheduled</strong> = has a date, work not done ·{' '}
+          <strong>Completed</strong> = work done, not yet invoiced ·{' '}
+          <strong>Invoiced</strong> = invoice sent, awaiting payment ·{' '}
+          <strong>Payment Received</strong> = customer paid — commission is payable only on these.
+        </p>
       </div>
-      <p className="text-xs text-gray-400 -mt-3">
-        Amounts shown are total job value at each stage. <strong>Sold</strong>{' '}
-        jobs aren&rsquo;t scheduled yet, so they show every month until a date is set; <strong>Scheduled</strong>{' '}
-        jobs count toward this month if completed within the month scheduled, otherwise count towards the
-        month the job is completed in. Commission is paid only once Castle receives the customer&rsquo;s payment.
-      </p>
 
       {/* Adjustments */}
       {(detail.adjustments.length > 0 || admin) && (
