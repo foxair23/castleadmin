@@ -145,13 +145,17 @@ function renderLines(lines: Line[]): string {
   ).join('') + (more > 0 ? `<li style="font-size:12px;color:#9ca3af;">…and ${more} more</li>` : '')
 }
 
-function sectionHtml(title: string, groups: { label: string; lines: Line[] }[]): string {
+interface Group { label: string; lines: Line[]; tab: string }
+
+function sectionHtml(title: string, groups: Group[], appUrl: string): string {
   const withItems = groups.filter(g => g.lines.length > 0)
   if (withItems.length === 0) return ''
   return `<h2 style="font-size:15px;font-weight:700;margin:18px 0 6px;color:#111827;">${title}</h2>` +
-    withItems.map(g =>
-      `<p style="font-size:13px;font-weight:600;margin:10px 0 2px;color:#374151;">${esc(g.label)} (${g.lines.length})</p><ul style="margin:0;padding-left:18px;">${renderLines(g.lines)}</ul>`,
-    ).join('')
+    withItems.map(g => {
+      const href = `${appUrl}/admin/action-items?tab=${encodeURIComponent(g.tab)}`
+      const label = `<a href="${href}" style="color:#dc2626;text-decoration:none;">${esc(g.label)} (${g.lines.length}) →</a>`
+      return `<p style="font-size:13px;font-weight:600;margin:10px 0 2px;color:#374151;">${label}</p><ul style="margin:0;padding-left:18px;">${renderLines(g.lines)}</ul>`
+    }).join('')
 }
 
 export function dateLabelPT(): string {
@@ -168,19 +172,19 @@ export function renderTodoEmail(d: TodoDigest, opts: {
   introText?: string
 }): { html: string; text: string } {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'
-  const newGroups = [
-    { label: 'Online Scheduling (press Done after handling)', lines: d.schedulingLines },
-    ...d.buckets.map(b => ({ label: b.label, lines: b.newLines })),
+  const newGroups: Group[] = [
+    { label: 'Online Scheduling (press Done after handling)', lines: d.schedulingLines, tab: 'online-scheduling' },
+    ...d.buckets.map(b => ({ label: b.label, lines: b.newLines, tab: b.tab })),
   ]
-  const dueGroups = d.buckets.map(b => ({ label: b.label, lines: b.dueLines }))
+  const dueGroups: Group[] = d.buckets.map(b => ({ label: b.label, lines: b.dueLines, tab: b.tab }))
 
   const html = `
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;max-width:640px;margin:0 auto;padding:28px 22px;">
   <p style="font-size:19px;font-weight:700;margin:0 0 2px;">${esc(opts.heading)}</p>
   <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">${esc(opts.subtitle)}</p>
   ${opts.introHtml ?? ''}
-  ${sectionHtml('🆕 Needs first action', newGroups)}
-  ${sectionHtml('🔔 Follow-ups due — actioned earlier, still unresolved', dueGroups)}
+  ${sectionHtml('🆕 Needs first action', newGroups, appUrl)}
+  ${sectionHtml('🔔 Follow-ups due — actioned earlier, still unresolved', dueGroups, appUrl)}
   <p style="margin:22px 0 0;">
     <a href="${appUrl}/admin/action-items" style="display:inline-block;background:#dc2626;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px;">Open Action Items →</a>
   </p>
@@ -188,12 +192,12 @@ export function renderTodoEmail(d: TodoDigest, opts: {
 
   const textParts: string[] = [opts.heading, opts.subtitle, '']
   if (opts.introText) textParts.push(opts.introText, '')
-  const addText = (title: string, groups: { label: string; lines: Line[] }[]) => {
+  const addText = (title: string, groups: Group[]) => {
     const withItems = groups.filter(g => g.lines.length > 0)
     if (withItems.length === 0) return
     textParts.push(title)
     for (const g of withItems) {
-      textParts.push(`  ${g.label} (${g.lines.length}):`)
+      textParts.push(`  ${g.label} (${g.lines.length}) — ${appUrl}/admin/action-items?tab=${g.tab}`)
       for (const l of g.lines.slice(0, CAP)) textParts.push(`    - ${l.text}${l.sub ? ` (${l.sub})` : ''}`)
       if (g.lines.length > CAP) textParts.push(`    …and ${g.lines.length - CAP} more`)
     }
