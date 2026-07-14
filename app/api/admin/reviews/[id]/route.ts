@@ -28,14 +28,27 @@ export async function PATCH(
 
   const { id } = await params
   const body = await req.json()
-  const { action, customerId } = body as { action: 'confirm' | 'skip' | 'manual' | 'unmatch'; customerId?: string }
+  const { action, customerId, jobId } = body as {
+    action: 'confirm' | 'skip' | 'manual' | 'unmatch'
+    customerId?: string
+    jobId?: string
+  }
 
   if (!['confirm', 'skip', 'manual', 'unmatch'].includes(action)) {
     return NextResponse.json({ error: 'invalid action' }, { status: 400 })
   }
 
-  if (action === 'manual' && !customerId) {
-    return NextResponse.json({ error: 'customerId required for manual action' }, { status: 400 })
+  if (action === 'manual' && !customerId && !jobId) {
+    return NextResponse.json({ error: 'customerId or jobId required for manual action' }, { status: 400 })
+  }
+
+  // For a manual match, resolve the customer from the chosen job when only a
+  // job was given — the credited tech is derived from matched_job_id, so
+  // assigning a specific job is what attributes the review to a tech.
+  let manualCustomerId = customerId ?? null
+  if (action === 'manual' && jobId && !manualCustomerId) {
+    const { data: job } = await db().from('sf_jobs').select('customer_id').eq('id', jobId).single()
+    manualCustomerId = (job?.customer_id as string | null) ?? null
   }
 
   const update =
@@ -53,8 +66,8 @@ export async function PATCH(
       ? {
           match_status:        'confirmed',
           match_confidence:    'manual',
-          matched_customer_id: customerId,
-          matched_job_id:      null,
+          matched_customer_id: manualCustomerId,
+          matched_job_id:      jobId ?? null,
           match_score:         null,
         }
       : {
