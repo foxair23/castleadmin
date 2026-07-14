@@ -30,6 +30,15 @@ interface Customer {
   last_serviced_date: string | null
 }
 
+interface CustomerJob {
+  id: string
+  number: string | null
+  status: string | null
+  date: string | null
+  total: number | null
+  tech_name: string | null
+}
+
 interface KPI {
   total: number
   avgRating: number | null
@@ -103,10 +112,17 @@ function MatchCellInner({
 
   if (match_status === 'confirmed' || match_status === 'auto') {
     return (
-      <span className="inline-flex items-center gap-1">
+      <span className="inline-flex items-center gap-1.5">
         {matched_customer_name && (
           <span className="text-xs text-gray-500">{matched_customer_name}</span>
         )}
+        <button
+          onClick={() => onSearch(review)}
+          title="Reassign to a different customer/job"
+          className="text-xs text-blue-600 hover:text-blue-800 transition-colors"
+        >
+          Reassign
+        </button>
         <button
           onClick={() => onAction(id, 'unmatch')}
           title="Unmatch"
@@ -168,9 +184,16 @@ function ManualMatchModal({
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Step 2: after a customer is chosen, pick which job to credit. The review's
+  // tech is derived from the job, so this is how a tech gets attributed.
+  const [customer, setCustomer]   = useState<Customer | null>(null)
+  const [jobs, setJobs]           = useState<CustomerJob[]>([])
+  const [jobsLoading, setJobsLoading] = useState(false)
+
   useEffect(() => { inputRef.current?.focus() }, [])
 
   useEffect(() => {
+    if (customer) return // pause search once we've moved to job selection
     if (debounceRef.current) clearTimeout(debounceRef.current)
     if (query.trim().length < 2) { setResults([]); return }
     debounceRef.current = setTimeout(async () => {
@@ -183,10 +206,35 @@ function ManualMatchModal({
         setSearching(false)
       }
     }, 250)
-  }, [query])
+  }, [query, customer])
 
-  async function selectCustomer(customer: Customer) {
-    setSaving(customer.id)
+  async function pickCustomer(c: Customer) {
+    setCustomer(c)
+    setJobsLoading(true)
+    try {
+      const res = await fetch(`/api/admin/customers/${c.id}/jobs`)
+      const json = await res.json()
+      setJobs(json.jobs ?? [])
+    } finally {
+      setJobsLoading(false)
+    }
+  }
+
+  async function assignJob(job: CustomerJob) {
+    setSaving(job.id)
+    await fetch(`/api/admin/reviews/${review.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'manual', customerId: customer!.id, jobId: job.id }),
+    })
+    setSaving(null)
+    onMatched()
+  }
+
+  // Fallback: match the customer with no specific job (no tech credited).
+  async function assignCustomerOnly() {
+    if (!customer) return
+    setSaving('customer-only')
     await fetch(`/api/admin/reviews/${review.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -210,40 +258,100 @@ function ManualMatchModal({
           )}
         </div>
 
-        <div className="px-5 py-3">
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search customer name…"
-            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
+        {!customer ? (
+          <>
+            {/* Step 1 — find the customer */}
+            <div className="px-5 py-3">
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search customer name…"
+                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
 
-        <div className="max-h-64 overflow-y-auto divide-y divide-gray-50">
-          {searching && (
-            <div className="px-5 py-3 text-sm text-gray-400">Searching…</div>
-          )}
-          {!searching && query.trim().length >= 2 && results.length === 0 && (
-            <div className="px-5 py-3 text-sm text-gray-400">No customers found</div>
-          )}
-          {results.map(c => (
-            <button
-              key={c.id}
-              onClick={() => selectCustomer(c)}
-              disabled={saving === c.id}
-              className="w-full text-left px-5 py-3 hover:bg-blue-50 disabled:opacity-50 transition-colors"
-            >
-              <span className="text-sm text-gray-800">{c.customer_name}</span>
-              {c.last_serviced_date && (
-                <span className="ml-2 text-xs text-gray-400">
-                  Last service: {new Date(c.last_serviced_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
+            <div className="max-h-64 overflow-y-auto divide-y divide-gray-50">
+              {searching && (
+                <div className="px-5 py-3 text-sm text-gray-400">Searching…</div>
               )}
-            </button>
-          ))}
-        </div>
+              {!searching && query.trim().length >= 2 && results.length === 0 && (
+                <div className="px-5 py-3 text-sm text-gray-400">No customers found</div>
+              )}
+              {results.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => pickCustomer(c)}
+                  className="w-full text-left px-5 py-3 hover:bg-blue-50 transition-colors"
+                >
+                  <span className="text-sm text-gray-800">{c.customer_name}</span>
+                  {c.last_serviced_date && (
+                    <span className="ml-2 text-xs text-gray-400">
+                      Last service: {new Date(c.last_serviced_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Step 2 — pick the job whose tech should get credit */}
+            <div className="px-5 py-2 flex items-center justify-between gap-2 bg-gray-50 border-b border-gray-100">
+              <div className="min-w-0">
+                <p className="text-xs text-gray-500">Customer</p>
+                <p className="text-sm font-medium text-gray-900 truncate">{customer.customer_name}</p>
+              </div>
+              <button
+                onClick={() => { setCustomer(null); setJobs([]) }}
+                className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+              >
+                ← Change
+              </button>
+            </div>
+
+            <div className="max-h-64 overflow-y-auto divide-y divide-gray-50">
+              {jobsLoading && (
+                <div className="px-5 py-3 text-sm text-gray-400">Loading jobs…</div>
+              )}
+              {!jobsLoading && jobs.length === 0 && (
+                <div className="px-5 py-3 text-sm text-gray-400">No jobs found for this customer.</div>
+              )}
+              {jobs.map(j => (
+                <button
+                  key={j.id}
+                  onClick={() => assignJob(j)}
+                  disabled={saving !== null}
+                  className="w-full text-left px-5 py-3 hover:bg-blue-50 disabled:opacity-50 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-gray-800">
+                      Job {j.number ?? j.id}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {j.date ? new Date(j.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-gray-500">
+                    {j.tech_name ? <span className="text-gray-700">Tech: {j.tech_name}</span> : <span className="text-amber-600">No tech on this job</span>}
+                    {j.status && <span className="ml-2 text-gray-400">{j.status}</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="px-5 py-2 border-t border-gray-100">
+              <button
+                onClick={assignCustomerOnly}
+                disabled={saving !== null}
+                className="text-xs text-gray-500 hover:text-gray-700 disabled:opacity-50"
+              >
+                Match customer only (no tech credited)
+              </button>
+            </div>
+          </>
+        )}
 
         <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
           <button
@@ -311,12 +419,20 @@ function ReviewDetailModal({
                   <p className="text-xs text-gray-400 mt-1">Tech: {review.matched_tech_name}</p>
                 )}
               </div>
-              <button
-                onClick={() => { onAction(review.id, 'unmatch'); onClose() }}
-                className="text-xs text-gray-400 hover:text-red-500 transition-colors"
-              >
-                Unmatch
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { onClose(); onSearch(review) }}
+                  className="text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                >
+                  Reassign
+                </button>
+                <button
+                  onClick={() => { onAction(review.id, 'unmatch'); onClose() }}
+                  className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                >
+                  Unmatch
+                </button>
+              </div>
             </div>
           )}
 
