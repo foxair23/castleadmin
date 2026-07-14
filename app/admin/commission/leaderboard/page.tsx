@@ -7,8 +7,8 @@ export default function CommissionLeaderboardPage() {
     <div>
       <h1 className="text-xl font-bold text-gray-900 mb-1">Leaderboard</h1>
       <p className="text-sm text-gray-500 mb-4">
-        Sales and reviews per technician, credited by sale date. Visible to all techs.
-        Commission on the Technicians tab is figured by completion date, so the totals differ by design.
+        Completed revenue and reviews per technician — same calculation as the Technicians tab, so the
+        numbers tie exactly. Visible to all techs.
       </p>
       <CommissionNav />
       <LeaderboardClient todayStr={todayStr} reviewsHref="/admin/reviews" />

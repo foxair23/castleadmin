@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { formatMoney } from '@/lib/week'
 import { listPeriods, periodForRecognitionDate } from '@/lib/commission/periods'
 
-interface SalesRow { rank: number; tech_name: string; dollars_sold: number; dollars_received: number }
+interface SalesRow { rank: number; tech_name: string; completed_revenue: number; received_revenue: number }
 interface ReviewRow { techName: string; total: number; avg: number; s5: number; s4: number; s3: number; s2: number; s1: number }
 
 export default function LeaderboardClient({
@@ -80,8 +80,8 @@ export default function LeaderboardClient({
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="text-left px-4 py-3 font-medium text-gray-600 w-12">#</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Technician</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-600">Dollars Sold</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-600">Dollars Received</th>
+                  <th className="text-right px-4 py-3 font-medium text-gray-600">Completed Revenue</th>
+                  <th className="text-right px-4 py-3 font-medium text-gray-600">Payment Received</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -97,8 +97,8 @@ export default function LeaderboardClient({
                       <td className="px-4 py-2 text-gray-900 font-medium">
                         {r.tech_name}{mine && <span className="ml-2 text-xs text-red-500">you</span>}
                       </td>
-                      <td className="px-4 py-2 text-right text-gray-900 font-semibold">{formatMoney(r.dollars_sold)}</td>
-                      <td className="px-4 py-2 text-right text-gray-600">{formatMoney(r.dollars_received)}</td>
+                      <td className="px-4 py-2 text-right text-gray-900 font-semibold">{formatMoney(r.completed_revenue)}</td>
+                      <td className="px-4 py-2 text-right text-gray-600">{formatMoney(r.received_revenue)}</td>
                     </tr>
                   )
                 })}
@@ -107,11 +107,12 @@ export default function LeaderboardClient({
           </div>
         </div>
         <p className="text-xs text-gray-400">
-          <span className="font-medium">Dollars sold</span> = the full value of every job sold (created) this
-          period, regardless of its current stage — scheduled, completed, invoiced, or paid.
-          <span className="font-medium"> Dollars received</span> = the portion of those sold jobs the customer has
-          paid. Commission is figured separately by <span className="font-medium">completion date</span>, so these
-          totals won&rsquo;t match the Commission tab&rsquo;s detail — that&rsquo;s expected.
+          Same calculation as the Commission tab: jobs count toward the month they were{' '}
+          <span className="font-medium">completed</span>.{' '}
+          <span className="font-medium">Completed Revenue</span> = total value of the rep&rsquo;s completed jobs this
+          period (the tab&rsquo;s Completed + Invoiced + Payment Received chevrons);{' '}
+          <span className="font-medium">Payment Received</span> = the portion the customer has paid. These totals tie
+          to the Commission tab exactly.
         </p>
       </section>
 

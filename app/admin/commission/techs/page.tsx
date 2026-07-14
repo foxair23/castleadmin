@@ -18,8 +18,7 @@ export default async function CommissionTechsPage() {
       <h1 className="text-xl font-bold text-gray-900 mb-1">Commission</h1>
       <p className="text-sm text-gray-500 mb-4">
         Review any technician&rsquo;s sales, pipeline, and earned/payable commission for a period.
-        Figures are credited by completion date (the commission basis) — the Leaderboard credits by
-        sale date, so its totals differ by design.
+        Figures are credited by completion date — the Leaderboard uses the same calculation.
       </p>
       <CommissionNav />
       <Suspense fallback={<div className="text-center text-gray-400 py-10">Loading…</div>}>

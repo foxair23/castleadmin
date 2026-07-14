@@ -17,8 +17,8 @@ export default async function TechLeaderboardPage() {
     <div>
       <h1 className="text-xl font-bold text-gray-900 mb-1">Leaderboard</h1>
       <p className="text-sm text-gray-500 mb-4">
-        See how everyone&rsquo;s tracking on sales and reviews this period, credited by sale date.
-        (Your Commission tab counts by completion date, so its totals will differ.)
+        See how everyone&rsquo;s tracking this period — same numbers as your Commission tab, counted by the
+        month the job was completed.
       </p>
       <LeaderboardClient todayStr={todayStr} highlightName={fullName} reviewsHref="/tech/reviews" />
     </div>

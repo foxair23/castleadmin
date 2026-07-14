@@ -2,19 +2,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient, type SupabaseClient } from '@supabase/supabase-js'
 import { periodForRecognitionDate } from '@/lib/commission/periods'
-import { buildResolver, buildTokenMap, classifyJobWithTokens, extractNoteTokens, type AgentMapping, type AgentOnJob, type TokenMapping } from '@/lib/commission/eligibility'
 
-// GET ?period_start=&period_end= — SALES leaderboard (TRD §9).
+// GET ?period_start=&period_end= — team leaderboard.
 //
-// This is a SALES board, NOT commission: it credits a rep for new business they
-// SOLD in the period (by job creation date), attributed via the agent→tech
-// mapping. It is independent of commission eligibility — denied / needs-review /
-// not-yet-completed jobs all still count as sales. "Dollars received" is the
-// collected portion of those sold jobs.
+// Uses the SAME calculation as the Commission (Technicians) tab: the engine's
+// commission_job_eligibility rows, credited by recognition date (the month the
+// job was COMPLETED). The two screens therefore tie to the penny:
+//   completed_revenue = sum of eligible job revenue completed in the period
+//                       (= the tab's Completed + Invoiced + Payment Received)
+//   received_revenue  = the portion collected (revenue_frozen — the tab's
+//                       Payment Received chevron)
+// Denied and needs-review jobs are excluded exactly as on the tab. Rates,
+// targets, and commission amounts are never returned — revenue only.
 //
-// Visible to all authenticated users; only rank/name/sold/received are returned.
-
-const EXCLUDED_STATUSES = '("Cancelled","Void","Voided")'
+// Visible to all authenticated users.
 
 async function fetchAll<T>(
   build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
@@ -50,96 +51,23 @@ export async function GET(req: NextRequest) {
     { auth: { persistSession: false } },
   )
 
-  // 1. Agent → tech resolver.
-  const { data: maps } = await db
-    .from('commission_agent_map')
-    .select('tech_user_id, agent_id, agent_first_name, agent_last_name')
-  const resolver = buildResolver((maps ?? []) as AgentMapping[])
-  const { data: tokenRows } = await db
-    .from('commission_note_tokens')
-    .select('token, tech_user_id')
-  const tokenMap = buildTokenMap((tokenRows ?? []) as TokenMapping[])
-
-  // 2. Jobs SOLD (created) in the period — full day range on created_at_sf.
-  const jobs = await fetchAll<{ id: string; total: number | null; tech_notes: string | null; notes_entries: unknown }>((f, t) =>
-    db.from('sf_jobs')
-      .select('id, total, tech_notes, notes_entries:raw_data->notes')
-      .eq('is_deleted', false)
-      .not('status', 'in', EXCLUDED_STATUSES)
-      .gte('created_at_sf', `${start}T00:00:00`)
-      .lte('created_at_sf', `${end}T23:59:59.999`)
-      .order('id', { ascending: true })
-      .range(f, t),
-  )
-  const jobIds = jobs.map(j => j.id)
-  const totalById = new Map(jobs.map(j => [j.id, j.total ?? 0]))
-  // Notes-tab entries + Notes-for-Techs; completion notes excluded.
-  const tokensById = new Map(jobs.map(j => {
-    const entries = Array.isArray(j.notes_entries) ? (j.notes_entries as { notes?: string | null }[]) : []
-    return [j.id, extractNoteTokens(j.tech_notes, ...entries.map(n => n?.notes))] as const
-  }))
-  if (jobIds.length === 0) return NextResponse.json({ rows: [] })
-
-  // 3. Agents per job → resolve the selling rep (single mapped agent only).
-  const agentRows = await fetchAll<AgentOnJob & { job_id: string }>((f, t) =>
-    db.from('sf_job_agents')
-      .select('job_id, agent_id, agent_first_name, agent_last_name')
-      .in('job_id', jobIds)
-      .order('job_id', { ascending: true })
-      .range(f, t),
-  )
-  const agentsByJob = new Map<string, AgentOnJob[]>()
-  for (const a of agentRows) {
-    const arr = agentsByJob.get(a.job_id) ?? []
-    arr.push(a)
-    agentsByJob.set(a.job_id, arr)
-  }
-
-  // 4. Collection: jobs with a paid, live invoice.
-  const paid = await fetchAll<{ job_id: string | null }>((f, t) =>
-    db.from('sf_invoices')
-      .select('job_id')
-      .eq('is_paid', true).eq('is_deleted', false)
-      .in('job_id', jobIds)
-      .order('id', { ascending: true })
-      .range(f, t),
-  )
-  const paidJobs = new Set(paid.map(p => p.job_id).filter(Boolean) as string[])
-
-  // 4b. Eligibility rows are the ATTRIBUTION SOURCE OF TRUTH wherever they
-  // exist — the Commission tab reads exactly these rows, so the board uses
-  // them verbatim (auto-classified and admin-credited alike). Denied jobs are
-  // excluded; needs_review jobs are held out until resolved. Only jobs with NO
-  // eligibility row (open / not yet completed) are classified live.
-  const eligRows = await fetchAll<{ sf_job_id: string; tech_user_id: string | null; status: string }>((f, t) =>
+  const elig = await fetchAll<{ tech_user_id: string; revenue: number | null; revenue_frozen: boolean }>((f, t) =>
     db.from('commission_job_eligibility')
-      .select('sf_job_id, tech_user_id, status')
-      .in('sf_job_id', jobIds)
-      .order('sf_job_id', { ascending: true })
+      .select('tech_user_id, revenue, revenue_frozen, id')
+      .eq('status', 'eligible')
+      .not('tech_user_id', 'is', null)
+      .gte('recognition_date', start)
+      .lte('recognition_date', end)
+      .order('id', { ascending: true })
       .range(f, t),
   )
-  const eligByJob = new Map(eligRows.map(r => [r.sf_job_id, r]))
 
-  // 5. Aggregate per tech (only jobs cleanly attributable to one rep, not denied).
-  const byTech = new Map<string, { sold: number; received: number }>()
-  for (const jobId of jobIds) {
-    const elig = eligByJob.get(jobId)
-    let techId: string | null = null
-    if (elig) {
-      // Completed job with an engine/admin decision — mirror the Commission tab.
-      if (elig.status !== 'eligible' || !elig.tech_user_id) continue
-      techId = elig.tech_user_id
-    } else {
-      // Open job — classify live from tokens/agents.
-      const cls = classifyJobWithTokens(tokensById.get(jobId) ?? [], tokenMap, agentsByJob.get(jobId) ?? [], resolver)
-      if (!cls || cls.status !== 'eligible' || !cls.tech_user_id) continue
-      techId = cls.tech_user_id
-    }
-    const total = totalById.get(jobId) ?? 0
-    const cur = byTech.get(techId) ?? { sold: 0, received: 0 }
-    cur.sold += total
-    if (paidJobs.has(jobId)) cur.received += total
-    byTech.set(techId, cur)
+  const byTech = new Map<string, { completed: number; received: number }>()
+  for (const e of elig) {
+    const cur = byTech.get(e.tech_user_id) ?? { completed: 0, received: 0 }
+    cur.completed += e.revenue ?? 0
+    if (e.revenue_frozen) cur.received += e.revenue ?? 0
+    byTech.set(e.tech_user_id, cur)
   }
 
   const techIds = Array.from(byTech.keys())
@@ -152,10 +80,10 @@ export async function GET(req: NextRequest) {
   const rows = techIds
     .map(id => ({
       tech_name: names.get(id) ?? 'Unknown',
-      dollars_sold: Math.round(byTech.get(id)!.sold * 100) / 100,
-      dollars_received: Math.round(byTech.get(id)!.received * 100) / 100,
+      completed_revenue: Math.round(byTech.get(id)!.completed * 100) / 100,
+      received_revenue: Math.round(byTech.get(id)!.received * 100) / 100,
     }))
-    .sort((a, b) => b.dollars_sold - a.dollars_sold)
+    .sort((a, b) => b.completed_revenue - a.completed_revenue)
     .map((row, i) => ({ rank: i + 1, ...row }))
 
   return NextResponse.json({ rows })
