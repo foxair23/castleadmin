@@ -152,7 +152,7 @@ function sectionHtml(title: string, groups: Group[], appUrl: string): string {
   if (withItems.length === 0) return ''
   return `<h2 style="font-size:15px;font-weight:700;margin:18px 0 6px;color:#111827;">${title}</h2>` +
     withItems.map(g => {
-      const href = `${appUrl}/admin/action-items?tab=${encodeURIComponent(g.tab)}`
+      const href = `${appUrl}/sales/action-items?tab=${encodeURIComponent(g.tab)}`
       const label = `<a href="${href}" style="color:#dc2626;text-decoration:none;">${esc(g.label)} (${g.lines.length}) →</a>`
       return `<p style="font-size:13px;font-weight:600;margin:10px 0 2px;color:#374151;">${label}</p><ul style="margin:0;padding-left:18px;">${renderLines(g.lines)}</ul>`
     }).join('')
@@ -172,6 +172,10 @@ export function renderTodoEmail(d: TodoDigest, opts: {
   introText?: string
 }): { html: string; text: string } {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'
+  // Link to /sales/action-items, not /admin: the digest goes to both admin and
+  // sales recipients, and this page renders the same Action Items UI for both
+  // roles. /admin/action-items would bounce sales users through an
+  // admin→tech→admin redirect loop ("this page isn't working").
   const newGroups: Group[] = [
     { label: 'Online Scheduling (press Done after handling)', lines: d.schedulingLines, tab: 'online-scheduling' },
     ...d.buckets.map(b => ({ label: b.label, lines: b.newLines, tab: b.tab })),
@@ -186,7 +190,7 @@ export function renderTodoEmail(d: TodoDigest, opts: {
   ${sectionHtml('🆕 Needs first action', newGroups, appUrl)}
   ${sectionHtml('🔔 Follow-ups due — actioned earlier, still unresolved', dueGroups, appUrl)}
   <p style="margin:22px 0 0;">
-    <a href="${appUrl}/admin/action-items" style="display:inline-block;background:#dc2626;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px;">Open Action Items →</a>
+    <a href="${appUrl}/sales/action-items" style="display:inline-block;background:#dc2626;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px;">Open Action Items →</a>
   </p>
 </div>`.trim()
 
@@ -197,7 +201,7 @@ export function renderTodoEmail(d: TodoDigest, opts: {
     if (withItems.length === 0) return
     textParts.push(title)
     for (const g of withItems) {
-      textParts.push(`  ${g.label} (${g.lines.length}) — ${appUrl}/admin/action-items?tab=${g.tab}`)
+      textParts.push(`  ${g.label} (${g.lines.length}) — ${appUrl}/sales/action-items?tab=${g.tab}`)
       for (const l of g.lines.slice(0, CAP)) textParts.push(`    - ${l.text}${l.sub ? ` (${l.sub})` : ''}`)
       if (g.lines.length > CAP) textParts.push(`    …and ${g.lines.length - CAP} more`)
     }
@@ -205,7 +209,7 @@ export function renderTodoEmail(d: TodoDigest, opts: {
   }
   addText('NEEDS FIRST ACTION', newGroups)
   addText('FOLLOW-UPS DUE', dueGroups)
-  textParts.push(`${appUrl}/admin/action-items`)
+  textParts.push(`${appUrl}/sales/action-items`)
 
   return { html, text: textParts.join('\n') }
 }
