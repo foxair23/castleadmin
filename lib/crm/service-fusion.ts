@@ -182,11 +182,19 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
     const weekStartStr = fmt(weekStart)
     const weekEndStr = fmt(weekEnd)
 
-    // Widen the job-level date filter so we catch jobs whose SF start_date
-    // differs from their visit dates (e.g. jobs created last week with visits
-    // this week, or jobs "scheduled" next week whose visits fall this week).
-    // We then filter visits to [weekStart, weekEnd] on our side.
-    const fetchFrom = fmt(new Date(weekStart.getTime() - 30 * 86400_000))
+    // The SF /jobs filter keys off the job's start_date, but a job's start_date
+    // is pinned to its FIRST visit — a later "site visit" (a follow-up/return
+    // appointment weeks or months after the job was created) keeps the original
+    // start_date. So a wide look-back is required to catch a job whose only
+    // in-week visit is a late site visit; a narrow window silently drops it and
+    // the assigned tech never sees that visit in their piecework. (Observed:
+    // jobs started Jun 5 with the tech's site visit in mid-July — ~40 days out —
+    // fell outside the old 30-day look-back.) We still filter visits to
+    // [weekStart, weekEnd] on our side, so widening only affects which jobs are
+    // scanned, never which visits are credited. 150 days covers realistic
+    // site-visit gaps; this sync is a manual, low-frequency action, so the extra
+    // pages scanned are an acceptable trade-off.
+    const fetchFrom = fmt(new Date(weekStart.getTime() - 150 * 86400_000))
     const fetchTo   = fmt(new Date(weekEnd.getTime()   + 14 * 86400_000))
 
     const results: CrmJob[] = []
