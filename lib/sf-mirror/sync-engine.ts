@@ -413,8 +413,14 @@ export async function reprocessCustomerChildren(): Promise<number> {
   return total
 }
 
-async function syncJobChildren(jobs: Raw[]) {
+async function syncJobChildren(jobsRaw: Raw[]) {
   const supabase = db()
+  // A job can arrive twice in one batch (SF pagination returns it on two pages
+  // when its updated_date shifts mid-scan). The per-job delete+insert children
+  // below build their rows via flatMap, so a duplicate job would double-insert
+  // the same (job_id, tech_id)/(job_id, agent_id) rows and trip those tables'
+  // unique constraints. Dedupe jobs by id first.
+  const jobs = dedupeByKey(jobsRaw as unknown as Record<string, unknown>[], 'id') as unknown as Raw[]
   const jobIds = jobs.map(j => toStr(j.id)!)
 
   // Techs
@@ -455,7 +461,8 @@ async function syncJobChildren(jobs: Raw[]) {
     (j.invoices ?? []).map((inv: Raw) => mapInvoice(inv, toStr(j.id)!))
   )
   if (invoiceRows.length > 0) {
-    await supabase.from('sf_invoices').upsert(invoiceRows, { onConflict: 'id' })
+    // Same job-expand can surface a shared invoice twice — dedupe before upsert.
+    await supabase.from('sf_invoices').upsert(dedupeByKey(invoiceRows, 'id'), { onConflict: 'id' })
   }
 }
 
@@ -508,6 +515,22 @@ async function detectAndRecordReschedules(incomingJobs: Raw[]) {
 
 const BATCH_SIZE = 200
 
+// Collapse rows that share the same conflict key, keeping the LAST (most
+// recently fetched) copy. SF pagination can return the same record on more than
+// one page when its updated_date shifts mid-scan (the sync itself, or a
+// concurrent edit, moves a record between pages), so an upsert batch can contain
+// the same key twice — which Postgres rejects with "ON CONFLICT DO UPDATE
+// command cannot affect row a second time". Handles composite keys (e.g.
+// "job_id,tech_id").
+function dedupeByKey<T extends Record<string, unknown>>(rows: T[], conflictCol: string): T[] {
+  const keys = conflictCol.split(',').map(s => s.trim())
+  const byKey = new Map<string, T>()
+  for (const r of rows) {
+    byKey.set(keys.map(c => String(r[c] ?? '')).join(' '), r)
+  }
+  return byKey.size === rows.length ? rows : [...byKey.values()]
+}
+
 async function batchUpsert(table: string, rows: unknown[], conflictCol = 'id') {
   if (rows.length === 0) return 0
   // The /invoices endpoint doesn't return the job link — only the jobs-sync
@@ -520,8 +543,9 @@ async function batchUpsert(table: string, rows: unknown[], conflictCol = 'id') {
     await preserveExistingInvoiceJobIds(rows as Record<string, unknown>[])
   }
   const supabase = db()
+  const deduped = dedupeByKey(rows as Record<string, unknown>[], conflictCol)
   let upserted = 0
-  for (const batch of chunk(rows as Record<string, unknown>[], BATCH_SIZE)) {
+  for (const batch of chunk(deduped, BATCH_SIZE)) {
     const { error } = await supabase.from(table).upsert(batch, { onConflict: conflictCol })
     if (error) throw new Error(`Upsert failed on ${table}: ${error.message}`)
     upserted += batch.length
