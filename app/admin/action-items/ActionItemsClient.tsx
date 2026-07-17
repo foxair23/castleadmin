@@ -127,17 +127,19 @@ function SortTh<T>({
   sortKey,
   sortDir,
   onSort,
+  className = '',
 }: {
   col: keyof T
   label: string
   sortKey: keyof T
   sortDir: SortDir
   onSort: (k: keyof T) => void
+  className?: string
 }) {
   const active = col === sortKey
   return (
     <th
-      className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none hover:text-gray-700 whitespace-nowrap"
+      className={`px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none hover:text-gray-700 whitespace-nowrap ${className}`}
       onClick={() => onSort(col)}
     >
       {label}
@@ -266,25 +268,26 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
   }
 
   const due = rec.follow_up_on <= todayPT()
+  const subline = `${rec.action_label} · ${fmtDate(rec.actioned_at)}${rec.actioned_by_name ? ` · ${rec.actioned_by_name}` : ''}`
   return (
-    <td className="px-4 py-2 whitespace-nowrap">
-      <div className="flex flex-col gap-0.5">
+    <td className="px-4 py-2 align-top">
+      <div className="flex flex-col gap-0.5 max-w-[170px]">
         {due ? (
           <button
             onClick={press}
             disabled={busy}
             title={`Records another "${cfg.button}" and restarts the ${cfg.days}-day clock`}
-            className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
+            className="self-start text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
           >
             {busy ? 'Saving…' : `🔔 Due — ${cfg.button} again`}
           </button>
         ) : (
-          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap">
+          <span className="self-start inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap">
             ⏳ Waiting til {fmtDate(rec.follow_up_on + 'T12:00:00')}
           </span>
         )}
-        <span className="text-[11px] text-gray-400 whitespace-nowrap">
-          {rec.action_label} · {fmtDate(rec.actioned_at)}{rec.actioned_by_name ? ` · ${rec.actioned_by_name}` : ''}
+        <span className="text-[11px] text-gray-400 truncate" title={subline}>
+          {subline}
         </span>
       </div>
     </td>
@@ -304,11 +307,11 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
             <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="po_number" label="PO #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="po_number" label="PO #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-20" />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="days_outstanding" label="Days Outstanding" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="days_outstanding" label="Days Late" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-16" />
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="payment_status" label="Payment Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
@@ -320,7 +323,9 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
               <ActionCell tab="unpaid" entityId={job.id} record={actions[`sf_job:${job.id}`]} itemDate={job.closed_at} />
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
-              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{job.po_number ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-600">
+                <div className="max-w-[70px] truncate" title={job.po_number ?? undefined}>{job.po_number ?? '—'}</div>
+              </td>
               <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>

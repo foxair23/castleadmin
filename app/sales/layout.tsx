@@ -22,7 +22,7 @@ export default async function SalesLayout({ children }: { children: React.ReactN
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <SalesNav role={profile.role as 'admin' | 'sales'} fullName={profile.full_name} />
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">
+      <main className="flex-1 max-w-screen-2xl w-full mx-auto px-4 py-6">
         {children}
       </main>
     </div>

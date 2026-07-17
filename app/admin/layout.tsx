@@ -22,7 +22,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <Navbar role="admin" fullName={profile.full_name} />
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-6">
+      <main className="flex-1 max-w-screen-2xl w-full mx-auto px-4 py-6">
         {children}
       </main>
     </div>
