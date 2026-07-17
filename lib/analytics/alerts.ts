@@ -60,6 +60,7 @@ async function fetchTechNamesByJobIds(
 export interface UnpaidJob {
   id: string
   number: string | null
+  po_number: string | null
   customer_name: string | null
   customer_id: string | null
   closed_at: string
@@ -81,7 +82,7 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
 
   const { data } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, customer_id, closed_at, total, due_total, payment_status, source')
+    .select('id, number, po_number:raw_data->>po_number, customer_name, customer_id, closed_at, total, due_total, payment_status, source')
     .not('closed_at', 'is', null)
     .gt('closed_at', '2000-01-01')  // exclude epoch-zero dates SF stores for cancelled jobs
     .gt('due_total', 0)
@@ -97,6 +98,7 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
   const items: UnpaidJob[] = jobs.map((j: {
     id: string
     number: string | null
+    po_number: string | null
     customer_name: string | null
     customer_id: string | null
     closed_at: string
@@ -107,6 +109,7 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
   }) => ({
     id: j.id,
     number: j.number,
+    po_number: j.po_number && j.po_number.trim() !== '' ? j.po_number : null,
     customer_name: j.customer_name,
     customer_id: j.customer_id,
     closed_at: j.closed_at,
