@@ -304,6 +304,7 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
             <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="po_number" label="PO #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -319,6 +320,7 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
               <ActionCell tab="unpaid" entityId={job.id} record={actions[`sf_job:${job.id}`]} itemDate={job.closed_at} />
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{job.po_number ?? '—'}</td>
               <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
