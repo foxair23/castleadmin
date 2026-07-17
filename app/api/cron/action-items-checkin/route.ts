@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 import { adminDb, computeTodoDigest, dateLabelPT, renderTodoEmail } from '@/lib/action-items/digest'
+import { isPtHour } from '@/lib/cron/pt-gate'
 
 export const maxDuration = 300
 
@@ -8,9 +9,14 @@ export const maxDuration = 300
 // today vs. what still needs a touch before end of day. Same classification as
 // the morning digest — anything actioned today has already dropped out of the
 // remaining buckets, so the lists below the scoreboard are exactly what's left.
+// Scheduled at both 22:00 and 23:00 UTC; the PT gate runs it only on the 3 PM
+// PT firing so it stays pinned to 3 PM across the PDT/PST switch.
 export async function GET(req: NextRequest) {
   if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!isPtHour(15)) {
+    return NextResponse.json({ ok: true, skipped: 'off-hour (pinned to 3 PM PT)' })
   }
   const started = Date.now()
 
