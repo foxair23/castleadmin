@@ -27,6 +27,13 @@ export async function GET(req: NextRequest) {
 
   const results: Record<string, number> = {}
   for (const group of groups) {
+    // Skip a category with no outstanding (>$0 due) jobs — don't send an empty
+    // report. Every included job already has due_total > 0 (getUnpaidJobs), so
+    // count === 0 means nothing is owed in this category this week.
+    if (group.count === 0) {
+      results[group.key] = 0
+      continue
+    }
     const { subject, html, text } = renderArEmail(group)
     results[group.key] = await enqueueForSubscribers({
       notificationTypeKey: 'weekly_ar_aging',
