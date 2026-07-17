@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
-  normalize, tokenize, scoreJob, dateBonusDays, buildScoreJob,
+  normalize, tokenize, scoreJob, dateBonusDays, buildScoreJob, effectiveJobDate,
   AUTO_THRESHOLD, CANDIDATE_THRESHOLD,
 } from '@/lib/google-reviews/matcher'
 
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   if (jobIdParam) {
     const { data: jrow, error: jerr } = await db
       .from('sf_jobs')
-      .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
+      .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, start_date, is_deleted')
       .eq('id', jobIdParam)
       .maybeSingle()
     lookupJob = jerr ? { error: jerr.message } : (jrow ?? { found: false, note: `No sf_jobs row with id=${jobIdParam}` })
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
   ]).join(',')
   const { data: rawJobs } = q ? await db
     .from('sf_jobs')
-    .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
+    .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, start_date, is_deleted')
     .or(jobFilters)
     .limit(2000) : { data: [] }
 
@@ -83,13 +83,13 @@ export async function GET(req: NextRequest) {
   // jobs exist. This is the truncation-proof way to prove a job is/ isn't present.
   let tightQ = db
     .from('sf_jobs')
-    .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, is_deleted')
+    .select('id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, start_date, is_deleted')
   for (const t of rawTokens) tightQ = tightQ.ilike('customer_name', `%${t}%`)
   const { data: tightRows } = q && rawTokens.length > 0 ? await tightQ.limit(50) : { data: [] }
   const tightMatches = (tightRows ?? []).map((j: {
     id: string; customer_id: string; customer_name: string | null
     contact_first_name: string | null; contact_last_name: string | null
-    closed_at: string | null; is_deleted: boolean
+    closed_at: string | null; start_date: string | null; is_deleted: boolean
   }) => {
     const sj = buildScoreJob(j)
     const base = scoreJob(rNorm, rTokens, sj)
@@ -107,11 +107,14 @@ export async function GET(req: NextRequest) {
   const scored = (rawJobs ?? []).map((j: {
     id: string; customer_id: string; customer_name: string | null
     contact_first_name: string | null; contact_last_name: string | null
-    closed_at: string | null; is_deleted: boolean
+    closed_at: string | null; start_date: string | null; is_deleted: boolean
   }) => {
     const sj    = buildScoreJob(j)
     const base  = scoreJob(rNorm, rTokens, sj)
-    const bonus = dateBonusDays(reviewDate, j.closed_at)
+    // Mirror the batch matcher exactly: recency uses closed_at with a
+    // start_date fallback (a just-completed job has no closed_at yet).
+    const eff   = effectiveJobDate(j.closed_at, j.start_date)
+    const bonus = dateBonusDays(reviewDate, eff)
     const total = Math.min(base + bonus, 1.0)
     return {
       job_id:         j.id,
@@ -120,13 +123,15 @@ export async function GET(req: NextRequest) {
       contact:        [j.contact_first_name, j.contact_last_name].filter(Boolean).join(' ') || null,
       match_tokens:   sj.customerTokens,
       closed_at:      j.closed_at,
+      start_date:     j.start_date,
+      effective_date: eff,
       is_deleted:     j.is_deleted,
-      excluded_from_matching: j.is_deleted || (j.closed_at
-        ? (new Date(j.closed_at).getTime() - new Date(reviewDate).getTime()) / 86400000 > 30
+      excluded_from_matching: j.is_deleted || (eff
+        ? (new Date(eff).getTime() - new Date(reviewDate).getTime()) / 86400000 > 30
         : false),
       excluded_reason: j.is_deleted ? 'deleted'
-        : (j.closed_at && (new Date(j.closed_at).getTime() - new Date(reviewDate).getTime()) / 86400000 > 30)
-          ? 'closed_after_review'
+        : (eff && (new Date(eff).getTime() - new Date(reviewDate).getTime()) / 86400000 > 30)
+          ? 'job_after_review'
           : null,
       base_score:     Math.round(base * 100) / 100,
       date_bonus:     bonus,
@@ -146,7 +151,9 @@ export async function GET(req: NextRequest) {
     const bestTight = tightMatches
       .filter(j => !j.is_deleted)
       .map(j => {
-        const bonus = dateBonusDays(review.created_at_google, (rawJobs ?? []).find((r: { id: string }) => r.id === j.job_id)?.closed_at ?? null)
+        const raw = (rawJobs ?? []).find((r: { id: string }) => r.id === j.job_id) as
+          { closed_at: string | null; start_date: string | null } | undefined
+        const bonus = dateBonusDays(review.created_at_google, effectiveJobDate(raw?.closed_at ?? null, raw?.start_date ?? null))
         return { ...j, total_score: Math.min(j.base_score + bonus, 1.0) }
       })
       .sort((a, b) => b.total_score - a.total_score)[0]
