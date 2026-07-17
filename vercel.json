@@ -2,7 +2,7 @@
   "crons": [
     { "path": "/api/cron/sf-sync-jobs-hourly", "schedule": "0 * * * *" },
     { "path": "/api/cron/sf-sync-daily", "schedule": "1 8 * * 1-6" },
-    { "path": "/api/cron/sf-sync-estimates", "schedule": "9 8 * * 1-6" },
+    { "path": "/api/cron/sf-sync-estimates", "schedule": "30 8,15,17,19,21,23 * * 1-6" },
     { "path": "/api/cron/sf-sync-invoices", "schedule": "17 8 * * 1-6" },
     { "path": "/api/cron/sf-sync-calendar-tasks", "schedule": "25 8 * * 1-6" },
     { "path": "/api/cron/sf-sync-weekly", "schedule": "1 8 * * 0" },
