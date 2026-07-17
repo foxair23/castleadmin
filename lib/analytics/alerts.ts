@@ -77,10 +77,12 @@ export interface UnpaidJobsResult {
   totalDue: number
 }
 
-export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
+// `limit`: max rows (default 100 for the Action Items tab). Pass null for no
+// cap — the weekly AR aging report needs every unpaid job, not a truncated set.
+export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<UnpaidJobsResult> {
   const db = getAdminClient()
 
-  const { data } = await db
+  let query = db
     .from('sf_jobs')
     .select('id, number, po_number:raw_data->>po_number, customer_name, customer_id, closed_at, total, due_total, payment_status, source')
     .not('closed_at', 'is', null)
@@ -89,7 +91,11 @@ export async function getUnpaidJobs(): Promise<UnpaidJobsResult> {
     .not('status', 'in', '("Cancelled","Void","Voided")')
     .eq('is_deleted', false)
     .order('closed_at', { ascending: true })
-    .limit(100)
+
+  const limit = opts?.limit === undefined ? 100 : opts.limit
+  if (limit !== null) query = query.limit(limit)
+
+  const { data } = await query
 
   const jobs = data ?? []
   const jobIds = jobs.map((j: { id: string }) => j.id)
