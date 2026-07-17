@@ -98,7 +98,8 @@ export interface ScoreJob {
   customerNorm: string
   first: string
   last: string
-  closed_at: string | null
+  /** Best-known "when did this job happen" date — see effectiveJobDate(). */
+  effective_date: string | null
 }
 
 // Raw job row from sf_jobs that we score against.
@@ -109,6 +110,21 @@ export interface RawJob {
   contact_first_name: string | null
   contact_last_name: string | null
   closed_at: string | null
+  start_date: string | null
+}
+
+/**
+ * The date recency logic should use for a job. closed_at is only stamped when a
+ * job reaches a closed status (Invoiced/Paid), so a just-completed job usually
+ * still has closed_at = NULL when its review arrives — which made the recency
+ * tie-break treat the customer's NEWEST job as "infinitely far away" and hand
+ * the match to an old, dated job instead. SF also stores epoch-1970 closed_at
+ * on some cancelled rows. Fall back to start_date in both cases. (ISO strings
+ * compare correctly lexicographically.)
+ */
+export function effectiveJobDate(closedAt: string | null, startDate: string | null): string | null {
+  if (closedAt && closedAt > '2000-01-01') return closedAt
+  return startDate ?? null
 }
 
 // Build the precomputed ScoreJob from a raw sf_jobs row. The matchable token set
@@ -130,7 +146,7 @@ export function buildScoreJob(j: RawJob): ScoreJob {
     customerNorm:   j.customer_name ? normalize(j.customer_name) : [first, last].filter(Boolean).join(' '),
     first,
     last,
-    closed_at:      j.closed_at,
+    effective_date: effectiveJobDate(j.closed_at, j.start_date),
   }
 }
 
@@ -204,7 +220,7 @@ export async function runMatchingPass(): Promise<MatchResult> {
   // because the supabase-js .or() syntax for IS NOT NULL is unreliable across
   // driver versions. Using .not('field','is',null) directly is guaranteed safe.
   const jobs: ScoreJob[] = []
-  const JOB_SELECT = 'id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at'
+  const JOB_SELECT = 'id, customer_id, customer_name, contact_first_name, contact_last_name, closed_at, start_date'
 
   // ── Pass 1: jobs with a customer_name ────────────────────────────────────
   let from = 0
@@ -220,7 +236,8 @@ export async function runMatchingPass(): Promise<MatchResult> {
     if (!page || page.length === 0) break
     for (const j of page as Array<{
       id: string; customer_id: string; customer_name: string | null
-      contact_first_name: string | null; contact_last_name: string | null; closed_at: string | null
+      contact_first_name: string | null; contact_last_name: string | null
+      closed_at: string | null; start_date: string | null
     }>) {
       jobs.push(buildScoreJob(j))
     }
@@ -244,7 +261,8 @@ export async function runMatchingPass(): Promise<MatchResult> {
     if (!page || page.length === 0) break
     for (const j of page as Array<{
       id: string; customer_id: string; customer_name: string | null
-      contact_first_name: string | null; contact_last_name: string | null; closed_at: string | null
+      contact_first_name: string | null; contact_last_name: string | null
+      closed_at: string | null; start_date: string | null
     }>) {
       jobs.push(buildScoreJob(j))
     }
@@ -267,23 +285,25 @@ export async function runMatchingPass(): Promise<MatchResult> {
 
     for (const job of jobs) {
       // A reviewer cannot review a job that hasn't happened yet. Skip jobs whose
-      // closed_at is more than 30 days after the review date — this prevents
-      // future customer records from generating spurious candidate matches.
-      if (job.closed_at) {
-        const daysAfter = (new Date(job.closed_at).getTime() - new Date(review.created_at_google).getTime()) / 86400000
+      // effective date is more than 30 days after the review date — this
+      // prevents future customer records from generating spurious candidates.
+      if (job.effective_date) {
+        const daysAfter = (new Date(job.effective_date).getTime() - new Date(review.created_at_google).getTime()) / 86400000
         if (daysAfter > 30) continue
       }
 
       const ns = scoreJob(rNorm, rTokens, job)
       if (ns === 0) continue
-      const total = Math.min(ns + dateBonusDays(review.created_at_google, job.closed_at), 1.0)
+      const total = Math.min(ns + dateBonusDays(review.created_at_google, job.effective_date), 1.0)
       // Tie-break: a repeat customer's jobs all carry the same name score (and
       // an equal — often zero — date bonus once they're months old), and the
       // strict > kept whichever job happened to come FIRST, i.e. the oldest.
       // Reviews are about the most recent visit, so on equal score prefer the
-      // job whose completion date is CLOSEST to the review date.
-      const closeness = job.closed_at
-        ? Math.abs(new Date(review.created_at_google).getTime() - new Date(job.closed_at).getTime())
+      // job whose effective date is CLOSEST to the review date. (effective_date
+      // falls back to start_date when closed_at isn't stamped yet — a freshly
+      // completed, not-yet-invoiced job must not lose this tie-break.)
+      const closeness = job.effective_date
+        ? Math.abs(new Date(review.created_at_google).getTime() - new Date(job.effective_date).getTime())
         : Number.MAX_SAFE_INTEGER
       if (total > bestScore || (total === bestScore && closeness < bestCloseness)) {
         bestScore = total
