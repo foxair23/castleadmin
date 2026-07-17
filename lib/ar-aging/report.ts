@@ -64,7 +64,9 @@ function buildGroup(key: ArGroupKey, label: string, items: UnpaidJob[], includeS
 /** Split unpaid jobs into the three source-based AR groups. */
 export function buildArGroups(items: UnpaidJob[]): ArGroup[] {
   return [
-    buildGroup('clopay', 'Clopay', items.filter(isClopay), false),
+    // Clopay spans two sources (Clopay + SF&I (Home Depot)), so show Source.
+    // Genie is a single source, so it's omitted there.
+    buildGroup('clopay', 'Clopay', items.filter(isClopay), true),
     buildGroup('genie', 'Genie', items.filter(isGenie), false),
     buildGroup('remainder', 'Remainder', items.filter(j => !isClopay(j) && !isGenie(j)), true),
   ]
