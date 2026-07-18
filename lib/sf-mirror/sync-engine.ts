@@ -413,6 +413,42 @@ export async function reprocessCustomerChildren(): Promise<number> {
   return total
 }
 
+// Stamp work_completed_at the FIRST time we observe a job in a completed-or-
+// later status. SF's own closed_at is only set at Invoiced/Paid, so this column
+// is the app's source of truth for "when was the work actually done" (the
+// Monthly Revenue chart buckets by it — see migration 054). Never overwritten:
+// only null rows are stamped, so later re-syncs can't move a job's month.
+const COMPLETEDISH = /complet|invoic|paid/i
+
+async function stampWorkCompleted(jobsRaw: Raw[]) {
+  const supabase = db()
+  const jobs = dedupeByKey(jobsRaw as unknown as Record<string, unknown>[], 'id') as unknown as Raw[]
+  const candidates = jobs.filter(j => COMPLETEDISH.test(toStr(j.status) ?? ''))
+  if (candidates.length === 0) return
+
+  const { data: unstamped } = await supabase
+    .from('sf_jobs')
+    .select('id')
+    .in('id', candidates.map(j => toStr(j.id)!))
+    .is('work_completed_at', null)
+  if (!unstamped || unstamped.length === 0) return
+  const needIds = new Set(unstamped.map(r => r.id as string))
+
+  for (const j of candidates) {
+    const id = toStr(j.id)!
+    if (!needIds.has(id)) continue
+    // Prefer SF's own stamp when it's sane (epoch-1970 rows are garbage);
+    // otherwise "now" — the hourly sync sees a completion within the hour.
+    const closed = toStr(j.completed_date ?? j.closed_at)
+    const value = closed && closed > '2000-01-01' ? closed : nowIso()
+    await supabase
+      .from('sf_jobs')
+      .update({ work_completed_at: value })
+      .eq('id', id)
+      .is('work_completed_at', null)
+  }
+}
+
 async function syncJobChildren(jobsRaw: Raw[]) {
   const supabase = db()
   // A job can arrive twice in one batch (SF pagination returns it on two pages
@@ -653,6 +689,7 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
     afterUpsert: async (items) => {
       await detectAndRecordReschedules(items)
       await syncJobChildren(items)
+      await stampWorkCompleted(items)
     },
   },
   {

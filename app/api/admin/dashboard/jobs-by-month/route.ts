@@ -5,9 +5,9 @@ import { createClient as createAdminClient, SupabaseClient } from '@supabase/sup
 export const maxDuration = 60
 
 // Jobs completed in a given month, for the dashboard's bottom detail table.
-// Bucketed by closed_at (revenue is recognized on completion, matching the
-// Monthly Revenue chart). closed_at reflects Pacific wall-clock, so plain
-// YYYY-MM-DD string bounds compare correctly.
+// Bucketed by work_completed_at — when the work was actually done — matching
+// the Monthly Revenue chart (closed_at is only stamped at invoicing; see
+// migration 054). Plain YYYY-MM-DD string bounds compare correctly.
 
 async function requireAdmin() {
   const supabase = await createClient()
@@ -62,18 +62,18 @@ export async function GET(req: NextRequest) {
     number: string | null
     customer_name: string | null
     source: string | null
-    closed_at: string | null
+    work_completed_at: string | null
     total: number | null
     due_total: number | null
   }
   const jobs = await fetchAll<JobRow>((from, to) =>
     db.from('sf_jobs')
-      .select('id, number, customer_name, source, closed_at, total, due_total')
+      .select('id, number, customer_name, source, work_completed_at, total, due_total')
       .eq('is_deleted', false)
       .not('status', 'in', '("Cancelled","Void","Voided")')
-      .gte('closed_at', start)
-      .lt('closed_at', end)
-      .order('closed_at', { ascending: false })
+      .gte('work_completed_at', start)
+      .lt('work_completed_at', end)
+      .order('work_completed_at', { ascending: false })
       .order('id', { ascending: true })
       .range(from, to)
   )
@@ -103,7 +103,7 @@ export async function GET(req: NextRequest) {
     number: j.number,
     customer: j.customer_name,
     source: j.source,
-    closedAt: j.closed_at,
+    closedAt: j.work_completed_at,
     revenue: j.total ?? 0,
     amountDue: j.due_total ?? 0,
     techs: techsByJob.get(j.id) ?? [],

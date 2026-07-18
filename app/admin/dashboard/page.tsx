@@ -51,26 +51,28 @@ export default async function DashboardPage() {
     fetchAllRows<{ completed_at: string | null; original_scheduled_at: string | null }>((f, t) =>
       db.from('sf_jobs_cache').select('completed_at, original_scheduled_at, id').eq('is_closed', true).gte('completed_at', daysAgo(90)).not('completed_at', 'is', null).not('original_scheduled_at', 'is', null).order('id', { ascending: true }).range(f, t)),
     // Job volume by week for 2025 + 2026 — count of completed jobs, bucketed by
-    // week of closed_at (same completion basis as Monthly Revenue).
-    fetchAllRows<{ closed_at: string | null }>((f, t) =>
+    // week of work_completed_at (when the work was done — same basis as Monthly
+    // Revenue; closed_at is only stamped at invoicing, see migration 054).
+    fetchAllRows<{ work_completed_at: string | null }>((f, t) =>
       db.from('sf_jobs')
-        .select('closed_at')
+        .select('work_completed_at')
         .eq('is_deleted', false)
         .not('status', 'in', '("Cancelled","Void","Voided")')
-        .gte('closed_at', '2025-01-01')
-        .lt('closed_at', '2027-01-01')
+        .gte('work_completed_at', '2025-01-01')
+        .lt('work_completed_at', '2027-01-01')
         .order('id', { ascending: true })
         .range(f, t)),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
-    // Revenue Today / This Week / 28-day avg — same logic as monthly_job_revenue RPC:
-    // sum(sf_jobs.total) bucketed by closed_at, excluding deleted + cancelled/void jobs.
-    fetchAllRows<{ closed_at: string | null; total: number | null }>((f, t) =>
+    // Revenue Today / This Week / 28-day avg — same basis as monthly_job_revenue:
+    // sum(sf_jobs.total) bucketed by work_completed_at (work date, not invoice
+    // date), excluding deleted + cancelled/void jobs.
+    fetchAllRows<{ work_completed_at: string | null; total: number | null }>((f, t) =>
       db.from('sf_jobs')
-        .select('closed_at, total')
+        .select('work_completed_at, total')
         .eq('is_deleted', false)
         .not('status', 'in', '("Cancelled","Void","Voided")')
-        .not('closed_at', 'is', null)
-        .gte('closed_at', daysAgo(90))
+        .not('work_completed_at', 'is', null)
+        .gte('work_completed_at', daysAgo(90))
         .order('id', { ascending: true })
         .range(f, t)),
     // Online scheduling leads that have been acknowledged ("Done"). These make
@@ -89,19 +91,19 @@ export default async function DashboardPage() {
   ])
 
   // Compute snapshot — all three revenue metrics use the same source as the
-  // monthly_job_revenue RPC: sf_jobs.total bucketed by closed_at, excluding
-  // deleted + cancelled/void jobs.
+  // monthly_job_revenue RPC: sf_jobs.total bucketed by work_completed_at (the
+  // work date, not the invoice date), excluding deleted + cancelled/void jobs.
   const revenueToday = closedJobsRevenue
-    .filter(r => r.closed_at?.slice(0, 10) === todayStr)
+    .filter(r => r.work_completed_at?.slice(0, 10) === todayStr)
     .reduce((s, r) => s + (r.total ?? 0), 0)
 
   const revenueWeek = closedJobsRevenue
-    .filter(r => (r.closed_at ?? '') >= daysAgo(7))
+    .filter(r => (r.work_completed_at ?? '') >= daysAgo(7))
     .reduce((s, r) => s + (r.total ?? 0), 0)
 
   const dailyRevTotals: Record<string, number> = {}
-  for (const r of closedJobsRevenue.filter(r => (r.closed_at ?? '') >= daysAgo(28))) {
-    const d = r.closed_at?.slice(0, 10) ?? ''
+  for (const r of closedJobsRevenue.filter(r => (r.work_completed_at ?? '') >= daysAgo(28))) {
+    const d = r.work_completed_at?.slice(0, 10) ?? ''
     if (d) dailyRevTotals[d] = (dailyRevTotals[d] ?? 0) + (r.total ?? 0)
   }
   const dailyValues = Object.values(dailyRevTotals)
@@ -114,7 +116,7 @@ export default async function DashboardPage() {
   // and 2026 can be compared on the same axis.
   const cntByYearMonth: Record<number, number[]> = { 2025: Array(12).fill(0), 2026: Array(12).fill(0) }
   for (const r of jobVolumeRows) {
-    const ymd = r.closed_at?.slice(0, 10)
+    const ymd = r.work_completed_at?.slice(0, 10)
     if (!ymd) continue
     const year = Number(ymd.slice(0, 4))
     if (year !== 2025 && year !== 2026) continue
@@ -197,8 +199,9 @@ export default async function DashboardPage() {
 
   // Monthly revenue + tech attribution (piecework). Company revenue is computed
   // server-side by the monthly_job_revenue() RPC — sum(sf_jobs.total) bucketed by
-  // month of closed_at (revenue recognized on completion). Using an RPC sidesteps
-  // PostgREST's 1000-row response cap, which silently truncated the prior approach.
+  // month of work_completed_at (when the work was done; closed_at is only stamped
+  // at invoicing — see migration 054). Using an RPC sidesteps PostgREST's
+  // 1000-row response cap, which silently truncated the prior approach.
   const [
     { data: monthlyRevRows },
     pwJobsForChart,
