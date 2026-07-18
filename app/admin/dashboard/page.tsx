@@ -222,9 +222,90 @@ export default async function DashboardPage() {
     if (r.ym) jobsByYearMonth[r.ym] = Number(r.revenue ?? 0)
   }
   const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+  // ── Revenue Outlook — four 12-month projections from the same monthly data ──
+  // All methods exclude the in-progress month from their base (except method 1,
+  // which extrapolates it by days elapsed). Basis: work-date revenue.
+  const curYear  = Number(todayStr.slice(0, 4))
+  const curMonth = Number(todayStr.slice(5, 7)) // 1-12
+  const rev = (y: number, m: number) => jobsByYearMonth[`${y}-${String(m).padStart(2, '0')}`] ?? 0
+  const revenueOutlook = (() => {
+    if (curYear !== 2026) return null // projections are wired for the 2026 chart year
+    const dayOfMonth   = Number(todayStr.slice(8, 10))
+    const daysInMonth  = new Date(curYear, curMonth, 0).getDate()
+    const completedMonths = Array.from({ length: curMonth - 1 }, (_, i) => i + 1)
+    const futureMonths    = Array.from({ length: 12 - curMonth }, (_, i) => curMonth + 1 + i)
+    const actualCompleted = completedMonths.reduce((s, m) => s + rev(2026, m), 0)
+    const mtd = rev(2026, curMonth)
+
+    // 1. Current-month pace: extrapolate the in-progress month by days elapsed.
+    // Unstable in the first few days of a month — fall back to last completed month.
+    const curMonthExtrap = dayOfMonth >= 5
+      ? (mtd / dayOfMonth) * daysInMonth
+      : rev(2026, curMonth - 1)
+    const m1RunRate = curMonthExtrap * 12
+    const m1Projected2026 = actualCompleted + curMonthExtrap * (12 - curMonth + 1)
+
+    // 2. Trailing-3-month average (completed months only).
+    const t3 = completedMonths.slice(-3)
+    const t3avg = t3.length > 0 ? t3.reduce((s, m) => s + rev(2026, m), 0) / t3.length : 0
+    const m2RunRate = t3avg * 12
+    const m2Projected2026 = actualCompleted + t3avg * (12 - curMonth + 1)
+
+    // 3. Seasonality-adjusted: monthly indices from 2025 (the only complete
+    // year); de-seasonalize the last 3 completed months to find the current
+    // level, then project each remaining month as level × its index.
+    const avg2025 = Array.from({ length: 12 }, (_, i) => rev(2025, i + 1)).reduce((a, b) => a + b, 0) / 12
+    const index = (m: number) => (avg2025 > 0 ? rev(2025, m) / avg2025 : 1)
+    const levelSamples = t3.filter(m => index(m) > 0.1).map(m => rev(2026, m) / index(m))
+    const level = levelSamples.length > 0 ? levelSamples.reduce((a, b) => a + b, 0) / levelSamples.length : t3avg
+    const projMonth = (m: number) => level * index(m)
+    const m3RunRate = level * 12
+    const m3Projected2026 = actualCompleted + [curMonth, ...futureMonths].reduce((s, m) => s + projMonth(m), 0)
+
+    // 4. Year-over-year pace: average growth across completed overlap months,
+    // applied to 2025's remaining months. With only ~3 months of ownership this
+    // may be rough — shown so it can be judged against the others.
+    const overlap = completedMonths.filter(m => rev(2025, m) > 0)
+    const growths = overlap.map(m => rev(2026, m) / rev(2025, m) - 1)
+    const yoyGrowth = growths.length > 0 ? growths.reduce((a, b) => a + b, 0) / growths.length : 0
+    const m4Projected2026 = actualCompleted + [curMonth, ...futureMonths].reduce((s, m) => s + rev(2025, m) * (1 + yoyGrowth), 0)
+    const m4RunRate = m4Projected2026 // calendar-year figure doubles as the 12-mo view
+
+    // Chart overlay: dashed projection from the last completed month through
+    // December, using the seasonality-adjusted method (the only one with a
+    // monthly shape; the straight-line methods are flat by construction).
+    const projByMonth: (number | null)[] = MONTHS_SHORT.map((_, i) => {
+      const m = i + 1
+      if (m === curMonth - 1) return rev(2026, m)      // connect to last actual
+      if (m === curMonth) return curMonthExtrap        // in-progress month, extrapolated
+      if (m > curMonth) return projMonth(m)
+      return null
+    })
+
+    return {
+      methods: [
+        { key: 'current', label: 'Current Month × 12', projected2026: m1Projected2026, runRate12: m1RunRate,
+          note: dayOfMonth >= 5 ? `${MONTHS_SHORT[curMonth - 1]} pace, ${dayOfMonth} days in` : `using ${MONTHS_SHORT[curMonth - 2]} (month just started)` },
+        { key: 't3', label: 'Trailing 3-Mo Avg × 12', projected2026: m2Projected2026, runRate12: m2RunRate,
+          note: `${t3.map(m => MONTHS_SHORT[m - 1]).join(', ')} average` },
+        { key: 'seasonal', label: 'Seasonality-Adjusted', projected2026: m3Projected2026, runRate12: m3RunRate,
+          note: 'monthly shape from 2025' },
+        { key: 'yoy', label: 'Year-over-Year Pace', projected2026: m4Projected2026, runRate12: m4RunRate,
+          note: `${yoyGrowth >= 0 ? '+' : ''}${Math.round(yoyGrowth * 100)}% vs 2025 (${overlap.length} mo overlap)` },
+      ],
+      projByMonth,
+    }
+  })()
+
   const monthlyRevenue = MONTHS_SHORT.map((label, i) => {
     const m = String(i + 1).padStart(2, '0')
-    return { month: label, revenue2025: jobsByYearMonth[`2025-${m}`] ?? 0, revenue2026: jobsByYearMonth[`2026-${m}`] ?? 0 }
+    return {
+      month: label,
+      revenue2025: jobsByYearMonth[`2025-${m}`] ?? 0,
+      revenue2026: jobsByYearMonth[`2026-${m}`] ?? 0,
+      projection: revenueOutlook?.projByMonth[i] ?? null,
+    }
   })
 
   // Tech monthly revenue — deduplicate sf_job_ids per tech per month
@@ -293,6 +374,7 @@ export default async function DashboardPage() {
       techScoreboard={techScoreboard}
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
+      revenueOutlook={revenueOutlook ? { methods: revenueOutlook.methods } : null}
       techMonthlyRevenue={techMonthlyRevenue}
     />
   )

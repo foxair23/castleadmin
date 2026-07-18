@@ -52,7 +52,10 @@ interface Props {
     revenueDeltaPct: number | null
   }[]
   lastSync: { sync_type: string; completed_at: string; records_synced: number } | null
-  monthlyRevenue: { month: string; revenue2025: number; revenue2026: number }[]
+  monthlyRevenue: { month: string; revenue2025: number; revenue2026: number; projection: number | null }[]
+  revenueOutlook: {
+    methods: { key: string; label: string; projected2026: number; runRate12: number; note: string }[]
+  } | null
   techMonthlyRevenue: { techId: string; techName: string; data: { yearMonth: string; revenue: number }[] }[]
 }
 
@@ -407,6 +410,7 @@ export default function DashboardClient({
   techScoreboard,
   lastSync,
   monthlyRevenue,
+  revenueOutlook,
   techMonthlyRevenue,
 }: Props) {
   const router = useRouter()
@@ -622,11 +626,38 @@ export default function DashboardClient({
                     />
                     <Line type="monotone" dataKey="revenue2025" name="2025" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenRevLines.has('revenue2025')} />
                     <Line type="monotone" dataKey="revenue2026" name="2026" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} hide={hiddenRevLines.has('revenue2026')} />
+                    <Line type="monotone" dataKey="projection" name="2026 projected" stroke="#10b981" strokeWidth={2} strokeDasharray="6 4" dot={false} activeDot={{ r: 4 }} connectNulls={false} hide={hiddenRevLines.has('projection')} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
           </div>
+
+          {/* Section 3b — Revenue Outlook (12-month projections) */}
+          {revenueOutlook && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-2">Revenue Outlook</h2>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {revenueOutlook.methods.map(m => (
+                  <div key={m.key} className="bg-white border border-gray-200 rounded-lg p-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{m.label}</p>
+                    <p className="mt-1 text-2xl font-bold text-gray-900">{fmt$(m.projected2026)}</p>
+                    <p className="text-xs text-gray-500">projected full-year 2026</p>
+                    <p className="mt-1.5 text-sm font-medium text-gray-700">{fmt$(m.runRate12)}
+                      <span className="ml-1 text-xs font-normal text-gray-400">12-mo run rate</span>
+                    </p>
+                    <p className="mt-1 text-[11px] text-gray-400">{m.note}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-gray-400">
+                Four independent projections — the spread between them is the honest uncertainty range. Based on
+                work-date revenue; the in-progress month is extrapolated by days elapsed (method 1) or excluded
+                (methods 2–4). Seasonality shape comes from 2025, a single year under previous ownership — treat it
+                as directional. The dashed chart line above shows the seasonality-adjusted path.
+              </p>
+            </div>
+          )}
 
           {/* Section 4 — Revenue by Tech */}
           {techMonthlyRevenue.length > 0 && (() => {
