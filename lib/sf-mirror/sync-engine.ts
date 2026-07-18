@@ -413,6 +413,54 @@ export async function reprocessCustomerChildren(): Promise<number> {
   return total
 }
 
+// Record every observed job status transition into sf_job_status_history —
+// the durable log that lets work_completed_at (and any future analytics) use
+// REAL transition moments instead of heuristics. The old analytics sync wrote
+// this table until Jul 2 2026; this resumes it from the mirror sync.
+//
+// Changes are detected against the LATEST LOGGED status per job, not against
+// sf_jobs — afterUpsert hooks run after the upsert has already overwritten the
+// stored row, so sf_jobs always reflects the incoming value by then. A job
+// with no history row gets a baseline row (previous_status null) on first
+// touch, after which only genuine transitions insert.
+async function recordStatusChanges(jobsRaw: Raw[]) {
+  const supabase = db()
+  const jobs = dedupeByKey(jobsRaw as unknown as Record<string, unknown>[], 'id') as unknown as Raw[]
+  const ids = jobs.map(j => toStr(j.id)!).filter(Boolean)
+  if (ids.length === 0) return
+
+  // Latest logged status per job (rows come back newest-first; keep the first
+  // seen per job).
+  const latest = new Map<string, string>()
+  const { data: hist } = await supabase
+    .from('sf_job_status_history')
+    .select('sf_job_id, status, observed_at')
+    .in('sf_job_id', ids)
+    .order('observed_at', { ascending: false })
+  for (const h of (hist ?? []) as Array<{ sf_job_id: string; status: string }>) {
+    if (!latest.has(h.sf_job_id)) latest.set(h.sf_job_id, h.status)
+  }
+
+  const observedAt = nowIso()
+  const rows: unknown[] = []
+  for (const j of jobs) {
+    const id = toStr(j.id)!
+    const status = toStr(j.status)
+    if (!status) continue
+    const prev = latest.get(id)
+    if (prev === status) continue
+    rows.push({
+      sf_job_id: id,
+      status,
+      previous_status: prev ?? null,
+      observed_at: observedAt,
+    })
+  }
+  if (rows.length > 0) {
+    await supabase.from('sf_job_status_history').insert(rows)
+  }
+}
+
 // Stamp work_completed_at the FIRST time we observe a job in a completed-or-
 // later status. SF's own closed_at is only set at Invoiced/Paid, so this column
 // is the app's source of truth for "when was the work actually done" (the
@@ -703,6 +751,7 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
     afterUpsert: async (items) => {
       await detectAndRecordReschedules(items)
       await syncJobChildren(items)
+      await recordStatusChanges(items)
       await stampWorkCompleted(items)
     },
   },
