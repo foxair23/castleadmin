@@ -54,7 +54,7 @@ interface Props {
   lastSync: { sync_type: string; completed_at: string; records_synced: number } | null
   monthlyRevenue: { month: string; revenue2025: number; revenue2026: number; projection: number | null }[]
   revenueOutlook: {
-    methods: { key: string; label: string; projected2026: number; runRate12: number; note: string }[]
+    methods: { key: string; label: string; next12: number; note: string }[]
   } | null
   techMonthlyRevenue: { techId: string; techName: string; data: { yearMonth: string; revenue: number }[] }[]
 }
@@ -641,20 +641,18 @@ export default function DashboardClient({
                 {revenueOutlook.methods.map(m => (
                   <div key={m.key} className="bg-white border border-gray-200 rounded-lg p-4">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{m.label}</p>
-                    <p className="mt-1 text-2xl font-bold text-gray-900">{fmt$(m.projected2026)}</p>
-                    <p className="text-xs text-gray-500">projected full-year 2026</p>
-                    <p className="mt-1.5 text-sm font-medium text-gray-700">{fmt$(m.runRate12)}
-                      <span className="ml-1 text-xs font-normal text-gray-400">12-mo run rate</span>
-                    </p>
+                    <p className="mt-1 text-2xl font-bold text-gray-900">{fmt$(m.next12)}</p>
+                    <p className="text-xs text-gray-500">next 12 months, projected</p>
                     <p className="mt-1 text-[11px] text-gray-400">{m.note}</p>
                   </div>
                 ))}
               </div>
               <p className="mt-2 text-xs text-gray-400">
-                Four independent projections — the spread between them is the honest uncertainty range. Based on
-                work-date revenue; the in-progress month is extrapolated by days elapsed (method 1) or excluded
-                (methods 2–4). Seasonality shape comes from 2025, a single year under previous ownership — treat it
-                as directional. The dashed chart line above shows the seasonality-adjusted path.
+                Four independent projections of the <span className="font-medium">next 12 months</span> — the spread
+                between them is the honest uncertainty range. Based on work-date revenue; the in-progress month is
+                extrapolated by days elapsed where used. Seasonality shape comes from 2025, a single year under
+                previous ownership — treat it as directional. The dashed chart line above shows the
+                seasonality-adjusted path through December.
               </p>
             </div>
           )}
