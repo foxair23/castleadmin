@@ -440,7 +440,21 @@ async function stampWorkCompleted(jobsRaw: Raw[]) {
     // Prefer SF's own stamp when it's sane (epoch-1970 rows are garbage);
     // otherwise "now" — the hourly sync sees a completion within the hour.
     const closed = toStr(j.completed_date ?? j.closed_at)
-    const value = closed && closed > '2000-01-01' ? closed : nowIso()
+    const start = toStr(j.start_date)
+    const saneClosed = closed && closed > '2000-01-01' ? closed : null
+    let value = saneClosed ?? nowIso()
+    // Invoice-lag guard (mirrors migration 055): this account's workflow often
+    // skips "Completed" and jumps straight to Invoiced, so closed_at can trail
+    // the work by weeks/months. When the INVOICE stamp lags the scheduled
+    // start by >14 days, the work date is start_date — a start can run a
+    // couple weeks early on long jobs, but recognizing April work in July is
+    // far worse. Only the saneClosed path is guarded: a live "just flipped to
+    // Completed" observation (the nowIso() path) is a genuine completion
+    // moment even when the job started months ago.
+    if (saneClosed && start && start > '2000-01-01' &&
+        new Date(saneClosed).getTime() - new Date(start).getTime() > 14 * 86_400_000) {
+      value = start
+    }
     await supabase
       .from('sf_jobs')
       .update({ work_completed_at: value })
