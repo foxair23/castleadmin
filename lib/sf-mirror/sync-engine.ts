@@ -413,6 +413,54 @@ export async function reprocessCustomerChildren(): Promise<number> {
   return total
 }
 
+// Record every observed job status transition into sf_job_status_history —
+// the durable log that lets work_completed_at (and any future analytics) use
+// REAL transition moments instead of heuristics. The old analytics sync wrote
+// this table until Jul 2 2026; this resumes it from the mirror sync.
+//
+// Changes are detected against the LATEST LOGGED status per job, not against
+// sf_jobs — afterUpsert hooks run after the upsert has already overwritten the
+// stored row, so sf_jobs always reflects the incoming value by then. A job
+// with no history row gets a baseline row (previous_status null) on first
+// touch, after which only genuine transitions insert.
+async function recordStatusChanges(jobsRaw: Raw[]) {
+  const supabase = db()
+  const jobs = dedupeByKey(jobsRaw as unknown as Record<string, unknown>[], 'id') as unknown as Raw[]
+  const ids = jobs.map(j => toStr(j.id)!).filter(Boolean)
+  if (ids.length === 0) return
+
+  // Latest logged status per job (rows come back newest-first; keep the first
+  // seen per job).
+  const latest = new Map<string, string>()
+  const { data: hist } = await supabase
+    .from('sf_job_status_history')
+    .select('sf_job_id, status, observed_at')
+    .in('sf_job_id', ids)
+    .order('observed_at', { ascending: false })
+  for (const h of (hist ?? []) as Array<{ sf_job_id: string; status: string }>) {
+    if (!latest.has(h.sf_job_id)) latest.set(h.sf_job_id, h.status)
+  }
+
+  const observedAt = nowIso()
+  const rows: unknown[] = []
+  for (const j of jobs) {
+    const id = toStr(j.id)!
+    const status = toStr(j.status)
+    if (!status) continue
+    const prev = latest.get(id)
+    if (prev === status) continue
+    rows.push({
+      sf_job_id: id,
+      status,
+      previous_status: prev ?? null,
+      observed_at: observedAt,
+    })
+  }
+  if (rows.length > 0) {
+    await supabase.from('sf_job_status_history').insert(rows)
+  }
+}
+
 // Stamp work_completed_at the FIRST time we observe a job in a completed-or-
 // later status. SF's own closed_at is only set at Invoiced/Paid, so this column
 // is the app's source of truth for "when was the work actually done" (the
@@ -440,7 +488,21 @@ async function stampWorkCompleted(jobsRaw: Raw[]) {
     // Prefer SF's own stamp when it's sane (epoch-1970 rows are garbage);
     // otherwise "now" — the hourly sync sees a completion within the hour.
     const closed = toStr(j.completed_date ?? j.closed_at)
-    const value = closed && closed > '2000-01-01' ? closed : nowIso()
+    const start = toStr(j.start_date)
+    const saneClosed = closed && closed > '2000-01-01' ? closed : null
+    let value = saneClosed ?? nowIso()
+    // Invoice-lag guard (mirrors migration 055): this account's workflow often
+    // skips "Completed" and jumps straight to Invoiced, so closed_at can trail
+    // the work by weeks/months. When the INVOICE stamp lags the scheduled
+    // start by >14 days, the work date is start_date — a start can run a
+    // couple weeks early on long jobs, but recognizing April work in July is
+    // far worse. Only the saneClosed path is guarded: a live "just flipped to
+    // Completed" observation (the nowIso() path) is a genuine completion
+    // moment even when the job started months ago.
+    if (saneClosed && start && start > '2000-01-01' &&
+        new Date(saneClosed).getTime() - new Date(start).getTime() > 14 * 86_400_000) {
+      value = start
+    }
     await supabase
       .from('sf_jobs')
       .update({ work_completed_at: value })
@@ -503,40 +565,68 @@ async function syncJobChildren(jobsRaw: Raw[]) {
 }
 
 // ─── Reschedule detection ─────────────────────────────────────────────────
-// Folded into the daily job sync per §9. Compares incoming start_date against
-// the currently stored value; writes sf_job_schedule_history on change.
+// Writes sf_job_schedule_history. The dashboard Capacity section reads the
+// earliest change_type='initial' row per job as original_scheduled_at (via the
+// sf_jobs_cache view), so first touch records an 'initial' baseline; after
+// that, genuine start_date changes record 'rescheduled' rows.
+//
+// Changes are detected against the LATEST LOGGED row, not sf_jobs — this runs
+// from afterUpsert, by which time the upsert has already overwritten the
+// stored row (the old sf_jobs comparison could therefore never fire, which is
+// why this table went quiet after the legacy analytics sync stopped).
 
 async function detectAndRecordReschedules(incomingJobs: Raw[]) {
   const supabase = db()
-  const ids = incomingJobs.map(j => toStr(j.id)!)
+  const jobs = dedupeByKey(incomingJobs as unknown as Record<string, unknown>[], 'id') as unknown as Raw[]
+  const ids = jobs.map(j => toStr(j.id)!).filter(Boolean)
+  if (ids.length === 0) return
 
-  const { data: existing } = await supabase
-    .from('sf_jobs')
-    .select('id, start_date, status')
-    .in('id', ids)
+  // Latest logged scheduled date per job (rows newest-first; keep first seen).
+  // Compare on the YYYY-MM-DD part — the column is timestamptz while incoming
+  // start_date is a plain date, and a midnight-vs-midnight-UTC mismatch must
+  // not register as a reschedule.
+  const latest = new Map<string, string>()
+  const hasHistory = new Set<string>()
+  const { data: hist } = await supabase
+    .from('sf_job_schedule_history')
+    .select('sf_job_id, scheduled_at, observed_at')
+    .in('sf_job_id', ids)
+    .order('observed_at', { ascending: false })
+  for (const h of (hist ?? []) as Array<{ sf_job_id: string; scheduled_at: string | null }>) {
+    hasHistory.add(h.sf_job_id)
+    if (!latest.has(h.sf_job_id) && h.scheduled_at) {
+      latest.set(h.sf_job_id, h.scheduled_at.slice(0, 10))
+    }
+  }
 
-  if (!existing || existing.length === 0) return
-
-  type ExistingJob = { id: string; start_date: string | null; status: string | null }
-  const existingMap = new Map((existing as ExistingJob[]).map(e => [e.id, e]))
   const historyRows: unknown[] = []
   const observedAt = nowIso()
 
-  for (const job of incomingJobs) {
+  for (const job of jobs) {
     const id = toStr(job.id)!
-    const prev = existingMap.get(id)
-    if (!prev) continue
-
     const newDate = toStr(job.start_date)
-    const prevDate = prev.start_date
+    if (!newDate || newDate <= '2000-01-01') continue
 
-    if (newDate && prevDate && newDate !== prevDate) {
+    if (!hasHistory.has(id)) {
+      historyRows.push({
+        sf_job_id: id,
+        scheduled_at: newDate,
+        previous_scheduled_at: null,
+        observed_at: observedAt,
+        change_type: 'initial',
+        job_status_at_change: toStr(job.status),
+      })
+      continue
+    }
+
+    const prevDate = latest.get(id)
+    if (prevDate && newDate.slice(0, 10) !== prevDate) {
       historyRows.push({
         sf_job_id: id,
         scheduled_at: newDate,
         previous_scheduled_at: prevDate,
         observed_at: observedAt,
-        change_type: 'reschedule',
+        change_type: 'rescheduled',
         job_status_at_change: toStr(job.status),
       })
     }
@@ -689,6 +779,7 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
     afterUpsert: async (items) => {
       await detectAndRecordReschedules(items)
       await syncJobChildren(items)
+      await recordStatusChanges(items)
       await stampWorkCompleted(items)
     },
   },
