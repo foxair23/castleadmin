@@ -234,43 +234,47 @@ export default async function DashboardPage() {
     const dayOfMonth   = Number(todayStr.slice(8, 10))
     const daysInMonth  = new Date(curYear, curMonth, 0).getDate()
     const completedMonths = Array.from({ length: curMonth - 1 }, (_, i) => i + 1)
-    const futureMonths    = Array.from({ length: 12 - curMonth }, (_, i) => curMonth + 1 + i)
-    const actualCompleted = completedMonths.reduce((s, m) => s + rev(2026, m), 0)
     const mtd = rev(2026, curMonth)
+
+    // All four methods project the NEXT 12 MONTHS from now (rolling window),
+    // not the calendar year.
 
     // 1. Current-month pace: extrapolate the in-progress month by days elapsed.
     // Unstable in the first few days of a month — fall back to last completed month.
     const curMonthExtrap = dayOfMonth >= 5
       ? (mtd / dayOfMonth) * daysInMonth
       : rev(2026, curMonth - 1)
-    const m1RunRate = curMonthExtrap * 12
-    const m1Projected2026 = actualCompleted + curMonthExtrap * (12 - curMonth + 1)
+    const m1Next12 = curMonthExtrap * 12
 
     // 2. Trailing-3-month average (completed months only).
     const t3 = completedMonths.slice(-3)
     const t3avg = t3.length > 0 ? t3.reduce((s, m) => s + rev(2026, m), 0) / t3.length : 0
-    const m2RunRate = t3avg * 12
-    const m2Projected2026 = actualCompleted + t3avg * (12 - curMonth + 1)
+    const m2Next12 = t3avg * 12
 
     // 3. Seasonality-adjusted: monthly indices from 2025 (the only complete
     // year); de-seasonalize the last 3 completed months to find the current
-    // level, then project each remaining month as level × its index.
+    // level. Over any full 12-month window the indices average to 1, so the
+    // rolling next-12 projection is level × 12; the per-month shape still
+    // drives the chart's dashed line.
     const avg2025 = Array.from({ length: 12 }, (_, i) => rev(2025, i + 1)).reduce((a, b) => a + b, 0) / 12
     const index = (m: number) => (avg2025 > 0 ? rev(2025, m) / avg2025 : 1)
     const levelSamples = t3.filter(m => index(m) > 0.1).map(m => rev(2026, m) / index(m))
     const level = levelSamples.length > 0 ? levelSamples.reduce((a, b) => a + b, 0) / levelSamples.length : t3avg
     const projMonth = (m: number) => level * index(m)
-    const m3RunRate = level * 12
-    const m3Projected2026 = actualCompleted + [curMonth, ...futureMonths].reduce((s, m) => s + projMonth(m), 0)
+    const m3Next12 = level * 12
 
-    // 4. Year-over-year pace: average growth across completed overlap months,
-    // applied to 2025's remaining months. With only ~3 months of ownership this
-    // may be rough — shown so it can be judged against the others.
+    // 4. Year-over-year pace: next 12 months = the trailing 12 months of
+    // actuals (in-progress month extrapolated) grown by the average YoY rate
+    // observed across the completed overlap months. Inherits last year's
+    // seasonal shape automatically.
     const overlap = completedMonths.filter(m => rev(2025, m) > 0)
     const growths = overlap.map(m => rev(2026, m) / rev(2025, m) - 1)
     const yoyGrowth = growths.length > 0 ? growths.reduce((a, b) => a + b, 0) / growths.length : 0
-    const m4Projected2026 = actualCompleted + [curMonth, ...futureMonths].reduce((s, m) => s + rev(2025, m) * (1 + yoyGrowth), 0)
-    const m4RunRate = m4Projected2026 // calendar-year figure doubles as the 12-mo view
+    const trailing12 =
+      Array.from({ length: 12 - curMonth }, (_, i) => curMonth + 1 + i).reduce((s, m) => s + rev(2025, m), 0) + // e.g. Aug–Dec 2025
+      completedMonths.reduce((s, m) => s + rev(2026, m), 0) +                                                   // Jan–Jun 2026
+      curMonthExtrap                                                                                            // Jul 2026, extrapolated
+    const m4Next12 = trailing12 * (1 + yoyGrowth)
 
     // Chart overlay: dashed projection from the last completed month through
     // December, using the seasonality-adjusted method (the only one with a
@@ -285,13 +289,13 @@ export default async function DashboardPage() {
 
     return {
       methods: [
-        { key: 'current', label: 'Current Month × 12', projected2026: m1Projected2026, runRate12: m1RunRate,
+        { key: 'current', label: 'Current Month × 12', next12: m1Next12,
           note: dayOfMonth >= 5 ? `${MONTHS_SHORT[curMonth - 1]} pace, ${dayOfMonth} days in` : `using ${MONTHS_SHORT[curMonth - 2]} (month just started)` },
-        { key: 't3', label: 'Trailing 3-Mo Avg × 12', projected2026: m2Projected2026, runRate12: m2RunRate,
+        { key: 't3', label: 'Trailing 3-Mo Avg × 12', next12: m2Next12,
           note: `${t3.map(m => MONTHS_SHORT[m - 1]).join(', ')} average` },
-        { key: 'seasonal', label: 'Seasonality-Adjusted', projected2026: m3Projected2026, runRate12: m3RunRate,
+        { key: 'seasonal', label: 'Seasonality-Adjusted', next12: m3Next12,
           note: 'monthly shape from 2025' },
-        { key: 'yoy', label: 'Year-over-Year Pace', projected2026: m4Projected2026, runRate12: m4RunRate,
+        { key: 'yoy', label: 'Year-over-Year Pace', next12: m4Next12,
           note: `${yoyGrowth >= 0 ? '+' : ''}${Math.round(yoyGrowth * 100)}% vs 2025 (${overlap.length} mo overlap)` },
       ],
       projByMonth,
