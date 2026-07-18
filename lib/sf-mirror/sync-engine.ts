@@ -485,24 +485,22 @@ async function stampWorkCompleted(jobsRaw: Raw[]) {
   for (const j of candidates) {
     const id = toStr(j.id)!
     if (!needIds.has(id)) continue
-    // Prefer SF's own stamp when it's sane (epoch-1970 rows are garbage);
-    // otherwise "now" — the hourly sync sees a completion within the hour.
+    const status = toStr(j.status) ?? ''
     const closed = toStr(j.completed_date ?? j.closed_at)
     const start = toStr(j.start_date)
     const saneClosed = closed && closed > '2000-01-01' ? closed : null
-    let value = saneClosed ?? nowIso()
-    // Invoice-lag guard (mirrors migration 055): this account's workflow often
-    // skips "Completed" and jumps straight to Invoiced, so closed_at can trail
-    // the work by weeks/months. When the INVOICE stamp lags the scheduled
-    // start by >14 days, the work date is start_date — a start can run a
-    // couple weeks early on long jobs, but recognizing April work in July is
-    // far worse. Only the saneClosed path is guarded: a live "just flipped to
-    // Completed" observation (the nowIso() path) is a genuine completion
-    // moment even when the job started months ago.
-    if (saneClosed && start && start > '2000-01-01' &&
-        new Date(saneClosed).getTime() - new Date(start).getTime() > 14 * 86_400_000) {
-      value = start
-    }
+    const saneStart = start && start > '2000-01-01' ? start : null
+    // Work-date policy (mirrors migration 057):
+    // - Job observed transitioning to a "Completed" status → stamp NOW. The
+    //   hourly sync sees the flip within the hour, so this is a genuine live
+    //   completion moment — the gold standard.
+    // - Job arriving straight at Invoiced/Paid (this account's workflow often
+    //   skips "Completed") → the work happened before the invoice, on the
+    //   scheduled start for this mostly single-visit business. Prefer
+    //   start_date; fall back to SF's stamp, then now.
+    const value = /complet/i.test(status)
+      ? nowIso()
+      : (saneStart ?? saneClosed ?? nowIso())
     await supabase
       .from('sf_jobs')
       .update({ work_completed_at: value })
