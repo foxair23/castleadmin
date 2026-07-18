@@ -588,6 +588,10 @@ export default function DashboardClient({
           {/* Section 3 — Monthly Revenue */}
           <div>
             <h2 className="text-sm font-semibold text-gray-700 mb-2">Monthly Revenue</h2>
+            <p className="text-xs text-gray-400 mb-2 -mt-1">
+              Jobs count toward the month the <span className="font-medium">work was completed</span> — not when
+              they were invoiced — so an invoicing catch-up can&rsquo;t inflate a month.
+            </p>
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -938,7 +942,7 @@ export default function DashboardClient({
               {monthLoading ? (
                 <p className="text-sm text-gray-400 py-4 text-center">Loading…</p>
               ) : monthRows === null || monthRows.length === 0 ? (
-                <p className="text-sm text-gray-400 py-4 text-center">No jobs closed in this month.</p>
+                <p className="text-sm text-gray-400 py-4 text-center">No jobs completed in this month.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -947,7 +951,7 @@ export default function DashboardClient({
                         <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Customer</th>
                         <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Job #</th>
                         <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Source</th>
-                        <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Closed</th>
+                        <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Work Completed</th>
                         <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Revenue</th>
                         <th className="text-right py-2 px-3 text-xs font-medium text-gray-500">Amount Due</th>
                         <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">Tech(s)</th>
