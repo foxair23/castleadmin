@@ -565,40 +565,68 @@ async function syncJobChildren(jobsRaw: Raw[]) {
 }
 
 // ─── Reschedule detection ─────────────────────────────────────────────────
-// Folded into the daily job sync per §9. Compares incoming start_date against
-// the currently stored value; writes sf_job_schedule_history on change.
+// Writes sf_job_schedule_history. The dashboard Capacity section reads the
+// earliest change_type='initial' row per job as original_scheduled_at (via the
+// sf_jobs_cache view), so first touch records an 'initial' baseline; after
+// that, genuine start_date changes record 'rescheduled' rows.
+//
+// Changes are detected against the LATEST LOGGED row, not sf_jobs — this runs
+// from afterUpsert, by which time the upsert has already overwritten the
+// stored row (the old sf_jobs comparison could therefore never fire, which is
+// why this table went quiet after the legacy analytics sync stopped).
 
 async function detectAndRecordReschedules(incomingJobs: Raw[]) {
   const supabase = db()
-  const ids = incomingJobs.map(j => toStr(j.id)!)
+  const jobs = dedupeByKey(incomingJobs as unknown as Record<string, unknown>[], 'id') as unknown as Raw[]
+  const ids = jobs.map(j => toStr(j.id)!).filter(Boolean)
+  if (ids.length === 0) return
 
-  const { data: existing } = await supabase
-    .from('sf_jobs')
-    .select('id, start_date, status')
-    .in('id', ids)
+  // Latest logged scheduled date per job (rows newest-first; keep first seen).
+  // Compare on the YYYY-MM-DD part — the column is timestamptz while incoming
+  // start_date is a plain date, and a midnight-vs-midnight-UTC mismatch must
+  // not register as a reschedule.
+  const latest = new Map<string, string>()
+  const hasHistory = new Set<string>()
+  const { data: hist } = await supabase
+    .from('sf_job_schedule_history')
+    .select('sf_job_id, scheduled_at, observed_at')
+    .in('sf_job_id', ids)
+    .order('observed_at', { ascending: false })
+  for (const h of (hist ?? []) as Array<{ sf_job_id: string; scheduled_at: string | null }>) {
+    hasHistory.add(h.sf_job_id)
+    if (!latest.has(h.sf_job_id) && h.scheduled_at) {
+      latest.set(h.sf_job_id, h.scheduled_at.slice(0, 10))
+    }
+  }
 
-  if (!existing || existing.length === 0) return
-
-  type ExistingJob = { id: string; start_date: string | null; status: string | null }
-  const existingMap = new Map((existing as ExistingJob[]).map(e => [e.id, e]))
   const historyRows: unknown[] = []
   const observedAt = nowIso()
 
-  for (const job of incomingJobs) {
+  for (const job of jobs) {
     const id = toStr(job.id)!
-    const prev = existingMap.get(id)
-    if (!prev) continue
-
     const newDate = toStr(job.start_date)
-    const prevDate = prev.start_date
+    if (!newDate || newDate <= '2000-01-01') continue
 
-    if (newDate && prevDate && newDate !== prevDate) {
+    if (!hasHistory.has(id)) {
+      historyRows.push({
+        sf_job_id: id,
+        scheduled_at: newDate,
+        previous_scheduled_at: null,
+        observed_at: observedAt,
+        change_type: 'initial',
+        job_status_at_change: toStr(job.status),
+      })
+      continue
+    }
+
+    const prevDate = latest.get(id)
+    if (prevDate && newDate.slice(0, 10) !== prevDate) {
       historyRows.push({
         sf_job_id: id,
         scheduled_at: newDate,
         previous_scheduled_at: prevDate,
         observed_at: observedAt,
-        change_type: 'reschedule',
+        change_type: 'rescheduled',
         job_status_at_change: toStr(job.status),
       })
     }
