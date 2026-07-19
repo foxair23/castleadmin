@@ -20,6 +20,7 @@ import type {
   AcceptedEstimatesResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
+import PhotoLightbox from '@/components/PhotoLightbox'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -614,9 +615,14 @@ function DoneButton({ leadId }: { leadId: string }) {
 
 function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
+  // Lightbox over a single lead's photos — one click, then arrow through them.
+  const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null)
 
   return (
     <div className="overflow-x-auto">
+      {lightboxPhotos && (
+        <PhotoLightbox photos={lightboxPhotos} onClose={() => setLightboxPhotos(null)} />
+      )}
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
@@ -643,23 +649,17 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
                   ? <span className="text-gray-400">—</span>
                   : <>{lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}{lead.service_category ? ` — ${SERVICE_CATEGORY_LABELS[lead.service_category] ?? lead.service_category}` : ''}</>}
               </td>
-              <td className="px-3 py-2">
+              <td className="px-3 py-2 whitespace-nowrap">
                 {lead.photos.length === 0
                   ? <span className="text-gray-300">—</span>
                   : (
-                    // Same idea as the lead-detail thumbnail grid, sized for a
-                    // table row: 40px thumbnails, horizontally scrollable when
-                    // there are many. Click opens the full-size photo.
-                    <div className="flex gap-1.5 overflow-x-auto max-w-[150px]">
-                      {lead.photos.map((url, i) => (
-                        <a key={i} href={url} target="_blank" rel="noreferrer" title={`Photo ${i + 1}`}
-                           className="block w-10 h-10 flex-shrink-0 rounded overflow-hidden border border-gray-200 hover:ring-2 hover:ring-red-400">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={url} alt={`Photo ${i + 1}`} loading="lazy" className="w-full h-full object-cover"
-                               onError={(e) => { (e.currentTarget.parentElement as HTMLElement).innerHTML = '📄' }} />
-                        </a>
-                      ))}
-                    </div>
+                    <button
+                      onClick={() => setLightboxPhotos(lead.photos)}
+                      className="text-xs px-2 py-1 rounded border border-blue-300 text-blue-600 hover:bg-blue-50 whitespace-nowrap"
+                      title="View photos"
+                    >
+                      📷 {lead.photos.length}
+                    </button>
                   )}
               </td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(lead.appointment_date)}</td>

@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { approveLead, rejectLead, updateLeadNotes, retrySfSync, updateLeadFee } from '../actions'
+import PhotoLightbox from '@/components/PhotoLightbox'
 
 interface Lead {
   id: string
@@ -125,6 +126,8 @@ function Row({ label, value }: { label: string; value: string | undefined | null
 }
 
 export default function LeadDetailClient({ lead, approverName, garageServiceCallFee, gateServiceCallFee, attachments }: Props) {
+  const imageAttachments = attachments.filter(a => a.mime_type.startsWith('image/'))
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [isPending, startTransition] = useTransition()
   const [showRejectModal, setShowRejectModal] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
@@ -286,16 +289,25 @@ export default function LeadDetailClient({ lead, approverName, garageServiceCall
         {lead.description && <Row label="Description" value={lead.description} />}
       </Section>
 
+      {lightboxIndex !== null && (
+        <PhotoLightbox
+          photos={imageAttachments.map(a => a.url)}
+          startIndex={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
+
       {attachments.length > 0 && (
         <Section title={`Customer Photos (${attachments.length})`}>
           <div className="flex flex-wrap gap-3">
             {attachments.map((a, i) =>
               a.mime_type.startsWith('image/') ? (
-                <a key={i} href={a.url} target="_blank" rel="noreferrer" title={a.filename}
-                   className="block w-28 h-28 rounded-lg overflow-hidden border border-gray-200 hover:ring-2 hover:ring-red-400">
+                <button key={i} type="button" title={a.filename}
+                   onClick={() => setLightboxIndex(imageAttachments.findIndex(img => img.url === a.url))}
+                   className="block w-28 h-28 rounded-lg overflow-hidden border border-gray-200 hover:ring-2 hover:ring-red-400 cursor-pointer p-0">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={a.url} alt={a.filename} className="w-full h-full object-cover" />
-                </a>
+                </button>
               ) : (
                 <a key={i} href={a.url} target="_blank" rel="noreferrer"
                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-sm text-blue-600 hover:bg-blue-50">
@@ -304,7 +316,7 @@ export default function LeadDetailClient({ lead, approverName, garageServiceCall
               )
             )}
           </div>
-          <p className="text-xs text-gray-400 mt-2">Uploaded by the customer in the scheduler. Links open the full-size file.</p>
+          <p className="text-xs text-gray-400 mt-2">Uploaded by the customer in the scheduler. Click a photo to browse them full-screen.</p>
         </Section>
       )}
 
