@@ -13,6 +13,7 @@ export default function StepOptionalDetails({ state, widgetKey, onNext }: Props)
   const [note, setNote] = useState(state.optional_note);
   const [photoUrls, setPhotoUrls] = useState<string[]>(state.uploaded_photo_urls);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleContinue() {
@@ -26,10 +27,19 @@ export default function StepOptionalDetails({ state, widgetKey, onNext }: Props)
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (files.length === 0) return;
-    if (!state.partial_lead_id) return; // can't upload without a lead record
+    setUploadError(null);
+    if (!state.partial_lead_id) {
+      // Photos attach to the lead record created at the contact step; if that
+      // save failed we can't upload — say so instead of silently doing nothing
+      // (photos are optional, the booking itself is unaffected).
+      setUploadError("Photos couldn't be attached — you can continue without them.");
+      return;
+    }
     setUploading(true);
     try {
       const newUrls: string[] = [];
+      let failed = 0;
+      let serverMsg = '';
       for (const file of files) {
         const formData = new FormData();
         formData.append('files', file);
@@ -43,11 +53,22 @@ export default function StepOptionalDetails({ state, widgetKey, onNext }: Props)
           const data = await res.json() as { uploads: { url: string }[] };
           const url = data.uploads?.[0]?.url;
           if (url) newUrls.push(url);
+          else failed++;
+        } else {
+          failed++;
+          try {
+            serverMsg = ((await res.json()) as { error?: string }).error ?? '';
+          } catch { /* keep generic */ }
         }
       }
       setPhotoUrls((prev) => [...prev, ...newUrls]);
+      if (failed > 0) {
+        setUploadError(
+          serverMsg || `${failed} photo${failed === 1 ? '' : 's'} couldn't be uploaded — you can continue without ${failed === 1 ? 'it' : 'them'}.`
+        );
+      }
     } catch {
-      // non-blocking — ignore upload errors silently
+      setUploadError("Upload failed — please check your connection, or continue without photos.");
     }
     setUploading(false);
     // reset input so same file can be reselected
@@ -219,6 +240,12 @@ export default function StepOptionalDetails({ state, widgetKey, onNext }: Props)
           </svg>
           {uploading ? 'Uploading…' : 'Add photos'}
         </button>
+
+        {uploadError && (
+          <p style={{ fontSize: '0.85rem', color: 'var(--color-primary)', marginTop: '0.5rem' }}>
+            {uploadError}
+          </p>
+        )}
       </div>
 
       <button
