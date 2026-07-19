@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { unstable_cache } from 'next/cache'
 import { SchedulerConfig } from './lib/types'
 import { DEFAULT_CONFIG } from './lib/api'
 import SchedulerEmbed from './SchedulerEmbed'
@@ -12,6 +13,35 @@ function serviceClient() {
     { auth: { persistSession: false } }
   )
 }
+
+// Widget-key validation and settings change rarely but were fetched from
+// Supabase on EVERY page load — two round trips before any HTML rendered.
+// Cache both for 60s so warm loads skip the database entirely (admin settings
+// changes take at most a minute to reach the widget).
+const getCachedWidget = unstable_cache(
+  async (key: string) => {
+    const { data } = await serviceClient()
+      .from('scheduler_widget_instances')
+      .select('id, is_active')
+      .eq('api_key', key)
+      .single()
+    return data
+  },
+  ['scheduler-embed-widget'],
+  { revalidate: 60 }
+)
+
+const getCachedSettings = unstable_cache(
+  async () => {
+    const { data } = await serviceClient()
+      .from('scheduler_settings')
+      .select('key, value')
+      .in('key', CONFIG_KEYS)
+    return data ?? []
+  },
+  ['scheduler-embed-settings'],
+  { revalidate: 60 }
+)
 
 const CONFIG_KEYS = [
   'office_phone',
@@ -47,13 +77,12 @@ export default async function SchedulerPage({
     )
   }
 
-  const db = serviceClient()
-
-  const { data: widget } = await db
-    .from('scheduler_widget_instances')
-    .select('id, is_active')
-    .eq('api_key', key)
-    .single()
+  // Parallel + cached: the two lookups ran sequentially before, adding a full
+  // extra round trip to time-to-first-byte.
+  const [widget, rows] = await Promise.all([
+    getCachedWidget(key),
+    getCachedSettings(),
+  ])
 
   if (!widget || !widget.is_active) {
     return (
@@ -63,13 +92,8 @@ export default async function SchedulerPage({
     )
   }
 
-  const { data: rows } = await db
-    .from('scheduler_settings')
-    .select('key, value')
-    .in('key', CONFIG_KEYS)
-
   const settingsMap: Record<string, unknown> = {}
-  for (const row of rows ?? []) {
+  for (const row of rows) {
     settingsMap[row.key] = row.value
   }
 
