@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { getPhotoUrlsForLeads } from '@/lib/scheduler/photos'
 
 function getAdminClient(): SupabaseClient {
   return createAdminClient(
@@ -443,6 +444,8 @@ export interface OnlineSchedulingLead {
   sf_job_id: string | null
   created_at: string
   days_waiting: number
+  /** Customer-uploaded photos: 7-day signed URLs (also used by the digest emails). */
+  photos: string[]
 }
 
 export interface OnlineSchedulingResult {
@@ -463,7 +466,10 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
     .order('created_at', { ascending: false })
     .limit(200)
 
-  const items: OnlineSchedulingLead[] = (data ?? []).map((l: {
+  const rows = data ?? []
+  const photoMap = await getPhotoUrlsForLeads(db, rows.map((l: { id: string }) => l.id), 60 * 60 * 24 * 7)
+
+  const items: OnlineSchedulingLead[] = rows.map((l: {
     id: string
     customer_first_name: string | null
     customer_last_name: string | null
@@ -484,6 +490,7 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
     sf_job_id: l.service_fusion_job_id ?? null,
     created_at: l.created_at,
     days_waiting: daysBetween(l.created_at),
+    photos: photoMap.get(l.id) ?? [],
   }))
 
   return { items }

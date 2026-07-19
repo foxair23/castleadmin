@@ -625,6 +625,7 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Photos</th>
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="kind" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Age" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -641,6 +642,16 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
                 {lead.service_type == null
                   ? <span className="text-gray-400">—</span>
                   : <>{lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}{lead.service_category ? ` — ${SERVICE_CATEGORY_LABELS[lead.service_category] ?? lead.service_category}` : ''}</>}
+              </td>
+              <td className="px-3 py-2 whitespace-nowrap">
+                {lead.photos.length === 0
+                  ? <span className="text-gray-300">—</span>
+                  : lead.photos.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noreferrer"
+                         className="text-blue-600 hover:text-blue-800 hover:underline mr-2">
+                        📷 {i + 1}
+                      </a>
+                    ))}
               </td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(lead.appointment_date)}</td>
               <td className="px-4 py-2">
