@@ -643,15 +643,24 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
                   ? <span className="text-gray-400">—</span>
                   : <>{lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}{lead.service_category ? ` — ${SERVICE_CATEGORY_LABELS[lead.service_category] ?? lead.service_category}` : ''}</>}
               </td>
-              <td className="px-3 py-2 whitespace-nowrap">
+              <td className="px-3 py-2">
                 {lead.photos.length === 0
                   ? <span className="text-gray-300">—</span>
-                  : lead.photos.map((url, i) => (
-                      <a key={i} href={url} target="_blank" rel="noreferrer"
-                         className="text-blue-600 hover:text-blue-800 hover:underline mr-2">
-                        📷 {i + 1}
-                      </a>
-                    ))}
+                  : (
+                    // Same idea as the lead-detail thumbnail grid, sized for a
+                    // table row: 40px thumbnails, horizontally scrollable when
+                    // there are many. Click opens the full-size photo.
+                    <div className="flex gap-1.5 overflow-x-auto max-w-[150px]">
+                      {lead.photos.map((url, i) => (
+                        <a key={i} href={url} target="_blank" rel="noreferrer" title={`Photo ${i + 1}`}
+                           className="block w-10 h-10 flex-shrink-0 rounded overflow-hidden border border-gray-200 hover:ring-2 hover:ring-red-400">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt={`Photo ${i + 1}`} loading="lazy" className="w-full h-full object-cover"
+                               onError={(e) => { (e.currentTarget.parentElement as HTMLElement).innerHTML = '📄' }} />
+                        </a>
+                      ))}
+                    </div>
+                  )}
               </td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(lead.appointment_date)}</td>
               <td className="px-4 py-2">
