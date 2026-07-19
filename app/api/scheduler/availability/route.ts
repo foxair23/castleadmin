@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { isMondayMorningLockedOut } from '@/lib/scheduler/weekend-cutoff'
 
 const ALLOWED_ORIGINS = [
   'https://schedule.castlegaragedoors.com',
@@ -191,6 +192,12 @@ export async function GET(req: NextRequest) {
       const windowStart = windowStartDate(dateStr, w.start)
       const hoursUntil = (windowStart.getTime() - nowMs) / 3_600_000
       if (hoursUntil < minNoticeHours) return { ...w, available: false, reason: 'too_soon' as const }
+
+      // Weekend cutoff: after Friday 4 PM PT, the following Monday's morning
+      // window is no longer bookable.
+      if (isMondayMorningLockedOut(dateStr, w.start, nowMs)) {
+        return { ...w, available: false, reason: 'too_soon' as const }
+      }
 
       // Per-window booking cap: scheduler leads + SF jobs in this window
       if (maxBookingsPerWindow > 0) {

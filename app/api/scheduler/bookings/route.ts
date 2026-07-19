@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { syncLeadToServiceFusion } from '@/lib/scheduler/sf-sync'
+import { isMondayMorningLockedOut } from '@/lib/scheduler/weekend-cutoff'
 import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
 import { renderBookingConfirmation, formatTimeWindow } from '@/lib/notifications/templates/booking-confirmation'
@@ -176,6 +177,16 @@ export async function POST(req: NextRequest) {
         { status: 422, headers: cors }
       )
     }
+  }
+
+  // Weekend cutoff: after Friday 4 PM PT, the following Monday's morning
+  // window can't be booked. Availability already hides the slot; this guards
+  // against a widget left open since before the cutoff submitting a stale one.
+  if (isMondayMorningLockedOut(body.appointment_date, body.appointment_window_start, Date.now())) {
+    return NextResponse.json(
+      { error: 'That time window is no longer available. Please choose another time.' },
+      { status: 422, headers: cors }
+    )
   }
 
   // Daily SF job cap
