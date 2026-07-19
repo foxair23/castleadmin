@@ -1,4 +1,5 @@
 {
+  "regions": ["sfo1"],
   "crons": [
     { "path": "/api/cron/sf-sync-jobs-hourly", "schedule": "0 * * * *" },
     { "path": "/api/cron/sf-sync-daily", "schedule": "1 8 * * 1-6" },

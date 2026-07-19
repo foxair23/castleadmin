@@ -20,6 +20,7 @@ import type {
   AcceptedEstimatesResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
+import PhotoLightbox from '@/components/PhotoLightbox'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -614,9 +615,14 @@ function DoneButton({ leadId }: { leadId: string }) {
 
 function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]; notes: Record<string, string> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_waiting')
+  // Lightbox over a single lead's photos — one click, then arrow through them.
+  const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null)
 
   return (
     <div className="overflow-x-auto">
+      {lightboxPhotos && (
+        <PhotoLightbox photos={lightboxPhotos} onClose={() => setLightboxPhotos(null)} />
+      )}
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
@@ -625,6 +631,7 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Photos</th>
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="kind" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Age" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -641,6 +648,19 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
                 {lead.service_type == null
                   ? <span className="text-gray-400">—</span>
                   : <>{lead.service_type === 'gate' ? 'Gate' : 'Garage Door'}{lead.service_category ? ` — ${SERVICE_CATEGORY_LABELS[lead.service_category] ?? lead.service_category}` : ''}</>}
+              </td>
+              <td className="px-3 py-2 whitespace-nowrap">
+                {lead.photos.length === 0
+                  ? <span className="text-gray-300">—</span>
+                  : (
+                    <button
+                      onClick={() => setLightboxPhotos(lead.photos)}
+                      className="text-xs px-2 py-1 rounded border border-blue-300 text-blue-600 hover:bg-blue-50 whitespace-nowrap"
+                      title="View photos"
+                    >
+                      📷 {lead.photos.length}
+                    </button>
+                  )}
               </td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(lead.appointment_date)}</td>
               <td className="px-4 py-2">

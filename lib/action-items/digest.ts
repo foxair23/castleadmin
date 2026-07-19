@@ -19,7 +19,7 @@ import {
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT } from './config'
 
-export interface Line { text: string; sub?: string }
+export interface Line { text: string; sub?: string; links?: { label: string; href: string }[] }
 export interface TabBucket { tab: string; label: string; newLines: Line[]; dueLines: Line[] }
 
 export interface TodoDigest {
@@ -116,6 +116,8 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
   // Online Scheduling has its own Done flow — every listed lead needs a first touch.
   const schedulingLines: Line[] = onlineScheduling.items.map(l => ({
     text: `${l.customer_name} — ${l.kind === 'synced' ? 'synced to SF' : 'partial'} — ${l.days_waiting}d`,
+    // Customer-uploaded photos (7-day signed URLs from the alert query).
+    links: l.photos.map((url, i) => ({ label: `📷 ${i + 1}`, href: url })),
   }))
 
   // Full open backlog keyed "tab:id" (post-cutoff, action state ignored). This
@@ -327,9 +329,12 @@ const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 function renderLines(lines: Line[]): string {
   const shown = lines.slice(0, CAP)
   const more = lines.length - shown.length
-  return shown.map(l =>
-    `<li style="margin:2px 0;font-size:13px;color:#374151;">${esc(l.text)}${l.sub ? `<br/><span style="font-size:11px;color:#9ca3af;">${esc(l.sub)}</span>` : ''}</li>`,
-  ).join('') + (more > 0 ? `<li style="font-size:12px;color:#9ca3af;">…and ${more} more</li>` : '')
+  return shown.map(l => {
+    const links = l.links && l.links.length > 0
+      ? ' ' + l.links.map(k => `<a href="${k.href}" style="color:#2563eb;text-decoration:none;">${esc(k.label)}</a>`).join(' ')
+      : ''
+    return `<li style="margin:2px 0;font-size:13px;color:#374151;">${esc(l.text)}${links}${l.sub ? `<br/><span style="font-size:11px;color:#9ca3af;">${esc(l.sub)}</span>` : ''}</li>`
+  }).join('') + (more > 0 ? `<li style="font-size:12px;color:#9ca3af;">…and ${more} more</li>` : '')
 }
 
 interface Group { label: string; lines: Line[]; tab: string }
@@ -389,7 +394,10 @@ export function renderTodoEmail(d: TodoDigest, opts: {
     textParts.push(title)
     for (const g of withItems) {
       textParts.push(`  ${g.label} (${g.lines.length}) — ${appUrl}/sales/action-items?tab=${g.tab}`)
-      for (const l of g.lines.slice(0, CAP)) textParts.push(`    - ${l.text}${l.sub ? ` (${l.sub})` : ''}`)
+      for (const l of g.lines.slice(0, CAP)) {
+        textParts.push(`    - ${l.text}${l.sub ? ` (${l.sub})` : ''}`)
+        for (const k of l.links ?? []) textParts.push(`      ${k.label}: ${k.href}`)
+      }
       if (g.lines.length > CAP) textParts.push(`    …and ${g.lines.length - CAP} more`)
     }
     textParts.push('')

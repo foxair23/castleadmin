@@ -3,6 +3,7 @@ import { sfPost, sfGet } from '@/lib/crm/service-fusion'
 import { findExistingSfCustomer, updateExistingCustomerContactInfo } from '@/lib/scheduler/sf-customer-match'
 import { enqueueForSubscribers, hasRecentNotification } from '@/lib/notifications/enqueue'
 import { renderSchedulerLeadSynced } from '@/lib/notifications/templates/scheduler-lead-synced'
+import { getLeadPhotoUrls } from '@/lib/scheduler/photos'
 import { renderSchedulerLeadStuck } from '@/lib/notifications/templates/scheduler-lead-stuck'
 
 function db() {
@@ -167,6 +168,13 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     descLines.push(`Lead source: ${l.lead_source}`)
     descLines.push(`Booking ID: ${l.id}`)
 
+    // Customer-uploaded photos: the storage bucket is private, so link
+    // long-lived signed URLs into the job description — techs can open them
+    // straight from Service Fusion. The same URLs go into the lead-synced
+    // notification email below.
+    const leadPhotos = await getLeadPhotoUrls(supabase, l.id, 60 * 60 * 24 * 365)
+    leadPhotos.forEach((p, i) => descLines.push(`Customer photo ${i + 1}: ${p.url}`))
+
     // ── 3. Create job ───────────────────────────────────────────────────────
     const jobPayload = {
       customer_name: parseInt(sfCustomerId, 10),
@@ -238,6 +246,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       sfJobId: sfJobId!,
       sfCustomerId: sfCustomerId!,
       notes: descLines.join('\n'),
+      photos: leadPhotos,
       adminUrl,
       ackUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/scheduler/ack/${leadId}`,
     })

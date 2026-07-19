@@ -1,5 +1,14 @@
 import type { ReactNode } from 'react';
+import { DM_Sans, Source_Sans_3 } from 'next/font/google';
 import HeightReporter from './HeightReporter';
+
+// Self-hosted via next/font: the old <link> to fonts.googleapis.com was a
+// RENDER-BLOCKING external stylesheet — the browser painted nothing (not even
+// the loading skeleton) until Google's CSS + font files resolved. next/font
+// serves the fonts from our own origin with immutable caching and zero
+// external round trips.
+const dmSans = DM_Sans({ subsets: ['latin'], weight: ['400', '500', '600', '700'], display: 'swap', variable: '--next-font-heading' });
+const sourceSans = Source_Sans_3({ subsets: ['latin'], weight: ['400', '500', '600'], display: 'swap', variable: '--next-font-body' });
 
 export const metadata = {
   robots: 'noindex, nofollow',
@@ -7,13 +16,8 @@ export const metadata = {
 
 export default function EmbedLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${dmSans.variable} ${sourceSans.variable}`}>
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap"
-          rel="stylesheet"
-        />
         <style>{`
           :root {
             --color-primary: #C81E1E;
@@ -27,8 +31,8 @@ export default function EmbedLayout({ children }: { children: ReactNode }) {
             --radius-card: 10px;
             --radius-input: 6px;
             --radius-large: 14px;
-            --font-heading: 'DM Sans', sans-serif;
-            --font-body: 'Source Sans 3', sans-serif;
+            --font-heading: var(--next-font-heading), 'DM Sans', sans-serif;
+            --font-body: var(--next-font-body), 'Source Sans 3', sans-serif;
           }
           *, *::before, *::after { box-sizing: border-box; }
           body { font-family: var(--font-body); color: var(--color-text); }

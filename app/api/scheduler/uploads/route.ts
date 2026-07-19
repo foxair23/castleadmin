@@ -12,6 +12,22 @@ const ALLOWED_MIME_TYPES = [
   'application/pdf',
 ]
 
+// Some browsers (notably for HEIC and files shared from other apps) report an
+// EMPTY file.type. That failed the check below and, worse, would reach the
+// storage bucket with a default content type the bucket's own mime allowlist
+// rejects — a silent upload failure. Infer from the extension when the browser
+// doesn't say.
+const EXT_MIME: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf',
+}
+
+function resolveMime(file: File): string {
+  if (file.type) return file.type
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  return EXT_MIME[ext] ?? ''
+}
+
 const STORAGE_BUCKET = 'scheduler-uploads'
 
 function corsHeaders(origin: string | null): Record<string, string> {
@@ -120,9 +136,10 @@ export async function POST(req: NextRequest) {
   const results: { filename: string; storage_path: string; url: string }[] = []
 
   for (const file of files) {
-    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+    const mime = resolveMime(file)
+    if (!ALLOWED_MIME_TYPES.includes(mime)) {
       return NextResponse.json(
-        { error: `File type not allowed: ${file.type}` },
+        { error: `File type not supported${mime ? ` (${mime})` : ''} — please use JPG, PNG, WebP, or HEIC photos.` },
         { status: 400, headers: cors }
       )
     }
@@ -142,7 +159,7 @@ export async function POST(req: NextRequest) {
     const { error: uploadError } = await db.storage
       .from(STORAGE_BUCKET)
       .upload(storagePath, bytes, {
-        contentType: file.type,
+        contentType: mime,
         upsert: false,
       })
 
@@ -161,7 +178,7 @@ export async function POST(req: NextRequest) {
         lead_id: leadId,
         filename: file.name.slice(0, 255),
         storage_path: storagePath,
-        mime_type: file.type,
+        mime_type: mime,
         size_bytes: file.size,
       })
 
