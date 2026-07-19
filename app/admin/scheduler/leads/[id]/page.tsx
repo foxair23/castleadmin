@@ -27,7 +27,7 @@ export default async function LeadDetailPage({ params }: Props) {
     { auth: { persistSession: false } }
   )
 
-  const [approverRes, feesRes] = await Promise.all([
+  const [approverRes, feesRes, attachmentRes] = await Promise.all([
     lead.approved_by
       ? supabase.from('profiles').select('full_name').eq('id', lead.approved_by).single()
       : Promise.resolve({ data: null }),
@@ -35,7 +35,23 @@ export default async function LeadDetailPage({ params }: Props) {
       .from('scheduler_settings')
       .select('key, value')
       .in('key', ['service_call_fee', 'gate_service_call_fee']),
+    adminDb
+      .from('scheduler_lead_attachments')
+      .select('filename, storage_path, mime_type')
+      .eq('lead_id', id)
+      .order('uploaded_at', { ascending: true }),
   ])
+
+  // Fresh short-lived signed URLs per view — the bucket is private.
+  const attachments: { filename: string; mime_type: string; url: string }[] = []
+  for (const a of (attachmentRes.data ?? []) as { filename: string; storage_path: string; mime_type: string }[]) {
+    const { data: signed } = await adminDb.storage
+      .from('scheduler-uploads')
+      .createSignedUrl(a.storage_path, 60 * 60) // 1 hour
+    if (signed?.signedUrl) {
+      attachments.push({ filename: a.filename, mime_type: a.mime_type, url: signed.signedUrl })
+    }
+  }
 
   const approverName: string | null = approverRes.data?.full_name ?? null
   const feeMap: Record<string, number> = {}
@@ -49,6 +65,7 @@ export default async function LeadDetailPage({ params }: Props) {
       approverName={approverName}
       garageServiceCallFee={garageServiceCallFee}
       gateServiceCallFee={gateServiceCallFee}
+      attachments={attachments}
     />
   )
 }

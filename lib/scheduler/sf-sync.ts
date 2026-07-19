@@ -167,6 +167,28 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
     descLines.push(`Lead source: ${l.lead_source}`)
     descLines.push(`Booking ID: ${l.id}`)
 
+    // Customer-uploaded photos: the storage bucket is private, so link
+    // long-lived signed URLs into the job description — techs can open them
+    // straight from Service Fusion.
+    const { data: atts } = await supabase
+      .from('scheduler_lead_attachments')
+      .select('storage_path')
+      .eq('lead_id', l.id)
+      .order('uploaded_at', { ascending: true })
+    if (atts && atts.length > 0) {
+      const ONE_YEAR = 60 * 60 * 24 * 365
+      let photoNum = 0
+      for (const a of atts as { storage_path: string }[]) {
+        const { data: signed } = await supabase.storage
+          .from('scheduler-uploads')
+          .createSignedUrl(a.storage_path, ONE_YEAR)
+        if (signed?.signedUrl) {
+          photoNum++
+          descLines.push(`Customer photo ${photoNum}: ${signed.signedUrl}`)
+        }
+      }
+    }
+
     // ── 3. Create job ───────────────────────────────────────────────────────
     const jobPayload = {
       customer_name: parseInt(sfCustomerId, 10),
