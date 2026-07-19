@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
   // against a widget left open since before the cutoff submitting a stale one.
   if (isMondayMorningLockedOut(body.appointment_date, body.appointment_window_start, Date.now())) {
     return NextResponse.json(
-      { error: 'Monday morning appointments must be booked by Friday 4 PM. Please choose another time.' },
+      { error: 'That time window is no longer available. Please choose another time.' },
       { status: 422, headers: cors }
     )
   }
