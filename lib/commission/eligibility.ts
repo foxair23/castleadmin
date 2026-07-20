@@ -101,16 +101,23 @@ export function buildTokenMap(mappings: TokenMapping[]): Map<string, string> {
 
 /**
  * Extract $token$ tags from job text fields. A token must START WITH A LETTER
- * (then letters/digits/_/-), between two $ signs, case-insensitive, deduped.
+ * (then letters/digits/_/-), wrapped by $ signs, case-insensitive, deduped.
  * The letter-first rule keeps dollar figures from false-matching: in
  * "quote $500-$700" the substring "$500-$" would otherwise parse as token
  * "500-", sending an agent-attributed job to review as an unknown token.
+ *
+ * Wrapping is lenient about EXTRA dollar signs: `$$david$$` is treated the same
+ * as `$david$` (a tech was doubling them up). `\$+` consumes the leading run;
+ * the trailing `$` is a lookahead (not consumed) so a single `$` shared between
+ * adjacent tokens still delimits both — `$kyle$$juan$` yields kyle AND juan.
+ * A trailing `$` is still required, so bare `$word` (e.g. "$estimate") is not a
+ * token.
  */
 export function extractNoteTokens(...texts: (string | null | undefined)[]): string[] {
   const found = new Set<string>()
   for (const t of texts) {
     if (!t) continue
-    for (const m of t.matchAll(/\$([a-z][a-z0-9_-]{0,19})\$/gi)) found.add(m[1].toLowerCase())
+    for (const m of t.matchAll(/\$+([a-z][a-z0-9_-]{0,19})(?=\$)/gi)) found.add(m[1].toLowerCase())
   }
   return [...found]
 }
