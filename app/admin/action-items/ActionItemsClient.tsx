@@ -706,6 +706,160 @@ function AlertSection({
   )
 }
 
+// ── A/R Aging Report send modal ───────────────────────────────────────────────
+
+interface ArResult {
+  groups: { key: string; label: string; count: number; totalDue: number; queued: number }[]
+  recipients: 'subscribers' | 'self'
+}
+
+function ArReportModal({ lastSyncAt, onClose }: { lastSyncAt: string | null; onClose: () => void }) {
+  const [onlyMe, setOnlyMe] = useState(false)
+  const [phase, setPhase] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  const [pct, setPct] = useState(0)
+  const [stepLabel, setStepLabel] = useState('')
+  const [error, setError] = useState('')
+  const [result, setResult] = useState<ArResult | null>(null)
+
+  const syncAgeText = (() => {
+    if (!lastSyncAt) return 'unknown'
+    const mins = Math.round((Date.now() - new Date(lastSyncAt).getTime()) / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins} min ago`
+    const hrs = Math.round(mins / 60)
+    if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`
+    return `${Math.round(hrs / 24)} day${Math.round(hrs / 24) === 1 ? '' : 's'} ago`
+  })()
+
+  async function postSend(): Promise<ArResult> {
+    const res = await fetch('/api/admin/ar-aging/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ onlyMe }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || 'Send failed')
+    return data as ArResult
+  }
+
+  async function refreshThenSend() {
+    setPhase('running'); setError(''); setResult(null); setPct(1)
+    try {
+      const totalSteps = RECONCILE_STEPS.length + 1
+      let done = 0
+      for (const step of RECONCILE_STEPS) {
+        setStepLabel(`Refreshing ${step.label}…`)
+        const res = await fetch('/api/admin/sf-sync/trigger', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(step.body),
+        })
+        if (!res.ok) throw new Error(`Refresh failed on ${step.label}. Nothing was sent.`)
+        done++; setPct(Math.round((done / totalSteps) * 100))
+      }
+      setStepLabel('Sending report…')
+      const data = await postSend()
+      setPct(100); setResult(data); setPhase('done')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed'); setPhase('error')
+    }
+  }
+
+  async function sendOnly() {
+    setPhase('running'); setError(''); setResult(null); setStepLabel('Sending report…'); setPct(60)
+    try {
+      const data = await postSend()
+      setPct(100); setResult(data); setPhase('done')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed'); setPhase('error')
+    }
+  }
+
+  const running = phase === 'running'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={running ? undefined : onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-gray-100">
+          <p className="font-semibold text-gray-900">Email A/R Aging Report</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Sends the 3 reports (Clopay, Genie, Remainder){onlyMe ? ' to you only' : ' to the A/R report subscribers'}.
+            Categories with nothing outstanding are skipped.
+          </p>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          {phase !== 'done' && (
+            <>
+              <p className="text-xs text-gray-500">
+                Service Fusion data last synced: <span className="font-medium text-gray-700">{syncAgeText}</span>.
+                For the most current numbers, refresh before sending.
+              </p>
+
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" className="h-4 w-4" checked={onlyMe} disabled={running}
+                       onChange={e => setOnlyMe(e.target.checked)} />
+                Send only to me (test run)
+              </label>
+
+              {running ? (
+                <div>
+                  <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                    <span>{stepLabel}</span><span>{pct}%</span>
+                  </div>
+                  <div className="h-2 rounded bg-gray-200 overflow-hidden">
+                    <div className="h-full bg-red-600 transition-all duration-300" style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="text-xs text-amber-600 mt-2">⚠ Keep this window open until it finishes.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 pt-1">
+                  <button onClick={refreshThenSend}
+                    className="w-full text-sm px-3 py-2 rounded bg-red-600 hover:bg-red-700 text-white font-medium">
+                    Refresh data, then send
+                  </button>
+                  <button onClick={sendOnly}
+                    className="w-full text-sm px-3 py-2 rounded border border-gray-300 text-gray-700 hover:bg-gray-50">
+                    Send with current data
+                  </button>
+                </div>
+              )}
+
+              {phase === 'error' && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+              )}
+            </>
+          )}
+
+          {phase === 'done' && result && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-green-700">✓ Report sent {result.recipients === 'self' ? 'to you' : 'to subscribers'} — emails go out within a minute.</p>
+              <div className="border border-gray-200 rounded divide-y divide-gray-100">
+                {result.groups.map(g => (
+                  <div key={g.key} className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="text-gray-700">{g.label}</span>
+                    {g.count === 0
+                      ? <span className="text-gray-400 text-xs">skipped — nothing outstanding</span>
+                      : <span className="text-gray-600 text-xs">{fmtMoney(g.totalDue)} · {g.count} job{g.count === 1 ? '' : 's'} · {g.queued} email{g.queued === 1 ? '' : 's'}</span>}
+                  </div>
+                ))}
+              </div>
+              {!onlyMe && result.groups.every(g => g.count === 0 || g.queued === 0) && result.groups.some(g => g.count > 0) && (
+                <p className="text-xs text-amber-600">No emails queued — check that users are subscribed to the A/R report in Notifications.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} disabled={running}
+            className="text-sm text-gray-500 hover:text-gray-700 disabled:opacity-40">
+            {phase === 'done' ? 'Close' : 'Cancel'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -718,6 +872,9 @@ interface Props {
   actions: Record<string, ActionRecord>
   acceptedEstimates: AcceptedEstimatesResult
   notes: Record<string, string>
+  /** Admin-only A/R email trigger (the sales page omits both). */
+  showArReport?: boolean
+  lastSyncAt?: string | null
 }
 
 function SourceBadge({ source }: { source: string | null }) {
@@ -844,8 +1001,11 @@ export default function ActionItemsClient({
   acceptedEstimates,
   actions,
   notes,
+  showArReport = false,
+  lastSyncAt = null,
 }: Props) {
   const router = useRouter()
+  const [arModalOpen, setArModalOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
@@ -1118,16 +1278,30 @@ export default function ActionItemsClient({
       </div>
 
       {/* Active tab content */}
+      {arModalOpen && showArReport && (
+        <ArReportModal lastSyncAt={lastSyncAt} onClose={() => setArModalOpen(false)} />
+      )}
+
       {activeTab === 'unpaid' && (
         <AlertSection
           title="Completed but Unpaid Jobs"
           count={filteredUnpaid.length}
           summary={
-            filteredUnpaid.length > 0 ? (
-              <span className="text-sm text-gray-600">
-                Total due: <span className="font-semibold text-red-700">{fmtMoney(filteredUnpaid.reduce((s, j) => s + j.due_total, 0))}</span>
-              </span>
-            ) : undefined
+            <span className="flex items-center gap-4">
+              {filteredUnpaid.length > 0 && (
+                <span className="text-sm text-gray-600">
+                  Total due: <span className="font-semibold text-red-700">{fmtMoney(filteredUnpaid.reduce((s, j) => s + j.due_total, 0))}</span>
+                </span>
+              )}
+              {showArReport && (
+                <button
+                  onClick={() => setArModalOpen(true)}
+                  className="text-xs px-3 py-1.5 rounded border border-red-300 bg-red-50 hover:bg-red-100 text-red-700 font-medium whitespace-nowrap"
+                >
+                  ✉ Email A/R Report
+                </button>
+              )}
+            </span>
           }
         >
           <p className="text-xs text-gray-400 mb-2">A row clears automatically when the job&rsquo;s balance reaches $0 in Service Fusion.</p>

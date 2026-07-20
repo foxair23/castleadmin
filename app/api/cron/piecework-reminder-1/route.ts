@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { enqueueNotification } from '@/lib/notifications/enqueue'
 import { renderPieceworkReminder } from '@/lib/notifications/templates/piecework-reminder'
+import { isPtHour } from '@/lib/cron/pt-gate'
 import { getWeekStart, getWeekEnd, formatDate } from '@/lib/week'
 
-// Runs Wed 16:00 UTC = Wed 8–9 AM PT (morning reminder on deadline day)
+// Wed 9 AM PT (morning reminder on deadline day). Scheduled at both 16:00 and
+// 17:00 UTC; the PT gate runs it only on the 9 AM PT firing so it stays pinned
+// across the PDT/PST switch.
 export const maxDuration = 60
 
 function db() {
@@ -20,6 +23,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  if (!isPtHour(9)) {
+    return NextResponse.json({ ok: true, skipped: 'off-hour (pinned to 9 AM PT)' })
+  }
   const enqueued = await enqueuePieceworkReminders()
   return NextResponse.json({ ok: true, enqueued })
 }

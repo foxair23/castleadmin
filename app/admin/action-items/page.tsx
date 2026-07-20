@@ -30,7 +30,7 @@ export default async function ActionItemsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, notesResult] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, notesResult, lastSyncResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -40,7 +40,10 @@ export default async function ActionItemsPage() {
       getOnlineSchedulingLeads(),
       getAcceptedEstimatesAwaitingJob(),
       db.from('action_item_notes').select('entity_type, entity_id, note'),
+      db.from('sf_sync_runs').select('completed_at').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1).maybeSingle(),
     ])
+
+  const lastSyncAt = (lastSyncResult.data?.completed_at as string | null) ?? null
 
   const notes: Record<string, string> = {}
   for (const n of notesResult.data ?? []) {
@@ -78,6 +81,8 @@ export default async function ActionItemsPage() {
       acceptedEstimates={acceptedEstimates}
       actions={actions}
       notes={notes}
+      showArReport
+      lastSyncAt={lastSyncAt}
     />
   )
 }
