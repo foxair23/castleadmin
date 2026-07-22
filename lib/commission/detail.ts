@@ -226,11 +226,14 @@ async function loadOpenLines(
   const candidateIds = Array.from(new Set((agentJobs ?? []).map(a => a.job_id)))
   if (candidateIds.length === 0) return []
 
+  // "Still open" = not yet completed. Keyed on work_completed_at so a job that's
+  // been marked Completed (but not yet invoiced) is handled by the eligibility
+  // path as a "Completed" line instead of double-counting as Scheduled/Sold here.
   const { data: openRows } = await db
     .from('sf_jobs')
-    .select('id, number, customer_name, start_date, total, closed_at')
+    .select('id, number, customer_name, start_date, total, work_completed_at')
     .in('id', candidateIds)
-    .is('closed_at', null)
+    .is('work_completed_at', null)
     .eq('is_deleted', false)
     .not('status', 'in', EXCLUDED_STATUSES)
 

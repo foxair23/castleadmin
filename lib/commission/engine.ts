@@ -47,7 +47,8 @@ async function fetchAll<T>(
 }
 
 interface JobRow {
-  id: string; closed_at: string | null; total: number | null; tech_notes: string | null
+  id: string; closed_at: string | null; work_completed_at: string | null
+  total: number | null; tech_notes: string | null
   /** Notes-tab entries (raw_data->notes) — where field techs add notes. */
   notes_entries: unknown
 }
@@ -82,14 +83,18 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
   if (tokenErr) throw new Error(`load note tokens: ${tokenErr.message}`)
   const tokenMap = buildTokenMap((tokenData ?? []) as TokenMapping[])
 
-  // 2. Candidate jobs: completed on/after the start date, not cancelled/deleted.
+  // 2. Candidate jobs: WORK COMPLETED on/after the start date, not cancelled/
+  //    deleted. Keyed on work_completed_at (when the tech finished) rather than
+  //    closed_at (the invoice stamp) — this account marks jobs Completed long
+  //    before invoicing, and commission is recognized at completion. closed_at
+  //    is a fallback for the rare completed job the sync hasn't stamped yet.
   const jobs = await fetchAll<JobRow>((from, to) =>
     supabase
       .from('sf_jobs')
-      .select('id, closed_at, total, tech_notes, notes_entries:raw_data->notes')
+      .select('id, closed_at, work_completed_at, total, tech_notes, notes_entries:raw_data->notes')
       .eq('is_deleted', false)
       .not('status', 'in', `(${EXCLUDED_STATUSES.map(s => `"${s}"`).join(',')})`)
-      .gte('closed_at', COMMISSION_START_DATE)
+      .or(`work_completed_at.gte.${COMMISSION_START_DATE},and(work_completed_at.is.null,closed_at.gte.${COMMISSION_START_DATE})`)
       .order('id', { ascending: true })
       .range(from, to),
   )
@@ -155,7 +160,10 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
       continue
     }
 
-    const recognition_date = (job.closed_at ?? '').slice(0, 10)
+    // Recognize in the month the WORK was completed (falls back to the invoice
+    // stamp only when the sync hasn't stamped work_completed_at yet). Keeps
+    // commission periods aligned with the work-date revenue chart.
+    const recognition_date = (job.work_completed_at ?? job.closed_at ?? '').slice(0, 10)
     const isCollected = collected.has(job.id)
     const liveTotal = job.total ?? 0
 
