@@ -98,7 +98,35 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
 
   const { data } = await query
 
-  const jobs = data ?? []
+  const rawJobs = data ?? []
+
+  // A payment logged in Service Fusion updates the INVOICE (is_paid), not the
+  // job — the job's due_total stays frozen at the original amount and its
+  // updated_date doesn't even move, so no sync can ever clear it. Treat a job
+  // as paid when it has invoices and none of them are unpaid; otherwise a paid
+  // job would sit on the Unpaid tab forever.
+  const paidJobIds = new Set<string>()
+  const rawIds = rawJobs.map((j: { id: string }) => j.id)
+  if (rawIds.length > 0) {
+    const { data: invRows } = await db
+      .from('sf_invoices')
+      .select('job_id, is_paid')
+      .in('job_id', rawIds)
+      .eq('is_deleted', false)
+    const invByJob = new Map<string, { any: boolean; hasUnpaid: boolean }>()
+    for (const inv of (invRows ?? []) as Array<{ job_id: string | null; is_paid: boolean | null }>) {
+      if (!inv.job_id) continue
+      const e = invByJob.get(inv.job_id) ?? { any: false, hasUnpaid: false }
+      e.any = true
+      if (!inv.is_paid) e.hasUnpaid = true
+      invByJob.set(inv.job_id, e)
+    }
+    for (const [jid, e] of invByJob) {
+      if (e.any && !e.hasUnpaid) paidJobIds.add(jid) // fully settled on the invoice side
+    }
+  }
+
+  const jobs = rawJobs.filter((j: { id: string }) => !paidJobIds.has(j.id))
   const jobIds = jobs.map((j: { id: string }) => j.id)
   const techMap = await fetchTechNamesByJobIds(db, jobIds)
 
