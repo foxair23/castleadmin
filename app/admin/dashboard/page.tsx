@@ -37,6 +37,7 @@ export default async function DashboardPage() {
     arData,
     capacityJobs,
     jobVolumeRows,
+    zeroDollarRows,
     { data: lastSyncLog },
     closedJobsRevenue,
     schedulerLeads,
@@ -60,6 +61,20 @@ export default async function DashboardPage() {
         .not('status', 'in', '("Cancelled","Void","Voided")')
         .gte('work_completed_at', '2025-01-01')
         .lt('work_completed_at', '2027-01-01')
+        .order('id', { ascending: true })
+        .range(f, t)),
+    // Completed jobs still carrying $0 revenue — pending revenue that lands once
+    // a 3rd-party partner returns the total. Counted by work-completed month +
+    // source, shown as a table under Revenue Outlook.
+    fetchAllRows<{ work_completed_at: string | null; source: string | null }>((f, t) =>
+      db.from('sf_jobs')
+        .select('work_completed_at, source')
+        .eq('is_deleted', false)
+        .not('status', 'in', '("Cancelled","Void","Voided")')
+        .not('work_completed_at', 'is', null)
+        .gte('work_completed_at', '2025-01-01')
+        .lt('work_completed_at', '2027-01-01')
+        .or('total.is.null,total.eq.0')
         .order('id', { ascending: true })
         .range(f, t)),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
@@ -129,6 +144,25 @@ export default async function DashboardPage() {
     jobs2025: cntByYearMonth[2025][i],
     jobs2026: cntByYearMonth[2026][i],
   }))
+
+  // $0 completed jobs (pending revenue) by work-completed month × source.
+  const zeroByMonthSource: Record<string, Record<string, number>> = {}
+  for (const r of zeroDollarRows) {
+    const ym = r.work_completed_at?.slice(0, 7)
+    if (!ym) continue
+    const src = (r.source ?? '').trim() || '(no source)'
+    ;(zeroByMonthSource[ym] ??= {})[src] = (zeroByMonthSource[ym]?.[src] ?? 0) + 1
+  }
+  const zeroDollarByMonth = Object.entries(zeroByMonthSource)
+    .sort(([a], [b]) => b.localeCompare(a)) // most recent month first
+    .map(([ym, bySrc]) => ({
+      ym,
+      label: `${MONTH_LABELS_SHORT[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`,
+      sources: Object.entries(bySrc)
+        .map(([source, count]) => ({ source, count }))
+        .sort((a, b) => b.count - a.count),
+      total: Object.values(bySrc).reduce((s, n) => s + n, 0),
+    }))
 
   // Online scheduling — acknowledged ("Done") submissions only. The bar chart
   // aggregates these by month (synced to SF vs partial), and the table lists the
@@ -379,6 +413,7 @@ export default async function DashboardPage() {
       lastSync={(lastSyncLog?.[0] as { sync_type: string; completed_at: string; records_synced: number } | undefined) ?? null}
       monthlyRevenue={monthlyRevenue}
       revenueOutlook={revenueOutlook ? { methods: revenueOutlook.methods } : null}
+      zeroDollarByMonth={zeroDollarByMonth}
       techMonthlyRevenue={techMonthlyRevenue}
     />
   )

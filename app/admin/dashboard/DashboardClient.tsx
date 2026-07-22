@@ -56,6 +56,12 @@ interface Props {
   revenueOutlook: {
     methods: { key: string; label: string; next12: number; note: string }[]
   } | null
+  zeroDollarByMonth: {
+    ym: string
+    label: string
+    sources: { source: string; count: number }[]
+    total: number
+  }[]
   techMonthlyRevenue: { techId: string; techName: string; data: { yearMonth: string; revenue: number }[] }[]
 }
 
@@ -411,11 +417,16 @@ export default function DashboardClient({
   lastSync,
   monthlyRevenue,
   revenueOutlook,
+  zeroDollarByMonth,
   techMonthlyRevenue,
 }: Props) {
   const router = useRouter()
   const [syncing, setSyncing] = useState(false)
   const [showBackfill, setShowBackfill] = useState(false)
+
+  // $0-jobs table — month selector (defaults to the most recent month with data)
+  const [zeroMonth, setZeroMonth] = useState(zeroDollarByMonth[0]?.ym ?? '')
+  const zeroSelected = zeroDollarByMonth.find(m => m.ym === zeroMonth) ?? zeroDollarByMonth[0]
 
   // Tech scoreboard — week selector + client-side fetch
   const weekOptions = getRecentMondays(13)
@@ -653,6 +664,50 @@ export default function DashboardClient({
                 extrapolated by days elapsed where used. Seasonality shape comes from 2025, a single year under
                 previous ownership — treat it as directional. The dashed chart line above shows the
                 seasonality-adjusted path through December.
+              </p>
+            </div>
+          )}
+
+          {/* Section 3c — $0 completed jobs (pending revenue) by source */}
+          {zeroDollarByMonth.length > 0 && zeroSelected && (
+            <div>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <h2 className="text-sm font-semibold text-gray-700">Completed Jobs Awaiting Revenue ($0)</h2>
+                <select
+                  value={zeroMonth}
+                  onChange={e => setZeroMonth(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400"
+                >
+                  {zeroDollarByMonth.map(m => (
+                    <option key={m.ym} value={m.ym}>{m.label} ({m.total})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="text-left px-4 py-2 font-medium text-gray-600">Source</th>
+                      <th className="text-right px-4 py-2 font-medium text-gray-600">$0 Jobs</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {zeroSelected.sources.map(s => (
+                      <tr key={s.source}>
+                        <td className="px-4 py-2 text-gray-800">{s.source}</td>
+                        <td className="px-4 py-2 text-right text-gray-900 font-medium">{s.count}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-gray-50">
+                      <td className="px-4 py-2 font-semibold text-gray-700">Total</td>
+                      <td className="px-4 py-2 text-right font-bold text-gray-900">{zeroSelected.total}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-gray-400">
+                Jobs completed in the selected month that still have $0 — pending revenue that lands once the total
+                comes back (e.g. from a 3rd-party partner). Counted by the month the work was completed.
               </p>
             </div>
           )}
