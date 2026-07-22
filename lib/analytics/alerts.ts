@@ -160,6 +160,60 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
   return { items, totalDue }
 }
 
+// ── Alert 1b — Completed jobs awaiting revenue ($0) ──────────────────────────
+// Completed jobs still carrying $0 — revenue that lands after the fact (a 3rd-
+// party partner returns the total). Confirmed true-$0 jobs (in
+// zero_revenue_confirmations) are excluded; they're a legitimate no-charge.
+
+export interface ZeroRevenueJob {
+  id: string
+  number: string | null
+  customer_name: string | null
+  source: string | null
+  work_completed_at: string
+  tech_names: string[]
+  days_since_completion: number
+}
+
+export interface ZeroRevenueJobsResult {
+  items: ZeroRevenueJob[]
+}
+
+export async function getZeroRevenueJobs(): Promise<ZeroRevenueJobsResult> {
+  const db = getAdminClient()
+
+  const [{ data }, { data: confirmed }] = await Promise.all([
+    db.from('sf_jobs')
+      .select('id, number, customer_name, source, work_completed_at, total')
+      .eq('is_deleted', false)
+      .not('status', 'in', '("Cancelled","Void","Voided")')
+      .not('work_completed_at', 'is', null)
+      .or('total.is.null,total.eq.0')
+      .order('work_completed_at', { ascending: false })
+      .limit(500),
+    db.from('zero_revenue_confirmations').select('sf_job_id'),
+  ])
+
+  const confirmedIds = new Set((confirmed ?? []).map((c: { sf_job_id: string }) => c.sf_job_id))
+  const jobs = (data ?? []).filter((j: { id: string }) => !confirmedIds.has(j.id))
+  const techMap = await fetchTechNamesByJobIds(db, jobs.map((j: { id: string }) => j.id))
+
+  const items: ZeroRevenueJob[] = jobs.map((j: {
+    id: string; number: string | null; customer_name: string | null
+    source: string | null; work_completed_at: string
+  }) => ({
+    id: j.id,
+    number: j.number,
+    customer_name: j.customer_name,
+    source: j.source ?? null,
+    work_completed_at: j.work_completed_at,
+    tech_names: techMap.get(j.id) ?? [],
+    days_since_completion: daysBetween(j.work_completed_at),
+  }))
+
+  return { items }
+}
+
 // ── Alert 2 — Completed but Never Invoiced ───────────────────────────────────
 
 export interface UninvoicedJob {
