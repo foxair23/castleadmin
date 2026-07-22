@@ -59,8 +59,9 @@ interface Props {
   zeroDollarByMonth: {
     ym: string
     label: string
-    sources: { source: string; count: number }[]
-    total: number
+    sources: { source: string; pending: number; confirmed: number }[]
+    pendingTotal: number
+    confirmedTotal: number
   }[]
   techMonthlyRevenue: { techId: string; techName: string; data: { yearMonth: string; revenue: number }[] }[]
 }
@@ -679,7 +680,7 @@ export default function DashboardClient({
                   className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400"
                 >
                   {zeroDollarByMonth.map(m => (
-                    <option key={m.ym} value={m.ym}>{m.label} ({m.total})</option>
+                    <option key={m.ym} value={m.ym}>{m.label} ({m.pendingTotal + m.confirmedTotal})</option>
                   ))}
                 </select>
               </div>
@@ -688,26 +689,31 @@ export default function DashboardClient({
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="text-left px-4 py-2 font-medium text-gray-600">Source</th>
-                      <th className="text-right px-4 py-2 font-medium text-gray-600">$0 Jobs</th>
+                      <th className="text-right px-4 py-2 font-medium text-gray-600">Awaiting Revenue</th>
+                      <th className="text-right px-4 py-2 font-medium text-gray-600">Confirmed $0</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {zeroSelected.sources.map(s => (
                       <tr key={s.source}>
                         <td className="px-4 py-2 text-gray-800">{s.source}</td>
-                        <td className="px-4 py-2 text-right text-gray-900 font-medium">{s.count}</td>
+                        <td className="px-4 py-2 text-right text-gray-900 font-medium">{s.pending}</td>
+                        <td className="px-4 py-2 text-right text-gray-500">{s.confirmed || <span className="text-gray-300">—</span>}</td>
                       </tr>
                     ))}
                     <tr className="bg-gray-50">
                       <td className="px-4 py-2 font-semibold text-gray-700">Total</td>
-                      <td className="px-4 py-2 text-right font-bold text-gray-900">{zeroSelected.total}</td>
+                      <td className="px-4 py-2 text-right font-bold text-gray-900">{zeroSelected.pendingTotal}</td>
+                      <td className="px-4 py-2 text-right font-bold text-gray-700">{zeroSelected.confirmedTotal}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
               <p className="mt-2 text-xs text-gray-400">
-                Jobs completed in the selected month that still have $0 — pending revenue that lands once the total
-                comes back (e.g. from a 3rd-party partner). Counted by the month the work was completed.
+                Jobs completed in the selected month that still have $0, counted by the month the work was completed.
+                <span className="font-medium"> Awaiting Revenue</span> = the total will come back later (e.g. from a
+                3rd-party partner); <span className="font-medium">Confirmed $0</span> = flagged as legitimately no-charge
+                on the Action Items → Awaiting Revenue tab.
               </p>
             </div>
           )}

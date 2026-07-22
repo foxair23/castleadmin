@@ -38,6 +38,7 @@ export default async function DashboardPage() {
     capacityJobs,
     jobVolumeRows,
     zeroDollarRows,
+    { data: zeroConfirmedRows },
     { data: lastSyncLog },
     closedJobsRevenue,
     schedulerLeads,
@@ -65,10 +66,10 @@ export default async function DashboardPage() {
         .range(f, t)),
     // Completed jobs still carrying $0 revenue — pending revenue that lands once
     // a 3rd-party partner returns the total. Counted by work-completed month +
-    // source, shown as a table under Revenue Outlook.
-    fetchAllRows<{ work_completed_at: string | null; source: string | null }>((f, t) =>
+    // source, split into pending vs confirmed-true-$0, under Revenue Outlook.
+    fetchAllRows<{ id: string; work_completed_at: string | null; source: string | null }>((f, t) =>
       db.from('sf_jobs')
-        .select('work_completed_at, source')
+        .select('id, work_completed_at, source')
         .eq('is_deleted', false)
         .not('status', 'in', '("Cancelled","Void","Voided")')
         .not('work_completed_at', 'is', null)
@@ -77,6 +78,8 @@ export default async function DashboardPage() {
         .or('total.is.null,total.eq.0')
         .order('id', { ascending: true })
         .range(f, t)),
+    // Which of those $0 jobs are confirmed legitimate true-$0.
+    db.from('zero_revenue_confirmations').select('sf_job_id'),
     db.from('sf_sync_runs').select('sync_type:run_type, status, completed_at, records_synced:records_upserted').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1),
     // Revenue Today / This Week / 28-day avg — same basis as monthly_job_revenue:
     // sum(sf_jobs.total) bucketed by work_completed_at (work date, not invoice
@@ -145,13 +148,17 @@ export default async function DashboardPage() {
     jobs2026: cntByYearMonth[2026][i],
   }))
 
-  // $0 completed jobs (pending revenue) by work-completed month × source.
-  const zeroByMonthSource: Record<string, Record<string, number>> = {}
+  // $0 completed jobs by work-completed month × source, split into pending
+  // (revenue still coming) vs confirmed true-$0 (flagged as legitimately $0).
+  const confirmedZeroIds = new Set((zeroConfirmedRows ?? []).map((r: { sf_job_id: string }) => r.sf_job_id))
+  const zeroByMonthSource: Record<string, Record<string, { pending: number; confirmed: number }>> = {}
   for (const r of zeroDollarRows) {
     const ym = r.work_completed_at?.slice(0, 7)
     if (!ym) continue
     const src = (r.source ?? '').trim() || '(no source)'
-    ;(zeroByMonthSource[ym] ??= {})[src] = (zeroByMonthSource[ym]?.[src] ?? 0) + 1
+    const cell = ((zeroByMonthSource[ym] ??= {})[src] ??= { pending: 0, confirmed: 0 })
+    if (confirmedZeroIds.has(r.id)) cell.confirmed++
+    else cell.pending++
   }
   const zeroDollarByMonth = Object.entries(zeroByMonthSource)
     .sort(([a], [b]) => b.localeCompare(a)) // most recent month first
@@ -159,9 +166,10 @@ export default async function DashboardPage() {
       ym,
       label: `${MONTH_LABELS_SHORT[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`,
       sources: Object.entries(bySrc)
-        .map(([source, count]) => ({ source, count }))
-        .sort((a, b) => b.count - a.count),
-      total: Object.values(bySrc).reduce((s, n) => s + n, 0),
+        .map(([source, c]) => ({ source, pending: c.pending, confirmed: c.confirmed }))
+        .sort((a, b) => (b.pending + b.confirmed) - (a.pending + a.confirmed)),
+      pendingTotal: Object.values(bySrc).reduce((s, c) => s + c.pending, 0),
+      confirmedTotal: Object.values(bySrc).reduce((s, c) => s + c.confirmed, 0),
     }))
 
   // Online scheduling — acknowledged ("Done") submissions only. The bar chart

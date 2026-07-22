@@ -18,6 +18,8 @@ import type {
   OnlineSchedulingResult,
   AcceptedEstimateAwaitingJob,
   AcceptedEstimatesResult,
+  ZeroRevenueJob,
+  ZeroRevenueJobsResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
 import PhotoLightbox from '@/components/PhotoLightbox'
@@ -292,6 +294,80 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
         </span>
       </div>
     </td>
+  )
+}
+
+// ── Alert 1b — Awaiting Revenue ($0 completed jobs) ──────────────────────────
+
+// Flags a completed $0 job as a legitimate true-$0 (no revenue coming) → it
+// drops off this tab and counts as "Confirmed $0" on the dashboard. Optimistic.
+function ConfirmZeroButton({ jobId, onConfirmed }: { jobId: string; onConfirmed: (jobId: string) => void }) {
+  const [busy, setBusy] = useState(false)
+  async function handleConfirm() {
+    if (busy) return
+    setBusy(true)
+    onConfirmed(jobId) // optimistic — remove from the list immediately
+    try {
+      await fetch('/api/admin/zero-revenue/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId, confirmed: true }),
+      })
+    } catch { /* best-effort; a refresh reconciles */ }
+    setBusy(false)
+  }
+  return (
+    <button
+      onClick={handleConfirm}
+      disabled={busy}
+      title="This job is legitimately $0 — no revenue is coming. Removes it from this list and counts it as Confirmed $0."
+      className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
+    >
+      ✓ Confirm $0
+    </button>
+  )
+}
+
+function ZeroRevenueTable({ items, notes, actions }: { items: ZeroRevenueJob[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
+  const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_since_completion')
+  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set())
+  const visible = sorted.filter(j => !confirmedIds.has(j.id))
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
+            <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="number" label="Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
+            <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="work_completed_at" label="Completed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="days_since_completion" label="Age" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-16" />
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">True $0?</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {visible.map(job => (
+            <tr key={job.id} className="hover:bg-gray-50">
+              <ActionCell tab="awaiting-revenue" entityId={job.id} record={actions[`sf_job_revenue:${job.id}`]} itemDate={job.work_completed_at} />
+              <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
+              <NotesCell entityType="sf_job_revenue" entityId={job.id} initialNote={notes[`sf_job_revenue:${job.id}`] ?? ''} />
+              <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.work_completed_at)}</td>
+              <td className="px-4 py-2"><AgingPill days={job.days_since_completion} /></td>
+              <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
+              <td className="px-4 py-2">
+                <ConfirmZeroButton jobId={job.id} onConfirmed={id => setConfirmedIds(prev => new Set(prev).add(id))} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -871,6 +947,8 @@ interface Props {
   onlineScheduling: OnlineSchedulingResult
   actions: Record<string, ActionRecord>
   acceptedEstimates: AcceptedEstimatesResult
+  /** Admin-only "Awaiting Revenue" ($0 jobs) tab — the sales page omits it. */
+  zeroRevenueJobs?: ZeroRevenueJobsResult
   notes: Record<string, string>
   /** Admin-only A/R email trigger (the sales page omits both). */
   showArReport?: boolean
@@ -985,7 +1063,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling'
+type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -999,6 +1077,7 @@ export default function ActionItemsClient({
   awaitingSfJob,
   onlineScheduling,
   acceptedEstimates,
+  zeroRevenueJobs,
   actions,
   notes,
   showArReport = false,
@@ -1018,7 +1097,7 @@ export default function ActionItemsClient({
   // useSearchParams Suspense boundary needed).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    const valid: TabKey[] = ['unpaid', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling']
+    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling']
     if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
   }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
@@ -1085,6 +1164,9 @@ export default function ActionItemsClient({
   const filteredAwaitingSfJob = notWaiting(filterByCutoff(filterByDays(awaitingSfJob.items, 'days_waiting'), 'closed_at'), 'sales_lead')
   const filteredOnlineScheduling = filterByCutoff(filterByDays(onlineScheduling.items, 'days_waiting'), 'created_at')
   const filteredAcceptedEstimates = notWaiting(filterByCutoff(filterByDays(acceptedEstimates.items, 'days_since_update'), 'created_at_sf'), 'sf_estimate')
+  const filteredZeroRevenue = notWaiting(
+    filterByCutoff(filterByDays(filterBySource(zeroRevenueJobs?.items ?? []), 'days_since_completion'), 'work_completed_at'),
+    'sf_job_revenue')
 
   const totalCount =
     filteredUnpaid.length +
@@ -1157,6 +1239,7 @@ export default function ActionItemsClient({
     // Ordered by business importance (owner-specified).
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
+    ...(zeroRevenueJobs ? [{ key: 'awaiting-revenue' as TabKey, label: 'Awaiting Revenue', count: filteredZeroRevenue.length }] : []),
     { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
     { key: 'accepted-no-job', label: 'Accepted Estimate - No Job', count: filteredAcceptedEstimates.length },
     { key: 'estimates',    label: 'Stale Estimates',count: filteredStaleEstimates.length },
@@ -1306,6 +1389,17 @@ export default function ActionItemsClient({
         >
           <p className="text-xs text-gray-400 mb-2">A row clears automatically when the job&rsquo;s balance reaches $0 in Service Fusion.</p>
           {filteredUnpaid.length === 0 ? <AllClear /> : <UnpaidJobsTable items={filteredUnpaid} notes={notes} actions={actions} />}
+        </AlertSection>
+      )}
+
+      {activeTab === 'awaiting-revenue' && zeroRevenueJobs && (
+        <AlertSection title="Awaiting Revenue ($0 completed jobs)" count={filteredZeroRevenue.length}>
+          <p className="text-xs text-gray-400 mb-2">
+            Completed jobs still at $0 — revenue that lands after the fact (e.g. a 3rd-party partner total). A row
+            clears automatically when revenue is added in Service Fusion. If a job is legitimately $0, click
+            <span className="font-medium"> Confirm $0</span> to move it to the dashboard&rsquo;s Confirmed $0 count.
+          </p>
+          {filteredZeroRevenue.length === 0 ? <AllClear /> : <ZeroRevenueTable items={filteredZeroRevenue} notes={notes} actions={actions} />}
         </AlertSection>
       )}
 

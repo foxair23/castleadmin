@@ -20,6 +20,10 @@ export interface ActionTabConfig {
 
 export const ACTION_TAB_CONFIG: Record<string, ActionTabConfig> = {
   'unpaid':          { button: 'Payment Requested', days: 3, entity: 'sf_job' },
+  // Distinct entity ('sf_job_revenue', not 'sf_job') so logging "Added Revenue"
+  // here doesn't collide with the unpaid/uninvoiced/followup action rows, which
+  // a $0 job can also appear on.
+  'awaiting-revenue':{ button: 'Added Revenue',     days: 3, entity: 'sf_job_revenue' },
   'uninvoiced':      { button: 'Invoiced',          days: 1, entity: 'sf_job' },
   'estimates':       { button: 'Followed Up',       days: 3, entity: 'sf_estimate' },
   'accepted-no-job': { button: 'Converted',         days: 1, entity: 'sf_estimate' },
