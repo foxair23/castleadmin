@@ -947,7 +947,7 @@ interface Props {
   onlineScheduling: OnlineSchedulingResult
   actions: Record<string, ActionRecord>
   acceptedEstimates: AcceptedEstimatesResult
-  /** Admin-only "Awaiting Revenue" ($0 jobs) tab — the sales page omits it. */
+  /** "Awaiting Revenue" ($0 jobs) tab data — admin + sales both pass it. */
   zeroRevenueJobs?: ZeroRevenueJobsResult
   notes: Record<string, string>
   /** Admin-only A/R email trigger (the sales page omits both). */

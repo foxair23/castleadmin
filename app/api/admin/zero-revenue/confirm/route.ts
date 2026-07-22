@@ -10,12 +10,13 @@ function adminDb() {
   )
 }
 
-async function requireAdmin() {
+// Admin + sales — sales work the Awaiting Revenue tab too.
+async function requireStaff() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   const { data: profile } = await adminDb().from('profiles').select('role, is_active').eq('id', user.id).single()
-  if (!profile?.is_active || profile.role !== 'admin') return null
+  if (!profile?.is_active || !['admin', 'sales'].includes(profile.role ?? '')) return null
   return user
 }
 
@@ -24,7 +25,7 @@ async function requireAdmin() {
 // from the Awaiting Revenue tab, counts it as Confirmed $0 on the dashboard);
 // confirmed:false undoes it.
 export async function POST(req: NextRequest) {
-  const user = await requireAdmin()
+  const user = await requireStaff()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { job_id, confirmed } = await req.json() as { job_id?: string; confirmed?: boolean }
