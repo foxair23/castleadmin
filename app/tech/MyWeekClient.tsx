@@ -140,8 +140,10 @@ export default function MyWeekClient({ userId, selectedWeek, currentWeek, jobs, 
     setSyncStatus('Connecting to Service Fusion…')
 
     const controller = new AbortController()
-    const slowTimer = setTimeout(() => setSyncStatus('Still syncing — this can take up to 30 seconds…'), 8_000)
-    const hardTimer = setTimeout(() => controller.abort(), 45_000)
+    const slowTimer = setTimeout(() => setSyncStatus('Still syncing — this can take up to a minute…'), 8_000)
+    // Give up just under the server's 60s maxDuration so a slow-SF day doesn't
+    // abort a sync that would otherwise finish.
+    const hardTimer = setTimeout(() => controller.abort(), 58_000)
 
     try {
       const res = await fetch('/api/tech/sf-sync', {

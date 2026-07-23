@@ -213,13 +213,18 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
     // scanned, never which visits are credited. 150 days covers realistic
     // site-visit gaps; this sync is a manual, low-frequency action, so the extra
     // pages scanned are an acceptable trade-off.
-    // Scan a 150-day-back .. 14-day-forward window, but in 30-day CHUNKS. One
-    // wide /jobs query with the visits/items expand overloads SF's backend and
-    // 500s; smaller windows keep each response light. A job on a chunk boundary
-    // could appear in two chunks, so dedupe by id.
+    // Scan a 90-day-back .. 14-day-forward window, in 30-day CHUNKS. The
+    // look-back catches jobs whose only in-week visit is a late "site visit"
+    // (a job's start_date is pinned to its FIRST visit). 90 days covers a
+    // realistic site-visit gap (the observed case was ~40 days) while keeping
+    // the scan small enough to finish inside the request budget — 150 days
+    // pulled ~5 months of the whole company's jobs and timed the sync out.
+    // One wide /jobs query with the visits/items expand also overloads SF's
+    // backend (500s), so smaller windows keep each response light; a job on a
+    // chunk boundary could appear twice, so dedupe by id.
     const DAY = 86400_000
     const CHUNK = 30 * DAY
-    const overallFrom = weekStart.getTime() - 150 * DAY
+    const overallFrom = weekStart.getTime() - 90 * DAY
     const overallTo   = weekEnd.getTime()   + 14 * DAY
 
     const results: CrmJob[] = []
@@ -332,14 +337,17 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         weekVisits.forEach((visit: any, idx: number) => {
-          // A tech qualifies for a visit if they appear at the visit level OR
-          // the job level. This ensures the job-level tech still gets credit
-          // even when a different tech is explicitly assigned to a site visit.
+          // Visit-level assignment is authoritative: if a visit has its own
+          // techs (a site visit assigned to a specific person), ONLY they are
+          // credited for it — the job-level tech must NOT also get credit.
+          // Fall back to the job-level techs only when the visit has none of
+          // its own. (Bug fixed: a job assigned to David with a site visit
+          // assigned to Kyle was crediting David for Kyle's visit.)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const visitTechs: any[] = visit.techs_assigned?.length > 0 ? visit.techs_assigned : []
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const jobTechs: any[] = job.techs_assigned ?? []
-          const eligibleTechs = visitTechs.length > 0 ? [...visitTechs, ...jobTechs] : jobTechs
+          const eligibleTechs = visitTechs.length > 0 ? visitTechs : jobTechs
           if (!eligibleTechs.some((t: any) => String(t.id) === sfTechId)) return
           results.push({
             id: String(job.id),
