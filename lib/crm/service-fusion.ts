@@ -213,13 +213,18 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
     // scanned, never which visits are credited. 150 days covers realistic
     // site-visit gaps; this sync is a manual, low-frequency action, so the extra
     // pages scanned are an acceptable trade-off.
-    // Scan a 150-day-back .. 14-day-forward window, but in 30-day CHUNKS. One
-    // wide /jobs query with the visits/items expand overloads SF's backend and
-    // 500s; smaller windows keep each response light. A job on a chunk boundary
-    // could appear in two chunks, so dedupe by id.
+    // Scan a 90-day-back .. 14-day-forward window, in 30-day CHUNKS. The
+    // look-back catches jobs whose only in-week visit is a late "site visit"
+    // (a job's start_date is pinned to its FIRST visit). 90 days covers a
+    // realistic site-visit gap (the observed case was ~40 days) while keeping
+    // the scan small enough to finish inside the request budget — 150 days
+    // pulled ~5 months of the whole company's jobs and timed the sync out.
+    // One wide /jobs query with the visits/items expand also overloads SF's
+    // backend (500s), so smaller windows keep each response light; a job on a
+    // chunk boundary could appear twice, so dedupe by id.
     const DAY = 86400_000
     const CHUNK = 30 * DAY
-    const overallFrom = weekStart.getTime() - 150 * DAY
+    const overallFrom = weekStart.getTime() - 90 * DAY
     const overallTo   = weekEnd.getTime()   + 14 * DAY
 
     const results: CrmJob[] = []
