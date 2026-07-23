@@ -396,23 +396,22 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
   // can offer the real site-visit tech (with the visit date) as the credited
   // tech. Most-recent visit first. One light single-job query — safe to call
   // interactively.
-  async getJobVisitTechs(jobNumber: string): Promise<Array<{
+  async getJobVisitTechs(sfJobId: string): Promise<Array<{
     sfTechId: string
     name: string
     lastVisitDate: string | null
     isJobLevel: boolean
   }>> {
+    // Fetch the single job by its SF id (NOT the display number — they differ)
+    // with visits expanded. A single-resource GET returns the job object
+    // directly; guard for a list-shaped response just in case.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const json = (await sfGetRetry('/jobs', {
-      'filters[number][eq]': jobNumber,
-      'per-page': '5',
+    const json = (await sfGetRetry(`/jobs/${encodeURIComponent(sfJobId)}`, {
       expand: 'visits,visits.techs_assigned,techs_assigned',
     })) as any
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const jobs: any[] = json?.items ?? []
-    // Match the exact number (SF's eq filter is reliable, but guard anyway).
-    const job = jobs.find((j: any) => String(j.number) === String(jobNumber)) ?? jobs[0]
+    const job: any = json?.items ? (json.items[0] ?? null) : (json?.id ? json : (json?.data ?? null))
     if (!job) return []
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

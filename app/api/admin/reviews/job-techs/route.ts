@@ -26,16 +26,17 @@ async function requireAdmin() {
 // The techs who actually worked a given job, visit by visit, pulled live from
 // Service Fusion (the mirror only stores job-level techs). Each is mapped to its
 // app account via profiles.sf_technician_id so the reviews UI can pin the real
-// site-visit tech as the credited tech. ?number=<SF job number>.
+// site-visit tech as the credited tech. ?jobId=<sf_jobs.id, i.e. the SF internal
+// job id — not the display number>.
 export async function GET(req: NextRequest) {
   if (!await requireAdmin()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const number = new URL(req.url).searchParams.get('number')?.trim()
-  if (!number) return NextResponse.json({ error: 'number required' }, { status: 400 })
+  const jobId = new URL(req.url).searchParams.get('jobId')?.trim()
+  if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 })
 
   let sfTechs: Array<{ sfTechId: string; name: string; lastVisitDate: string | null; isJobLevel: boolean }>
   try {
-    sfTechs = await new ServiceFusionProvider().getJobVisitTechs(number)
+    sfTechs = await new ServiceFusionProvider().getJobVisitTechs(jobId)
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Failed to load job visits from Service Fusion' },

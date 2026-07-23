@@ -252,10 +252,10 @@ function ManualMatchModal({
     setChosenTechUserId(null)
     setVisitTechs([])
     setVisitTechsError(null)
-    if (!job.number) return // can't query SF without a job number; assign as-is
+    if (!job.id) return // can't query SF without the job id; assign as-is
     setVisitTechsLoading(true)
     try {
-      const res = await fetch(`/api/admin/reviews/job-techs?number=${encodeURIComponent(job.number)}`)
+      const res = await fetch(`/api/admin/reviews/job-techs?jobId=${encodeURIComponent(job.id)}`)
       const json = await res.json()
       if (!res.ok) { setVisitTechsError(json.error || 'Could not load visit techs'); return }
       const techs: JobTech[] = json.techs ?? []
