@@ -236,14 +236,29 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
       let page = 1
 
       while (true) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const json = (await sfGetRetry('/jobs', {
+      const baseParams = {
         'filters[start_date][gte]': chunkFrom,
         'filters[start_date][lte]': chunkTo,
-        expand: 'visits,visits.techs_assigned,techs_assigned,items',
         'per-page': '50',
         page: String(page),
-      })) as any
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let json: any
+      try {
+        json = await sfGetRetry('/jobs', { ...baseParams, expand: 'visits,visits.techs_assigned,techs_assigned,items' })
+      } catch (e) {
+        // Last resort: drop the heavy `items` expand. SF sometimes 500s on a
+        // specific job's line items; without items we still get the job plus
+        // its visits/techs (all that piecework attribution needs — items are
+        // only supplementary display, stored separately). If even this fails,
+        // it's an SF-side outage, not our query — surface the failing range.
+        try {
+          json = await sfGetRetry('/jobs', { ...baseParams, expand: 'visits,visits.techs_assigned,techs_assigned' }, 3)
+        } catch {
+          const msg = e instanceof Error ? e.message : String(e)
+          throw new Error(`Service Fusion failed loading jobs ${chunkFrom}..${chunkTo} (page ${page}). ${msg}`)
+        }
+      }
 
       const items: unknown[] = (json?.items ?? []).filter((j: { id?: unknown }) => {
         const id = String(j?.id ?? '')
