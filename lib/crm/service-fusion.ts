@@ -389,6 +389,75 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
     return results
   }
 
+  // Live-fetch the techs who worked a single job, visit by visit. The mirror
+  // (sf_job_techs) only stores JOB-LEVEL techs, so a review matched to a job
+  // with a later site visit by a different tech can't surface that tech from
+  // stored data. This pulls the job's visits straight from SF so the reviews UI
+  // can offer the real site-visit tech (with the visit date) as the credited
+  // tech. Most-recent visit first. One light single-job query — safe to call
+  // interactively.
+  async getJobVisitTechs(jobNumber: string): Promise<Array<{
+    sfTechId: string
+    name: string
+    lastVisitDate: string | null
+    isJobLevel: boolean
+  }>> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json = (await sfGetRetry('/jobs', {
+      'filters[number][eq]': jobNumber,
+      'per-page': '5',
+      expand: 'visits,visits.techs_assigned,techs_assigned',
+    })) as any
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const jobs: any[] = json?.items ?? []
+    // Match the exact number (SF's eq filter is reliable, but guard anyway).
+    const job = jobs.find((j: any) => String(j.number) === String(jobNumber)) ?? jobs[0]
+    if (!job) return []
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const techName = (t: any) =>
+      `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim() || `Tech ${t.id}`
+
+    // sfTechId -> { name, lastVisitDate, isJobLevel }
+    const byTech = new Map<string, { name: string; lastVisitDate: string | null; isJobLevel: boolean }>()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const visits: any[] = Array.isArray(job.visits) ? job.visits : []
+    for (const visit of visits) {
+      const vDate = typeof visit.start_date === 'string' ? visit.start_date.slice(0, 10) : null
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vTechs: any[] = visit.techs_assigned ?? []
+      for (const t of vTechs) {
+        const id = String(t.id)
+        const prev = byTech.get(id)
+        // Keep the most recent visit date for each tech.
+        if (!prev || (vDate && (!prev.lastVisitDate || vDate > prev.lastVisitDate))) {
+          byTech.set(id, { name: techName(t), lastVisitDate: vDate ?? prev?.lastVisitDate ?? null, isJobLevel: false })
+        }
+      }
+    }
+
+    // Job-level techs: include as fallback entries, but don't overwrite a tech
+    // already credited by an actual visit.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const jobTechs: any[] = job.techs_assigned ?? []
+    for (const t of jobTechs) {
+      const id = String(t.id)
+      if (!byTech.has(id)) byTech.set(id, { name: techName(t), lastVisitDate: null, isJobLevel: true })
+    }
+
+    return [...byTech.entries()]
+      .map(([sfTechId, v]) => ({ sfTechId, ...v }))
+      .sort((a, b) => {
+        // Visit techs (with dates) first, most recent first; job-level last.
+        if (a.lastVisitDate && b.lastVisitDate) return b.lastVisitDate.localeCompare(a.lastVisitDate)
+        if (a.lastVisitDate) return -1
+        if (b.lastVisitDate) return 1
+        return a.name.localeCompare(b.name)
+      })
+  }
+
   async listJobStatuses(): Promise<SfRawStatus[]> {
     const json = (await sfGet('/job-statuses', { 'per-page': '200' })) as any
     return (json?.items ?? []).map((s: any) => ({
