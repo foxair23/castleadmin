@@ -31,8 +31,18 @@ async function requireAdmin() {
 export async function GET(req: NextRequest) {
   if (!await requireAdmin()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const jobId = new URL(req.url).searchParams.get('jobId')?.trim()
-  if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 })
+  const params = new URL(req.url).searchParams
+  let jobId = params.get('jobId')?.trim() || ''
+  // Backward-compatible: an older client bundle may still send ?number= (the
+  // display number). Resolve it to the SF job id so a stale cached client
+  // doesn't break the picker.
+  const number = params.get('number')?.trim()
+  if (!jobId && number) {
+    const { data: job } = await admin()
+      .from('sf_jobs').select('id').eq('number', number).eq('is_deleted', false).limit(1).maybeSingle()
+    jobId = (job?.id as string | undefined) ?? ''
+  }
+  if (!jobId) return NextResponse.json({ error: 'jobId or number required' }, { status: 400 })
 
   let sfTechs: Array<{ sfTechId: string; name: string; lastVisitDate: string | null; isJobLevel: boolean }>
   try {
