@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   let query = db
     .from('google_reviews')
     .select(
-      'id, google_review_id, reviewer_name, star_rating, comment, created_at_google, reply_text, match_status, match_score, match_confidence, matched_customer_id, matched_job_id, deleted_at',
+      'id, google_review_id, reviewer_name, star_rating, comment, created_at_google, reply_text, match_status, match_score, match_confidence, matched_customer_id, matched_job_id, matched_tech_user_id, deleted_at',
       { count: 'exact' }
     )
     .is('deleted_at', null)
@@ -49,7 +49,23 @@ export async function GET(req: NextRequest) {
   const { data, error, count } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const rows = (data ?? []) as Array<Record<string, unknown> & { matched_customer_id: string | null; matched_job_id: string | null }>
+  const rows = (data ?? []) as Array<Record<string, unknown> & { matched_customer_id: string | null; matched_job_id: string | null; matched_tech_user_id: string | null }>
+
+  // Resolve admin tech overrides to display names. When a review has a pinned
+  // tech, it wins over the job-derived tech below.
+  const overrideIds = [...new Set(
+    rows.map(r => r.matched_tech_user_id).filter((id): id is string => id != null)
+  )]
+  const overrideTechMap: Record<string, string> = {}
+  if (overrideIds.length > 0) {
+    const { data: techs } = await db
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', overrideIds)
+    for (const t of (techs ?? []) as Array<{ id: string; full_name: string | null }>) {
+      if (t.full_name) overrideTechMap[t.id] = t.full_name
+    }
+  }
 
   const customerIds = [...new Set(
     rows.map(r => r.matched_customer_id).filter((id): id is string => id != null)
@@ -103,7 +119,11 @@ export async function GET(req: NextRequest) {
       (r.matched_customer_id ? customerNameMap[r.matched_customer_id] : null) ??
       (r.matched_job_id ? jobCustomerNameMap[r.matched_job_id] : null) ??
       null,
-    matched_tech_name:     r.matched_job_id ? (jobTechMap[r.matched_job_id] ?? null) : null,
+    matched_tech_name:
+      (r.matched_tech_user_id ? overrideTechMap[r.matched_tech_user_id] : null) ??
+      (r.matched_job_id ? jobTechMap[r.matched_job_id] : null) ??
+      null,
+    matched_tech_overridden: r.matched_tech_user_id != null,
   }))
 
   return NextResponse.json({ reviews, total: count ?? 0, page, pageSize })
