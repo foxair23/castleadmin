@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
 
   let added = 0
   let updated = 0
+  let removed = 0
   let errorMessage: string | null = null
 
   try {
@@ -119,6 +120,27 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+
+    // Prune SF-sourced rows this week that SF no longer attributes to this tech
+    // — e.g. a site visit reassigned to another tech, so it drops out of the
+    // fetch above and the old row would otherwise linger. Only zero-pay rows
+    // are removed, so a job the tech actually worked (entered pay on) is never
+    // silently deleted; those need a manual delete if truly misattributed.
+    const keptKeys = new Set(sfJobs.map(j => `${j.id}|${j.scheduledDate}`))
+    const { data: existingSfRows } = await service
+      .from('jobs')
+      .select('id, sf_job_id, work_date, total_pay')
+      .eq('tech_id', user.id)
+      .eq('week_start_date', week_start)
+      .eq('source', 'service_fusion')
+    const staleIds = (existingSfRows ?? [])
+      .filter((r: { sf_job_id: string | null; work_date: string; total_pay: number | null }) =>
+        !keptKeys.has(`${r.sf_job_id}|${r.work_date}`) && (r.total_pay ?? 0) === 0)
+      .map((r: { id: string }) => r.id)
+    if (staleIds.length > 0) {
+      await service.from('jobs').delete().in('id', staleIds)
+      removed = staleIds.length
+    }
   } catch (err: unknown) {
     errorMessage = err instanceof Error ? err.message : 'Sync failed'
   }
@@ -135,5 +157,5 @@ export async function POST(req: NextRequest) {
   if (errorMessage) {
     return NextResponse.json({ error: errorMessage }, { status: 502 })
   }
-  return NextResponse.json({ added, updated })
+  return NextResponse.json({ added, updated, removed })
 }
