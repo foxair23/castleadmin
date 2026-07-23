@@ -47,6 +47,14 @@ interface Tech {
   full_name: string
 }
 
+interface JobTech {
+  sfTechId: string
+  name: string
+  lastVisitDate: string | null
+  isJobLevel: boolean
+  userId: string | null
+}
+
 interface KPI {
   total: number
   avgRating: number | null
@@ -230,15 +238,55 @@ function ManualMatchModal({
     }, 250)
   }, [query, customer, mode])
 
-  // Assign directly to a job (job-number search path) — the customer is
-  // resolved server-side from the chosen job.
-  async function assignJobDirect(job: CustomerJob) {
-    setSaving(job.id)
+  // After a job is picked (either flow), move to the credit-tech step: pull the
+  // job's real visit techs live from SF (the mirror only has job-level techs) so
+  // the actual site-visit tech can be credited, not just whoever's on the job.
+  const [selectedJob, setSelectedJob]     = useState<CustomerJob | null>(null)
+  const [visitTechs, setVisitTechs]       = useState<JobTech[]>([])
+  const [visitTechsLoading, setVisitTechsLoading] = useState(false)
+  const [visitTechsError, setVisitTechsError] = useState<string | null>(null)
+  const [chosenTechUserId, setChosenTechUserId] = useState<string | null>(null)
+
+  async function chooseJob(job: CustomerJob) {
+    setSelectedJob(job)
+    setChosenTechUserId(null)
+    setVisitTechs([])
+    setVisitTechsError(null)
+    if (!job.number) return // can't query SF without a job number; assign as-is
+    setVisitTechsLoading(true)
+    try {
+      const res = await fetch(`/api/admin/reviews/job-techs?number=${encodeURIComponent(job.number)}`)
+      const json = await res.json()
+      if (!res.ok) { setVisitTechsError(json.error || 'Could not load visit techs'); return }
+      const techs: JobTech[] = json.techs ?? []
+      setVisitTechs(techs)
+      // Preselect the most recent visit tech that maps to an app account.
+      const preselect = techs.find(t => t.userId && !t.isJobLevel) ?? techs.find(t => t.userId)
+      setChosenTechUserId(preselect?.userId ?? null)
+    } catch {
+      setVisitTechsError('Could not load visit techs')
+    } finally {
+      setVisitTechsLoading(false)
+    }
+  }
+
+  // Finalize: assign the job (customer resolved server-side) and, if a visit
+  // tech was chosen, pin them as the credited tech in the same step.
+  async function finalizeAssign() {
+    if (!selectedJob) return
+    setSaving(selectedJob.id)
     await fetch(`/api/admin/reviews/${review.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'manual', jobId: job.id }),
+      body: JSON.stringify({ action: 'manual', jobId: selectedJob.id }),
     })
+    if (chosenTechUserId) {
+      await fetch(`/api/admin/reviews/${review.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_tech', techUserId: chosenTechUserId }),
+      })
+    }
     setSaving(null)
     onMatched()
   }
@@ -253,17 +301,6 @@ function ManualMatchModal({
     } finally {
       setJobsLoading(false)
     }
-  }
-
-  async function assignJob(job: CustomerJob) {
-    setSaving(job.id)
-    await fetch(`/api/admin/reviews/${review.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'manual', customerId: customer!.id, jobId: job.id }),
-    })
-    setSaving(null)
-    onMatched()
   }
 
   // Fallback: match the customer with no specific job (no tech credited).
@@ -293,7 +330,79 @@ function ManualMatchModal({
           )}
         </div>
 
-        {!customer ? (
+        {selectedJob ? (
+          <>
+            {/* Step 3 — pick who to credit, from the job's real SF visit techs */}
+            <div className="px-5 py-2 flex items-center justify-between gap-2 bg-gray-50 border-b border-gray-100">
+              <div className="min-w-0">
+                <p className="text-xs text-gray-500">Assigning to</p>
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  Job {selectedJob.number ?? selectedJob.id}
+                  {selectedJob.customer_name ? ` · ${selectedJob.customer_name}` : ''}
+                </p>
+              </div>
+              <button
+                onClick={() => { setSelectedJob(null); setVisitTechs([]); setVisitTechsError(null) }}
+                className="text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+              >
+                ← Back
+              </button>
+            </div>
+
+            <div className="px-5 py-3">
+              <p className="text-xs text-gray-500 mb-2">Who should get credit for this review?</p>
+              {visitTechsLoading && <div className="text-sm text-gray-400">Loading visits from Service Fusion…</div>}
+              {visitTechsError && (
+                <div className="text-sm text-amber-600 mb-2">{visitTechsError} — you can still assign the job and set the tech afterward.</div>
+              )}
+              {!visitTechsLoading && !visitTechsError && visitTechs.length === 0 && (
+                <div className="text-sm text-gray-400">No visit techs found for this job.</div>
+              )}
+              <div className="space-y-1 max-h-56 overflow-y-auto">
+                {visitTechs.map(t => {
+                  const disabled = !t.userId
+                  const selected = chosenTechUserId != null && chosenTechUserId === t.userId
+                  return (
+                    <button
+                      key={t.sfTechId}
+                      onClick={() => t.userId && setChosenTechUserId(t.userId)}
+                      disabled={disabled}
+                      className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${selected ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'} ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-gray-800">{t.name}</span>
+                        <span className="text-xs text-gray-400">
+                          {t.isJobLevel
+                            ? 'Job tech'
+                            : t.lastVisitDate
+                            ? `Visit ${new Date(t.lastVisitDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                            : 'Visit'}
+                        </span>
+                      </div>
+                      {disabled && <span className="text-xs text-amber-600">Not linked to an app account</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => setChosenTechUserId(null)}
+                className="text-xs text-gray-500 hover:text-gray-700"
+              >
+                Credit no tech
+              </button>
+              <button
+                onClick={finalizeAssign}
+                disabled={saving !== null}
+                className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving !== null ? 'Assigning…' : 'Assign review'}
+              </button>
+            </div>
+          </>
+        ) : !customer ? (
           <>
             {/* Step 1 — find the customer, or search a job directly by number */}
             <div className="px-5 pt-3 flex gap-1.5">
@@ -354,7 +463,7 @@ function ManualMatchModal({
                   {jobResults.map(j => (
                     <button
                       key={j.id}
-                      onClick={() => assignJobDirect(j)}
+                      onClick={() => chooseJob(j)}
                       disabled={saving !== null}
                       className="w-full text-left px-5 py-3 hover:bg-blue-50 disabled:opacity-50 transition-colors"
                     >
@@ -401,7 +510,7 @@ function ManualMatchModal({
               {jobs.map(j => (
                 <button
                   key={j.id}
-                  onClick={() => assignJob(j)}
+                  onClick={() => chooseJob(j)}
                   disabled={saving !== null}
                   className="w-full text-left px-5 py-3 hover:bg-blue-50 disabled:opacity-50 transition-colors"
                 >
