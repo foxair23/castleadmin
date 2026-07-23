@@ -22,6 +22,8 @@ interface Review {
   matched_job_id: string | null
   matched_customer_name: string | null
   matched_tech_name: string | null
+  matched_tech_user_id: string | null
+  matched_tech_overridden: boolean
 }
 
 interface Customer {
@@ -37,6 +39,12 @@ interface CustomerJob {
   date: string | null
   total: number | null
   tech_name: string | null
+  customer_name?: string | null
+}
+
+interface Tech {
+  id: string
+  full_name: string
 }
 
 interface KPI {
@@ -57,6 +65,7 @@ interface LastRun {
 interface Props {
   kpi: KPI
   lastRun: LastRun | null
+  techs: Tech[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -177,8 +186,13 @@ function ManualMatchModal({
   onClose: () => void
   onMatched: () => void
 }) {
+  // Search by customer name (then pick a job) or directly by SF job number —
+  // the latter finds jobs the customer pick list misses when SF filed the job
+  // under a different customer record.
+  const [mode, setMode]           = useState<'customer' | 'job'>('customer')
   const [query, setQuery]         = useState('')
   const [results, setResults]     = useState<Customer[]>([])
+  const [jobResults, setJobResults] = useState<CustomerJob[]>([])
   const [searching, setSearching] = useState(false)
   const [saving, setSaving]       = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -195,18 +209,39 @@ function ManualMatchModal({
   useEffect(() => {
     if (customer) return // pause search once we've moved to job selection
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (query.trim().length < 2) { setResults([]); return }
+    const term = query.trim()
+    const minLen = mode === 'job' ? 3 : 2
+    if (term.length < minLen) { setResults([]); setJobResults([]); return }
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
       try {
-        const res = await fetch(`/api/admin/customers/search?q=${encodeURIComponent(query.trim())}`)
-        const json = await res.json()
-        setResults(json.customers ?? [])
+        if (mode === 'job') {
+          const res = await fetch(`/api/admin/reviews/jobs-search?q=${encodeURIComponent(term)}`)
+          const json = await res.json()
+          setJobResults(json.jobs ?? [])
+        } else {
+          const res = await fetch(`/api/admin/customers/search?q=${encodeURIComponent(term)}`)
+          const json = await res.json()
+          setResults(json.customers ?? [])
+        }
       } finally {
         setSearching(false)
       }
     }, 250)
-  }, [query, customer])
+  }, [query, customer, mode])
+
+  // Assign directly to a job (job-number search path) — the customer is
+  // resolved server-side from the chosen job.
+  async function assignJobDirect(job: CustomerJob) {
+    setSaving(job.id)
+    await fetch(`/api/admin/reviews/${review.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'manual', jobId: job.id }),
+    })
+    setSaving(null)
+    onMatched()
+  }
 
   async function pickCustomer(c: Customer) {
     setCustomer(c)
@@ -260,14 +295,28 @@ function ManualMatchModal({
 
         {!customer ? (
           <>
-            {/* Step 1 — find the customer */}
+            {/* Step 1 — find the customer, or search a job directly by number */}
+            <div className="px-5 pt-3 flex gap-1.5">
+              <button
+                onClick={() => { setMode('customer'); setQuery(''); setJobResults([]) }}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${mode === 'customer' ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+              >
+                By customer
+              </button>
+              <button
+                onClick={() => { setMode('job'); setQuery(''); setResults([]) }}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${mode === 'job' ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+              >
+                By job #
+              </button>
+            </div>
             <div className="px-5 py-3">
               <input
                 ref={inputRef}
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                placeholder="Search customer name…"
+                placeholder={mode === 'job' ? 'Search job number…' : 'Search customer name…'}
                 className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -276,23 +325,54 @@ function ManualMatchModal({
               {searching && (
                 <div className="px-5 py-3 text-sm text-gray-400">Searching…</div>
               )}
-              {!searching && query.trim().length >= 2 && results.length === 0 && (
-                <div className="px-5 py-3 text-sm text-gray-400">No customers found</div>
-              )}
-              {results.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => pickCustomer(c)}
-                  className="w-full text-left px-5 py-3 hover:bg-blue-50 transition-colors"
-                >
-                  <span className="text-sm text-gray-800">{c.customer_name}</span>
-                  {c.last_serviced_date && (
-                    <span className="ml-2 text-xs text-gray-400">
-                      Last service: {new Date(c.last_serviced_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </span>
+              {mode === 'customer' && (
+                <>
+                  {!searching && query.trim().length >= 2 && results.length === 0 && (
+                    <div className="px-5 py-3 text-sm text-gray-400">No customers found</div>
                   )}
-                </button>
-              ))}
+                  {results.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => pickCustomer(c)}
+                      className="w-full text-left px-5 py-3 hover:bg-blue-50 transition-colors"
+                    >
+                      <span className="text-sm text-gray-800">{c.customer_name}</span>
+                      {c.last_serviced_date && (
+                        <span className="ml-2 text-xs text-gray-400">
+                          Last service: {new Date(c.last_serviced_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </>
+              )}
+              {mode === 'job' && (
+                <>
+                  {!searching && query.trim().length >= 3 && jobResults.length === 0 && (
+                    <div className="px-5 py-3 text-sm text-gray-400">No jobs found</div>
+                  )}
+                  {jobResults.map(j => (
+                    <button
+                      key={j.id}
+                      onClick={() => assignJobDirect(j)}
+                      disabled={saving !== null}
+                      className="w-full text-left px-5 py-3 hover:bg-blue-50 disabled:opacity-50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-gray-800">Job {j.number ?? j.id}</span>
+                        <span className="text-xs text-gray-400">
+                          {j.date ? new Date(j.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-gray-500">
+                        {j.customer_name && <span className="text-gray-600">{j.customer_name}</span>}
+                        {j.tech_name ? <span className="ml-2 text-gray-700">Tech: {j.tech_name}</span> : <span className="ml-2 text-amber-600">No tech on this job</span>}
+                        {j.status && <span className="ml-2 text-gray-400">{j.status}</span>}
+                      </div>
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
           </>
         ) : (
@@ -370,14 +450,18 @@ function ManualMatchModal({
 
 function ReviewDetailModal({
   review,
+  techs,
   onClose,
   onAction,
   onSearch,
+  onSetTech,
 }: {
   review: Review
+  techs: Tech[]
   onClose: () => void
   onAction: (id: string, action: 'confirm' | 'skip' | 'unmatch') => void
   onSearch: (review: Review) => void
+  onSetTech: (id: string, techUserId: string | null) => void
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
@@ -436,6 +520,31 @@ function ReviewDetailModal({
             </div>
           )}
 
+          {(review.match_status === 'confirmed' || review.match_status === 'auto') && (
+            <div className="mb-1 border-t border-gray-100 pt-3">
+              <label className="block text-xs text-gray-500 mb-1">Credited tech</label>
+              <select
+                value={review.matched_tech_user_id ?? ''}
+                onChange={e => onSetTech(review.id, e.target.value || null)}
+                className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 text-gray-900 bg-white"
+              >
+                <option value="">
+                  {review.matched_tech_overridden
+                    ? 'Use tech from matched job'
+                    : `From job${review.matched_tech_name ? `: ${review.matched_tech_name}` : ' (none)'}`}
+                </option>
+                {techs.map(t => (
+                  <option key={t.id} value={t.id}>{t.full_name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                {review.matched_tech_overridden
+                  ? 'Manually set — overrides the job’s tech on the review and leaderboard.'
+                  : 'Set this when a later site visit was done by a different tech than the job’s.'}
+              </p>
+            </div>
+          )}
+
           {review.match_status === 'pending_review' && (
             <div>
               {review.matched_customer_name && (
@@ -483,7 +592,7 @@ function fmtDate(iso: string) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ReviewsClient({ kpi, lastRun }: Props) {
+export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
   const [reviews, setReviews]   = useState<Review[]>([])
   const [total, setTotal]       = useState(0)
   const [page, setPage]         = useState(1)
@@ -566,6 +675,21 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
     load(page)
   }
 
+  // Pin (or clear) the credited tech on a review. Keeps the open detail modal in
+  // sync so the picker reflects the new selection immediately.
+  async function handleSetTech(reviewId: string, techUserId: string | null) {
+    await fetch(`/api/admin/reviews/${reviewId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set_tech', techUserId }),
+    })
+    const techName = techUserId ? (techs.find(t => t.id === techUserId)?.full_name ?? null) : null
+    setDetailReview(r => r && r.id === reviewId
+      ? { ...r, matched_tech_user_id: techUserId, matched_tech_overridden: techUserId != null, matched_tech_name: techName ?? r.matched_tech_name }
+      : r)
+    load(page)
+  }
+
   const pct = (n: number) => kpi.total > 0 ? Math.round(n / kpi.total * 100) : 0
 
   return (
@@ -575,9 +699,11 @@ export default function ReviewsClient({ kpi, lastRun }: Props) {
       {detailReview && (
         <ReviewDetailModal
           review={detailReview}
+          techs={techs}
           onClose={() => setDetailReview(null)}
           onAction={(id, action) => { handleAction(id, action); setDetailReview(null) }}
           onSearch={(r) => { setDetailReview(null); setSearchTarget(r) }}
+          onSetTech={handleSetTech}
         />
       )}
 

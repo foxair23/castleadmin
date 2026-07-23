@@ -28,44 +28,69 @@ export async function GET(req: NextRequest) {
 
   const { data: reviews } = await db
     .from('google_reviews')
-    .select('matched_job_id, star_rating')
+    .select('matched_job_id, matched_tech_user_id, star_rating')
     .in('match_status', ['auto', 'confirmed'])
     .is('deleted_at', null)
     .not('matched_job_id', 'is', null)
     .gte('created_at_google', `${start}T00:00:00`)
     .lte('created_at_google', `${end}T23:59:59.999`)
 
-  const list = reviews ?? []
-  const jobIds = [...new Set(list.map((r: { matched_job_id: string }) => r.matched_job_id))]
+  const list = (reviews ?? []) as Array<{ matched_job_id: string; matched_tech_user_id: string | null; star_rating: number }>
 
   type Row = { techName: string; total: number; avg: number; s5: number; s4: number; s3: number; s2: number; s1: number }
   const byTech: Record<string, Row & { _sum: number }> = {}
+  function credit(name: string, stars: number) {
+    if (!name) return
+    if (!byTech[name]) byTech[name] = { techName: name, total: 0, avg: 0, s5: 0, s4: 0, s3: 0, s2: 0, s1: 0, _sum: 0 }
+    const t = byTech[name]
+    t.total++
+    t._sum += stars
+    if (stars === 5) t.s5++
+    else if (stars === 4) t.s4++
+    else if (stars === 3) t.s3++
+    else if (stars === 2) t.s2++
+    else if (stars === 1) t.s1++
+  }
 
+  // Reviews with an admin tech override are credited solely to that tech. The
+  // rest fall back to the matched job's assigned techs (sf_job_techs).
+  const overridden = list.filter(r => r.matched_tech_user_id)
+  const jobDerived = list.filter(r => !r.matched_tech_user_id)
+
+  const overrideIds = [...new Set(overridden.map(r => r.matched_tech_user_id as string))]
+  if (overrideIds.length > 0) {
+    const { data: techs } = await db
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', overrideIds)
+    const nameById: Record<string, string> = {}
+    for (const t of (techs ?? []) as Array<{ id: string; full_name: string | null }>) {
+      if (t.full_name) nameById[t.id] = t.full_name
+    }
+    for (const r of overridden) {
+      const name = nameById[r.matched_tech_user_id as string]
+      if (name) credit(name, r.star_rating)
+    }
+  }
+
+  const jobIds = [...new Set(jobDerived.map(r => r.matched_job_id))]
   if (jobIds.length > 0) {
     const { data: jobTechs } = await db
       .from('sf_job_techs')
       .select('job_id, tech_first_name, tech_last_name')
       .in('job_id', jobIds)
 
-    const starByJob: Record<string, number> = {}
-    for (const r of list as Array<{ matched_job_id: string; star_rating: number }>) {
-      starByJob[r.matched_job_id] = r.star_rating
-    }
-
+    const techsByJob: Record<string, string[]> = {}
     for (const jt of (jobTechs ?? []) as Array<{ job_id: string; tech_first_name: string | null; tech_last_name: string | null }>) {
       const name = [jt.tech_first_name, jt.tech_last_name].filter(Boolean).join(' ')
       if (!name) continue
-      const stars = starByJob[jt.job_id]
-      if (stars == null) continue
-      if (!byTech[name]) byTech[name] = { techName: name, total: 0, avg: 0, s5: 0, s4: 0, s3: 0, s2: 0, s1: 0, _sum: 0 }
-      const t = byTech[name]
-      t.total++
-      t._sum += stars
-      if (stars === 5) t.s5++
-      else if (stars === 4) t.s4++
-      else if (stars === 3) t.s3++
-      else if (stars === 2) t.s2++
-      else if (stars === 1) t.s1++
+      ;(techsByJob[jt.job_id] ??= []).push(name)
+    }
+
+    for (const r of jobDerived) {
+      for (const name of new Set(techsByJob[r.matched_job_id] ?? [])) {
+        credit(name, r.star_rating)
+      }
     }
   }
 

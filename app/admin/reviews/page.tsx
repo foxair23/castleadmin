@@ -29,10 +29,20 @@ export default async function ReviewsPage() {
     .limit(1)
     .maybeSingle()
 
+  // Active techs, for the per-review credited-tech override picker.
+  const { data: techRows } = await db
+    .from('profiles')
+    .select('id, full_name')
+    .eq('role', 'technician')
+    .eq('is_active', true)
+    .order('full_name')
+  const techs = (techRows ?? []).map(t => ({ id: t.id as string, full_name: (t.full_name as string | null) ?? '' }))
+
   return (
     <ReviewsClient
       kpi={{ total, avgRating, fiveStars, oneStar }}
       lastRun={lastRun as { status: string; ended_at: string | null; reviews_new: number | null; reviews_seen: number | null; errors_json: string[] | null } | null}
+      techs={techs}
     />
   )
 }
