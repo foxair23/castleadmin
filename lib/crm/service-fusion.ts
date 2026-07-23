@@ -337,14 +337,17 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         weekVisits.forEach((visit: any, idx: number) => {
-          // A tech qualifies for a visit if they appear at the visit level OR
-          // the job level. This ensures the job-level tech still gets credit
-          // even when a different tech is explicitly assigned to a site visit.
+          // Visit-level assignment is authoritative: if a visit has its own
+          // techs (a site visit assigned to a specific person), ONLY they are
+          // credited for it — the job-level tech must NOT also get credit.
+          // Fall back to the job-level techs only when the visit has none of
+          // its own. (Bug fixed: a job assigned to David with a site visit
+          // assigned to Kyle was crediting David for Kyle's visit.)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const visitTechs: any[] = visit.techs_assigned?.length > 0 ? visit.techs_assigned : []
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const jobTechs: any[] = job.techs_assigned ?? []
-          const eligibleTechs = visitTechs.length > 0 ? [...visitTechs, ...jobTechs] : jobTechs
+          const eligibleTechs = visitTechs.length > 0 ? visitTechs : jobTechs
           if (!eligibleTechs.some((t: any) => String(t.id) === sfTechId)) return
           results.push({
             id: String(job.id),
