@@ -145,6 +145,25 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
   }
 }
 
+// SF's /jobs endpoint with heavy expands intermittently 500s (its "Hmmm... error
+// on the server" page) or 429s under load, and our fetch can time out. These are
+// transient — retry a few times with backoff before surfacing the error.
+async function sfGetRetry(path: string, params: Record<string, string>, attempts = 4): Promise<unknown> {
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await sfGet(path, params)
+    } catch (e) {
+      lastErr = e
+      const msg = e instanceof Error ? e.message : String(e)
+      const transient = /\(5\d\d\)|busy|abort|network|fetch failed|timeout/i.test(msg)
+      if (!transient || i === attempts - 1) throw e
+      await new Promise(r => setTimeout(r, 600 * 2 ** i)) // 0.6s, 1.2s, 2.4s
+    }
+  }
+  throw lastErr
+}
+
 export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider {
   async testConnection(): Promise<void> {
     await sfGet('/techs', { perPage: '1' })
@@ -194,23 +213,39 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
     // scanned, never which visits are credited. 150 days covers realistic
     // site-visit gaps; this sync is a manual, low-frequency action, so the extra
     // pages scanned are an acceptable trade-off.
-    const fetchFrom = fmt(new Date(weekStart.getTime() - 150 * 86400_000))
-    const fetchTo   = fmt(new Date(weekEnd.getTime()   + 14 * 86400_000))
+    // Scan a 150-day-back .. 14-day-forward window, but in 30-day CHUNKS. One
+    // wide /jobs query with the visits/items expand overloads SF's backend and
+    // 500s; smaller windows keep each response light. A job on a chunk boundary
+    // could appear in two chunks, so dedupe by id.
+    const DAY = 86400_000
+    const CHUNK = 30 * DAY
+    const overallFrom = weekStart.getTime() - 150 * DAY
+    const overallTo   = weekEnd.getTime()   + 14 * DAY
 
     const results: CrmJob[] = []
-    let page = 1
+    const seen = new Set<string>()
 
-    while (true) {
+    for (let chunkStart = overallFrom; chunkStart <= overallTo; chunkStart += CHUNK) {
+      const chunkFrom = fmt(new Date(chunkStart))
+      const chunkTo   = fmt(new Date(Math.min(chunkStart + CHUNK - DAY, overallTo)))
+      let page = 1
+
+      while (true) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const json = (await sfGet('/jobs', {
-        'filters[start_date][gte]': fetchFrom,
-        'filters[start_date][lte]': fetchTo,
+      const json = (await sfGetRetry('/jobs', {
+        'filters[start_date][gte]': chunkFrom,
+        'filters[start_date][lte]': chunkTo,
         expand: 'visits,visits.techs_assigned,techs_assigned,items',
         'per-page': '50',
         page: String(page),
       })) as any
 
-      const items: unknown[] = json?.items ?? []
+      const items: unknown[] = (json?.items ?? []).filter((j: { id?: unknown }) => {
+        const id = String(j?.id ?? '')
+        if (!id || seen.has(id)) return false
+        seen.add(id)
+        return true
+      })
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const job of items as any[]) {
@@ -325,6 +360,7 @@ export class ServiceFusionProvider implements CrmProvider, AnalyticsCrmProvider 
       const meta = json?._meta
       if (!meta || page >= (meta.pageCount ?? 1)) break
       page++
+      }
     }
 
     return results
