@@ -274,13 +274,13 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
   const subline = `${rec.action_label} · ${fmtDate(rec.actioned_at)}${rec.actioned_by_name ? ` · ${rec.actioned_by_name}` : ''}`
   return (
     <td className="px-4 py-2 align-top">
-      <div className="flex flex-col gap-0.5 max-w-[170px]">
+      <div className="flex flex-col gap-0.5 w-[180px]">
         {due ? (
           <button
             onClick={press}
             disabled={busy}
             title={`Records another "${cfg.button}" and restarts the ${cfg.days}-day clock`}
-            className="self-start text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
+            className="self-start text-left text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded disabled:opacity-50 leading-tight"
           >
             {busy ? 'Saving…' : `🔔 Due — ${cfg.button} again`}
           </button>
