@@ -280,9 +280,9 @@ function ActionCell({ tab, entityId, record, itemDate }: { tab: string; entityId
             onClick={press}
             disabled={busy}
             title={`Records another "${cfg.button}" and restarts the ${cfg.days}-day clock`}
-            className="self-start text-left text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded disabled:opacity-50 leading-tight"
+            className="self-start text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded disabled:opacity-50 whitespace-nowrap"
           >
-            {busy ? 'Saving…' : `🔔 Due — ${cfg.button} again`}
+            {busy ? 'Saving…' : '🔔 Action Due Again'}
           </button>
         ) : (
           <span className="self-start inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap">
