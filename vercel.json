@@ -20,6 +20,7 @@
     { "path": "/api/cron/scheduler-partial-leads", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/weekly-ar-aging", "schedule": "0 14,15 * * 1" },
     { "path": "/api/cron/daily-action-items", "schedule": "0 14,15 * * 1-6" },
+    { "path": "/api/cron/commission-baseline", "schedule": "0 14,15 * * *" },
     { "path": "/api/cron/action-items-checkin", "schedule": "0 22,23 * * 1-6" }
   ]
 }

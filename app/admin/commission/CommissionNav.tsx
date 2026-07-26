@@ -12,6 +12,7 @@ const TABS: { href: string; label: string; match: (p: string) => boolean }[] = [
   { href: '/admin/commission/review', label: 'Review', match: p => p.startsWith('/admin/commission/review') },
   { href: '/admin/commission/acceptances', label: 'Acceptances', match: p => p.startsWith('/admin/commission/acceptances') },
   { href: '/admin/commission/leaderboard', label: 'Leaderboard', match: p => p.startsWith('/admin/commission/leaderboard') },
+  { href: '/admin/commission/upsell', label: 'Upsell', match: p => p.startsWith('/admin/commission/upsell') },
   { href: '/admin/commission/agents', label: 'Agent Mapping', match: p => p.startsWith('/admin/commission/agents') },
 ]
 
