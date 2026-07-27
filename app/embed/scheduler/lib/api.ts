@@ -11,8 +11,9 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   incentive_banner_enabled: true,
   incentive_banner_text: '$50 off your first service',
   tcpa_copy:
-    'By checking this box, you consent to receive text messages about your appointment from Castle Garage Doors & Gates. Message and data rates may apply. Reply STOP to opt out.',
+    "We'll send appointment reminders, updates, and the occasional offer from Castle Garage Inc. Reply STOP to opt out or HELP for help anytime. Message frequency varies; msg & data rates may apply.",
   marketing_sms_copy: "I'd like to receive promotions and tips by SMS.",
+  legal_url: 'https://castlegaragedoors.com/legal',
   scheduling_enabled: true,
   scheduling_disabled_message:
     'Online scheduling is temporarily unavailable. Please call us to book.',

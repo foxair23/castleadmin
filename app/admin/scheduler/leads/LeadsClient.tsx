@@ -15,6 +15,7 @@ interface Lead {
   customer_first_name: string
   customer_last_name: string | null
   customer_phone: string
+  customer_sms_appointment_consent: boolean
   address_city: string | null
   address_state: string | null
   address_in_service_area: boolean | null
@@ -233,6 +234,9 @@ export default function LeadsClient({ initialLeads }: { initialLeads: Lead[] }) 
                             </Link>
                             {lead.is_partial && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">Partial</span>
+                            )}
+                            {lead.customer_sms_appointment_consent && (
+                              <span title="Opted in to SMS" className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">SMS ✓</span>
                             )}
                           </div>
                           <span className="text-gray-400 text-xs">

@@ -438,6 +438,7 @@ export default function FlowShell({ config, widgetKey }: Props) {
       return (
         <StepLeadCapture
           state={state}
+          config={config}
           widgetKey={widgetKey}
           sessionId={sessionIdRef.current}
           onNext={handleNext}

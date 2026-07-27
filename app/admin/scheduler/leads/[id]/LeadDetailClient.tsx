@@ -21,6 +21,7 @@ interface Lead {
   customer_email: string | null
   customer_sms_appointment_consent: boolean
   customer_sms_marketing_consent: boolean
+  customer_sms_consent_at: string | null
   address_line1: string | null
   address_line2: string | null
   address_city: string | null
@@ -324,8 +325,18 @@ export default function LeadDetailClient({ lead, approverName, garageServiceCall
         <Row label="Name" value={[lead.customer_first_name, lead.customer_last_name].filter(Boolean).join(' ')} />
         <Row label="Phone" value={formatPhone(lead.customer_phone)} />
         <Row label="Email" value={lead.customer_email} />
-        {!lead.is_partial && <Row label="SMS (appt)" value={lead.customer_sms_appointment_consent} />}
-        {!lead.is_partial && <Row label="SMS (marketing)" value={lead.customer_sms_marketing_consent} />}
+        {/* One combined opt-in; shown for partial leads too so you know whether
+            an abandoned lead can be texted. */}
+        <Row
+          label="SMS opt-in"
+          value={
+            lead.customer_sms_appointment_consent
+              ? lead.customer_sms_consent_at
+                ? `Yes — ${formatDate(lead.customer_sms_consent_at.slice(0, 10))}`
+                : 'Yes'
+              : 'No'
+          }
+        />
       </Section>
 
       {(lead.address_line1 || lead.address_city || lead.address_zip) && (

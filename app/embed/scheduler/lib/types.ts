@@ -28,6 +28,7 @@ export interface SchedulerConfig {
   incentive_banner_text: string
   tcpa_copy: string
   marketing_sms_copy: string
+  legal_url: string
   scheduling_enabled: boolean
   scheduling_disabled_message: string
   service_call_fee: number
@@ -44,6 +45,7 @@ export interface FlowState {
   // Step 2
   first_name: string
   mobile_phone: string
+  sms_consent: boolean
   partial_lead_id: string | null
 
   // Step 3 — service
@@ -86,6 +88,7 @@ export interface BookingPayload {
   first_name: string
   last_name?: string
   mobile_phone: string
+  sms_consent?: boolean
   // service
   primary_category: PrimaryCategory
   service_type: string
@@ -121,6 +124,7 @@ export interface PartialLeadPayload {
   zip: string
   first_name: string
   mobile_phone: string
+  sms_consent: boolean
   session_id: string
   widget_key: string
 }
