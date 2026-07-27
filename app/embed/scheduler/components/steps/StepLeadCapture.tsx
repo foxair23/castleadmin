@@ -1,22 +1,24 @@
 'use client';
 
 import { useState } from 'react';
-import { FlowState } from '../../lib/types';
+import { FlowState, SchedulerConfig } from '../../lib/types';
 import { validatePhone, formatPhoneDisplay, extractDigits } from '../../lib/validation';
 import { savePartialLead } from '../../lib/api';
 
 interface Props {
   state: FlowState;
+  config: SchedulerConfig;
   widgetKey: string;
   sessionId: string;
   onNext: (partial: Partial<FlowState>) => void;
 }
 
-export default function StepLeadCapture({ state, widgetKey, sessionId, onNext }: Props) {
+export default function StepLeadCapture({ state, config, widgetKey, sessionId, onNext }: Props) {
   const [firstName, setFirstName] = useState(state.first_name);
   const [phone, setPhone] = useState(
     state.mobile_phone ? formatPhoneDisplay(state.mobile_phone) : ''
   );
+  const [smsConsent, setSmsConsent] = useState(state.sms_consent);
   const [errors, setErrors] = useState<{ first_name?: string; mobile_phone?: string }>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -37,6 +39,7 @@ export default function StepLeadCapture({ state, widgetKey, sessionId, onNext }:
       zip: state.zip,
       first_name: firstName.trim(),
       mobile_phone: digits,
+      sms_consent: smsConsent,
       session_id: sessionId,
       widget_key: widgetKey,
     });
@@ -44,6 +47,7 @@ export default function StepLeadCapture({ state, widgetKey, sessionId, onNext }:
     onNext({
       first_name: firstName.trim(),
       mobile_phone: digits,
+      sms_consent: smsConsent,
       partial_lead_id: leadId,
     });
   }
@@ -90,7 +94,7 @@ export default function StepLeadCapture({ state, widgetKey, sessionId, onNext }:
         Let&apos;s get your appointment started
       </h2>
       <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
-        We&apos;ll only contact you about your appointment.
+        We&apos;ll use this to reach you about your appointment.
       </p>
 
       <div style={{ marginBottom: '1rem' }}>
@@ -141,6 +145,53 @@ export default function StepLeadCapture({ state, widgetKey, sessionId, onNext }:
           </p>
         )}
       </div>
+
+      {/* SMS opt-in — unchecked by default (TCPA/10DLC: consent must be an
+          affirmative act; never pre-check). Optional — booking proceeds either
+          way. The bold label is the benefit; the fine print carries the
+          required disclosures (STOP/HELP, frequency, rates) and the editable
+          tcpa_copy; the Privacy Policy link points at the configured legal URL. */}
+      <label
+        htmlFor="sms-consent"
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '0.625rem',
+          marginBottom: '1.5rem',
+          cursor: 'pointer',
+          padding: '0.875rem',
+          border: '1.5px solid var(--color-border)',
+          borderRadius: 'var(--radius-input)',
+          backgroundColor: 'var(--color-white)',
+        }}
+      >
+        <input
+          id="sms-consent"
+          type="checkbox"
+          checked={smsConsent}
+          onChange={(e) => setSmsConsent(e.target.checked)}
+          style={{ width: '1.15rem', height: '1.15rem', marginTop: '0.1rem', flexShrink: 0, accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+        />
+        <span style={{ fontSize: '0.85rem', lineHeight: 1.45, color: 'var(--color-text)' }}>
+          <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, display: 'block', marginBottom: '0.15rem' }}>
+            Yes, keep me posted by text!
+          </span>
+          <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>
+            {config.tcpa_copy}{' '}
+            See our{' '}
+            <a
+              href={config.legal_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}
+            >
+              Privacy Policy
+            </a>
+            .
+          </span>
+        </span>
+      </label>
 
       <button
         type="button"

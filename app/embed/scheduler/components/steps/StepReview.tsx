@@ -130,6 +130,7 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
       first_name: state.first_name,
       last_name: state.customer_last_name || undefined,
       mobile_phone: state.mobile_phone,
+      sms_consent: state.sms_consent,
       primary_category: state.primary_category,
       service_type: state.service_type,
       answers: {

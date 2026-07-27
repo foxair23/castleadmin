@@ -98,6 +98,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
   // Legal copy
   const tcpaCopy = useField(str(s.tcpa_copy))
   const marketingCopy = useField(str(s.marketing_sms_copy))
+  const legalUrl = useField(str(s.legal_url))
 
   // Categories / issues — stored as JSON arrays, edit as newline-separated text
   const gdCategories = useField(arr(s.garage_door_categories).join('\n'))
@@ -571,7 +572,12 @@ export default function SettingsClient({ initialSettings: s }: Props) {
 
       <Section title="Legal Copy">
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">TCPA consent copy</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">SMS opt-in disclosure</label>
+          <p className="text-xs text-gray-500 mb-1">
+            Fine print shown under the &ldquo;Yes, keep me posted by text!&rdquo; checkbox on the phone step.
+            Keep the required elements (STOP/HELP, &ldquo;message frequency varies&rdquo;, &ldquo;msg &amp; data rates
+            may apply&rdquo;). The Privacy Policy link is added automatically from the URL below.
+          </p>
           <textarea
             value={tcpaCopy.value}
             onChange={e => tcpaCopy.setValue(e.target.value)}
@@ -582,6 +588,22 @@ export default function SettingsClient({ initialSettings: s }: Props) {
             onClick={() => save('tcpa_copy', tcpaCopy.value, tcpaCopy.markSaved)}
             disabled={isPending}
             saved={tcpaCopy.saved}
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Privacy Policy / legal URL</label>
+          <p className="text-xs text-gray-500 mb-1">Where the &ldquo;Privacy Policy&rdquo; link in the opt-in points.</p>
+          <input
+            type="url"
+            value={legalUrl.value}
+            onChange={e => legalUrl.setValue(e.target.value)}
+            placeholder="https://castlegaragedoors.com/legal"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 mb-2"
+          />
+          <SaveButton
+            onClick={() => save('legal_url', legalUrl.value, legalUrl.markSaved)}
+            disabled={isPending}
+            saved={legalUrl.saved}
           />
         </div>
         <div>

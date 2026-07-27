@@ -47,6 +47,7 @@ interface BookingPayload {
   first_name: string
   last_name?: string
   mobile_phone: string
+  sms_consent?: boolean
   // Service
   primary_category: 'garage_door' | 'gate'
   service_type: string
@@ -290,6 +291,13 @@ export async function POST(req: NextRequest) {
     customer_last_name:       body.last_name?.trim() || null,
     customer_phone:           body.mobile_phone.trim(),
     customer_email:           body.customer_email?.trim().toLowerCase() || null,
+    // SMS opt-in (single combined box → both flags). Only stamp consent_at when
+    // they opted in, so a completed booking never erases an earlier consent.
+    customer_sms_appointment_consent: body.sms_consent === true,
+    customer_sms_marketing_consent:   body.sms_consent === true,
+    ...(body.sms_consent === true
+      ? { customer_sms_consent_at: new Date().toISOString(), sms_consent_copy_version: '2026-07-a' }
+      : {}),
     // Address
     address_line1:            body.address_line1.trim(),
     address_city:             incomingCity,

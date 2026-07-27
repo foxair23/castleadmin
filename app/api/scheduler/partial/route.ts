@@ -13,9 +13,14 @@ interface PartialPayload {
   zip: string
   first_name: string
   mobile_phone: string
+  sms_consent?: boolean
   session_id: string
   widget_key: string
 }
+
+// Approved SMS opt-in disclosure version — stored on the lead as the exact copy
+// the customer saw, for the TCPA audit trail. Bump when the wording changes.
+const SMS_CONSENT_COPY_VERSION = '2026-07-a'
 
 export async function POST(req: NextRequest) {
   let body: PartialPayload
@@ -25,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { zip, first_name, mobile_phone, session_id, widget_key } = body
+  const { zip, first_name, mobile_phone, sms_consent, session_id, widget_key } = body
 
   if (!first_name?.trim() || !mobile_phone?.trim() || !session_id?.trim() || !widget_key?.trim()) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -44,10 +49,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid widget key' }, { status: 401 })
   }
 
+  // The single combined opt-in covers both appointment and promotional texts,
+  // so it sets both consent flags. consent_at/version give a proof-of-consent
+  // audit trail; only stamped when they actually opted in.
+  const consented = sms_consent === true
   const leadFields = {
     customer_first_name: first_name.trim(),
     customer_phone: mobile_phone.trim(),
     address_zip: zip?.trim() || null,
+    customer_sms_appointment_consent: consented,
+    customer_sms_marketing_consent: consented,
+    customer_sms_consent_at: consented ? new Date().toISOString() : null,
+    sms_consent_copy_version: consented ? SMS_CONSENT_COPY_VERSION : null,
   }
 
   // If a partial lead already exists for this session, update and return it.

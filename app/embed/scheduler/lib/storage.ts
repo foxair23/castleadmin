@@ -12,6 +12,7 @@ export const INITIAL_FLOW_STATE: FlowState = {
   // Step 2
   first_name: '',
   mobile_phone: '',
+  sms_consent: false,
   partial_lead_id: null,
 
   // Step 3 — service
