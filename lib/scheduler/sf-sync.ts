@@ -36,6 +36,7 @@ interface Lead {
   address_is_owner: boolean | null
   notes_internal: string
   lead_source: string
+  sf_job_source: string | null
   incentive_applied: string | null
   quoted_fee: string | null
   sync_attempts: unknown[]
@@ -186,7 +187,9 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       state_prov: l.address_state,
       postal_code: l.address_zip,
       status: sfStatusName || sfStatusId,
-      source: 'Website',
+      // Per-widget configurable Job Source (marketing attribution); falls back
+      // to 'Website' for legacy leads captured before this was configurable.
+      source: l.sf_job_source || 'Website',
       description: descLines.join('\n'),
       start_date: l.appointment_date,
       time_frame_promised_start: l.appointment_window_start,

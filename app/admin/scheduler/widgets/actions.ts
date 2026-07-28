@@ -15,7 +15,7 @@ async function assertAdmin(): Promise<string> {
   return user.id
 }
 
-export async function createWidget(displayName: string, leadSource: string) {
+export async function createWidget(displayName: string, leadSource: string, sfJobSource?: string) {
   const userId = await assertAdmin()
 
   // Use service role to generate api_key via Postgres random bytes
@@ -37,9 +37,28 @@ export async function createWidget(displayName: string, leadSource: string) {
 
   const { error: insertError } = await db
     .from('scheduler_widget_instances')
-    .insert({ id, display_name: displayName, lead_source: leadSource, api_key: apiKey, created_by: userId })
+    .insert({
+      id,
+      display_name: displayName,
+      lead_source: leadSource,
+      sf_job_source: sfJobSource?.trim() || 'Website',
+      api_key: apiKey,
+      created_by: userId,
+    })
 
   if (insertError) throw new Error(insertError.message)
+  revalidatePath('/admin/scheduler/widgets')
+}
+
+// Change the Service Fusion Job Source an existing widget stamps on new jobs.
+export async function updateWidgetSource(id: string, sfJobSource: string) {
+  await assertAdmin()
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('scheduler_widget_instances')
+    .update({ sf_job_source: sfJobSource.trim() || 'Website' })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
   revalidatePath('/admin/scheduler/widgets')
 }
 

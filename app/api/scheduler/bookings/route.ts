@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
 
   const { data: widget, error: widgetErr } = await db
     .from('scheduler_widget_instances')
-    .select('id, lead_source, is_active')
+    .select('id, lead_source, sf_job_source, is_active')
     .eq('api_key', key)
     .single()
 
@@ -281,6 +281,7 @@ export async function POST(req: NextRequest) {
     session_id:               body.session_id ?? null,
     is_partial:               false,
     lead_source:              widget.lead_source ?? 'website',
+    sf_job_source:            widget.sf_job_source ?? 'Website',
     widget_instance_id:       widget.id,
     // Service — map new field names to existing DB columns
     service_type:             body.primary_category,   // DB: 'garage_door'|'gate'
