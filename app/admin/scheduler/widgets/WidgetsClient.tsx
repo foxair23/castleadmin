@@ -145,6 +145,11 @@ export default function WidgetsClient({ initialWidgets, sfSources, appUrl }: Pro
 
   return (
     <div className="max-w-2xl">
+      {/* Shared suggestions for the SF Job Source inputs — pick an existing
+          source or type a brand-new one. */}
+      <datalist id="sf-sources-list">
+        {sfSources.map(s => <option key={s} value={s} />)}
+      </datalist>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Widget Instances</h1>
         <button
@@ -187,16 +192,19 @@ export default function WidgetsClient({ initialWidgets, sfSources, appUrl }: Pro
             </div>
             <div>
               <label className="block text-sm text-gray-600 mb-1">Service Fusion Job Source</label>
-              <select
+              <input
+                type="text"
+                list="sf-sources-list"
                 value={newSfSource}
                 onChange={e => setNewSfSource(e.target.value)}
+                placeholder="e.g. Website, Google Ads"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
-              >
-                {(sfSources.includes(newSfSource) ? sfSources : [newSfSource, ...sfSources]).map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-400 mt-1">The Job Source stamped on jobs this widget creates in Service Fusion.</p>
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                The Job Source stamped on jobs this widget creates in Service Fusion. Pick an existing
+                source or type a new one &mdash; a new value must match a Job Source that exists in
+                Service Fusion, or the booking won&rsquo;t sync.
+              </p>
             </div>
             <div className="flex gap-3">
               <button
@@ -237,16 +245,18 @@ export default function WidgetsClient({ initialWidgets, sfSources, appUrl }: Pro
                 </p>
                 <div className="flex items-center gap-2 mt-2">
                   <label className="text-xs text-gray-500">SF Job Source</label>
-                  <select
-                    value={widget.sf_job_source}
-                    onChange={e => handleSourceChange(widget.id, e.target.value)}
+                  <input
+                    type="text"
+                    list="sf-sources-list"
+                    defaultValue={widget.sf_job_source}
                     disabled={isPending}
-                    className="border border-gray-300 rounded px-2 py-1 text-xs text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
-                  >
-                    {(sfSources.includes(widget.sf_job_source) ? sfSources : [widget.sf_job_source, ...sfSources]).map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
+                    onBlur={e => {
+                      const v = e.target.value.trim()
+                      if (v && v !== widget.sf_job_source) handleSourceChange(widget.id, v)
+                      else e.target.value = widget.sf_job_source
+                    }}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 w-44"
+                  />
                 </div>
               </div>
               <div className="flex gap-2 shrink-0 ml-4">
