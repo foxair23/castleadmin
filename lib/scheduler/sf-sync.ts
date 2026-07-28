@@ -187,9 +187,10 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       state_prov: l.address_state,
       postal_code: l.address_zip,
       status: sfStatusName || sfStatusId,
-      // Per-widget configurable Job Source (marketing attribution); falls back
-      // to 'Website' for legacy leads captured before this was configurable.
-      source: l.sf_job_source || 'Website',
+      // Per-widget configurable Job Source (marketing attribution). Omitted
+      // entirely when the widget has none set — submitting the job always takes
+      // priority over attribution, so we never block a booking on the source.
+      ...(l.sf_job_source ? { source: l.sf_job_source } : {}),
       description: descLines.join('\n'),
       start_date: l.appointment_date,
       time_frame_promised_start: l.appointment_window_start,
@@ -199,7 +200,27 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     console.log('[sf-sync] job payload:', JSON.stringify(jobPayload))
-    const jobResp = (await sfPost('/jobs', jobPayload)) as any
+    // Priority is always to submit the job. If SF rejects a configured source
+    // (e.g. it doesn't exist in SF), retry once without it rather than lose the
+    // booking — attribution is nice-to-have, the job is not.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let jobResp: any
+    try {
+      jobResp = await sfPost('/jobs', jobPayload)
+    } catch (postErr) {
+      // Only retry on a 4xx (validation) error — that's the "source SF doesn't
+      // recognize" case. Don't retry on 5xx/timeout: SF may have created the job
+      // already, and a blind retry would duplicate it.
+      const msg = postErr instanceof Error ? postErr.message : String(postErr)
+      const retry = { ...jobPayload } as Record<string, unknown>
+      if (/\(4\d\d\)/.test(msg) && 'source' in retry) {
+        delete retry.source
+        console.warn('[sf-sync] job POST rejected (4xx) with source; retrying without source:', msg)
+        jobResp = await sfPost('/jobs', retry)
+      } else {
+        throw postErr
+      }
+    }
     console.log('[sf-sync] job response:', JSON.stringify(jobResp))
     sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? jobResp?.data?.id ?? '')
     if (!sfJobId || sfJobId === 'undefined') {
@@ -243,6 +264,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
       phone: l.customer_phone,
       email: l.customer_email || null,
       serviceLabel,
+      jobSource: l.sf_job_source || null,
       appointmentDate,
       appointmentWindow,
       address,

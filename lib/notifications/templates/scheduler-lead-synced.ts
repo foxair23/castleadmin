@@ -16,6 +16,7 @@ export interface SchedulerLeadSyncedData {
   phone: string
   email: string | null
   serviceLabel: string
+  jobSource: string | null   // SF Job Source stamped on the job (null = none set)
   appointmentDate: string
   appointmentWindow: string
   address: string
@@ -47,6 +48,9 @@ export function renderSchedulerLeadSynced(data: SchedulerLeadSyncedData): {
   <p style="${LABEL}">Service</p>
   <p style="${VALUE}">${data.serviceLabel}</p>
 
+  <p style="${LABEL}">Job Source</p>
+  <p style="${VALUE}">${data.jobSource ?? '—'}</p>
+
   <p style="${LABEL}">Appointment</p>
   <p style="${VALUE}">${data.appointmentDate}, ${data.appointmentWindow}</p>
 
@@ -75,6 +79,7 @@ export function renderSchedulerLeadSynced(data: SchedulerLeadSyncedData): {
     ``,
     `Customer: ${data.customerName}${data.phone ? ` / ${data.phone}` : ''}${data.email ? ` / ${data.email}` : ''}`,
     `Service: ${data.serviceLabel}`,
+    `Job Source: ${data.jobSource ?? '—'}`,
     `Appointment: ${data.appointmentDate}, ${data.appointmentWindow}`,
     `Address: ${data.address}`,
     `SF Job #${data.sfJobId} · Customer #${data.sfCustomerId}`,
