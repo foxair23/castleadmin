@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { createWidget, toggleWidget, deleteWidget } from './actions'
+import { createWidget, toggleWidget, deleteWidget, updateWidgetSource } from './actions'
 
 interface Widget {
   id: string
   display_name: string
   lead_source: string
+  sf_job_source: string
   api_key: string
   is_active: boolean
   created_at: string
@@ -14,6 +15,7 @@ interface Widget {
 
 interface Props {
   initialWidgets: Widget[]
+  sfSources: string[]
   appUrl: string
 }
 
@@ -60,12 +62,13 @@ function EmbedSnippet({ widget, appUrl }: { widget: Widget; appUrl: string }) {
   )
 }
 
-export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
+export default function WidgetsClient({ initialWidgets, sfSources, appUrl }: Props) {
   const [widgets, setWidgets] = useState(initialWidgets)
   const [isPending, startTransition] = useTransition()
   const [showNew, setShowNew] = useState(false)
   const [newName, setNewName] = useState('')
   const [newSource, setNewSource] = useState('website')
+  const [newSfSource, setNewSfSource] = useState('Website')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -76,12 +79,28 @@ export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
     setError('')
     startTransition(async () => {
       try {
-        await createWidget(newName.trim(), newSource)
+        await createWidget(newName.trim(), newSource, newSfSource)
         setNewName('')
         setNewSource('website')
+        setNewSfSource('Website')
         setShowNew(false)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to create widget')
+      }
+    })
+  }
+
+  // Change an existing widget's Service Fusion Job Source, optimistically.
+  function handleSourceChange(id: string, source: string) {
+    const prev = widgets
+    setWidgets(ws => ws.map(w => (w.id === id ? { ...w, sf_job_source: source } : w)))
+    setError('')
+    startTransition(async () => {
+      try {
+        await updateWidgetSource(id, source)
+      } catch (e) {
+        setWidgets(prev)
+        setError(e instanceof Error ? e.message : 'Failed to update job source')
       }
     })
   }
@@ -126,6 +145,11 @@ export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
 
   return (
     <div className="max-w-2xl">
+      {/* Shared suggestions for the SF Job Source inputs — pick an existing
+          source or type a brand-new one. */}
+      <datalist id="sf-sources-list">
+        {sfSources.map(s => <option key={s} value={s} />)}
+      </datalist>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Widget Instances</h1>
         <button
@@ -166,6 +190,22 @@ export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
               />
               <p className="text-xs text-gray-400 mt-1">Stored on each lead for attribution.</p>
             </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Service Fusion Job Source</label>
+              <input
+                type="text"
+                list="sf-sources-list"
+                value={newSfSource}
+                onChange={e => setNewSfSource(e.target.value)}
+                placeholder="e.g. Website, Google Ads"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                The Job Source stamped on jobs this widget creates in Service Fusion. Pick an existing
+                source or type a new one &mdash; a new value must match a Job Source that exists in
+                Service Fusion, or the booking won&rsquo;t sync.
+              </p>
+            </div>
             <div className="flex gap-3">
               <button
                 onClick={handleCreate}
@@ -199,10 +239,25 @@ export default function WidgetsClient({ initialWidgets, appUrl }: Props) {
                   )}
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  Source: <span className="font-mono">{widget.lead_source}</span>
+                  Lead source: <span className="font-mono">{widget.lead_source}</span>
                   {' · '}
                   ID: <span className="font-mono">{widget.id}</span>
                 </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <label className="text-xs text-gray-500">SF Job Source</label>
+                  <input
+                    type="text"
+                    list="sf-sources-list"
+                    defaultValue={widget.sf_job_source}
+                    disabled={isPending}
+                    onBlur={e => {
+                      const v = e.target.value.trim()
+                      if (v && v !== widget.sf_job_source) handleSourceChange(widget.id, v)
+                      else e.target.value = widget.sf_job_source
+                    }}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 w-44"
+                  />
+                </div>
               </div>
               <div className="flex gap-2 shrink-0 ml-4">
                 <button
