@@ -20,11 +20,11 @@ export default async function InvoiceRemindersPage() {
     { auth: { persistSession: false } }
   )
 
-  const [{ data: settings }, { data: sourceRows }, { data: recent }, { data: optouts }] = await Promise.all([
+  const [{ data: settings }, { data: sourceRows }, { data: recent }, { data: inbound }] = await Promise.all([
     db.from('invoice_reminder_settings').select('*').eq('id', 1).maybeSingle(),
     db.from('sf_sources').select('short_name').eq('is_deleted', false).not('short_name', 'is', null).order('short_name'),
     db.from('invoice_reminders').select('id, sf_invoice_id, sf_job_id, stage_day, channel, recipient, status, error, amount_due, sent_at').order('sent_at', { ascending: false }).limit(50),
-    db.from('invoice_reminder_optouts').select('id, channel, value, reason, created_at').order('created_at', { ascending: false }).limit(100),
+    db.from('dialpad_inbound_events').select('id, received_at, verified, from_number, message_text, action').order('received_at', { ascending: false }).limit(25),
   ])
 
   const sources = [...new Set((sourceRows ?? []).map(r => r.short_name as string).filter(Boolean))]
@@ -34,7 +34,7 @@ export default async function InvoiceRemindersPage() {
       settings={settings as never}
       sources={sources}
       recent={(recent ?? []) as never}
-      optouts={(optouts ?? []) as never}
+      inbound={(inbound ?? []) as never}
       dialpadConfigured={isDialpadConfigured()}
     />
   )

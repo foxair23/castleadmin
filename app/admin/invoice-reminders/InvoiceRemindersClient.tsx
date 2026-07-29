@@ -1,31 +1,43 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { setEnabled, saveSettings, previewPlan, testDialpad, registerWebhook, addOptout, removeOptout } from './actions'
+import { setEnabled, saveSettings, previewPlan, testDialpad, registerWebhook } from './actions'
+import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoice-reminder-email'
+
+// Sample data for previews, so placeholders resolve to something realistic.
+const SAMPLE_VARS: Record<string, string> = {
+  customer: 'Jane Sample', invoice_number: '#181181161', amount_due: '$450.00', pay_url: '#', business_name: 'Castle Garage Inc',
+}
+function fillVars(tpl: string): string {
+  return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => SAMPLE_VARS[k] ?? '')
+}
 
 type Channel = 'email' | 'sms'
-interface CadenceStage { day: number; channels: Channel[] }
+interface CadenceStage {
+  day: number
+  channels: Channel[]
+  email_subject: string
+  email_body: string
+  sms_body: string
+}
 interface Settings {
   enabled: boolean
   activated_at: string | null
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
-  email_subject: string
-  email_body: string
-  sms_body: string
 }
 interface LogRow {
   id: string; sf_invoice_id: string; sf_job_id: string | null; stage_day: number
   channel: string; recipient: string; status: string; error: string | null; amount_due: number | null; sent_at: string
 }
-interface Optout { id: string; channel: string; value: string; reason: string; created_at: string }
+interface InboundEvent { id: string; received_at: string; verified: boolean; from_number: string | null; message_text: string | null; action: string }
 
 interface Props {
   settings: Settings
   sources: string[]
   recent: LogRow[]
-  optouts: Optout[]
+  inbound: InboundEvent[]
   dialpadConfigured: boolean
 }
 
@@ -36,26 +48,43 @@ function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-export default function InvoiceRemindersClient({ settings: initial, sources, recent, optouts, dialpadConfigured }: Props) {
+const EMPTY_STAGE: CadenceStage = { day: 7, channels: ['email'], email_subject: '', email_body: '', sms_body: '' }
+
+export default function InvoiceRemindersClient({ settings: initial, sources, recent, inbound, dialpadConfigured }: Props) {
   const [isPending, startTransition] = useTransition()
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
 
   const [excluded, setExcluded] = useState<string[]>(initial.excluded_sources ?? [])
   const [sendHour, setSendHour] = useState(initial.send_hour_pt ?? 9)
-  const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ day: 7, channels: ['email'] }])
-  const [emailSubject, setEmailSubject] = useState(initial.email_subject ?? '')
-  const [emailBody, setEmailBody] = useState(initial.email_body ?? '')
-  const [smsBody, setSmsBody] = useState(initial.sms_body ?? '')
+  const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ ...EMPTY_STAGE }])
 
   const [preview, setPreview] = useState<{ count: number; sample: { invoiceNumber: string | null; customerName: string | null; channel: string; recipient: string; stageDay: number; amountDue: number }[] } | null>(null)
   const [testNum, setTestNum] = useState('')
-  const [testOut, setTestOut] = useState<string>('')
-  const [optChannel, setOptChannel] = useState<Channel>('sms')
-  const [optValue, setOptValue] = useState('')
+  const [testOut, setTestOut] = useState('')
 
   function flash(m: string) { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 4000) }
   function fail(e: unknown) { setErr(e instanceof Error ? e.message : String(e)); setMsg('') }
+
+  function patchStage(i: number, patch: Partial<CadenceStage>) {
+    setCadence(c => c.map((s, j) => j === i ? { ...s, ...patch } : s))
+  }
+  function toggleChannel(i: number, ch: Channel, on: boolean) {
+    patchStage(i, { channels: on ? [...cadence[i].channels, ch] : cadence[i].channels.filter(x => x !== ch) })
+  }
+  // Render the branded email with this stage's current (unsaved) copy + sample
+  // data, and open it in a new tab so the layout/logo can be eyeballed.
+  function previewEmail(s: CadenceStage) {
+    const { html } = renderInvoiceReminderEmail({
+      bodyText: fillVars(s.email_body),
+      invoiceNumber: SAMPLE_VARS.invoice_number,
+      amountDue: SAMPLE_VARS.amount_due,
+      payUrl: '#',
+    })
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
 
   function toggleEnabled() {
     startTransition(async () => {
@@ -63,21 +92,16 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
       catch (e) { fail(e) }
     })
   }
-
   function save() {
     startTransition(async () => {
-      try {
-        await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, cadence, email_subject: emailSubject, email_body: emailBody, sms_body: smsBody })
-        flash('Settings saved')
-      } catch (e) { fail(e) }
+      try { await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, cadence }); flash('Settings saved') }
+      catch (e) { fail(e) }
     })
   }
-
   async function runPreview() {
     setErr(''); setPreview(null)
     try { setPreview(await previewPlan()) } catch (e) { fail(e) }
   }
-
   async function runTest() {
     setTestOut('Testing…')
     try {
@@ -87,12 +111,11 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
       setTestOut(parts.join('\n'))
     } catch (e) { setTestOut(e instanceof Error ? e.message : String(e)) }
   }
-
   async function runRegisterWebhook() {
     setTestOut('Registering webhook…')
     try {
       const r = await registerWebhook()
-      setTestOut(`Webhook ${r.ok ? 'registered' : 'FAILED'} — webhook ${r.webhookId ?? '—'}, subscription ${r.subscriptionId ?? '—'}\n${JSON.stringify(r.detail).slice(0, 400)}`)
+      setTestOut(`Webhook ${r.ok ? 'registered' : 'FAILED'} — webhook ${r.webhookId ?? '—'}, subscription ${r.subscriptionId ?? '—'}`)
     } catch (e) { setTestOut(e instanceof Error ? e.message : String(e)) }
   }
 
@@ -129,51 +152,19 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
             <label className={label}>Test — send to a phone</label>
             <input value={testNum} onChange={e => setTestNum(e.target.value)} placeholder="(760) 555-1234" className={input} />
           </div>
-          <button onClick={runTest} className="px-3 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50">Test connection + send</button>
-          <button onClick={runRegisterWebhook} className="px-3 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50">Register STOP webhook</button>
+          <button onClick={runTest} className="px-3 py-2 text-sm rounded border border-gray-400 text-gray-800 hover:bg-gray-100">Test connection + send</button>
+          <button onClick={runRegisterWebhook} className="px-3 py-2 text-sm rounded border border-gray-400 text-gray-800 hover:bg-gray-100">Register STOP webhook</button>
         </div>
         {testOut && <pre className="mt-3 text-xs bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre-wrap">{testOut}</pre>}
       </section>
 
-      {/* Cadence + settings */}
+      {/* Global settings */}
       <section className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-gray-800">Cadence &amp; rules</h2>
-
-        <div>
-          <label className={label}>Reminder schedule (days after invoice date → channels)</label>
-          <div className="space-y-2">
-            {cadence.map((s, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className="text-sm text-gray-500">After</span>
-                <input
-                  type="number" min={0} value={s.day}
-                  onChange={e => setCadence(c => c.map((x, j) => j === i ? { ...x, day: Number(e.target.value) } : x))}
-                  className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-gray-900"
-                />
-                <span className="text-sm text-gray-500">days →</span>
-                {(['email', 'sms'] as Channel[]).map(ch => (
-                  <label key={ch} className="flex items-center gap-1 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={s.channels.includes(ch)}
-                      onChange={e => setCadence(c => c.map((x, j) => j === i ? { ...x, channels: e.target.checked ? [...x.channels, ch] : x.channels.filter(y => y !== ch) } : x))}
-                    />
-                    {ch.toUpperCase()}
-                  </label>
-                ))}
-                <button onClick={() => setCadence(c => c.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:text-red-700 ml-auto">Remove</button>
-              </div>
-            ))}
-          </div>
-          <button onClick={() => setCadence(c => [...c, { day: (c[c.length - 1]?.day ?? 0) + 7, channels: ['email'] }])} className="mt-2 text-sm text-blue-600 hover:text-blue-800">+ Add stage</button>
-          <p className="text-xs text-gray-400 mt-1">The series stops after the last stage.</p>
-        </div>
-
+        <h2 className="text-sm font-semibold text-gray-800">Global settings</h2>
         <div>
           <label className={label}>Send hour (PT)</label>
           <input type="number" min={0} max={23} value={sendHour} onChange={e => setSendHour(Number(e.target.value))} className="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-gray-900" />
         </div>
-
         <div>
           <label className={label}>Excluded Job Sources (3rd-party paid — skip these)</label>
           <div className="flex flex-wrap gap-2">
@@ -188,28 +179,62 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
         </div>
       </section>
 
-      {/* Templates */}
+      {/* Reminder schedule + per-stage copy */}
       <section className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-gray-800">Message copy</h2>
-        <p className="text-xs text-gray-400">Placeholders: {'{{customer}}'} {'{{invoice_number}}'} {'{{amount_due}}'} {'{{pay_url}}'} {'{{business_name}}'}</p>
         <div>
-          <label className={label}>Email subject</label>
-          <input value={emailSubject} onChange={e => setEmailSubject(e.target.value)} className={input} />
+          <h2 className="text-sm font-semibold text-gray-800">Reminder schedule &amp; message copy</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Each stage fires that many days after the invoice date, with its own copy — ramp up the tone as it ages. The series stops after the last stage. Placeholders: {'{{customer}}'} {'{{invoice_number}}'} {'{{amount_due}}'} {'{{pay_url}}'}. Email copy is wrapped in the branded template automatically.</p>
         </div>
-        <div>
-          <label className={label}>Email body</label>
-          <textarea value={emailBody} onChange={e => setEmailBody(e.target.value)} rows={7} className={`${input} font-mono`} />
-        </div>
-        <div>
-          <label className={label}>SMS body</label>
-          <textarea value={smsBody} onChange={e => setSmsBody(e.target.value)} rows={3} className={`${input} font-mono`} />
-          <p className="text-xs text-gray-400 mt-1">Keep it short. Must include an opt-out (e.g. &ldquo;Reply STOP to opt out&rdquo;).</p>
-        </div>
+
+        {cadence.map((s, i) => (
+          <div key={i} className="border border-gray-200 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-semibold text-gray-700">Reminder {i + 1}</span>
+              <span className="text-sm text-gray-500">— after</span>
+              <input type="number" min={0} value={s.day} onChange={e => patchStage(i, { day: Number(e.target.value) })} className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-gray-900" />
+              <span className="text-sm text-gray-500">days via</span>
+              {(['email', 'sms'] as Channel[]).map(ch => (
+                <label key={ch} className="flex items-center gap-1 text-sm text-gray-700">
+                  <input type="checkbox" checked={s.channels.includes(ch)} onChange={e => toggleChannel(i, ch, e.target.checked)} />
+                  {ch.toUpperCase()}
+                </label>
+              ))}
+              <button onClick={() => setCadence(c => c.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:text-red-700 ml-auto">Remove</button>
+            </div>
+
+            {s.channels.includes('email') && (
+              <div className="space-y-2 pl-1">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Email subject</label>
+                  <input value={s.email_subject} onChange={e => patchStage(i, { email_subject: e.target.value })} className={input} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Email message</label>
+                  <textarea value={s.email_body} onChange={e => patchStage(i, { email_body: e.target.value })} rows={5} className={`${input} font-mono text-xs`} />
+                </div>
+                <button
+                  onClick={() => previewEmail(s)}
+                  className="text-xs px-3 py-1.5 rounded border border-gray-400 text-gray-800 hover:bg-gray-100"
+                >
+                  Preview email ↗
+                </button>
+              </div>
+            )}
+            {s.channels.includes('sms') && (
+              <div className="pl-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">SMS text</label>
+                <textarea value={s.sms_body} onChange={e => patchStage(i, { sms_body: e.target.value })} rows={2} className={`${input} font-mono text-xs`} />
+                <p className="text-[11px] text-gray-400 mt-1">Keep it short and include an opt-out (e.g. &ldquo;Reply STOP to opt out&rdquo;).</p>
+              </div>
+            )}
+          </div>
+        ))}
+        <button onClick={() => setCadence(c => [...c, { ...EMPTY_STAGE, day: (c[c.length - 1]?.day ?? 0) + 7 }])} className="text-sm text-blue-600 hover:text-blue-800">+ Add reminder</button>
       </section>
 
       <div className="flex items-center gap-3">
         <button onClick={save} disabled={isPending} className="px-4 py-2 bg-gray-900 text-white text-sm font-semibold rounded-lg hover:bg-gray-700 disabled:opacity-40">Save settings</button>
-        <button onClick={runPreview} className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50">Dry-run preview</button>
+        <button onClick={runPreview} className="px-4 py-2 bg-white border border-gray-400 text-gray-800 text-sm font-medium rounded-lg hover:bg-gray-100">Dry-run preview</button>
       </div>
 
       {preview && (
@@ -228,24 +253,25 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
         </section>
       )}
 
-      {/* Opt-outs */}
+      {/* Inbound webhook events (diagnostic) */}
       <section className="bg-white border border-gray-200 rounded-lg p-5">
-        <h2 className="text-sm font-semibold text-gray-800 mb-2">Opt-outs ({optouts.length})</h2>
-        <div className="flex gap-2 items-end mb-3">
-          <select value={optChannel} onChange={e => setOptChannel(e.target.value as Channel)} className="border border-gray-300 rounded px-2 py-2 text-sm text-gray-900 bg-white">
-            <option value="sms">SMS</option><option value="email">Email</option>
-          </select>
-          <input value={optValue} onChange={e => setOptValue(e.target.value)} placeholder={optChannel === 'sms' ? 'phone' : 'email'} className={input} />
-          <button onClick={() => startTransition(async () => { try { await addOptout(optChannel, optValue); setOptValue(''); flash('Opt-out added') } catch (e) { fail(e) } })} className="px-3 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50 whitespace-nowrap">Add</button>
-        </div>
-        <div className="max-h-48 overflow-y-auto divide-y divide-gray-100">
-          {optouts.map(o => (
-            <div key={o.id} className="flex items-center justify-between py-1.5 text-sm">
-              <span className="text-gray-700"><span className="text-xs text-gray-400 uppercase mr-2">{o.channel}</span>{o.value}<span className="text-xs text-gray-400 ml-2">({o.reason})</span></span>
-              <button onClick={() => startTransition(async () => { try { await removeOptout(o.id) } catch (e) { fail(e) } })} className="text-xs text-gray-400 hover:text-red-600">Remove</button>
-            </div>
-          ))}
-        </div>
+        <h2 className="text-sm font-semibold text-gray-800 mb-1">Inbound from Dialpad ({inbound.length})</h2>
+        <p className="text-xs text-gray-400 mb-2">Raw record of what Dialpad posts to our webhook. STOP is usually handled by Dialpad internally and won&rsquo;t appear here — the engine also stops texting a number if a send is rejected for opt-out.</p>
+        {inbound.length === 0 ? <p className="text-sm text-gray-400">No inbound events received yet.</p> : (
+          <table className="w-full text-xs">
+            <thead><tr className="text-left text-gray-500"><th className="py-1">When</th><th>From</th><th>Text</th><th>Action</th></tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {inbound.map(e => (
+                <tr key={e.id}>
+                  <td className="py-1 whitespace-nowrap">{fmtDateTime(e.received_at)}</td>
+                  <td className="font-mono">{e.from_number ?? '—'}</td>
+                  <td className="max-w-[220px] truncate" title={e.message_text ?? undefined}>{e.message_text ?? '—'}</td>
+                  <td>{e.action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
 
       {/* Recent activity */}

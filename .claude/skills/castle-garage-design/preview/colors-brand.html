@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Colors" name="Brand Colors" subtitle="Black + Red — only two brand colors" viewport="700x260" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Castle — Color Primary</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--color-bg-light);padding:20px;font-family:var(--font-body);}
+  .row{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+  .sw{position:relative;height:108px;border-radius:10px;overflow:hidden;border:1px solid var(--color-border);box-shadow:var(--shadow-sm);}
+  .sw .lbl{position:absolute;left:14px;bottom:10px;color:#fff;font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:.02em;}
+  .sw .hex{position:absolute;right:14px;bottom:10px;color:rgba(255,255,255,.78);font-size:12px;font-family:'SF Mono','Menlo',monospace;}
+  .sw .var{position:absolute;left:14px;top:10px;color:rgba(255,255,255,.6);font-size:11px;text-transform:uppercase;letter-spacing:.1em;font-weight:600;}
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="sw" style="background:#0F0F0F;">
+      <span class="var">Primary</span><span class="lbl">Castle Black</span><span class="hex">#0F0F0F</span>
+    </div>
+    <div class="sw" style="background:#C81E1E;">
+      <span class="var">Accent</span><span class="lbl">Castle Red</span><span class="hex">#C81E1E</span>
+    </div>
+    <div class="sw" style="background:#A51919;">
+      <span class="var">Red Dark · hover</span><span class="lbl">Castle Red Dark</span><span class="hex">#A51919</span>
+    </div>
+    <div class="sw" style="background:#23232B;">
+      <span class="var">Primary Soft</span><span class="lbl">Soft Black</span><span class="hex">#23232B</span>
+    </div>
+  </div>
+</body>
+</html>
