@@ -1,0 +1,164 @@
+/* ===================================================================
+   Castle Garage Doors & Gates — Design Tokens
+   Typography + Color foundations
+   =================================================================== */
+
+@font-face {
+  font-family: 'DM Sans';
+  src: url('assets/fonts/DMSans-VariableFont.ttf') format('truetype-variations'),
+       url('assets/fonts/DMSans-VariableFont.ttf') format('truetype');
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'DM Sans';
+  src: url('assets/fonts/DMSans-Italic-VariableFont.ttf') format('truetype-variations'),
+       url('assets/fonts/DMSans-Italic-VariableFont.ttf') format('truetype');
+  font-weight: 100 1000;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Sans 3';
+  src: url('assets/fonts/SourceSans3-VariableFont.ttf') format('truetype-variations'),
+       url('assets/fonts/SourceSans3-VariableFont.ttf') format('truetype');
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Sans 3';
+  src: url('assets/fonts/SourceSans3-Italic-VariableFont.ttf') format('truetype-variations'),
+       url('assets/fonts/SourceSans3-Italic-VariableFont.ttf') format('truetype');
+  font-weight: 100 1000;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  /* ===== COLOR — PRIMARY (the "castle" black) ===== */
+  --color-primary:        #0F0F0F;  /* Near-black — primary headings, dark sections, footer */
+  --color-primary-soft:   #23232B;  /* Softened black — panels on dark backgrounds */
+  --color-bg-dark:        #0F0F0F;
+  --color-bg-dark-soft:   #1A1A22;
+
+  /* ===== COLOR — ACCENT (Castle Red) ===== */
+  --color-red:            #C81E1E;  /* Default brand red — CTAs, links, accents */
+  --color-red-dark:       #A51919;  /* Hover / pressed state for primary buttons */
+  --color-red-light:      #E8302E;  /* Lighter red — rare; highlights on dark bg */
+  --color-cta:            #C81E1E;
+  --color-cta-hover:      #A51919;
+
+  /* ===== COLOR — NEUTRAL TEXT ===== */
+  --color-text-primary:   #1A1A1A;  /* Body text default */
+  --color-text-secondary: #64646E;  /* Subheads, descriptions */
+  --color-text-muted:     #8A8A94;  /* Meta, dates, fine print */
+
+  /* ===== COLOR — SURFACES ===== */
+  --color-bg-white:       #FFFFFF;  /* Cards, header */
+  --color-bg-light:       #F5F5F3;  /* Page background — warm off-white */
+  --color-surface:        #F7F7F5;  /* Inset cards, alt sections */
+  --color-border:         #E2E0DC;  /* Default border */
+  --color-border-light:   #F0EEEB;  /* Subtle dividers */
+
+  /* ===== COLOR — SEMANTIC ===== */
+  --color-success:        #2E7D52;
+  --color-warning:        #D4922E;
+  --color-error:          #C81E1E;  /* Same as brand red */
+
+  /* ===== TYPE — FAMILIES ===== */
+  --font-display: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-body:    'Source Sans 3', system-ui, -apple-system, sans-serif;
+
+  /* ===== TYPE — SIZES (mobile-first) ===== */
+  --text-hero:    2.25rem;   /* 36px — hero h1 mobile */
+  --text-h1:      1.875rem;  /* 30px */
+  --text-h2:      1.5rem;    /* 24px */
+  --text-h3:      1.25rem;   /* 20px */
+  --text-h4:      1.25rem;
+  --text-body:    1.125rem;  /* 18px */
+  --text-body-sm: 1rem;      /* 16px */
+  --text-small:   0.875rem;  /* 14px — labels, fine print */
+
+  /* ===== TYPE — RHYTHM ===== */
+  --leading-tight:   1.2;    /* Display headings */
+  --leading-normal:  1.65;   /* Body */
+  --tracking-tight:  -0.02em;/* Display */
+  --tracking-wide:    0.05em;
+  --tracking-wider:   0.1em; /* Eyebrow labels, all-caps */
+
+  /* ===== SPACING (4-base) ===== */
+  --space-1:  0.25rem;   /* 4 */
+  --space-2:  0.5rem;    /* 8 */
+  --space-3:  0.75rem;   /* 12 */
+  --space-4:  1rem;      /* 16 */
+  --space-6:  1.5rem;    /* 24 */
+  --space-8:  2rem;      /* 32 */
+  --space-10: 2.5rem;    /* 40 */
+  --space-12: 3rem;      /* 48 */
+  --space-16: 4rem;      /* 64 */
+  --space-20: 5rem;      /* 80 */
+  --space-24: 6rem;      /* 96 */
+
+  /* ===== LAYOUT ===== */
+  --max-width:     1200px;
+  --header-height: 72px;
+  --radius:        8px;
+  --radius-lg:     12px;
+
+  /* ===== SHADOWS (low-key, neutral) ===== */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.10);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.14);
+  --shadow-xl: 0 20px 48px rgba(0,0,0,0.18);
+}
+
+/* Desktop type bumps */
+@media (min-width: 768px) {
+  :root {
+    --text-hero: 3.25rem;  /* 52px */
+    --text-h1:   2.5rem;   /* 40px */
+    --text-h2:   2rem;     /* 32px */
+    --text-h3:   1.5rem;
+    --text-h4:   1.25rem;
+  }
+}
+
+/* ===== SEMANTIC TYPE STYLES ===== */
+body {
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  color: var(--color-text-primary);
+  background: var(--color-bg-light);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--color-primary);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+}
+h1 { font-size: var(--text-h1); }
+h2 { font-size: var(--text-h2); }
+h3 { font-size: var(--text-h3); }
+h4 { font-size: var(--text-h4); font-weight: 600; }
+
+.text-hero    { font-size: var(--text-hero); }
+.text-eyebrow {
+  font-family: var(--font-body);
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--color-red);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wider);
+}
+.text-tagline {
+  font-style: italic;
+  font-size: 1.25rem;
+  color: var(--color-text-secondary);
+}
+small, .text-small { font-size: var(--text-small); color: var(--color-text-muted); }
