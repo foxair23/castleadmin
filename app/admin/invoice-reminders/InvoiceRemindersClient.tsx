@@ -8,8 +8,11 @@ import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoic
 const SAMPLE_VARS: Record<string, string> = {
   customer: 'Jane Sample', invoice_number: '#181181161', amount_due: '$450.00', pay_url: '#', business_name: 'Castle Garage Inc',
 }
+function subst(tpl: string, vars: Record<string, string>): string {
+  return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => vars[k] ?? '')
+}
 function fillVars(tpl: string): string {
-  return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => SAMPLE_VARS[k] ?? '')
+  return subst(tpl, SAMPLE_VARS)
 }
 
 type Channel = 'email' | 'sms'
@@ -61,7 +64,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   const [replyTo, setReplyTo] = useState(initial.reply_to_email ?? '')
   const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ ...EMPTY_STAGE }])
 
-  const [preview, setPreview] = useState<{ count: number; sample: { invoiceNumber: string | null; customerName: string | null; channel: string; recipient: string; stageDay: number; amountDue: number }[] } | null>(null)
+  const [preview, setPreview] = useState<{ count: number; sample: { sfInvoiceId: string; invoiceNumber: string | null; customerName: string | null; channel: string; recipient: string; stageIndex: number; stageDay: number; amountDue: number; payUrl: string | null }[] } | null>(null)
   const [testNum, setTestNum] = useState('')
   const [testOut, setTestOut] = useState('')
 
@@ -76,16 +79,11 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   }
   // Render the branded email with this stage's current (unsaved) copy + sample
   // data, and open it in a new tab inside a Desktop/Mobile preview frame.
-  function previewEmail(s: CadenceStage) {
-    const { html } = renderInvoiceReminderEmail({
-      bodyText: fillVars(s.email_body),
-      invoiceNumber: SAMPLE_VARS.invoice_number,
-      amountDue: SAMPLE_VARS.amount_due,
-      payUrl: '#',
-    })
-    // Embed the email in a resizable frame. <-escape so nothing in the
-    // email HTML can break out of the injecting <script>.
+  // Open rendered email HTML in a new tab inside a Desktop/Mobile preview frame.
+  function openEmailFrame(html: string, to?: string) {
+    // <-escape so nothing in the email HTML can break out of the injecting script.
     const emailJson = JSON.stringify(html).replace(/</g, '\\u003c')
+    const toLine = to ? `<div class="to">To: ${to.replace(/</g, '\\u003c')}</div>` : ''
     const wrapper = `<!doctype html><html><head><meta charset="utf-8"><title>Email preview</title>
 <style>
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#e5e7eb;}
@@ -93,6 +91,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   .bar span{font-size:13px;margin-right:10px;opacity:.8;}
   .bar button{margin:0 4px;padding:7px 18px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;background:#fff;color:#111;}
   .bar button.active{background:#C81E1E;color:#fff;}
+  .to{background:#1A1A22;color:#fff;text-align:center;padding:6px;font-size:12px;font-family:monospace;}
   .wrap{display:flex;justify-content:center;padding:20px;}
   iframe{border:1px solid #b0b0b0;background:#fff;height:82vh;transition:width .15s;box-shadow:0 4px 24px rgba(0,0,0,.15);}
 </style></head><body>
@@ -100,6 +99,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
     <button id="d" class="active" onclick="setW('100%',this)">Desktop</button>
     <button id="m" onclick="setW('390px',this)">Mobile</button>
   </div>
+  ${toLine}
   <div class="wrap"><iframe id="f" style="width:100%"></iframe></div>
   <script>
     document.getElementById('f').srcdoc = ${emailJson};
@@ -109,6 +109,53 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
     const url = URL.createObjectURL(new Blob([wrapper], { type: 'text/html' }))
     window.open(url, '_blank', 'noopener')
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
+  // SMS preview — the exact text in a phone-style bubble.
+  function openSmsPreview(text: string, to: string) {
+    const s = (v: string) => v.replace(/</g, '\\u003c')
+    const wrapper = `<!doctype html><html><head><meta charset="utf-8"><title>SMS preview</title>
+<style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#e5e7eb;padding:28px;}
+.phone{max-width:360px;margin:0 auto;background:#fff;border-radius:22px;border:1px solid #ccc;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.15);}
+.hdr{background:#0F0F0F;color:#fff;padding:12px 16px;font-weight:700;font-size:13px;}
+.body{padding:18px;}
+.to{font-size:12px;color:#666;margin-bottom:12px;}
+.bubble{background:#e9e9eb;color:#111;padding:10px 14px;border-radius:16px;font-size:15px;line-height:1.4;white-space:pre-wrap;display:inline-block;max-width:88%;}</style></head>
+<body><div class="phone"><div class="hdr">Castle Garage Inc</div><div class="body"><div class="to">To: ${s(to)}</div><div class="bubble">${s(text)}</div></div></div></body></html>`
+    const url = URL.createObjectURL(new Blob([wrapper], { type: 'text/html' }))
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
+  function previewEmail(s: CadenceStage) {
+    const { html } = renderInvoiceReminderEmail({
+      bodyText: fillVars(s.email_body),
+      invoiceNumber: SAMPLE_VARS.invoice_number,
+      amountDue: SAMPLE_VARS.amount_due,
+      payUrl: '#',
+    })
+    openEmailFrame(html)
+  }
+  // Render a specific queued send with its REAL data, for QC.
+  function viewPlanned(row: { channel: string; stageIndex: number; invoiceNumber: string | null; sfInvoiceId: string; customerName: string | null; amountDue: number; payUrl: string | null; recipient: string }) {
+    const stage = cadence[row.stageIndex]
+    if (!stage) return
+    const vars: Record<string, string> = {
+      customer: row.customerName ?? 'there',
+      invoice_number: row.invoiceNumber ?? row.sfInvoiceId,
+      amount_due: money(row.amountDue),
+      pay_url: row.payUrl ?? '',
+      business_name: 'Castle Garage Inc',
+    }
+    if (row.channel === 'email') {
+      const { html } = renderInvoiceReminderEmail({
+        bodyText: subst(stage.email_body, vars),
+        invoiceNumber: vars.invoice_number,
+        amountDue: vars.amount_due,
+        payUrl: vars.pay_url,
+      })
+      openEmailFrame(html, row.recipient)
+    } else {
+      openSmsPreview(subst(stage.sms_body, vars), row.recipient)
+    }
   }
 
   function toggleEnabled() {
@@ -272,13 +319,21 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
       {preview && (
         <section className="bg-white border border-gray-200 rounded-lg p-5">
           <h2 className="text-sm font-semibold text-gray-800 mb-1">{preview.count} message{preview.count === 1 ? '' : 's'} match your current schedule</h2>
-          <p className="text-xs text-gray-500 mb-2">Everything eligible under the cadence above (uses your unsaved edits). With fresh start, an enabled run only sends invoices that cross a <em>new</em> stage after you turn it on, so real runs start smaller than this.</p>
+          <p className="text-xs text-gray-500 mb-2">Everything eligible under the cadence above (uses your unsaved edits). <strong>Click View</strong> on any row to see the exact email or text with that customer&rsquo;s real name, invoice number, and pay link. With fresh start, an enabled run only sends invoices that cross a <em>new</em> stage after you turn it on, so real runs start smaller than this.</p>
           {preview.sample.length > 0 && (
             <table className="w-full text-xs">
-              <thead><tr className="text-left text-gray-500"><th className="py-1">Invoice</th><th>Customer</th><th>Day</th><th>Channel</th><th>To</th><th className="text-right">Due</th></tr></thead>
+              <thead><tr className="text-left text-gray-500"><th className="py-1">Invoice</th><th>Customer</th><th>Day</th><th>Channel</th><th>To</th><th className="text-right">Due</th><th></th></tr></thead>
               <tbody className="divide-y divide-gray-100">
                 {preview.sample.map((p, i) => (
-                  <tr key={i}><td className="py-1 font-mono">{p.invoiceNumber ?? '—'}</td><td>{p.customerName ?? '—'}</td><td>{p.stageDay}d</td><td>{p.channel}</td><td className="font-mono">{p.recipient}</td><td className="text-right">{money(p.amountDue)}</td></tr>
+                  <tr key={i}>
+                    <td className="py-1 font-mono">{p.invoiceNumber ?? '—'}</td>
+                    <td>{p.customerName ?? '—'}</td>
+                    <td>{p.stageDay}d</td>
+                    <td>{p.channel}</td>
+                    <td className="font-mono">{p.recipient}</td>
+                    <td className="text-right">{money(p.amountDue)}</td>
+                    <td className="text-right"><button onClick={() => viewPlanned(p)} className="text-blue-600 hover:text-blue-800">View ↗</button></td>
+                  </tr>
                 ))}
               </tbody>
             </table>
