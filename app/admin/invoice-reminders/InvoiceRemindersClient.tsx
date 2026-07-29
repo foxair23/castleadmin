@@ -20,12 +20,14 @@ interface LogRow {
   channel: string; recipient: string; status: string; error: string | null; amount_due: number | null; sent_at: string
 }
 interface Optout { id: string; channel: string; value: string; reason: string; created_at: string }
+interface InboundEvent { id: string; received_at: string; verified: boolean; from_number: string | null; message_text: string | null; action: string }
 
 interface Props {
   settings: Settings
   sources: string[]
   recent: LogRow[]
   optouts: Optout[]
+  inbound: InboundEvent[]
   dialpadConfigured: boolean
 }
 
@@ -36,7 +38,7 @@ function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-export default function InvoiceRemindersClient({ settings: initial, sources, recent, optouts, dialpadConfigured }: Props) {
+export default function InvoiceRemindersClient({ settings: initial, sources, recent, optouts, inbound, dialpadConfigured }: Props) {
   const [isPending, startTransition] = useTransition()
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -246,6 +248,28 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Inbound webhook events (diagnostic) */}
+      <section className="bg-white border border-gray-200 rounded-lg p-5">
+        <h2 className="text-sm font-semibold text-gray-800 mb-1">Inbound from Dialpad ({inbound.length})</h2>
+        <p className="text-xs text-gray-400 mb-2">Raw record of what Dialpad posts to our webhook. STOP/HELP are often handled by Dialpad internally and won&rsquo;t appear here — opt-outs are then captured when a send is rejected.</p>
+        {inbound.length === 0 ? <p className="text-sm text-gray-400">No inbound events received yet.</p> : (
+          <table className="w-full text-xs">
+            <thead><tr className="text-left text-gray-500"><th className="py-1">When</th><th>From</th><th>Text</th><th>Action</th><th>Verified</th></tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {inbound.map(e => (
+                <tr key={e.id}>
+                  <td className="py-1 whitespace-nowrap">{fmtDateTime(e.received_at)}</td>
+                  <td className="font-mono">{e.from_number ?? '—'}</td>
+                  <td className="max-w-[220px] truncate" title={e.message_text ?? undefined}>{e.message_text ?? '—'}</td>
+                  <td>{e.action}</td>
+                  <td>{e.verified ? '✓' : '✗'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
 
       {/* Recent activity */}

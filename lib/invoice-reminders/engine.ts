@@ -229,7 +229,17 @@ export async function runReminders(): Promise<RunResult> {
         const res = await sendSms(p.recipient, renderTemplate(settings.sms_body, vars))
         ok = res.ok
         providerId = res.messageId
-        if (!res.ok) error = res.error ?? 'sms failed'
+        if (!res.ok) {
+          error = res.error ?? 'sms failed'
+          // Dialpad handles STOP internally and often doesn't forward it to our
+          // webhook — so a send can be rejected for opt-out without us knowing.
+          // Detect that from the rejection and record the opt-out ourselves so
+          // we stop trying. Belt-and-suspenders alongside the inbound webhook.
+          if (/opt.?out|unsubscrib|\bstop\b|consent|blocked|not.*subscrib|do.?not.?(text|contact|message)/i.test(error)) {
+            await supabase.from('invoice_reminder_optouts')
+              .upsert({ channel: 'sms', value: p.recipient, reason: 'stop' }, { onConflict: 'channel,value' })
+          }
+        }
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
