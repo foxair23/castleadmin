@@ -206,7 +206,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
       <section className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-gray-800">Reminder schedule &amp; message copy</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Each stage fires that many days after the invoice date, with its own copy — ramp up the tone as it ages. The series stops after the last stage. Placeholders: {'{{customer}}'} {'{{invoice_number}}'} {'{{amount_due}}'} {'{{pay_url}}'}. Email copy is wrapped in the branded template automatically.</p>
+          <p className="text-xs text-gray-400 mt-0.5">Each stage fires that many days after the invoice date, with its own copy — ramp up the tone as it ages. The series stops after the last stage. <strong>Email</strong> is sent when the customer has one; <strong>SMS</strong> is the fallback when they don&rsquo;t — so give every stage SMS copy too. Check <strong>SMS</strong> to also text alongside the email. Placeholders: {'{{customer}}'} {'{{invoice_number}}'} {'{{amount_due}}'} {'{{pay_url}}'}. Email copy is wrapped in the branded template automatically.</p>
         </div>
 
         {cadence.map((s, i) => (
@@ -243,13 +243,15 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
                 </button>
               </div>
             )}
-            {s.channels.includes('sms') && (
-              <div className="pl-1">
-                <label className="block text-xs font-medium text-gray-500 mb-1">SMS text</label>
-                <textarea value={s.sms_body} onChange={e => patchStage(i, { sms_body: e.target.value })} rows={2} className={`${input} font-mono text-xs`} />
-                <p className="text-[11px] text-gray-400 mt-1">Keep it short and include an opt-out (e.g. &ldquo;Reply STOP to opt out&rdquo;).</p>
-              </div>
-            )}
+            {/* Always shown — SMS is the fallback when a customer has no email,
+                so every stage needs SMS copy even if "SMS" isn't checked. */}
+            <div className="pl-1">
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                SMS text {!s.channels.includes('sms') && <span className="text-gray-400 font-normal">(fallback — used only for customers with no email)</span>}
+              </label>
+              <textarea value={s.sms_body} onChange={e => patchStage(i, { sms_body: e.target.value })} rows={2} className={`${input} font-mono text-xs`} />
+              <p className="text-[11px] text-gray-400 mt-1">Keep it short and include an opt-out (e.g. &ldquo;Reply STOP to opt out&rdquo;).</p>
+            </div>
           </div>
         ))}
         <button onClick={() => setCadence(c => [...c, { ...EMPTY_STAGE, day: (c[c.length - 1]?.day ?? 0) + 7 }])} className="text-sm text-blue-600 hover:text-blue-800">+ Add reminder</button>
