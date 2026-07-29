@@ -26,6 +26,7 @@ interface Settings {
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
+  reply_to_email: string | null
 }
 interface LogRow {
   id: string; sf_invoice_id: string; sf_job_id: string | null; stage_day: number
@@ -57,6 +58,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
 
   const [excluded, setExcluded] = useState<string[]>(initial.excluded_sources ?? [])
   const [sendHour, setSendHour] = useState(initial.send_hour_pt ?? 9)
+  const [replyTo, setReplyTo] = useState(initial.reply_to_email ?? '')
   const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ ...EMPTY_STAGE }])
 
   const [preview, setPreview] = useState<{ count: number; sample: { invoiceNumber: string | null; customerName: string | null; channel: string; recipient: string; stageDay: number; amountDue: number }[] } | null>(null)
@@ -117,7 +119,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   }
   function save() {
     startTransition(async () => {
-      try { await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, cadence }); flash('Settings saved') }
+      try { await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, cadence, reply_to_email: replyTo }); flash('Settings saved') }
       catch (e) { fail(e) }
     })
   }
@@ -187,6 +189,11 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
         <div>
           <label className={label}>Send hour (PT)</label>
           <input type="number" min={0} max={23} value={sendHour} onChange={e => setSendHour(Number(e.target.value))} className="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-gray-900" />
+        </div>
+        <div>
+          <label className={label}>Reply-to email</label>
+          <input type="email" value={replyTo} onChange={e => setReplyTo(e.target.value)} placeholder="billing@castlegaragedoors.com" className={input} />
+          <p className="text-xs text-gray-400 mt-1">Where customer replies go. Emails send from a no-reply address — set a monitored inbox here so replies aren&rsquo;t lost. If blank, replies go to the no-reply address.</p>
         </div>
         <div>
           <label className={label}>Excluded Job Sources (3rd-party paid — skip these)</label>

@@ -20,6 +20,7 @@ export interface ReminderSettings {
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
+  reply_to_email: string | null
 }
 
 export interface PlannedSend {
@@ -52,6 +53,7 @@ export async function loadSettings(): Promise<ReminderSettings> {
     send_hour_pt: s.send_hour_pt ?? 9,
     excluded_sources: s.excluded_sources ?? [],
     cadence: (s.cadence as CadenceStage[]) ?? [],
+    reply_to_email: (s as { reply_to_email?: string | null }).reply_to_email ?? null,
   }
 }
 
@@ -240,7 +242,7 @@ export async function runReminders(): Promise<RunResult> {
           amountDue: vars.amount_due,
           payUrl: p.payUrl ?? '',
         })
-        await sendEmail({ to: p.recipient, subject: renderTemplate(stage.email_subject, vars), html, text })
+        await sendEmail({ to: p.recipient, subject: renderTemplate(stage.email_subject, vars), html, text, replyTo: settings.reply_to_email || undefined })
         ok = true
       } else {
         const res = await sendSms(p.recipient, renderTemplate(stage.sms_body, vars))

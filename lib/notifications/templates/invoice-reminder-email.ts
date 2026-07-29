@@ -19,8 +19,11 @@ export function renderInvoiceReminderEmail(opts: {
   amountDue: string      // pre-formatted, e.g. "$450.00"
   payUrl: string
 }): { html: string; text: string } {
+  // Body is plain text; support **bold** (converted after escaping, so real HTML
+  // in the copy is still neutralized).
+  const fmt = (p: string) => esc(p).replace(/\n/g, '<br>').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   const paragraphs = opts.bodyText.trim().split(/\n\n+/)
-    .map(p => `<p style="font-size:16px; color:#1A1A1A; line-height:1.6; margin:0 0 16px;">${esc(p).replace(/\n/g, '<br>')}</p>`)
+    .map(p => `<p style="font-size:16px; color:#1A1A1A; line-height:1.6; margin:0 0 16px;">${fmt(p)}</p>`)
     .join('')
 
   const html = `<!doctype html>
