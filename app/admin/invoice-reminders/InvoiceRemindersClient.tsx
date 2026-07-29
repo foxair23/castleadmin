@@ -2,6 +2,15 @@
 
 import { useState, useTransition } from 'react'
 import { setEnabled, saveSettings, previewPlan, testDialpad, registerWebhook } from './actions'
+import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoice-reminder-email'
+
+// Sample data for previews, so placeholders resolve to something realistic.
+const SAMPLE_VARS: Record<string, string> = {
+  customer: 'Jane Sample', invoice_number: '#181181161', amount_due: '$450.00', pay_url: '#', business_name: 'Castle Garage Inc',
+}
+function fillVars(tpl: string): string {
+  return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => SAMPLE_VARS[k] ?? '')
+}
 
 type Channel = 'email' | 'sms'
 interface CadenceStage {
@@ -62,6 +71,19 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   }
   function toggleChannel(i: number, ch: Channel, on: boolean) {
     patchStage(i, { channels: on ? [...cadence[i].channels, ch] : cadence[i].channels.filter(x => x !== ch) })
+  }
+  // Render the branded email with this stage's current (unsaved) copy + sample
+  // data, and open it in a new tab so the layout/logo can be eyeballed.
+  function previewEmail(s: CadenceStage) {
+    const { html } = renderInvoiceReminderEmail({
+      bodyText: fillVars(s.email_body),
+      invoiceNumber: SAMPLE_VARS.invoice_number,
+      amountDue: SAMPLE_VARS.amount_due,
+      payUrl: '#',
+    })
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   function toggleEnabled() {
@@ -190,6 +212,12 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
                   <label className="block text-xs font-medium text-gray-500 mb-1">Email message</label>
                   <textarea value={s.email_body} onChange={e => patchStage(i, { email_body: e.target.value })} rows={5} className={`${input} font-mono text-xs`} />
                 </div>
+                <button
+                  onClick={() => previewEmail(s)}
+                  className="text-xs px-3 py-1.5 rounded border border-gray-400 text-gray-800 hover:bg-gray-100"
+                >
+                  Preview email ↗
+                </button>
               </div>
             )}
             {s.channels.includes('sms') && (
