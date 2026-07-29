@@ -20,6 +20,7 @@ export interface ReminderSettings {
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
+  reply_to_email: string | null
 }
 
 export interface PlannedSend {
@@ -52,6 +53,7 @@ export async function loadSettings(): Promise<ReminderSettings> {
     send_hour_pt: s.send_hour_pt ?? 9,
     excluded_sources: s.excluded_sources ?? [],
     cadence: (s.cadence as CadenceStage[]) ?? [],
+    reply_to_email: (s as { reply_to_email?: string | null }).reply_to_email ?? null,
   }
 }
 
@@ -158,10 +160,19 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
     const phone = toE164((raw['bill_to_phone_id'] as string) || (cust['phone'] as string) || null)
     const payUrl = (raw['pay_online_url'] as string) || null
 
-    for (const channel of tgt.stage.channels) {
+    // Channel resolution: email is primary when the customer has one. SMS is the
+    // fallback when they don't (for an email stage), and is also sent alongside
+    // email when SMS is explicitly checked (the "both" escalation).
+    const wantsEmail = tgt.stage.channels.includes('email')
+    const wantsSms = tgt.stage.channels.includes('sms')
+    const smsFallback = wantsEmail && !wantsSms && !email // email stage + no email → text instead
+    const channelsToSend: ('email' | 'sms')[] = []
+    if (wantsEmail && email) channelsToSend.push('email')
+    if ((wantsSms || smsFallback) && phone) channelsToSend.push('sms')
+
+    for (const channel of channelsToSend) {
       if (sentKeys.has(`${inv.id}|${tgt.index}|${channel}`)) continue
-      const recipient = channel === 'email' ? email : phone
-      if (!recipient) continue
+      const recipient = (channel === 'email' ? email : phone) as string
       if (optSet.has(`${channel}|${recipient.toLowerCase()}`)) continue
       if (channel === 'sms' && !isDialpadConfigured()) continue // SMS dormant until Dialpad is set up
       plan.push({
@@ -231,7 +242,7 @@ export async function runReminders(): Promise<RunResult> {
           amountDue: vars.amount_due,
           payUrl: p.payUrl ?? '',
         })
-        await sendEmail({ to: p.recipient, subject: renderTemplate(stage.email_subject, vars), html, text })
+        await sendEmail({ to: p.recipient, subject: renderTemplate(stage.email_subject, vars), html, text, replyTo: settings.reply_to_email || undefined })
         ok = true
       } else {
         const res = await sendSms(p.recipient, renderTemplate(stage.sms_body, vars))

@@ -26,6 +26,7 @@ interface Settings {
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
+  reply_to_email: string | null
 }
 interface LogRow {
   id: string; sf_invoice_id: string; sf_job_id: string | null; stage_day: number
@@ -57,6 +58,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
 
   const [excluded, setExcluded] = useState<string[]>(initial.excluded_sources ?? [])
   const [sendHour, setSendHour] = useState(initial.send_hour_pt ?? 9)
+  const [replyTo, setReplyTo] = useState(initial.reply_to_email ?? '')
   const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ ...EMPTY_STAGE }])
 
   const [preview, setPreview] = useState<{ count: number; sample: { invoiceNumber: string | null; customerName: string | null; channel: string; recipient: string; stageDay: number; amountDue: number }[] } | null>(null)
@@ -117,7 +119,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   }
   function save() {
     startTransition(async () => {
-      try { await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, cadence }); flash('Settings saved') }
+      try { await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, cadence, reply_to_email: replyTo }); flash('Settings saved') }
       catch (e) { fail(e) }
     })
   }
@@ -189,6 +191,11 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
           <input type="number" min={0} max={23} value={sendHour} onChange={e => setSendHour(Number(e.target.value))} className="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-gray-900" />
         </div>
         <div>
+          <label className={label}>Reply-to email</label>
+          <input type="email" value={replyTo} onChange={e => setReplyTo(e.target.value)} placeholder="billing@castlegaragedoors.com" className={input} />
+          <p className="text-xs text-gray-400 mt-1">Where customer replies go. Emails send from a no-reply address — set a monitored inbox here so replies aren&rsquo;t lost. If blank, replies go to the no-reply address.</p>
+        </div>
+        <div>
           <label className={label}>Excluded Job Sources (3rd-party paid — skip these)</label>
           <div className="flex flex-wrap gap-2">
             {sources.length === 0 && <span className="text-xs text-gray-400">No SF sources synced yet.</span>}
@@ -206,7 +213,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
       <section className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-gray-800">Reminder schedule &amp; message copy</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Each stage fires that many days after the invoice date, with its own copy — ramp up the tone as it ages. The series stops after the last stage. Placeholders: {'{{customer}}'} {'{{invoice_number}}'} {'{{amount_due}}'} {'{{pay_url}}'}. Email copy is wrapped in the branded template automatically.</p>
+          <p className="text-xs text-gray-400 mt-0.5">Each stage fires that many days after the invoice date, with its own copy — ramp up the tone as it ages. The series stops after the last stage. <strong>Email</strong> is sent when the customer has one; <strong>SMS</strong> is the fallback when they don&rsquo;t — so give every stage SMS copy too. Check <strong>SMS</strong> to also text alongside the email. Placeholders: {'{{customer}}'} {'{{invoice_number}}'} {'{{amount_due}}'} {'{{pay_url}}'}. Email copy is wrapped in the branded template automatically.</p>
         </div>
 
         {cadence.map((s, i) => (
@@ -243,13 +250,15 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
                 </button>
               </div>
             )}
-            {s.channels.includes('sms') && (
-              <div className="pl-1">
-                <label className="block text-xs font-medium text-gray-500 mb-1">SMS text</label>
-                <textarea value={s.sms_body} onChange={e => patchStage(i, { sms_body: e.target.value })} rows={2} className={`${input} font-mono text-xs`} />
-                <p className="text-[11px] text-gray-400 mt-1">Keep it short and include an opt-out (e.g. &ldquo;Reply STOP to opt out&rdquo;).</p>
-              </div>
-            )}
+            {/* Always shown — SMS is the fallback when a customer has no email,
+                so every stage needs SMS copy even if "SMS" isn't checked. */}
+            <div className="pl-1">
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                SMS text {!s.channels.includes('sms') && <span className="text-gray-400 font-normal">(fallback — used only for customers with no email)</span>}
+              </label>
+              <textarea value={s.sms_body} onChange={e => patchStage(i, { sms_body: e.target.value })} rows={2} className={`${input} font-mono text-xs`} />
+              <p className="text-[11px] text-gray-400 mt-1">Keep it short and include an opt-out (e.g. &ldquo;Reply STOP to opt out&rdquo;).</p>
+            </div>
           </div>
         ))}
         <button onClick={() => setCadence(c => [...c, { ...EMPTY_STAGE, day: (c[c.length - 1]?.day ?? 0) + 7 }])} className="text-sm text-blue-600 hover:text-blue-800">+ Add reminder</button>

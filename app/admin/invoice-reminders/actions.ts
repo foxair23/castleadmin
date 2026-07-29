@@ -39,6 +39,7 @@ export async function saveSettings(input: {
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
+  reply_to_email: string
 }) {
   const userId = await assertAdmin()
   // Validate cadence shape, preserving each stage's copy.
@@ -56,6 +57,7 @@ export async function saveSettings(input: {
     send_hour_pt: Math.min(23, Math.max(0, Math.round(input.send_hour_pt))),
     excluded_sources: input.excluded_sources ?? [],
     cadence,
+    reply_to_email: input.reply_to_email.trim() || null,
     updated_at: new Date().toISOString(),
     updated_by: userId,
   }).eq('id', 1)
