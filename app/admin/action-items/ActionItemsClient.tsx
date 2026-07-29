@@ -391,6 +391,7 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
             <SortTh col="days_outstanding" label="Days Late" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-16" />
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="payment_status" label="Payment Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Reminders</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Techs</th>
           </tr>
         </thead>
@@ -409,6 +410,23 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
               <td className="px-4 py-2"><AgingPill days={job.days_outstanding} /></td>
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(job.due_total)}</td>
               <td className="px-4 py-2 text-gray-600">{job.payment_status ?? '—'}</td>
+              <td className="px-4 py-2">
+                {job.reminders.length === 0 ? (
+                  <span className="text-gray-300">—</span>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {job.reminders.map((r, i) => (
+                      <span
+                        key={i}
+                        title={`${r.channel === 'sms' ? 'Text' : 'Email'} sent at ${r.day} days`}
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 whitespace-nowrap"
+                      >
+                        {r.day}d {r.channel === 'sms' ? '📱' : '✉'}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </td>
               <td className="px-4 py-2 text-gray-600">{job.tech_names.join(', ') || '—'}</td>
             </tr>
           ))}

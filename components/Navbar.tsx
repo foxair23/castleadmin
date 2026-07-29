@@ -58,7 +58,8 @@ export default function Navbar({ role, fullName }: NavbarProps) {
     pathname.startsWith('/admin/integrations') ||
     pathname.startsWith('/admin/sf') ||
     pathname.startsWith('/admin/mailchimp') ||
-    pathname.startsWith('/admin/notifications')
+    pathname.startsWith('/admin/notifications') ||
+    pathname.startsWith('/admin/invoice-reminders')
 
   return (
     <nav className="bg-gray-950 text-white border-b border-gray-800">
@@ -156,6 +157,13 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                       onClick={() => setSettingsOpen(false)}
                     >
                       Notifications
+                    </DropdownLink>
+                    <DropdownLink
+                      href="/admin/invoice-reminders"
+                      active={pathname.startsWith('/admin/invoice-reminders')}
+                      onClick={() => setSettingsOpen(false)}
+                    >
+                      Invoice Reminders
                     </DropdownLink>
                   </div>
                 )}
