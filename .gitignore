@@ -43,5 +43,6 @@ next-env.d.ts
 # local reference docs
 *.pdf
 
-# Claude Code internal
-.claude/
+# Claude Code internal (but keep committed skills)
+.claude/*
+!.claude/skills/
