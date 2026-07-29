@@ -3,19 +3,23 @@ import { todayPT } from '@/lib/action-items/config'
 import { sfGet } from '@/lib/crm/service-fusion'
 import { sendEmail } from '@/lib/notifications/resend'
 import { sendSms, toE164, isDialpadConfigured } from '@/lib/dialpad/client'
+import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoice-reminder-email'
 
 const BUSINESS_NAME = 'Castle Garage Inc'
 
-export interface CadenceStage { day: number; channels: ('email' | 'sms')[] }
+export interface CadenceStage {
+  day: number
+  channels: ('email' | 'sms')[]
+  email_subject: string
+  email_body: string
+  sms_body: string
+}
 export interface ReminderSettings {
   enabled: boolean
   activated_at: string | null
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
-  email_subject: string
-  email_body: string
-  sms_body: string
 }
 
 export interface PlannedSend {
@@ -48,9 +52,6 @@ export async function loadSettings(): Promise<ReminderSettings> {
     send_hour_pt: s.send_hour_pt ?? 9,
     excluded_sources: s.excluded_sources ?? [],
     cadence: (s.cadence as CadenceStage[]) ?? [],
-    email_subject: s.email_subject ?? 'Invoice {{invoice_number}} — balance due',
-    email_body: s.email_body ?? '',
-    sms_body: s.sms_body ?? '',
   }
 }
 
@@ -209,6 +210,8 @@ export async function runReminders(): Promise<RunResult> {
     if (unpaid === undefined) { unpaid = await stillUnpaid(p.sfInvoiceId); paidCache.set(p.sfInvoiceId, unpaid) }
     if (!unpaid) { skippedPaid++; continue }
 
+    const stage = settings.cadence[p.stageIndex]
+    if (!stage) { continue }
     const vars = {
       customer: p.customerName ?? 'there',
       invoice_number: p.invoiceNumber ?? p.sfInvoiceId,
@@ -222,11 +225,16 @@ export async function runReminders(): Promise<RunResult> {
     let error: string | null = null
     try {
       if (p.channel === 'email') {
-        const text = renderTemplate(settings.email_body, vars)
-        await sendEmail({ to: p.recipient, subject: renderTemplate(settings.email_subject, vars), html: text.replace(/\n/g, '<br>'), text })
+        const { html, text } = renderInvoiceReminderEmail({
+          bodyText: renderTemplate(stage.email_body, vars),
+          invoiceNumber: vars.invoice_number,
+          amountDue: vars.amount_due,
+          payUrl: p.payUrl ?? '',
+        })
+        await sendEmail({ to: p.recipient, subject: renderTemplate(stage.email_subject, vars), html, text })
         ok = true
       } else {
-        const res = await sendSms(p.recipient, renderTemplate(settings.sms_body, vars))
+        const res = await sendSms(p.recipient, renderTemplate(stage.sms_body, vars))
         ok = res.ok
         providerId = res.messageId
         if (!res.ok) {

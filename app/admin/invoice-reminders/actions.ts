@@ -39,23 +39,23 @@ export async function saveSettings(input: {
   send_hour_pt: number
   excluded_sources: string[]
   cadence: CadenceStage[]
-  email_subject: string
-  email_body: string
-  sms_body: string
 }) {
   const userId = await assertAdmin()
-  // Validate cadence shape.
+  // Validate cadence shape, preserving each stage's copy.
   const cadence = (input.cadence ?? [])
     .filter(s => Number.isFinite(s.day) && Array.isArray(s.channels) && s.channels.length > 0)
-    .map(s => ({ day: Math.max(0, Math.round(s.day)), channels: s.channels.filter(c => c === 'email' || c === 'sms') }))
+    .map(s => ({
+      day: Math.max(0, Math.round(s.day)),
+      channels: s.channels.filter(c => c === 'email' || c === 'sms'),
+      email_subject: String(s.email_subject ?? ''),
+      email_body: String(s.email_body ?? ''),
+      sms_body: String(s.sms_body ?? ''),
+    }))
     .sort((a, b) => a.day - b.day)
   const { error } = await svc().from('invoice_reminder_settings').update({
     send_hour_pt: Math.min(23, Math.max(0, Math.round(input.send_hour_pt))),
     excluded_sources: input.excluded_sources ?? [],
     cadence,
-    email_subject: input.email_subject,
-    email_body: input.email_body,
-    sms_body: input.sms_body,
     updated_at: new Date().toISOString(),
     updated_by: userId,
   }).eq('id', 1)
@@ -85,23 +85,6 @@ export async function registerWebhook(): Promise<Awaited<ReturnType<typeof regis
   await assertAdmin()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'
   return registerInboundWebhook(`${appUrl}/api/dialpad/sms-webhook`)
-}
-
-export async function addOptout(channel: 'email' | 'sms', value: string) {
-  const userId = await assertAdmin()
-  const normalized = channel === 'sms' ? toE164(value) : value.trim().toLowerCase()
-  if (!normalized) throw new Error('Invalid value')
-  const { error } = await svc().from('invoice_reminder_optouts')
-    .upsert({ channel, value: normalized, reason: 'manual', created_by: userId }, { onConflict: 'channel,value' })
-  if (error) throw new Error(error.message)
-  revalidatePath('/admin/invoice-reminders')
-}
-
-export async function removeOptout(id: string) {
-  await assertAdmin()
-  const { error } = await svc().from('invoice_reminder_optouts').delete().eq('id', id)
-  if (error) throw new Error(error.message)
-  revalidatePath('/admin/invoice-reminders')
 }
 
 export async function setSkip(sfInvoiceId: string, skip: boolean) {
