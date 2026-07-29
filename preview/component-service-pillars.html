@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Components" name="Service Pillars" subtitle="Two-up service pillars — Garage Doors + Gates with real photography" viewport="700x420" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Service Pillars</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;padding:22px;background:var(--color-bg-light);font-family:var(--font-body);}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  .pillar{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.06);border:1px solid #F0EEEB;text-align:center;padding-bottom:20px;}
+  .pillar .img{width:100%;height:200px;overflow:hidden;}
+  .pillar .img img{width:100%;height:100%;object-fit:cover;display:block;}
+  .pillar h3{font-family:var(--font-display);font-weight:700;font-size:22px;color:var(--color-primary);margin:16px 16px 6px;letter-spacing:-.02em;}
+  .pillar p{font-size:14px;color:var(--color-text-secondary);margin:0 16px 14px;line-height:1.5;}
+  .btn{display:inline-flex;align-items:center;justify-content:center;background:var(--color-red);color:#fff;padding:9px 18px;border-radius:8px;font-family:var(--font-display);font-weight:600;font-size:13px;border:2px solid var(--color-red);text-decoration:none;}
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="pillar">
+      <div class="img"><img src="../assets/photos/pillars/garage-doors.png" alt="Modern glass garage door"></div>
+      <h3>Garage Doors</h3>
+      <p>Repair, installation, and opener service for residential and commercial garage doors.</p>
+      <a class="btn">Explore Garage Door Services →</a>
+    </div>
+    <div class="pillar">
+      <div class="img"><img src="../assets/photos/pillars/gates.png" alt="Wood-and-iron driveway gate"></div>
+      <h3>Gates</h3>
+      <p>Automatic, driveway, security, and wrought iron gates — a specialty most competitors don't offer.</p>
+      <a class="btn">Explore Gate Services →</a>
+    </div>
+  </div>
+</body>
+</html>

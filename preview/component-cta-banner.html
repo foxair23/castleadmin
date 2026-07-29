@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Components" name="CTA Banner" subtitle="Black banner with red top-rule + red primary button (subtle stripe texture)" viewport="700x280" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CTA Banner</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;font-family:var(--font-body);}
+  .cta{position:relative;background:#0F0F0F;padding:36px 28px;text-align:left;color:#fff;overflow:hidden;border-top:3px solid var(--color-red);display:grid;grid-template-columns:1fr auto;align-items:center;gap:24px;}
+  /* subtle diagonal stripe texture, very low contrast */
+  .cta::before{content:"";position:absolute;inset:0;background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.025) 0 2px, transparent 2px 14px);pointer-events:none;}
+  .copy{position:relative;}
+  .mascot{position:relative;z-index:2;width:220px;height:auto;display:block;flex-shrink:0;filter:drop-shadow(0 8px 24px rgba(0,0,0,.45));}
+  .eyebrow{position:relative;font-size:12px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--color-red);margin:0 0 8px;}
+  h2{position:relative;font-family:var(--font-display);font-weight:900;font-size:28px;color:#fff;margin:0 0 8px;letter-spacing:.005em;text-transform:uppercase;}
+  p{position:relative;margin:0 0 20px;color:rgba(255,255,255,.78);font-size:15px;max-width:420px;line-height:1.5;}
+  .group{position:relative;display:flex;gap:12px;flex-wrap:wrap;}
+  .btn{display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:14px;padding:12px 22px;border-radius:8px;border:2px solid transparent;letter-spacing:.02em;}
+  .btn-r{background:var(--color-red);color:#fff;border-color:var(--color-red);}
+  .btn-o{background:transparent;color:#fff;border-color:rgba(255,255,255,.35);}
+</style>
+</head>
+<body>
+  <section class="cta">
+    <div class="copy">
+      <p class="eyebrow">24/7 Rapid Response</p>
+      <h2>Need Help? Our Knight Is On The Way.</h2>
+      <p>Free estimate, same-day service across San Diego County. No hidden fees — just honest, expert work.</p>
+      <div class="group">
+        <a class="btn btn-r">Book Now</a>
+        <a class="btn btn-o">Call (800) 576-1397</a>
+      </div>
+    </div>
+    <img class="mascot" src="../assets/mascot.webp" alt="Castle Knight mascot beside Castle service truck">
+  </section>
+</body>
+</html>
