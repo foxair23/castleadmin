@@ -71,6 +71,8 @@ export interface UnpaidJob {
   source: string | null
   tech_names: string[]
   days_outstanding: number
+  /** Invoice reminders sent for this job (stage day + channel), oldest first. */
+  reminders: { day: number; channel: string }[]
 }
 
 export interface UnpaidJobsResult {
@@ -130,6 +132,24 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
   const jobIds = jobs.map((j: { id: string }) => j.id)
   const techMap = await fetchTechNamesByJobIds(db, jobIds)
 
+  // Invoice reminders already sent for these jobs, so the Unpaid tab can show
+  // where each is in the reminder series at a glance.
+  const remindersByJob = new Map<string, { day: number; channel: string }[]>()
+  if (jobIds.length > 0) {
+    const { data: remRows } = await db
+      .from('invoice_reminders')
+      .select('sf_job_id, stage_day, channel, sent_at')
+      .in('sf_job_id', jobIds)
+      .eq('status', 'sent')
+      .order('sent_at', { ascending: true })
+    for (const r of (remRows ?? []) as Array<{ sf_job_id: string | null; stage_day: number; channel: string }>) {
+      if (!r.sf_job_id) continue
+      const arr = remindersByJob.get(r.sf_job_id) ?? []
+      arr.push({ day: r.stage_day, channel: r.channel })
+      remindersByJob.set(r.sf_job_id, arr)
+    }
+  }
+
   const items: UnpaidJob[] = jobs.map((j: {
     id: string
     number: string | null
@@ -154,6 +174,7 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
     source: j.source ?? null,
     tech_names: techMap.get(j.id) ?? [],
     days_outstanding: daysBetween(j.closed_at),
+    reminders: remindersByJob.get(j.id) ?? [],
   }))
 
   const totalDue = items.reduce((s, i) => s + i.due_total, 0)
