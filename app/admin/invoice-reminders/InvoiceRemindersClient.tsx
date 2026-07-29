@@ -73,7 +73,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
     patchStage(i, { channels: on ? [...cadence[i].channels, ch] : cadence[i].channels.filter(x => x !== ch) })
   }
   // Render the branded email with this stage's current (unsaved) copy + sample
-  // data, and open it in a new tab so the layout/logo can be eyeballed.
+  // data, and open it in a new tab inside a Desktop/Mobile preview frame.
   function previewEmail(s: CadenceStage) {
     const { html } = renderInvoiceReminderEmail({
       bodyText: fillVars(s.email_body),
@@ -81,7 +81,30 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
       amountDue: SAMPLE_VARS.amount_due,
       payUrl: '#',
     })
-    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+    // Embed the email in a resizable frame. <-escape so nothing in the
+    // email HTML can break out of the injecting <script>.
+    const emailJson = JSON.stringify(html).replace(/</g, '\\u003c')
+    const wrapper = `<!doctype html><html><head><meta charset="utf-8"><title>Email preview</title>
+<style>
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#e5e7eb;}
+  .bar{position:sticky;top:0;padding:10px;text-align:center;background:#0F0F0F;color:#fff;}
+  .bar span{font-size:13px;margin-right:10px;opacity:.8;}
+  .bar button{margin:0 4px;padding:7px 18px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;background:#fff;color:#111;}
+  .bar button.active{background:#C81E1E;color:#fff;}
+  .wrap{display:flex;justify-content:center;padding:20px;}
+  iframe{border:1px solid #b0b0b0;background:#fff;height:82vh;transition:width .15s;box-shadow:0 4px 24px rgba(0,0,0,.15);}
+</style></head><body>
+  <div class="bar"><span>Preview width:</span>
+    <button id="d" class="active" onclick="setW('100%',this)">Desktop</button>
+    <button id="m" onclick="setW('390px',this)">Mobile</button>
+  </div>
+  <div class="wrap"><iframe id="f" style="width:100%"></iframe></div>
+  <script>
+    document.getElementById('f').srcdoc = ${emailJson};
+    function setW(w,btn){document.getElementById('f').style.width=w;document.querySelectorAll('.bar button').forEach(function(b){b.className='';});btn.className='active';}
+  </script>
+</body></html>`
+    const url = URL.createObjectURL(new Blob([wrapper], { type: 'text/html' }))
     window.open(url, '_blank', 'noopener')
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
