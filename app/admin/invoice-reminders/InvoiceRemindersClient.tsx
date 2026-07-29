@@ -80,9 +80,10 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   // Render the branded email with this stage's current (unsaved) copy + sample
   // data, and open it in a new tab inside a Desktop/Mobile preview frame.
   // Open rendered email HTML in a new tab inside a Desktop/Mobile preview frame.
-  function openEmailFrame(html: string) {
+  function openEmailFrame(html: string, to?: string) {
     // <-escape so nothing in the email HTML can break out of the injecting script.
     const emailJson = JSON.stringify(html).replace(/</g, '\\u003c')
+    const toLine = to ? `<div class="to">To: ${to.replace(/</g, '\\u003c')}</div>` : ''
     const wrapper = `<!doctype html><html><head><meta charset="utf-8"><title>Email preview</title>
 <style>
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#e5e7eb;}
@@ -90,6 +91,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   .bar span{font-size:13px;margin-right:10px;opacity:.8;}
   .bar button{margin:0 4px;padding:7px 18px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;background:#fff;color:#111;}
   .bar button.active{background:#C81E1E;color:#fff;}
+  .to{background:#1A1A22;color:#fff;text-align:center;padding:6px;font-size:12px;font-family:monospace;}
   .wrap{display:flex;justify-content:center;padding:20px;}
   iframe{border:1px solid #b0b0b0;background:#fff;height:82vh;transition:width .15s;box-shadow:0 4px 24px rgba(0,0,0,.15);}
 </style></head><body>
@@ -97,6 +99,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
     <button id="d" class="active" onclick="setW('100%',this)">Desktop</button>
     <button id="m" onclick="setW('390px',this)">Mobile</button>
   </div>
+  ${toLine}
   <div class="wrap"><iframe id="f" style="width:100%"></iframe></div>
   <script>
     document.getElementById('f').srcdoc = ${emailJson};
@@ -149,7 +152,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
         amountDue: vars.amount_due,
         payUrl: vars.pay_url,
       })
-      openEmailFrame(html)
+      openEmailFrame(html, row.recipient)
     } else {
       openSmsPreview(subst(stage.sms_body, vars), row.recipient)
     }
