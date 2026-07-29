@@ -63,11 +63,16 @@ export async function saveSettings(input: {
   revalidatePath('/admin/invoice-reminders')
 }
 
-// Dry-run: what the next run would send (simulating "enabled now" if currently off).
-export async function previewPlan(): Promise<{ count: number; sample: PlannedSend[] }> {
+// Dry-run: everything that matches the (possibly unsaved) cadence right now.
+// The fresh-start window is opened here on purpose — the preview shows the full
+// picture of who your schedule matches so you can tune the numbers; the note in
+// the UI explains that an enabled fresh-start run only sends new stage-crossings.
+export async function previewPlan(input: { cadence: CadenceStage[]; excluded_sources: string[] }): Promise<{ count: number; sample: PlannedSend[] }> {
   await assertAdmin()
   const settings = await loadSettings()
-  if (!settings.activated_at) settings.activated_at = new Date().toISOString()
+  settings.cadence = input.cadence
+  settings.excluded_sources = input.excluded_sources
+  settings.activated_at = '2000-01-01T00:00:00Z' // open the window for preview
   const plan = await getPlannedSends(settings)
   return { count: plan.length, sample: plan.slice(0, 50) }
 }

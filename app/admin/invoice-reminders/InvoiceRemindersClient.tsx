@@ -100,7 +100,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   }
   async function runPreview() {
     setErr(''); setPreview(null)
-    try { setPreview(await previewPlan()) } catch (e) { fail(e) }
+    try { setPreview(await previewPlan({ cadence, excluded_sources: excluded })) } catch (e) { fail(e) }
   }
   async function runTest() {
     setTestOut('Testing…')
@@ -239,7 +239,8 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
 
       {preview && (
         <section className="bg-white border border-gray-200 rounded-lg p-5">
-          <h2 className="text-sm font-semibold text-gray-800 mb-2">Next run would send {preview.count} message{preview.count === 1 ? '' : 's'}</h2>
+          <h2 className="text-sm font-semibold text-gray-800 mb-1">{preview.count} message{preview.count === 1 ? '' : 's'} match your current schedule</h2>
+          <p className="text-xs text-gray-500 mb-2">Everything eligible under the cadence above (uses your unsaved edits). With fresh start, an enabled run only sends invoices that cross a <em>new</em> stage after you turn it on, so real runs start smaller than this.</p>
           {preview.sample.length > 0 && (
             <table className="w-full text-xs">
               <thead><tr className="text-left text-gray-500"><th className="py-1">Invoice</th><th>Customer</th><th>Day</th><th>Channel</th><th>To</th><th className="text-right">Due</th></tr></thead>
