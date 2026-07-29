@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Components" name="Service Card" subtitle="Red icon tile, white card, red link" viewport="700x240" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Service Card</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--color-bg-light);padding:24px;font-family:var(--font-body);}
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+  .card{background:#fff;border-radius:12px;padding:24px 22px;box-shadow:var(--shadow-sm);border:1px solid var(--color-border-light);}
+  .icon{width:48px;height:48px;background:rgba(200,30,30,.08);border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px;}
+  .icon svg{width:24px;height:24px;fill:var(--color-red);}
+  h3{font-family:var(--font-display);font-weight:700;font-size:18px;color:var(--color-primary);margin:0 0 6px;letter-spacing:-.02em;}
+  p{font-size:14px;color:var(--color-text-secondary);line-height:1.55;margin:0 0 12px;}
+  .link{color:var(--color-red);font-family:var(--font-display);font-weight:600;font-size:14px;text-decoration:none;}
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="card">
+      <div class="icon"><svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg></div>
+      <h3>Garage Door Repair</h3>
+      <p>Springs, cables, rollers, panels, tracks, sensors. Same-day &amp; 24/7 emergency.</p>
+      <a href="#" class="link">Schedule Repair →</a>
+    </div>
+    <div class="card">
+      <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3C6.95 3 3.15 4.85 0 7.23L12 22 24 7.25C20.85 4.87 17.05 3 12 3z"/></svg></div>
+      <h3>Openers</h3>
+      <p>LiftMaster, Marantec, Genie. Smart/WiFi, belt drive, chain drive, wall-mount.</p>
+      <a href="#" class="link">Explore Options →</a>
+    </div>
+    <div class="card">
+      <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm.5 5H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg></div>
+      <h3>Emergency Repair</h3>
+      <p>24/7 emergency service. Stuck door? Broken spring? Call any time.</p>
+      <a href="#" class="link">Get Help Now →</a>
+    </div>
+  </div>
+</body>
+</html>

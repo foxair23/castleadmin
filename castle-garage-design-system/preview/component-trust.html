@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Components" name="Trust Strip" subtitle="Header credentials + Certified &amp; Trusted partner-logo wall (matches live site)" viewport="700x380" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Trust Strip</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:#fff;font-family:var(--font-body);}
+  /* ── Top: thin credentials strip (header-adjacent) ── */
+  .strip{background:var(--color-surface);padding:18px 28px;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);}
+  .strip-inner{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px 26px;}
+  .item{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:var(--color-text-secondary);white-space:nowrap;}
+  .item svg{width:18px;height:18px;stroke:var(--color-red);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
+  /* ── Bottom: full Certified & Trusted section (matches live site) ── */
+  .ct{padding:32px 28px;text-align:center;}
+  .eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.18em;color:var(--color-red);font-weight:800;margin:0 0 8px;}
+  .ct h2{font-family:var(--font-display);font-size:26px;font-weight:900;text-transform:uppercase;letter-spacing:.01em;color:var(--color-text-primary);margin:0 0 10px;}
+  .ct p{max-width:620px;margin:0 auto 22px;font-size:14px;line-height:1.55;color:var(--color-text-secondary);}
+  .logos{display:flex;align-items:center;justify-content:center;gap:32px;flex-wrap:wrap;}
+  .logos img{height:64px;width:auto;object-fit:contain;filter:saturate(1);}
+  .logos .lm{height:32px;}
+  .logos .hd{height:72px;}
+  .logos .genie{height:54px;}
+</style>
+</head>
+<body>
+  <!-- Header credentials strip -->
+  <div class="strip">
+    <div class="strip-inner">
+      <span class="item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Same-Day Service</span>
+      <span class="item"><svg viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> Family-Owned &amp; Operated</span>
+      <span class="item"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg> Licensed &amp; Insured</span>
+      <span class="item"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Since 1981</span>
+      <span class="item"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> CSLB #1154002 · C-61/D-28</span>
+    </div>
+  </div>
+
+  <!-- Full Certified & Trusted section -->
+  <section class="ct">
+    <p class="eyebrow">Certified &amp; Trusted</p>
+    <h2>Authorized. Trained. Vetted.</h2>
+    <p>Factory-authorized Clopay door dealer, LiftMaster &amp; Genie opener specialist, and the <strong>only Home Depot installation partner across all of San Diego County.</strong></p>
+    <div class="logos">
+      <img src="../assets/partners/clopay-mad.png" alt="Clopay Master Authorized Dealer">
+      <img class="lm" src="../assets/partners/liftmaster.png" alt="LiftMaster">
+      <img class="genie" src="../assets/partners/genie.avif" alt="Genie">
+      <img class="hd" src="../assets/partners/home-depot-services.webp" alt="The Home Depot Home Services">
+    </div>
+  </section>
+</body>
+</html>

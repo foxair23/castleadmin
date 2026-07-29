@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Image Specifications" subtitle="Photography brief — sizes, subject, safe areas, production rules" viewport="700x1100" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Image Specifications</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;padding:24px 28px;background:#fff;font-family:var(--font-body);color:var(--color-text-primary);}
+  .eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:var(--color-red);font-weight:800;margin:0 0 6px;}
+  h2{font-family:var(--font-display);font-size:24px;font-weight:900;text-transform:uppercase;letter-spacing:.01em;margin:0 0 4px;}
+  .lede{font-size:14px;color:var(--color-text-secondary);margin:0 0 22px;max-width:620px;}
+
+  .specs{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+  .spec{border:1px solid var(--color-border);border-radius:10px;padding:14px;display:grid;grid-template-columns:1fr 1.2fr;gap:14px;align-items:start;background:#fff;}
+  .frame{background:var(--color-surface);border:1px dashed var(--color-border);border-radius:6px;display:flex;align-items:flex-end;justify-content:flex-start;position:relative;overflow:hidden;color:#fff;}
+  .frame::before{content:"";position:absolute;inset:0;background-image:linear-gradient(135deg,#94a3b8 25%,transparent 25%,transparent 50%,#94a3b8 50%,#94a3b8 75%,transparent 75%);background-size:14px 14px;opacity:.35;}
+  .frame .dim{position:absolute;top:6px;left:8px;font-family:'SF Mono','Menlo',monospace;font-size:10px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6);font-weight:700;}
+  .body{display:flex;flex-direction:column;gap:4px;}
+  .body .name{font-family:var(--font-display);font-size:14px;font-weight:800;line-height:1.2;color:var(--color-text-primary);}
+  .body .where{font-size:12px;color:var(--color-text-muted);font-style:italic;margin-bottom:2px;}
+  .body dl{margin:6px 0 0;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;}
+  .body dt{font-weight:700;color:var(--color-text-secondary);}
+  .body dd{margin:0;font-family:'SF Mono','Menlo',monospace;color:var(--color-text-primary);}
+
+  /* Aspect helpers */
+  .ar-16-9{aspect-ratio:16/9;}
+  .ar-3-2{aspect-ratio:3/2;}
+  .ar-4-3{aspect-ratio:4/3;}
+  .ar-1-1{aspect-ratio:1/1;}
+  .ar-3-4{aspect-ratio:3/4;}
+
+  .rules{margin-top:22px;padding:14px 18px;border:1px solid var(--color-border);border-radius:10px;background:var(--color-surface);}
+  .rules h3{font-family:var(--font-display);font-size:14px;text-transform:uppercase;letter-spacing:.1em;margin:0 0 8px;color:var(--color-text-primary);}
+  .rules ul{margin:0;padding-left:18px;font-size:13px;color:var(--color-text-secondary);line-height:1.55;}
+  .rules li{margin-bottom:4px;}
+  .rules strong{color:var(--color-text-primary);}
+</style>
+</head>
+<body>
+  <p class="eyebrow">For the Photographer</p>
+  <h2>Image Specifications</h2>
+  <p class="lede">Every image slot on the Castle marketing site. Shoot landscape unless noted. Export <strong>JPEG @ 80% quality</strong> for photos, <strong>PNG</strong> for logos and graphics with transparency. Always provide the @2× pixel size below.</p>
+
+  <div class="specs">
+
+    <div class="spec">
+      <div class="frame ar-16-9"><span class="dim">3200 × 1800 · 16:9</span></div>
+      <div class="body">
+        <div class="name">Homepage Hero</div>
+        <div class="where">Top of every page</div>
+        <dl>
+          <dt>Display</dt><dd>1600 × 900</dd>
+          <dt>Export</dt><dd>3200 × 1800 (@2×)</dd>
+          <dt>Subject</dt><dd>Wide elevation of garage / gate, daylight, no people</dd>
+          <dt>Safe area</dt><dd>Right 40% — text covers left 60%</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="frame ar-3-2"><span class="dim">1800 × 1200 · 3:2</span></div>
+      <div class="body">
+        <div class="name">Service Pillar Card</div>
+        <div class="where">Homepage "Our Services" 2-up</div>
+        <dl>
+          <dt>Display</dt><dd>900 × 600</dd>
+          <dt>Export</dt><dd>1800 × 1200 (@2×)</dd>
+          <dt>Subject</dt><dd>One service in action: door, gate, opener mech</dd>
+          <dt>Crop</dt><dd>Subject centered, breathing room top/bottom</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="frame ar-4-3"><span class="dim">1200 × 900 · 4:3</span></div>
+      <div class="body">
+        <div class="name">Gallery Thumbnail</div>
+        <div class="where">/gallery — masonry/grid</div>
+        <dl>
+          <dt>Display</dt><dd>600 × 450</dd>
+          <dt>Export</dt><dd>1200 × 900 (@2×)</dd>
+          <dt>Subject</dt><dd>Completed install, project showcase</dd>
+          <dt>Caption</dt><dd>Always include city + job type</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="frame ar-16-9"><span class="dim">2400 × 1350 · 16:9</span></div>
+      <div class="body">
+        <div class="name">Blog Header / OG Image</div>
+        <div class="where">Field Guides article + share preview</div>
+        <dl>
+          <dt>Display</dt><dd>1200 × 675</dd>
+          <dt>Export</dt><dd>2400 × 1350 (@2×)</dd>
+          <dt>Subject</dt><dd>Topical — close-up of part, tools, install</dd>
+          <dt>OG fallback</dt><dd>Same file works for Facebook/X share</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="frame ar-16-9"><span class="dim">1600 × 900 · 16:9</span></div>
+      <div class="body">
+        <div class="name">Blog Card Thumbnail</div>
+        <div class="where">"Field Guides" 3-up teaser</div>
+        <dl>
+          <dt>Display</dt><dd>400 × 225</dd>
+          <dt>Export</dt><dd>800 × 450 (@2×) or reuse header @½</dd>
+          <dt>Subject</dt><dd>Single icon-clear visual</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="frame ar-3-4"><span class="dim">1200 × 1600 · 3:4</span></div>
+      <div class="body">
+        <div class="name">About / Team Portrait</div>
+        <div class="where">/about — "Meet the family"</div>
+        <dl>
+          <dt>Display</dt><dd>600 × 800</dd>
+          <dt>Export</dt><dd>1200 × 1600 (@2×)</dd>
+          <dt>Subject</dt><dd>Owner, family, or technician — uniform on</dd>
+          <dt>Background</dt><dd>Truck, shop, or neutral exterior</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="frame ar-1-1"><span class="dim">800 × 800 · 1:1</span></div>
+      <div class="body">
+        <div class="name">Testimonial / Avatar</div>
+        <div class="where">Customer headshot (optional)</div>
+        <dl>
+          <dt>Display</dt><dd>96 × 96 round</dd>
+          <dt>Export</dt><dd>192 × 192 PNG (@2×)</dd>
+          <dt>Note</dt><dd>Most reviews don't have one — that's fine</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="frame ar-16-9"><span class="dim">2400 × 1350 · 16:9</span></div>
+      <div class="body">
+        <div class="name">Service Area Page Hero</div>
+        <div class="where">/service-areas/&lt;city&gt;</div>
+        <dl>
+          <dt>Display</dt><dd>1200 × 675</dd>
+          <dt>Export</dt><dd>2400 × 1350 (@2×)</dd>
+          <dt>Subject</dt><dd>Recognizable local scene + Castle truck</dd>
+          <dt>Tip</dt><dd>One per city if possible — generic OK</dd>
+        </dl>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="rules">
+    <h3>Production Rules — every photo</h3>
+    <ul>
+      <li><strong>Light:</strong> daylight, sunny or bright overcast. No twilight, no flash-on-camera.</li>
+      <li><strong>Color:</strong> warm Southern California — natural saturation, no HDR, no presets, no B&amp;W.</li>
+      <li><strong>People:</strong> none in environment shots. For portraits, uniformed crew only.</li>
+      <li><strong>Branding:</strong> Castle truck or logo visible in 30%+ of marketing shots — never the focal point.</li>
+      <li><strong>Frame:</strong> level horizons, straight verticals (no fisheye / dutch angle).</li>
+      <li><strong>Files:</strong> JPEG q80 for photos, PNG for transparency. Strip EXIF. sRGB color space. Name <code>area-job-XX.jpg</code> (e.g. <code>encinitas-clopay-001.jpg</code>).</li>
+      <li><strong>Always supply @2×.</strong> Browsers downscale beautifully; upscaling looks terrible.</li>
+    </ul>
+  </div>
+</body>
+</html>

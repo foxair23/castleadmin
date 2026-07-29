@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Colors" name="Semantic Colors" subtitle="Status only — error = brand red" viewport="700x200" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Castle — Semantic Colors</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--color-bg-light);padding:20px;font-family:var(--font-body);}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  .sw{position:relative;height:108px;border-radius:10px;overflow:hidden;}
+  .sw .lbl{position:absolute;left:14px;bottom:10px;color:#fff;font-family:var(--font-display);font-weight:600;font-size:13px;}
+  .sw .hex{position:absolute;right:14px;bottom:10px;color:rgba(255,255,255,.8);font-size:12px;font-family:'SF Mono','Menlo',monospace;}
+  .sw .var{position:absolute;left:14px;top:10px;color:rgba(255,255,255,.7);font-size:11px;text-transform:uppercase;letter-spacing:.1em;font-weight:600;}
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="sw" style="background:#2E7D52;">
+      <span class="var">success</span><span class="lbl">Success</span><span class="hex">#2E7D52</span>
+    </div>
+    <div class="sw" style="background:#D4922E;">
+      <span class="var">warning</span><span class="lbl">Warning</span><span class="hex">#D4922E</span>
+    </div>
+    <div class="sw" style="background:#C81E1E;">
+      <span class="var">error · same as brand</span><span class="lbl">Error</span><span class="hex">#C81E1E</span>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Components" name="Buttons" subtitle="Primary red · secondary outline · white-on-dark" viewport="700x240" -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Buttons</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--color-bg-light);padding:24px;font-family:var(--font-body);}
+  .stack{display:flex;flex-direction:column;gap:14px;}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .lbl{font-size:11px;color:var(--color-text-muted);font-family:'SF Mono','Menlo',monospace;min-width:88px;}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-display);font-weight:600;font-size:15px;padding:12px 22px;border-radius:8px;transition:all .2s;border:2px solid transparent;cursor:pointer;}
+  .btn-primary{background:var(--color-red);color:#fff;border-color:var(--color-red);box-shadow:var(--shadow-sm);}
+  .btn-primary:hover{background:var(--color-red-dark);border-color:var(--color-red-dark);box-shadow:var(--shadow-md);transform:translateY(-1px);}
+  .btn-secondary{color:var(--color-primary);border-color:var(--color-primary);background:transparent;}
+  .btn-secondary:hover{background:var(--color-primary);color:#fff;}
+  .btn-sm{padding:9px 16px;font-size:14px;}
+  .dark{background:var(--color-primary);padding:14px 18px;border-radius:10px;display:flex;gap:10px;}
+  .btn-white{background:#fff;color:var(--color-primary);border-color:#fff;}
+  .btn-outline-white{background:transparent;color:#fff;border-color:#fff;}
+  svg{width:14px;height:14px;}
+</style>
+</head>
+<body>
+  <div class="stack">
+    <div class="row"><span class="lbl">primary</span>
+      <button class="btn btn-primary">Schedule Service</button>
+      <button class="btn btn-primary btn-sm">Schedule Service</button>
+    </div>
+    <div class="row"><span class="lbl">secondary</span>
+      <button class="btn btn-secondary">View All Reviews</button>
+      <button class="btn btn-secondary btn-sm">See More</button>
+    </div>
+    <div class="dark">
+      <span class="lbl" style="color:rgba(255,255,255,.6);align-self:center;">on dark</span>
+      <button class="btn btn-white">Get Free Estimate</button>
+      <button class="btn btn-outline-white">Call (800) 576-1397</button>
+    </div>
+  </div>
+</body>
+</html>
