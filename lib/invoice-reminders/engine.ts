@@ -21,6 +21,7 @@ export interface ReminderSettings {
   activated_at: string | null
   send_hour_pt: number
   excluded_sources: string[]
+  excluded_email_domains: string[]
   cadence: CadenceStage[]
   reply_to_email: string | null
 }
@@ -56,6 +57,7 @@ export async function loadSettings(): Promise<ReminderSettings> {
     activated_at: s.activated_at ?? null,
     send_hour_pt: s.send_hour_pt ?? 9,
     excluded_sources: s.excluded_sources ?? [],
+    excluded_email_domains: (s as { excluded_email_domains?: string[] }).excluded_email_domains ?? [],
     cadence: (s.cadence as CadenceStage[]) ?? [],
     reply_to_email: (s as { reply_to_email?: string | null }).reply_to_email ?? null,
   }
@@ -134,6 +136,9 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
   const optSet = new Set((optRows ?? []).map(r => `${r.channel}|${(r.value as string).toLowerCase()}`))
   const norm = (s: string) => s.trim().toLowerCase()
   const excluded = new Set(settings.excluded_sources.map(norm))
+  // Excluded bill-to email domains — catches 3rd-party billers (e.g. Greystar)
+  // whose jobs carry a generic source like "Repeat Customer". Leading @ tolerated.
+  const excludedDomains = new Set(settings.excluded_email_domains.map(d => norm(d).replace(/^@/, '')))
 
   const plan: PlannedSend[] = []
   for (const inv of invoices) {
@@ -162,6 +167,11 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
     const email = (
       (raw['bill_to_email_id'] as string) || (cust['email'] as string) || ''
     ).trim().toLowerCase() || null
+    // Skip the whole invoice (both channels) when it bills to an excluded domain.
+    if (email && excludedDomains.size > 0) {
+      const domain = email.split('@')[1]
+      if (domain && excludedDomains.has(domain)) continue
+    }
     const phone = toE164((raw['bill_to_phone_id'] as string) || (cust['phone'] as string) || null)
     const payUrlLong = (raw['pay_online_url'] as string) || null
     // Shorten the (very long) SF pay URL to cstle.co/p/<code> — matters most for

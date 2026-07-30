@@ -38,6 +38,7 @@ export async function setEnabled(enabled: boolean) {
 export async function saveSettings(input: {
   send_hour_pt: number
   excluded_sources: string[]
+  excluded_email_domains: string[]
   cadence: CadenceStage[]
   reply_to_email: string
 }) {
@@ -56,6 +57,9 @@ export async function saveSettings(input: {
   const { error } = await svc().from('invoice_reminder_settings').update({
     send_hour_pt: Math.min(23, Math.max(0, Math.round(input.send_hour_pt))),
     excluded_sources: input.excluded_sources ?? [],
+    excluded_email_domains: (input.excluded_email_domains ?? [])
+      .map(d => d.trim().toLowerCase().replace(/^@/, ''))
+      .filter(Boolean),
     cadence,
     reply_to_email: input.reply_to_email.trim() || null,
     updated_at: new Date().toISOString(),
@@ -69,11 +73,12 @@ export async function saveSettings(input: {
 // The fresh-start window is opened here on purpose — the preview shows the full
 // picture of who your schedule matches so you can tune the numbers; the note in
 // the UI explains that an enabled fresh-start run only sends new stage-crossings.
-export async function previewPlan(input: { cadence: CadenceStage[]; excluded_sources: string[] }): Promise<{ count: number; sample: PlannedSend[] }> {
+export async function previewPlan(input: { cadence: CadenceStage[]; excluded_sources: string[]; excluded_email_domains: string[] }): Promise<{ count: number; sample: PlannedSend[] }> {
   await assertAdmin()
   const settings = await loadSettings()
   settings.cadence = input.cadence
   settings.excluded_sources = input.excluded_sources
+  settings.excluded_email_domains = input.excluded_email_domains
   settings.activated_at = '2000-01-01T00:00:00Z' // open the window for preview
   const plan = await getPlannedSends(settings)
   return { count: plan.length, sample: plan.slice(0, 50) }

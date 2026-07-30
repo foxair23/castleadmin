@@ -28,6 +28,7 @@ interface Settings {
   activated_at: string | null
   send_hour_pt: number
   excluded_sources: string[]
+  excluded_email_domains: string[] | null
   cadence: CadenceStage[]
   reply_to_email: string | null
 }
@@ -60,6 +61,8 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   const [err, setErr] = useState('')
 
   const [excluded, setExcluded] = useState<string[]>(initial.excluded_sources ?? [])
+  const [excludedDomains, setExcludedDomains] = useState<string>((initial.excluded_email_domains ?? []).join(', '))
+  const domainList = () => excludedDomains.split(/[\s,]+/).map(d => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean)
   const [sendHour, setSendHour] = useState(initial.send_hour_pt ?? 9)
   const [replyTo, setReplyTo] = useState(initial.reply_to_email ?? '')
   const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ ...EMPTY_STAGE }])
@@ -166,13 +169,13 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   }
   function save() {
     startTransition(async () => {
-      try { await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, cadence, reply_to_email: replyTo }); flash('Settings saved') }
+      try { await saveSettings({ send_hour_pt: sendHour, excluded_sources: excluded, excluded_email_domains: domainList(), cadence, reply_to_email: replyTo }); flash('Settings saved') }
       catch (e) { fail(e) }
     })
   }
   async function runPreview() {
     setErr(''); setPreview(null)
-    try { setPreview(await previewPlan({ cadence, excluded_sources: excluded })) } catch (e) { fail(e) }
+    try { setPreview(await previewPlan({ cadence, excluded_sources: excluded, excluded_email_domains: domainList() })) } catch (e) { fail(e) }
   }
   async function runTest() {
     setTestOut('Testing…')
@@ -254,6 +257,11 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
             ))}
           </div>
         </div>
+        <div>
+          <label className={label}>Excluded bill-to email domains</label>
+          <input value={excludedDomains} onChange={e => setExcludedDomains(e.target.value)} placeholder="greystar.com, homedepot.com" className={input} />
+          <p className="text-xs text-gray-400 mt-1">Skip any invoice billed to these domains — catches 3rd-party billers whose job source is generic (e.g. Greystar jobs logged as &ldquo;Repeat Customer&rdquo;). Comma-separated.</p>
+        </div>
       </section>
 
       {/* Reminder schedule + per-stage copy */}
@@ -322,17 +330,17 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
           <p className="text-xs text-gray-500 mb-2">Everything eligible under the cadence above (uses your unsaved edits). <strong>Click View</strong> on any row to see the exact email or text with that customer&rsquo;s real name, invoice number, and pay link. With fresh start, an enabled run only sends invoices that cross a <em>new</em> stage after you turn it on, so real runs start smaller than this.</p>
           {preview.sample.length > 0 && (
             <table className="w-full text-xs">
-              <thead><tr className="text-left text-gray-500"><th className="py-1">Invoice</th><th>Customer</th><th>Source</th><th>Day</th><th>Channel</th><th>To</th><th className="text-right">Due</th><th></th></tr></thead>
-              <tbody className="divide-y divide-gray-100">
+              <thead><tr className="text-left text-gray-600"><th className="py-1 pr-3">Invoice</th><th className="pr-3">Customer</th><th className="pr-3">Source</th><th className="pr-3">Day</th><th className="pr-3">Channel</th><th className="pr-3">To</th><th className="text-right pr-3">Due</th><th></th></tr></thead>
+              <tbody className="divide-y divide-gray-100 text-gray-800">
                 {preview.sample.map((p, i) => (
                   <tr key={i}>
-                    <td className="py-1 font-mono">{p.invoiceNumber ?? '—'}</td>
-                    <td>{p.customerName ?? '—'}</td>
-                    <td className={p.source ? '' : 'text-amber-600'}>{p.source ?? '(none)'}</td>
-                    <td>{p.stageDay}d</td>
-                    <td>{p.channel}</td>
-                    <td className="font-mono">{p.recipient}</td>
-                    <td className="text-right">{money(p.amountDue)}</td>
+                    <td className="py-1 pr-3 font-mono">{p.invoiceNumber ?? '—'}</td>
+                    <td className="pr-3">{p.customerName ?? '—'}</td>
+                    <td className={`pr-3 ${p.source ? '' : 'text-amber-600 font-medium'}`}>{p.source ?? '(none)'}</td>
+                    <td className="pr-3">{p.stageDay}d</td>
+                    <td className="pr-3">{p.channel}</td>
+                    <td className="pr-3 font-mono">{p.recipient}</td>
+                    <td className="text-right pr-3">{money(p.amountDue)}</td>
                     <td className="text-right"><button onClick={() => viewPlanned(p)} className="text-blue-600 hover:text-blue-800">View ↗</button></td>
                   </tr>
                 ))}
