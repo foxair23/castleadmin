@@ -64,7 +64,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   const [replyTo, setReplyTo] = useState(initial.reply_to_email ?? '')
   const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ ...EMPTY_STAGE }])
 
-  const [preview, setPreview] = useState<{ count: number; sample: { sfInvoiceId: string; invoiceNumber: string | null; customerName: string | null; greetingName: string | null; channel: string; recipient: string; stageIndex: number; stageDay: number; amountDue: number; payUrl: string | null }[] } | null>(null)
+  const [preview, setPreview] = useState<{ count: number; sample: { sfInvoiceId: string; invoiceNumber: string | null; customerName: string | null; greetingName: string | null; source: string | null; channel: string; recipient: string; stageIndex: number; stageDay: number; amountDue: number; payUrl: string | null }[] } | null>(null)
   const [testNum, setTestNum] = useState('')
   const [testOut, setTestOut] = useState('')
 
@@ -322,12 +322,13 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
           <p className="text-xs text-gray-500 mb-2">Everything eligible under the cadence above (uses your unsaved edits). <strong>Click View</strong> on any row to see the exact email or text with that customer&rsquo;s real name, invoice number, and pay link. With fresh start, an enabled run only sends invoices that cross a <em>new</em> stage after you turn it on, so real runs start smaller than this.</p>
           {preview.sample.length > 0 && (
             <table className="w-full text-xs">
-              <thead><tr className="text-left text-gray-500"><th className="py-1">Invoice</th><th>Customer</th><th>Day</th><th>Channel</th><th>To</th><th className="text-right">Due</th><th></th></tr></thead>
+              <thead><tr className="text-left text-gray-500"><th className="py-1">Invoice</th><th>Customer</th><th>Source</th><th>Day</th><th>Channel</th><th>To</th><th className="text-right">Due</th><th></th></tr></thead>
               <tbody className="divide-y divide-gray-100">
                 {preview.sample.map((p, i) => (
                   <tr key={i}>
                     <td className="py-1 font-mono">{p.invoiceNumber ?? '—'}</td>
                     <td>{p.customerName ?? '—'}</td>
+                    <td className={p.source ? '' : 'text-amber-600'}>{p.source ?? '(none)'}</td>
                     <td>{p.stageDay}d</td>
                     <td>{p.channel}</td>
                     <td className="font-mono">{p.recipient}</td>

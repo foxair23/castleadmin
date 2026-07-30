@@ -31,6 +31,7 @@ export interface PlannedSend {
   invoiceNumber: string | null
   customerName: string | null   // display, e.g. "Watts, Rian"
   greetingName: string | null   // cleaned first name for {{customer}}, e.g. "Rian"
+  source: string | null         // the job's SF source (null = none set)
   stageIndex: number
   stageDay: number
   channel: 'email' | 'sms'
@@ -195,6 +196,7 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
         invoiceNumber: inv.number,
         customerName: job.customer_name,
         greetingName: greeting,
+        source: job.source ?? null,
         stageIndex: tgt.index,
         stageDay: tgt.stage.day,
         channel,
