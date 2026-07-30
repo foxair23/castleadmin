@@ -72,7 +72,7 @@ export interface UnpaidJob {
   tech_names: string[]
   days_outstanding: number
   /** Invoice reminders sent for this job (stage day + channel), oldest first. */
-  reminders: { day: number; channel: string }[]
+  reminders: { day: number; channel: string; manual: boolean }[]
 }
 
 export interface UnpaidJobsResult {
@@ -134,18 +134,18 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
 
   // Invoice reminders already sent for these jobs, so the Unpaid tab can show
   // where each is in the reminder series at a glance.
-  const remindersByJob = new Map<string, { day: number; channel: string }[]>()
+  const remindersByJob = new Map<string, { day: number; channel: string; manual: boolean }[]>()
   if (jobIds.length > 0) {
     const { data: remRows } = await db
       .from('invoice_reminders')
-      .select('sf_job_id, stage_day, channel, sent_at')
+      .select('sf_job_id, stage_day, channel, manual, sent_at')
       .in('sf_job_id', jobIds)
       .eq('status', 'sent')
       .order('sent_at', { ascending: true })
-    for (const r of (remRows ?? []) as Array<{ sf_job_id: string | null; stage_day: number; channel: string }>) {
+    for (const r of (remRows ?? []) as Array<{ sf_job_id: string | null; stage_day: number; channel: string; manual: boolean | null }>) {
       if (!r.sf_job_id) continue
       const arr = remindersByJob.get(r.sf_job_id) ?? []
-      arr.push({ day: r.stage_day, channel: r.channel })
+      arr.push({ day: r.stage_day, channel: r.channel, manual: r.manual ?? false })
       remindersByJob.set(r.sf_job_id, arr)
     }
   }
