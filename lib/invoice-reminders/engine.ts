@@ -131,14 +131,15 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
   const sentKeys = new Set((sentRows ?? []).map(r => `${r.sf_invoice_id}|${r.stage_index}|${r.channel}`))
   const skipSet = new Set((skipRows ?? []).map(r => (r as { sf_invoice_id: string }).sf_invoice_id))
   const optSet = new Set((optRows ?? []).map(r => `${r.channel}|${(r.value as string).toLowerCase()}`))
-  const excluded = new Set(settings.excluded_sources.map(s => s.toLowerCase()))
+  const norm = (s: string) => s.trim().toLowerCase()
+  const excluded = new Set(settings.excluded_sources.map(norm))
 
   const plan: PlannedSend[] = []
   for (const inv of invoices) {
     if (skipSet.has(inv.id)) continue
     const job = inv.job_id ? jobMap.get(inv.job_id) : undefined
     if (!job) continue // no job link → can't verify source; skip
-    if (job.source && excluded.has(job.source.toLowerCase())) continue
+    if (job.source && excluded.has(norm(job.source))) continue
     const amountDue = job.due_total ?? inv.total ?? 0
     if (amountDue <= 0) continue
     const invoiceDate = (inv.date ?? '').slice(0, 10)
