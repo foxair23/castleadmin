@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/notifications/resend'
 import { sendSms, toE164, isDialpadConfigured } from '@/lib/dialpad/client'
 import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoice-reminder-email'
 import { greetingFirstName } from '@/lib/names'
+import { ensureShortLink } from '@/lib/short-links'
 
 const BUSINESS_NAME = 'Castle Garage Inc'
 
@@ -160,7 +161,10 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
       (raw['bill_to_email_id'] as string) || (cust['email'] as string) || ''
     ).trim().toLowerCase() || null
     const phone = toE164((raw['bill_to_phone_id'] as string) || (cust['phone'] as string) || null)
-    const payUrl = (raw['pay_online_url'] as string) || null
+    const payUrlLong = (raw['pay_online_url'] as string) || null
+    // Shorten the (very long) SF pay URL to cstle.co/p/<code> — matters most for
+    // SMS, and gives click tracking. Deterministic + deduped.
+    const payUrl = payUrlLong ? await ensureShortLink(payUrlLong) : null
     // Cleaned first name for the greeting (handles "Last, First" + ALL-CAPS),
     // same logic as the Mailchimp export.
     const greeting = greetingFirstName({
