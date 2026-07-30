@@ -15,10 +15,23 @@ function db() {
   )
 }
 
-/** Base of the short domain. Set SHORT_LINK_BASE=https://cstle.co once DNS points
- *  there; until then it falls back to the app's own domain (still works). */
+/** Dedicated short domain, e.g. https://go.cstle.co (set SHORT_LINK_BASE). */
 export function shortBase(): string {
-  return (process.env.SHORT_LINK_BASE || process.env.NEXT_PUBLIC_APP_URL || 'https://hq.castlegaragedoors.com').replace(/\/+$/, '')
+  return (process.env.SHORT_LINK_BASE || '').replace(/\/+$/, '')
+}
+function appBase(): string {
+  return (process.env.NEXT_PUBLIC_APP_URL || 'https://hq.castlegaragedoors.com').replace(/\/+$/, '')
+}
+
+/**
+ * Full short URL for a code. On the dedicated short domain the code sits at the
+ * root (go.cstle.co/<code>) — the middleware rewrites that host's requests to
+ * the /p/[code] resolver. Without SHORT_LINK_BASE we fall back to the app domain
+ * with the /p/ prefix (hq.castlegaragedoors.com/p/<code>), which routes normally.
+ */
+export function shortUrl(code: string): string {
+  const base = shortBase()
+  return base ? `${base}/${code}` : `${appBase()}/p/${code}`
 }
 
 /** Deterministic 8-char base62 code for a URL (~48 bits; collisions negligible). */
@@ -36,5 +49,5 @@ export async function ensureShortLink(targetUrl: string): Promise<string> {
   try {
     await db().from('short_links').upsert({ code, target_url: targetUrl }, { onConflict: 'code', ignoreDuplicates: true })
   } catch { /* best-effort; still return the short URL */ }
-  return `${shortBase()}/p/${code}`
+  return shortUrl(code)
 }
