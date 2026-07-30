@@ -60,6 +60,7 @@ export default function ResendReminderModal({
           no_channels: 'No deliverable channel (no contact info, or the customer opted out).',
           no_stage: 'That reminder stage no longer exists.',
           not_found: 'Invoice could not be found.',
+          excluded: 'This job\'s source is excluded from reminders — nothing was sent.',
         }
         const detail = res.failed.length ? ` (${res.failed.map(f => `${f.channel}: ${f.error}`).join('; ')})` : ''
         setResult((map[res.reason ?? ''] ?? 'Send failed.') + detail)
@@ -94,9 +95,11 @@ export default function ResendReminderModal({
 
           {data && !data.ok && (
             <p className="text-sm text-red-600">
-              {data.reason === 'no_cadence'
-                ? 'No reminder cadence is configured yet.'
-                : 'No unpaid invoice found for this job.'}
+              {data.reason === 'excluded'
+                ? `This job's source${data.source ? ` ("${data.source}")` : ''} is excluded from reminders (third-party-paid), so a reminder can't be sent.`
+                : data.reason === 'no_cadence'
+                  ? 'No reminder cadence is configured yet.'
+                  : 'No unpaid invoice found for this job.'}
             </p>
           )}
 

@@ -335,6 +335,7 @@ export interface ResendContext {
   invoiceNumber: string | null
   customerName: string | null
   greetingName: string | null
+  source: string | null
   amountDue: number
   email: string | null
   phone: string | null
@@ -405,6 +406,7 @@ export async function resolveInvoiceForResend(sfInvoiceId: string): Promise<Rese
     invoiceNumber: invoice.number,
     customerName: job?.customer_name ?? null,
     greetingName: greeting,
+    source: job?.source ?? null,
     amountDue,
     email,
     phone,
@@ -440,7 +442,8 @@ export interface ResendStagePreview {
 
 export interface ResendData {
   ok: boolean
-  reason?: 'not_found' | 'no_cadence'
+  reason?: 'not_found' | 'no_cadence' | 'excluded'
+  source?: string | null
   sfInvoiceId: string | null
   invoiceNumber: string | null
   customerName: string | null
@@ -451,6 +454,15 @@ export interface ResendData {
   stages: ResendStagePreview[]
 }
 
+const normSource = (s: string) => s.trim().toLowerCase()
+
+/** A job source that's excluded from reminders (3rd-party-paid) can't be resent. */
+function isExcludedSource(settings: ReminderSettings, source: string | null): boolean {
+  if (!source) return false
+  const excluded = new Set(settings.excluded_sources.map(normSource))
+  return excluded.has(normSource(source))
+}
+
 /** Build the full modal payload for a job's unpaid invoice: per-stage previews. */
 export async function getResendData(sfJobId: string): Promise<ResendData> {
   const settings = await loadSettings()
@@ -459,8 +471,12 @@ export async function getResendData(sfJobId: string): Promise<ResendData> {
   if (!sfInvoiceId) return { ok: false, reason: 'not_found', ...empty }
   const ctx = await resolveInvoiceForResend(sfInvoiceId)
   if (!ctx) return { ok: false, reason: 'not_found', ...empty }
+  const base = { sfInvoiceId, invoiceNumber: ctx.invoiceNumber, customerName: ctx.customerName, amountDue: ctx.amountDue, hasEmail: !!ctx.email, hasPhone: !!ctx.phone }
+  if (isExcludedSource(settings, ctx.source)) {
+    return { ok: false, reason: 'excluded', source: ctx.source, ...empty, ...base }
+  }
   if (settings.cadence.length === 0) {
-    return { ok: false, reason: 'no_cadence', ...empty, sfInvoiceId, invoiceNumber: ctx.invoiceNumber, customerName: ctx.customerName, amountDue: ctx.amountDue, hasEmail: !!ctx.email, hasPhone: !!ctx.phone }
+    return { ok: false, reason: 'no_cadence', ...empty, ...base }
   }
 
   // Opt-out lookup for this invoice's specific recipients only.
@@ -505,7 +521,7 @@ export async function getResendData(sfJobId: string): Promise<ResendData> {
 
 export interface ResendResult {
   ok: boolean
-  reason?: 'not_found' | 'no_stage' | 'paid' | 'no_channels'
+  reason?: 'not_found' | 'no_stage' | 'paid' | 'no_channels' | 'excluded'
   sent: ('email' | 'sms')[]
   failed: { channel: 'email' | 'sms'; error: string }[]
 }
@@ -518,6 +534,9 @@ export async function manualResend(sfInvoiceId: string, stageIndex: number): Pro
 
   const ctx = await resolveInvoiceForResend(sfInvoiceId)
   if (!ctx) return { ok: false, reason: 'not_found', sent: [], failed: [] }
+
+  // Excluded (3rd-party-paid) sources are never reminded — including manually.
+  if (isExcludedSource(settings, ctx.source)) return { ok: false, reason: 'excluded', sent: [], failed: [] }
 
   // Never resend on an invoice that's already been paid (live SF re-check).
   if (!(await stillUnpaid(sfInvoiceId))) return { ok: false, reason: 'paid', sent: [], failed: [] }
