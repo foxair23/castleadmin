@@ -4,6 +4,7 @@ import { sfGet } from '@/lib/crm/service-fusion'
 import { sendEmail } from '@/lib/notifications/resend'
 import { sendSms, toE164, isDialpadConfigured } from '@/lib/dialpad/client'
 import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoice-reminder-email'
+import { greetingFirstName } from '@/lib/names'
 
 const BUSINESS_NAME = 'Castle Garage Inc'
 
@@ -27,7 +28,8 @@ export interface PlannedSend {
   sfInvoiceId: string
   sfJobId: string | null
   invoiceNumber: string | null
-  customerName: string | null
+  customerName: string | null   // display, e.g. "Watts, Rian"
+  greetingName: string | null   // cleaned first name for {{customer}}, e.g. "Rian"
   stageIndex: number
   stageDay: number
   channel: 'email' | 'sms'
@@ -75,7 +77,7 @@ interface InvoiceRow {
   id: string; job_id: string | null; number: string | null; date: string | null
   total: number | null; raw_data: Record<string, unknown>
 }
-interface JobRow { id: string; source: string | null; due_total: number | null; customer_name: string | null; customer_id: string | null }
+interface JobRow { id: string; source: string | null; due_total: number | null; customer_name: string | null; customer_id: string | null; contact_first_name: string | null; contact_last_name: string | null }
 
 /**
  * Compute exactly what would be sent today. Fresh-start: a stage only fires if
@@ -109,7 +111,7 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
 
   const jobIds = [...new Set(invoices.map(i => i.job_id).filter((j): j is string => !!j))]
   const { data: jobRows } = await supabase
-    .from('sf_jobs').select('id, source, due_total, customer_name, customer_id').in('id', jobIds.length ? jobIds : ['__none__'])
+    .from('sf_jobs').select('id, source, due_total, customer_name, customer_id, contact_first_name, contact_last_name').in('id', jobIds.length ? jobIds : ['__none__'])
   const jobMap = new Map((jobRows ?? []).map(j => [(j as JobRow).id, j as JobRow]))
 
   // Customer fallback contacts.
@@ -159,6 +161,13 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
     ).trim().toLowerCase() || null
     const phone = toE164((raw['bill_to_phone_id'] as string) || (cust['phone'] as string) || null)
     const payUrl = (raw['pay_online_url'] as string) || null
+    // Cleaned first name for the greeting (handles "Last, First" + ALL-CAPS),
+    // same logic as the Mailchimp export.
+    const greeting = greetingFirstName({
+      firstName: job.contact_first_name ?? (cust['first_name'] as string | null),
+      lastName: job.contact_last_name ?? (cust['last_name'] as string | null),
+      customerName: job.customer_name,
+    })
 
     // Channel resolution: email is primary when the customer has one. SMS is the
     // fallback when they don't (for an email stage), and is also sent alongside
@@ -180,6 +189,7 @@ export async function getPlannedSends(settings: ReminderSettings): Promise<Plann
         sfJobId: inv.job_id,
         invoiceNumber: inv.number,
         customerName: job.customer_name,
+        greetingName: greeting,
         stageIndex: tgt.index,
         stageDay: tgt.stage.day,
         channel,
@@ -224,7 +234,7 @@ export async function runReminders(): Promise<RunResult> {
     const stage = settings.cadence[p.stageIndex]
     if (!stage) { continue }
     const vars = {
-      customer: p.customerName ?? 'there',
+      customer: p.greetingName ?? 'there',
       invoice_number: p.invoiceNumber ?? p.sfInvoiceId,
       amount_due: money(p.amountDue),
       pay_url: p.payUrl ?? '',

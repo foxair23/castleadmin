@@ -64,7 +64,7 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
   const [replyTo, setReplyTo] = useState(initial.reply_to_email ?? '')
   const [cadence, setCadence] = useState<CadenceStage[]>(initial.cadence?.length ? initial.cadence : [{ ...EMPTY_STAGE }])
 
-  const [preview, setPreview] = useState<{ count: number; sample: { sfInvoiceId: string; invoiceNumber: string | null; customerName: string | null; channel: string; recipient: string; stageIndex: number; stageDay: number; amountDue: number; payUrl: string | null }[] } | null>(null)
+  const [preview, setPreview] = useState<{ count: number; sample: { sfInvoiceId: string; invoiceNumber: string | null; customerName: string | null; greetingName: string | null; channel: string; recipient: string; stageIndex: number; stageDay: number; amountDue: number; payUrl: string | null }[] } | null>(null)
   const [testNum, setTestNum] = useState('')
   const [testOut, setTestOut] = useState('')
 
@@ -135,11 +135,11 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
     openEmailFrame(html)
   }
   // Render a specific queued send with its REAL data, for QC.
-  function viewPlanned(row: { channel: string; stageIndex: number; invoiceNumber: string | null; sfInvoiceId: string; customerName: string | null; amountDue: number; payUrl: string | null; recipient: string }) {
+  function viewPlanned(row: { channel: string; stageIndex: number; invoiceNumber: string | null; sfInvoiceId: string; customerName: string | null; greetingName: string | null; amountDue: number; payUrl: string | null; recipient: string }) {
     const stage = cadence[row.stageIndex]
     if (!stage) return
     const vars: Record<string, string> = {
-      customer: row.customerName ?? 'there',
+      customer: row.greetingName ?? 'there',
       invoice_number: row.invoiceNumber ?? row.sfInvoiceId,
       amount_due: money(row.amountDue),
       pay_url: row.payUrl ?? '',
