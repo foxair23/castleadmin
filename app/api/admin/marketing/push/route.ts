@@ -4,6 +4,7 @@ import { createClient as createAdminClient, SupabaseClient } from '@supabase/sup
 import { pushContacts } from '@/lib/mailchimp/client'
 import type { MailchimpContact } from '@/lib/mailchimp/client'
 import { getMatchingCustomerIds, lastServicedByCustomer, laterDate, realServiceDate, type MarketingFilters } from '@/lib/marketing/query'
+import { cleanContactName } from '@/lib/names'
 
 // Sending all matching leads can mean thousands of contacts (chunked DB reads +
 // batched Mailchimp calls), so allow up to 5 minutes.
@@ -83,25 +84,9 @@ export async function fetchContactsForIds(db: SupabaseClient<any>, customerIds: 
     const phones = phonesByContact.get(c.id) ?? []
     const email = emails.find(e => e.is_primary)?.email ?? emails[0]?.email ?? null
     const phone = phones.find(p => p.is_primary)?.phone ?? phones[0]?.phone ?? null
-    // Fix reversed names (fname ends with comma) and all-caps names
-    let firstName = c.first_name ?? null
-    let lastName = c.last_name ?? null
-    if (firstName && firstName.trimEnd().endsWith(',')) {
-      const tmp = lastName
-      lastName = firstName.trimEnd().replace(/,$/, '').trim() || null
-      firstName = tmp
-    }
-    const fix = (s: string | null) => {
-      if (!s) return s
-      if (s !== s.toUpperCase() || !/[A-Z]/.test(s)) return s
-      return s
-        .toLowerCase()
-        .replace(/\b\w/g, c => c.toUpperCase())
-        .replace(/\bMc([a-z])/g, (_, c) => `Mc${c.toUpperCase()}`)
-        .replace(/\bMac([bcdfghjklmnpqrstvwxyz])/g, (_, c) => `Mac${c.toUpperCase()}`)
-        .replace(/(?<=\S\s)(Van|Von|De|Di|La|Le|Du)\b/g, p => p.toLowerCase())
-    }
-    contactMap.set(c.customer_id, { first_name: fix(firstName), last_name: fix(lastName), email, phone })
+    // Fix reversed names (fname ends with comma) and all-caps names.
+    const { first, last } = cleanContactName(c.first_name, c.last_name)
+    contactMap.set(c.customer_id, { first_name: first, last_name: last, email, phone })
   }
 
   const locationMap = new Map<string, { city: string | null; postal_code: string | null }>()
