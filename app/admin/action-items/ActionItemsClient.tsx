@@ -23,6 +23,7 @@ import type {
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
 import PhotoLightbox from '@/components/PhotoLightbox'
+import ResendReminderModal from './ResendReminderModal'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -375,6 +376,8 @@ function ZeroRevenueTable({ items, notes, actions }: { items: ZeroRevenueJob[]; 
 
 function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
   const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'days_outstanding')
+  const router = useRouter()
+  const [resendJob, setResendJob] = useState<UnpaidJob | null>(null)
 
   return (
     <div className="overflow-x-auto">
@@ -401,17 +404,30 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
               <ActionCell tab="unpaid" entityId={job.id} record={actions[`sf_job:${job.id}`]} itemDate={job.closed_at} />
               <td className="px-4 py-2 font-medium text-gray-900">{job.customer_name ?? '—'}</td>
               <td className="px-4 py-2">
-                {job.reminders.length === 0 ? (
-                  <span className="text-gray-300">—</span>
-                ) : (
-                  <div className="flex flex-wrap gap-1">
-                    {job.reminders.map((r, i) => (
-                      <span key={i} title={`${r.channel === 'sms' ? 'Text' : 'Email'} sent at ${r.day} days`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 whitespace-nowrap">
-                        {r.day}d {r.channel === 'sms' ? '📱' : '✉'}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <div className="flex flex-col items-start gap-1">
+                  {job.reminders.length === 0 ? (
+                    <span className="text-gray-300">—</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {job.reminders.map((r, i) => (
+                        <span
+                          key={i}
+                          title={`${r.manual ? 'Manually resent' : 'Sent'} ${r.channel === 'sms' ? 'text' : 'email'} at ${r.day} days${r.manual ? ' (manual)' : ''}`}
+                          className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap ${r.manual ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}
+                        >
+                          {r.manual && <span aria-hidden>↻</span>}
+                          {r.day}d {r.channel === 'sms' ? '📱' : '✉'}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setResendJob(job)}
+                    className="text-[11px] font-medium text-red-600 hover:text-red-800 hover:underline whitespace-nowrap"
+                  >
+                    Resend Reminder
+                  </button>
+                </div>
               </td>
               <td className="px-4 py-2 text-gray-600">{job.number ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600">
@@ -428,6 +444,14 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
           ))}
         </tbody>
       </table>
+      {resendJob && (
+        <ResendReminderModal
+          jobId={resendJob.id}
+          customerName={resendJob.customer_name}
+          onClose={() => setResendJob(null)}
+          onSent={() => router.refresh()}
+        />
+      )}
     </div>
   )
 }
