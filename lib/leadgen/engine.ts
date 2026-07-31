@@ -45,14 +45,27 @@ export interface LeadRow {
   converted_at: string | null
 }
 
-export interface LeadGenSettings { enabled: boolean; self_schedule_url: string }
+export interface LeadGenSettings { enabled: boolean; self_schedule_url: string; reply_to_email: string | null }
 
 export async function loadLeadGenSettings(): Promise<LeadGenSettings> {
-  const { data } = await db().from('leadgen_settings').select('enabled, self_schedule_url').eq('id', 1).maybeSingle()
+  const { data } = await db().from('leadgen_settings').select('enabled, self_schedule_url, reply_to_email').eq('id', 1).maybeSingle()
   return {
     enabled: data?.enabled ?? false,
     self_schedule_url: (data?.self_schedule_url as string) || 'sfi.cstle.co',
+    reply_to_email: (data?.reply_to_email as string) || null,
   }
+}
+
+/** Record what an inbound webhook delivered, for visibility/debugging. */
+export async function logInboundEvent(fields: {
+  from_addr: string | null
+  subject: string | null
+  resend_email_id: string | null
+  outcome: string
+  lead_id?: string | null
+  detail?: string | null
+}): Promise<void> {
+  try { await db().from('leadgen_inbound_events').insert(fields) } catch { /* non-critical */ }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -218,7 +231,7 @@ export async function sendLeadOutreach(lead: LeadRow, settings?: LeadGenSettings
   if (lead.email && !lead.email_sent_at) {
     try {
       const { html, text } = renderLeadOutreachEmail({ greetingName: lead.greeting_name, scheduleUrl: cfg.self_schedule_url })
-      await sendEmail({ to: lead.email, subject: 'Castle Garage Doors & Gates — your Home Depot service request', html, text })
+      await sendEmail({ to: lead.email, subject: 'Castle Garage Doors & Gates — your Home Depot service request', html, text, replyTo: cfg.reply_to_email || undefined })
       patch.email_sent_at = new Date().toISOString()
       sent.push('email')
     } catch (e) {

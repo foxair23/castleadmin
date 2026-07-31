@@ -28,6 +28,16 @@ export async function setLeadGenEnabled(enabled: boolean) {
   revalidatePath('/admin/leadgen')
 }
 
+/** Reply-To inbox for outreach emails (so customer replies reach a human). */
+export async function setLeadGenReplyTo(email: string) {
+  const userId = await assertStaff()
+  const value = email.trim() || null
+  const { error } = await svc().from('leadgen_settings')
+    .update({ reply_to_email: value, updated_at: new Date().toISOString(), updated_by: userId }).eq('id', 1)
+  if (error) throw new Error(error.message)
+  revalidatePath('/admin/leadgen')
+}
+
 /** Manually set a lead's status (e.g. mark not-interested / reopen). */
 export async function updateLeadStatus(leadId: string, status: 'contacted' | 'not_interested' | 'callback' | 'booked') {
   await assertStaff()
