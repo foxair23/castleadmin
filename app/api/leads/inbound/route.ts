@@ -35,20 +35,33 @@ function extractEmail(d: Record<string, unknown>): RawInboundEmail {
   }
 }
 
-// Pull the full received email (with body) from Resend by id.
-async function fetchReceivedEmail(id: string): Promise<RawInboundEmail | null> {
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+// Pull the full received email (with body) from Resend by id. Returns the email
+// or a human-readable error for the inbound log. The body can lag the webhook by
+// a moment, so retry a few times on 404/not-ready and transient 5xx.
+async function fetchReceivedEmail(id: string): Promise<{ email?: RawInboundEmail; error?: string }> {
   const key = process.env.RESEND_API_KEY
-  if (!key) return null
-  try {
-    const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(id)}`, {
-      headers: { Authorization: `Bearer ${key}` },
-    })
-    if (!res.ok) return null
-    const d = (await res.json()) as Record<string, unknown>
-    return extractEmail(d)
-  } catch {
-    return null
+  if (!key) return { error: 'RESEND_API_KEY not set' }
+  const url = `https://api.resend.com/emails/receiving/${encodeURIComponent(id)}`
+  let lastError = 'unknown'
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(1000)
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` } })
+      if (res.ok) {
+        const d = (await res.json()) as Record<string, unknown>
+        return { email: extractEmail((d.data && typeof d.data === 'object' ? d.data : d) as Record<string, unknown>) }
+      }
+      const body = await res.text().catch(() => '')
+      lastError = `HTTP ${res.status}: ${body.slice(0, 300)}`
+      // Auth/permission errors won't fix themselves — stop retrying.
+      if (res.status === 401 || res.status === 403) break
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e)
+    }
   }
+  return { error: lastError }
 }
 
 export async function POST(req: NextRequest) {
@@ -82,10 +95,10 @@ export async function POST(req: NextRequest) {
       await logInboundEvent({ from_addr: metaFrom, subject: metaSubject, resend_email_id: null, outcome: 'error', detail: 'no body and no email id' })
       return NextResponse.json({ ok: true, ignored: 'no body and no email id' })
     }
-    const full = await fetchReceivedEmail(emailId)
+    const { email: full, error } = await fetchReceivedEmail(emailId)
     if (!full) {
-      await logInboundEvent({ from_addr: metaFrom, subject: metaSubject, resend_email_id: emailId, outcome: 'fetch_failed', detail: 'could not fetch email body from Resend' })
-      return NextResponse.json({ ok: true, ignored: 'could not fetch email body' })
+      await logInboundEvent({ from_addr: metaFrom, subject: metaSubject, resend_email_id: emailId, outcome: 'fetch_failed', detail: `fetch body: ${error ?? 'unknown'}` })
+      return NextResponse.json({ ok: true, ignored: 'could not fetch email body', detail: error })
     }
     email = full
   }
