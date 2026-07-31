@@ -50,7 +50,12 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/embed/') ||
     pathname.startsWith('/p/') ||
     pathname.startsWith('/api/scheduler/') ||
-    pathname.startsWith('/api/cron/')
+    pathname.startsWith('/api/cron/') ||
+    // Inbound webhooks: authenticated by their own shared secret / signature,
+    // so they must bypass the login redirect (otherwise the provider's POST is
+    // 307'd to /login and never runs).
+    pathname === '/api/leads/inbound' ||
+    pathname.startsWith('/api/dialpad/')
   ) {
     if (pathname === '/login' && user) {
       return NextResponse.redirect(new URL('/', request.url))
