@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parseLead, type RawInboundEmail } from '@/lib/leadgen/parse'
-import { ingestLead } from '@/lib/leadgen/engine'
+import { ingestLead, logInboundEvent } from '@/lib/leadgen/engine'
 
 export const maxDuration = 60
 
@@ -69,26 +69,44 @@ export async function POST(req: NextRequest) {
   }
 
   const data = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, unknown>
+  const emailId = (data.email_id as string) ?? (data.id as string) ?? null
+  const metaFrom = fromToString(data.from)
+  const metaSubject = (data.subject as string) ?? null
 
   // Prefer an inline body; otherwise fetch the full email by id.
   let email: RawInboundEmail
   if (data.text || data.html) {
     email = extractEmail(data)
   } else {
-    const id = (data.email_id as string) ?? (data.id as string) ?? null
-    if (!id) return NextResponse.json({ ok: true, ignored: 'no body and no email id' })
-    const full = await fetchReceivedEmail(id)
-    if (!full) return NextResponse.json({ ok: true, ignored: 'could not fetch email body' })
+    if (!emailId) {
+      await logInboundEvent({ from_addr: metaFrom, subject: metaSubject, resend_email_id: null, outcome: 'error', detail: 'no body and no email id' })
+      return NextResponse.json({ ok: true, ignored: 'no body and no email id' })
+    }
+    const full = await fetchReceivedEmail(emailId)
+    if (!full) {
+      await logInboundEvent({ from_addr: metaFrom, subject: metaSubject, resend_email_id: emailId, outcome: 'fetch_failed', detail: 'could not fetch email body from Resend' })
+      return NextResponse.json({ ok: true, ignored: 'could not fetch email body' })
+    }
     email = full
   }
 
   const parsed = parseLead(email)
-  if (!parsed) return NextResponse.json({ ok: true, ignored: 'not a recognized lead' })
+  if (!parsed) {
+    await logInboundEvent({ from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, outcome: 'not_lead', detail: 'no recognized provider / no contact info' })
+    return NextResponse.json({ ok: true, ignored: 'not a recognized lead' })
+  }
 
   try {
     const result = await ingestLead(parsed.parsed, parsed.text)
+    await logInboundEvent({
+      from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId,
+      outcome: result.status, lead_id: result.leadId,
+      detail: result.sent.length ? `sent: ${result.sent.join(', ')}` : null,
+    })
     return NextResponse.json({ ok: true, ...result })
   } catch (e) {
-    return NextResponse.json({ ok: true, error: e instanceof Error ? e.message : String(e) })
+    const detail = e instanceof Error ? e.message : String(e)
+    await logInboundEvent({ from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, outcome: 'error', detail })
+    return NextResponse.json({ ok: true, error: detail })
   }
 }

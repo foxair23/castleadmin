@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { setLeadGenEnabled, updateLeadStatus, sendOutreachNow } from './actions'
+import { setLeadGenEnabled, setLeadGenReplyTo, updateLeadStatus, sendOutreachNow } from './actions'
 
 export interface LeadView {
   id: string
@@ -22,6 +22,15 @@ export interface LeadView {
   jobNumber: string | null
   convertedAt: string | null
   needsAction: boolean
+}
+
+export interface InboundEvent {
+  id: string
+  receivedAt: string
+  from: string | null
+  subject: string | null
+  outcome: string
+  detail: string | null
 }
 
 const PROVIDER_LABEL: Record<string, string> = { home_depot: 'Home Depot' }
@@ -54,10 +63,13 @@ function StatusBadge({ status, needsAction }: { status: string; needsAction: boo
 
 type Filter = 'action' | 'all' | 'open' | 'booked' | 'closed'
 
-export default function LeadGenClient({ leads, enabled }: { leads: LeadView[]; enabled: boolean }) {
+export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { leads: LeadView[]; enabled: boolean; replyTo: string; inbound: InboundEvent[] }) {
   const router = useRouter()
   const [filter, setFilter] = useState<Filter>('action')
   const [pending, startTransition] = useTransition()
+  const [replyToInput, setReplyToInput] = useState(replyTo)
+  const [replySaved, setReplySaved] = useState(false)
+  const [showInbound, setShowInbound] = useState(false)
 
   const stats = useMemo(() => {
     const real = leads.filter(l => l.status !== 'duplicate')
@@ -88,6 +100,9 @@ export default function LeadGenClient({ leads, enabled }: { leads: LeadView[]; e
   }
   function resend(id: string) {
     startTransition(async () => { await sendOutreachNow(id); router.refresh() })
+  }
+  function saveReplyTo() {
+    startTransition(async () => { await setLeadGenReplyTo(replyToInput); setReplySaved(true); setTimeout(() => setReplySaved(false), 2000); router.refresh() })
   }
 
   const TABS: { key: Filter; label: string }[] = [
@@ -125,6 +140,26 @@ export default function LeadGenClient({ leads, enabled }: { leads: LeadView[]; e
           Auto-send is <strong>off</strong>. Incoming leads are still recorded, but no email/SMS goes out until you turn it on.
         </div>
       )}
+
+      {/* Reply-To: customer replies to the outreach email must reach a human,
+          not the inbound webhook. */}
+      <div className="mb-4 rounded-lg border border-gray-200 bg-white px-4 py-3">
+        <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Outreach reply-to inbox</label>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="email"
+            value={replyToInput}
+            onChange={e => setReplyToInput(e.target.value)}
+            placeholder="e.g. vanessa@castlegaragedoors.com"
+            className="flex-1 min-w-[220px] rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
+          />
+          <button onClick={saveReplyTo} disabled={pending} className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50">Save</button>
+          {replySaved && <span className="text-sm text-green-700">Saved</span>}
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          The outreach email invites customers to reply. Set a monitored inbox here — <strong>not</strong> an <code>@updates.castlegaragedoors.com</code> address, or replies loop back into the inbound webhook.
+        </p>
+      </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <Stat label="Total leads" value={stats.total} />
@@ -203,6 +238,40 @@ export default function LeadGenClient({ leads, enabled }: { leads: LeadView[]; e
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Inbound webhook log — what actually arrived at /api/leads/inbound. */}
+      <div className="mt-6">
+        <button onClick={() => setShowInbound(s => !s)} className="text-sm font-medium text-gray-600 hover:text-gray-900">
+          {showInbound ? '▾' : '▸'} Recent inbound emails ({inbound.length})
+        </button>
+        {showInbound && (
+          <div className="mt-2 overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr><Th>Received</Th><Th>From</Th><Th>Subject</Th><Th>Outcome</Th><Th>Detail</Th></tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {inbound.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Nothing received yet.</td></tr>}
+                {inbound.map(e => (
+                  <tr key={e.id} className="hover:bg-gray-50 align-top">
+                    <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDateTime(e.receivedAt)}</td>
+                    <td className="px-3 py-2 text-gray-600"><div className="max-w-[180px] truncate">{e.from ?? '—'}</div></td>
+                    <td className="px-3 py-2 text-gray-600"><div className="max-w-[220px] truncate">{e.subject ?? '—'}</div></td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        ['contacted', 'new', 'no_contact'].includes(e.outcome) ? 'bg-green-50 text-green-700'
+                        : e.outcome === 'held' ? 'bg-amber-100 text-amber-800'
+                        : ['error', 'fetch_failed'].includes(e.outcome) ? 'bg-red-100 text-red-700'
+                        : 'bg-gray-100 text-gray-500'}`}>{e.outcome}</span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500"><div className="max-w-[220px] truncate" title={e.detail ?? undefined}>{e.detail ?? '—'}</div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
-import LeadGenClient, { type LeadView } from './LeadGenClient'
+import LeadGenClient, { type LeadView, type InboundEvent } from './LeadGenClient'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,9 +23,10 @@ export default async function LeadGenPage() {
 
   const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
-  const [{ data: settings }, { data: leadRows }] = await Promise.all([
-    db.from('leadgen_settings').select('enabled').eq('id', 1).maybeSingle(),
+  const [{ data: settings }, { data: leadRows }, { data: inboundRows }] = await Promise.all([
+    db.from('leadgen_settings').select('enabled, reply_to_email').eq('id', 1).maybeSingle(),
     db.from('leads').select('*').order('received_at', { ascending: false }).limit(500),
+    db.from('leadgen_inbound_events').select('id, received_at, from_addr, subject, outcome, detail').order('received_at', { ascending: false }).limit(25),
   ])
 
   const rows = leadRows ?? []
@@ -56,5 +57,21 @@ export default async function LeadGenPage() {
     needsAction: needsAction(r.status, r.received_at),
   }))
 
-  return <LeadGenClient leads={leads} enabled={settings?.enabled ?? false} />
+  const inbound: InboundEvent[] = (inboundRows ?? []).map(r => ({
+    id: r.id as string,
+    receivedAt: r.received_at as string,
+    from: (r.from_addr as string) ?? null,
+    subject: (r.subject as string) ?? null,
+    outcome: r.outcome as string,
+    detail: (r.detail as string) ?? null,
+  }))
+
+  return (
+    <LeadGenClient
+      leads={leads}
+      enabled={settings?.enabled ?? false}
+      replyTo={settings?.reply_to_email ?? ''}
+      inbound={inbound}
+    />
+  )
 }
