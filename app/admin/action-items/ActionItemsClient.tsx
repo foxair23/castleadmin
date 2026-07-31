@@ -1282,7 +1282,7 @@ export default function ActionItemsClient({
   const TABS: { key: TabKey; label: string; count: number }[] = [
     // Ordered by business importance (owner-specified).
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
-    ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'Leads to Call', count: leadsToCallItems.length }] : []),
+    ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'SFI Leads', count: leadsToCallItems.length }] : []),
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
     ...(zeroRevenueJobs ? [{ key: 'awaiting-revenue' as TabKey, label: 'Awaiting Revenue', count: filteredZeroRevenue.length }] : []),
     { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
@@ -1546,7 +1546,7 @@ export default function ActionItemsClient({
 
       {activeTab === 'leads-to-call' && (
         <AlertSection
-          title="Leads to Call"
+          title="SFI Leads"
           count={leadsToCallItems.length}
         >
           <p className="text-xs text-gray-400 mb-2">Inbound leads not booked within an hour, or who asked for a callback. Clears automatically when the lead books a job (or is marked not interested on the LeadGen page).</p>
