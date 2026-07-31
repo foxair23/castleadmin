@@ -20,6 +20,8 @@ import type {
   AcceptedEstimatesResult,
   ZeroRevenueJob,
   ZeroRevenueJobsResult,
+  UncontactedLead,
+  UncontactedLeadsResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
 import PhotoLightbox from '@/components/PhotoLightbox'
@@ -987,6 +989,8 @@ interface Props {
   acceptedEstimates: AcceptedEstimatesResult
   /** "Awaiting Revenue" ($0 jobs) tab data — admin + sales both pass it. */
   zeroRevenueJobs?: ZeroRevenueJobsResult
+  /** LeadGen inbound leads needing a call (not booked within 1h). */
+  leadsToCall?: UncontactedLeadsResult
   notes: Record<string, string>
   /** Admin-only A/R email trigger (the sales page omits both). */
   showArReport?: boolean
@@ -1101,7 +1105,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling'
+type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -1116,11 +1120,13 @@ export default function ActionItemsClient({
   onlineScheduling,
   acceptedEstimates,
   zeroRevenueJobs,
+  leadsToCall,
   actions,
   notes,
   showArReport = false,
   lastSyncAt = null,
 }: Props) {
+  const leadsToCallItems = leadsToCall?.items ?? []
   const router = useRouter()
   const [arModalOpen, setArModalOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -1135,7 +1141,7 @@ export default function ActionItemsClient({
   // useSearchParams Suspense boundary needed).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling']
+    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call']
     if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
   }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
@@ -1276,6 +1282,7 @@ export default function ActionItemsClient({
   const TABS: { key: TabKey; label: string; count: number }[] = [
     // Ordered by business importance (owner-specified).
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
+    ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'Leads to Call', count: leadsToCallItems.length }] : []),
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
     ...(zeroRevenueJobs ? [{ key: 'awaiting-revenue' as TabKey, label: 'Awaiting Revenue', count: filteredZeroRevenue.length }] : []),
     { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
@@ -1537,6 +1544,60 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
+      {activeTab === 'leads-to-call' && (
+        <AlertSection
+          title="Leads to Call"
+          count={leadsToCallItems.length}
+        >
+          <p className="text-xs text-gray-400 mb-2">Inbound leads not booked within an hour, or who asked for a callback. Clears automatically when the lead books a job (or is marked not interested on the LeadGen page).</p>
+          {leadsToCallItems.length === 0 ? <AllClear /> : <LeadsToCallTable items={leadsToCallItems} />}
+        </AlertSection>
+      )}
+
+    </div>
+  )
+}
+
+function LeadsToCallTable({ items }: { items: UncontactedLead[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-20">Waiting</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {items.map(l => (
+            <tr key={l.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 font-medium text-gray-900">
+                {l.customer_name ?? '—'}
+                {!l.contacted && <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-800">not contacted</span>}
+              </td>
+              <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{l.phone ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-600"><div className="max-w-[180px] truncate">{l.email ?? '—'}</div></td>
+              <td className="px-4 py-2 text-gray-500"><div className="max-w-[200px] truncate" title={l.address ?? undefined}>{l.address ?? '—'}</div></td>
+              <td className="px-4 py-2">
+                {l.status === 'callback' ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">Callback requested{l.reply_text ? ` (“${l.reply_text}”)` : ''}</span>
+                ) : l.status === 'held' ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Held — review</span>
+                ) : l.status === 'no_contact' ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">No contact info</span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700">Awaiting booking</span>
+                )}
+              </td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{l.hours_waiting < 1 ? '<1h' : `${l.hours_waiting}h`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

@@ -757,3 +757,59 @@ export async function getAcceptedEstimatesAwaitingJob(): Promise<AcceptedEstimat
   const totalValue = items.reduce((s, i) => s + (i.total ?? 0), 0)
   return { items, totalValue }
 }
+
+// ── LeadGen: inbound leads needing a call ────────────────────────────────────
+// Leads not booked within an hour (literal, 24/7), plus any that asked for a
+// callback. Terminal states (booked / not interested / duplicate) are excluded.
+
+export interface UncontactedLead {
+  id: string
+  provider: string
+  customer_name: string | null
+  phone: string | null
+  email: string | null
+  address: string | null
+  status: string
+  reply_text: string | null
+  received_at: string
+  hours_waiting: number
+  contacted: boolean
+}
+
+export interface UncontactedLeadsResult {
+  items: UncontactedLead[]
+}
+
+export async function getUncontactedLeads(): Promise<UncontactedLeadsResult> {
+  const db = getAdminClient()
+  const { data } = await db
+    .from('leads')
+    .select('id, provider, customer_name, phone_e164, phone_raw, email, address_street, address_city, address_state, address_postal, status, reply_text, email_sent_at, sms_sent_at, received_at')
+    .in('status', ['new', 'held', 'contacted', 'no_contact', 'callback'])
+    .is('matched_job_id', null)
+    .order('received_at', { ascending: true })
+    .limit(300)
+
+  const HOUR = 3600_000
+  const rows = (data ?? []) as Array<Record<string, unknown>>
+  const items: UncontactedLead[] = rows
+    .filter(r => {
+      if (r.status === 'callback') return true
+      return Date.now() - new Date(r.received_at as string).getTime() >= HOUR
+    })
+    .map(r => ({
+      id: r.id as string,
+      provider: r.provider as string,
+      customer_name: (r.customer_name as string) ?? null,
+      phone: (r.phone_e164 as string) ?? (r.phone_raw as string) ?? null,
+      email: (r.email as string) ?? null,
+      address: [r.address_street, [r.address_city, r.address_state, r.address_postal].filter(Boolean).join(' ')].filter(Boolean).join(', ') || null,
+      status: r.status as string,
+      reply_text: (r.reply_text as string) ?? null,
+      received_at: r.received_at as string,
+      hours_waiting: Math.floor((Date.now() - new Date(r.received_at as string).getTime()) / HOUR),
+      contacted: !!(r.email_sent_at || r.sms_sent_at),
+    }))
+
+  return { items }
+}

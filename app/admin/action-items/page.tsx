@@ -10,6 +10,7 @@ import {
   getOnlineSchedulingLeads,
   getAcceptedEstimatesAwaitingJob,
   getZeroRevenueJobs,
+  getUncontactedLeads,
 } from '@/lib/analytics/alerts'
 import ActionItemsClient from './ActionItemsClient'
 
@@ -31,7 +32,7 @@ export default async function ActionItemsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, notesResult, lastSyncResult] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, notesResult, lastSyncResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -41,6 +42,7 @@ export default async function ActionItemsPage() {
       getOnlineSchedulingLeads(),
       getAcceptedEstimatesAwaitingJob(),
       getZeroRevenueJobs(),
+      getUncontactedLeads(),
       db.from('action_item_notes').select('entity_type, entity_id, note'),
       db.from('sf_sync_runs').select('completed_at').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1).maybeSingle(),
     ])
@@ -82,6 +84,7 @@ export default async function ActionItemsPage() {
       onlineScheduling={onlineScheduling}
       acceptedEstimates={acceptedEstimates}
       zeroRevenueJobs={zeroRevenueJobs}
+      leadsToCall={leadsToCall}
       actions={actions}
       notes={notes}
       showArReport

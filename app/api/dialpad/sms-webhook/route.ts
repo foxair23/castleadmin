@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { sendSms, toE164 } from '@/lib/dialpad/client'
+import { handleLeadReply } from '@/lib/leadgen/engine'
 
 export const maxDuration = 30
 
@@ -86,6 +87,16 @@ export async function POST(req: NextRequest) {
     await sendSms(from, 'Castle Garage Inc: for help call us, or reply STOP to opt out. Msg & data rates may apply.').catch(() => {})
     return NextResponse.json({ ok: true, action: 'help' })
   }
+
+  // Lead outreach replies: "1" = request a callback, "2" = no longer interested.
+  // Only acts if this number has a recent active lead; otherwise falls through.
+  try {
+    const leadAction = await handleLeadReply(from, text)
+    if (leadAction) {
+      await logEvent({ verified: true, from_number: from, message_text: text, action: `lead_${leadAction}` })
+      return NextResponse.json({ ok: true, action: `lead_${leadAction}` })
+    }
+  } catch { /* non-critical — fall through to noop */ }
 
   await logEvent({ verified: true, from_number: from, message_text: text, action: 'noop' })
   return NextResponse.json({ ok: true, action: 'noop' })
