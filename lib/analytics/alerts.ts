@@ -540,6 +540,8 @@ export async function getAwaitingSfJob(): Promise<AwaitingSfJobResult> {
 export interface OnlineSchedulingLead {
   id: string
   customer_name: string
+  phone: string | null
+  email: string | null
   service_type: string | null
   service_category: string | null
   appointment_date: string | null
@@ -562,7 +564,7 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
 
   const { data } = await db
     .from('scheduler_leads')
-    .select('id, customer_first_name, customer_last_name, service_type, service_category, appointment_date, is_partial, synced_at, service_fusion_job_id, created_at')
+    .select('id, customer_first_name, customer_last_name, customer_phone, customer_email, service_type, service_category, appointment_date, is_partial, synced_at, service_fusion_job_id, created_at')
     .is('acknowledged_at', null)
     .neq('status', 'rejected')
     .or('is_partial.eq.true,synced_at.not.is.null')
@@ -576,6 +578,8 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
     id: string
     customer_first_name: string | null
     customer_last_name: string | null
+    customer_phone: string | null
+    customer_email: string | null
     service_type: string | null
     service_category: string | null
     appointment_date: string | null
@@ -586,6 +590,8 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
   }) => ({
     id: l.id,
     customer_name: [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ') || 'Unknown',
+    phone: l.customer_phone || null,
+    email: l.customer_email || null,
     service_type: l.service_type,
     service_category: l.service_category,
     appointment_date: l.appointment_date,

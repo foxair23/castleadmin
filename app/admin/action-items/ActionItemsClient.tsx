@@ -745,6 +745,8 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
             <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Log Action</th>
             <SortTh col="created_at" label="Submitted" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="email" label="Email" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="phone" label="Phone" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="service_type" label="Service" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Photos</th>
@@ -759,6 +761,16 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
               <td className="px-4 py-2 whitespace-nowrap"><DoneButton leadId={lead.id} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDateTime(lead.created_at)}</td>
               <td className="px-4 py-2 font-medium text-gray-900">{lead.customer_name}</td>
+              <td className="px-4 py-2 text-gray-600">
+                {lead.email
+                  ? <a href={`mailto:${lead.email}`} className="text-blue-600 hover:underline break-all">{lead.email}</a>
+                  : <span className="text-gray-300">—</span>}
+              </td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">
+                {lead.phone
+                  ? <a href={`tel:${lead.phone}`} className="text-blue-600 hover:underline">{lead.phone}</a>
+                  : <span className="text-gray-300">—</span>}
+              </td>
               <NotesCell entityType="scheduler_lead" entityId={lead.id} initialNote={notes[`scheduler_lead:${lead.id}`] ?? ''} />
               <td className="px-4 py-2 text-gray-600">
                 {lead.service_type == null
