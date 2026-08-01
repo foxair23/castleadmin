@@ -560,6 +560,29 @@ async function syncJobChildren(jobsRaw: Raw[]) {
     // Same job-expand can surface a shared invoice twice — dedupe before upsert.
     await supabase.from('sf_invoices').upsert(dedupeByKey(invoiceRows, 'id'), { onConflict: 'id' })
   }
+
+  // Line items (products & services) — only touch jobs whose expand actually
+  // carried items, so a page fetched without the items expand (or a job SF
+  // returned itemless) never wipes previously-mirrored rows. Delete-then-insert
+  // per job mirrors the tech sync's shape (app/api/tech/sf-sync/route.ts), with
+  // a mapped line total. Field coalescing matches lib/crm/service-fusion.ts.
+  const jobsWithItems = jobs.filter(j => Array.isArray(j.items))
+  if (jobsWithItems.length > 0) {
+    const withItemsIds = jobsWithItems.map(j => toStr(j.id)!)
+    await supabase.from('sf_job_items').delete().in('sf_job_id', withItemsIds)
+    const itemRows = jobsWithItems.flatMap(j =>
+      (j.items as Raw[]).map((item: Raw) => ({
+        sf_job_id: toStr(j.id)!,
+        name: toStr(item.name ?? item.product_name ?? item.item_name),
+        description: toStr(item.description),
+        quantity: toNum(item.quantity),
+        unit_price: toNum(item.unit_price ?? item.price ?? item.rate),
+        total: toNum(item.total ?? item.total_price ?? item.amount),
+        sf_synced_at: nowIso(),
+      }))
+    )
+    if (itemRows.length > 0) await supabase.from('sf_job_items').insert(itemRows)
+  }
 }
 
 // ─── Reschedule detection ─────────────────────────────────────────────────
@@ -772,7 +795,10 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
   {
     entity: 'jobs', path: '/jobs', table: 'sf_jobs',
     filterKey: 'filters[updated_date][gte]',
-    expand: 'techs_assigned,agents,payments,invoices,notes',
+    // `items` gives us the job's line items (products & services), mirrored into
+    // sf_job_items by syncJobChildren. Same expand the tech sync uses; the mirror
+    // client retries 5xx, so a transient bad-items page recovers on the next run.
+    expand: 'techs_assigned,agents,payments,invoices,notes,items',
     mapper: mapJob,
     afterUpsert: async (items) => {
       await detectAndRecordReschedules(items)

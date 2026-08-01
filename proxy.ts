@@ -49,6 +49,10 @@ export async function proxy(request: NextRequest) {
     pathname === '/login' ||
     pathname.startsWith('/embed/') ||
     pathname.startsWith('/p/') ||
+    // Customer-facing approval: tokenized no-login link (the unguessable token in
+    // the path is the authorization). Page + its accept API are both public.
+    pathname.startsWith('/approve/') ||
+    pathname.startsWith('/api/approve/') ||
     pathname.startsWith('/api/scheduler/') ||
     pathname.startsWith('/api/cron/') ||
     // Inbound webhooks: authenticated by their own shared secret / signature,
