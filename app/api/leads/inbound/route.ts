@@ -41,8 +41,11 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 // or a human-readable error for the inbound log. The body can lag the webhook by
 // a moment, so retry a few times on 404/not-ready and transient 5xx.
 async function fetchReceivedEmail(id: string): Promise<{ email?: RawInboundEmail; error?: string }> {
-  const key = process.env.RESEND_API_KEY
-  if (!key) return { error: 'RESEND_API_KEY not set' }
+  // Reading a received email needs a FULL-ACCESS key; the send key is often
+  // restricted to sending only. Use a dedicated inbound key if provided, else
+  // fall back to the main key.
+  const key = process.env.RESEND_INBOUND_API_KEY || process.env.RESEND_API_KEY
+  if (!key) return { error: 'RESEND_INBOUND_API_KEY / RESEND_API_KEY not set' }
   const url = `https://api.resend.com/emails/receiving/${encodeURIComponent(id)}`
   let lastError = 'unknown'
   for (let attempt = 0; attempt < 4; attempt++) {
