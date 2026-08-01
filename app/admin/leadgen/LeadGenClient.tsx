@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useTransition } from 'react'
+import { useState, useMemo, useTransition, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { setLeadGenEnabled, setLeadGenReplyTo, updateLeadStatus, sendOutreachNow } from './actions'
 
@@ -12,6 +12,11 @@ export interface LeadView {
   email: string | null
   address: string | null
   program: string | null
+  source: string | null
+  externalId: string | null
+  referralStore: string | null
+  leadNotes: string | null
+  rawEmail: string | null
   receivedAt: string
   status: string
   heldReason: string | null
@@ -70,6 +75,7 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { le
   const [replyToInput, setReplyToInput] = useState(replyTo)
   const [replySaved, setReplySaved] = useState(false)
   const [showInbound, setShowInbound] = useState(false)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const stats = useMemo(() => {
     const real = leads.filter(l => l.status !== 'duplicate')
@@ -192,13 +198,17 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { le
               <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No leads in this view.</td></tr>
             )}
             {shown.map(l => (
-              <tr key={l.id} className="hover:bg-gray-50 align-top">
+              <Fragment key={l.id}>
+              <tr className="hover:bg-gray-50 align-top cursor-pointer" onClick={() => setExpandedId(id => id === l.id ? null : l.id)}>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">
                   {fmtDateTime(l.receivedAt)}
                   <div className="text-[11px] text-gray-400">{PROVIDER_LABEL[l.provider] ?? l.provider}</div>
                 </td>
                 <td className="px-3 py-2">
-                  <div className="font-medium text-gray-900">{l.customerName ?? '—'}</div>
+                  <div className="font-medium text-gray-900">
+                    <span className="text-gray-400 mr-1">{expandedId === l.id ? '▾' : '▸'}</span>
+                    {l.customerName ?? '—'}
+                  </div>
                   {l.address && <div className="text-[11px] text-gray-400 max-w-[220px]">{l.address}</div>}
                 </td>
                 <td className="px-3 py-2 text-gray-700">
@@ -221,7 +231,7 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { le
                   {l.heldReason && l.status === 'held' && <div className="text-[11px] text-amber-700 mt-0.5 max-w-[180px]">{l.heldReason}</div>}
                 </td>
                 <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{l.jobNumber ? `#${l.jobNumber}` : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">
+                <td className="px-3 py-2 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                   <div className="flex flex-col gap-1">
                     {l.status === 'held' && (
                       <button onClick={() => resend(l.id)} disabled={pending} className="text-[12px] font-medium text-red-600 hover:underline disabled:opacity-50">Send outreach</button>
@@ -235,6 +245,30 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { le
                   </div>
                 </td>
               </tr>
+              {expandedId === l.id && (
+                <tr className="bg-gray-50">
+                  <td colSpan={7} className="px-4 py-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+                      <Detail label="Name" value={l.customerName} />
+                      <Detail label="Phone" value={l.phone} />
+                      <Detail label="Email" value={l.email} />
+                      <Detail label="Address" value={l.address} />
+                      <Detail label="Program" value={l.program} />
+                      <Detail label="Source" value={l.source} />
+                      <Detail label="Service Center ID" value={l.externalId} />
+                      <Detail label="Referral Store" value={l.referralStore} />
+                      <Detail label="Notes" value={l.leadNotes} />
+                    </div>
+                    {l.rawEmail && (
+                      <details className="mt-3">
+                        <summary className="text-xs font-medium text-gray-500 cursor-pointer">Raw email</summary>
+                        <pre className="mt-1 max-h-64 overflow-auto rounded border border-gray-200 bg-white p-2 text-[11px] text-gray-700 whitespace-pre-wrap">{l.rawEmail}</pre>
+                      </details>
+                    )}
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -283,6 +317,15 @@ function Stat({ label, value, accent }: { label: string; value: string | number;
     <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
       <div className="text-xs uppercase tracking-wide text-gray-500">{label}</div>
       <div className={`text-2xl font-bold ${color}`}>{value}</div>
+    </div>
+  )
+}
+
+function Detail({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="text-gray-800 break-words">{value || <span className="text-gray-300">—</span>}</div>
     </div>
   )
 }

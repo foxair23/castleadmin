@@ -50,7 +50,7 @@ export function emailToText(email: RawInboundEmail): string {
   const base = (email.text && email.text.trim()) ? email.text : (email.html ? htmlToText(email.html) : '')
   return base
     .split('\n')
-    .map(line => line.replace(/^\s*>+\s?/, '').replace(/ /g, ' ').trimEnd())
+    .map(line => line.replace(/^\s*>+\s?/, '').replace(/\*/g, '').replace(/ /g, ' ').trimEnd())
     .join('\n')
 }
 
