@@ -15,6 +15,9 @@ export interface ApprovalRow {
   created_at: string
   sent_channels: string[] | null
   ip: string | null
+  user_agent: string | null
+  terms_fingerprint: string | null
+  legal_version: string | null
 }
 
 function fmtCurrency(n: number | null): string {
@@ -258,11 +261,12 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
               <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Approved (PT)</th>
               <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Sent</th>
               <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">IP</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Reference</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {rows.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No approval requests yet.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">No approval requests yet.</td></tr>
             ) : rows.map(r => (
               <tr key={r.id} className="hover:bg-gray-50">
                 <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{r.source_id}</td>
@@ -274,7 +278,8 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
                 <td className="px-4 py-2 text-gray-900">{r.approved_name ?? '—'}</td>
                 <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDateTime(r.approved_at)}</td>
                 <td className="px-4 py-2 text-gray-500">{(r.sent_channels ?? []).join(', ') || '—'}</td>
-                <td className="px-4 py-2 text-gray-400 whitespace-nowrap">{r.ip ?? '—'}</td>
+                <td className="px-4 py-2 text-gray-400 whitespace-nowrap" title={r.user_agent ?? undefined}>{r.ip ?? '—'}</td>
+                <td className="px-4 py-2 text-gray-400 font-mono text-xs whitespace-nowrap" title={r.legal_version ? `Approval version ${r.legal_version}` : undefined}>{r.terms_fingerprint ?? '—'}</td>
               </tr>
             ))}
           </tbody>

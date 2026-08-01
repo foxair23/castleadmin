@@ -18,7 +18,7 @@ export default async function ApprovalsPage() {
   const db = await createServiceClient()
   const { data: rows } = await db
     .from('job_approvals')
-    .select('id, source_id, customer_name, amount_total, status, approved_name, approved_at, created_at, sent_channels, ip')
+    .select('id, source_id, customer_name, amount_total, status, approved_name, approved_at, created_at, sent_channels, ip, user_agent, terms_fingerprint, legal_version')
     .order('created_at', { ascending: false })
     .limit(200)
 
