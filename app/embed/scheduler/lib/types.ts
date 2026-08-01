@@ -113,7 +113,7 @@ export interface BookingPayload {
   address_state: string
   address_zip: string
   address_is_owner: boolean
-  customer_email?: string
+  customer_email: string
   customer_last_name?: string
   additional_notes?: string
   // widget
