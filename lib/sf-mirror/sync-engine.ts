@@ -561,27 +561,44 @@ async function syncJobChildren(jobsRaw: Raw[]) {
     await supabase.from('sf_invoices').upsert(dedupeByKey(invoiceRows, 'id'), { onConflict: 'id' })
   }
 
-  // Line items (products & services) — only touch jobs whose expand actually
-  // carried items, so a page fetched without the items expand (or a job SF
-  // returned itemless) never wipes previously-mirrored rows. Delete-then-insert
-  // per job mirrors the tech sync's shape (app/api/tech/sf-sync/route.ts), with
-  // a mapped line total. Field coalescing matches lib/crm/service-fusion.ts.
-  const jobsWithItems = jobs.filter(j => Array.isArray(j.items))
-  if (jobsWithItems.length > 0) {
-    const withItemsIds = jobsWithItems.map(j => toStr(j.id)!)
-    await supabase.from('sf_job_items').delete().in('sf_job_id', withItemsIds)
-    const itemRows = jobsWithItems.flatMap(j =>
-      (j.items as Raw[]).map((item: Raw) => ({
-        sf_job_id: toStr(j.id)!,
-        name: toStr(item.name ?? item.product_name ?? item.item_name),
-        description: toStr(item.description),
-        quantity: toNum(item.quantity),
-        unit_price: toNum(item.unit_price ?? item.price ?? item.rate),
-        total: toNum(item.total ?? item.total_price ?? item.amount),
-        sf_synced_at: nowIso(),
-      }))
-    )
-    if (itemRows.length > 0) await supabase.from('sf_job_items').insert(itemRows)
+  // Line items — SF exposes a job's priced lines as PRODUCTS and SERVICES; the
+  // `items` expand is frequently empty, which is why line items historically
+  // didn't come through. Merge whichever of products/services/items a job
+  // carries, with defensive field coalescing (SF field names vary across
+  // products vs services).
+  //
+  // Replace strategy is REBUILD-ONLY-WHEN-PRESENT: a job with zero extracted
+  // lines is left untouched, never wiped. Otherwise the hourly jobs sync — whose
+  // expand returns empty products/services — would delete rows a single-job
+  // approval refresh had populated.
+  const jobLines = (j: Raw): Raw[] => {
+    const products = Array.isArray(j.products) ? (j.products as Raw[]) : []
+    const services = Array.isArray(j.services) ? (j.services as Raw[]) : []
+    if (products.length > 0 || services.length > 0) return [...products, ...services]
+    const items = Array.isArray(j.items) ? (j.items as Raw[]) : (Array.isArray(j.line_items) ? (j.line_items as Raw[]) : [])
+    return items
+  }
+  const mapLine = (j: Raw, it: Raw) => {
+    const qty = toNum(it.quantity ?? it.qty)
+    const unit = toNum(it.unit_price ?? it.price ?? it.rate ?? it.unit_cost)
+    const total = toNum(it.total ?? it.total_price ?? it.subtotal ?? it.line_total ?? it.extended_price ?? it.amount)
+      ?? (qty != null && unit != null ? qty * unit : unit)
+    return {
+      sf_job_id: toStr(j.id)!,
+      name: toStr(it.name ?? it.product_name ?? it.item_name ?? it.service_name ?? it.short_description ?? it.description),
+      description: toStr(it.description ?? it.long_description ?? it.short_description ?? it.notes),
+      quantity: qty,
+      unit_price: unit,
+      total,
+      sf_synced_at: nowIso(),
+    }
+  }
+  const jobsWithLines = jobs.filter(j => jobLines(j).length > 0)
+  if (jobsWithLines.length > 0) {
+    const ids = jobsWithLines.map(j => toStr(j.id)!)
+    await supabase.from('sf_job_items').delete().in('sf_job_id', ids)
+    const rows = jobsWithLines.flatMap(j => jobLines(j).map(it => mapLine(j, it)))
+    if (rows.length > 0) await supabase.from('sf_job_items').insert(rows)
   }
 }
 
@@ -903,7 +920,10 @@ export async function runIncrementalSyncForEntity(entity: string, deadlineMs?: n
 // upserts it, and runs the same child-sync + history hooks the incremental sync
 // uses. Returns quickly (one API call), so it's cheap to call from the UI.
 export async function syncSingleJob(jobId: string): Promise<{ ok: boolean; error?: string }> {
-  const FULL_EXPAND = 'techs_assigned,agents,payments,invoices,notes,items'
+  // Priced line items live under products + services. Expand them here; if the
+  // single-resource expand comes back empty we fall back to the dedicated
+  // /jobs/{id}/products and /jobs/{id}/services sub-resources below.
+  const FULL_EXPAND = 'techs_assigned,agents,payments,invoices,notes,items,products,services'
   const BASE_EXPAND = 'techs_assigned,agents,payments,invoices,notes'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const unwrap = (json: any): Raw | null =>
@@ -914,11 +934,33 @@ export async function syncSingleJob(jobId: string): Promise<{ ok: boolean; error
     try {
       raw = unwrap(await sfMirrorGet(`/jobs/${encodeURIComponent(jobId)}`, { expand: FULL_EXPAND }))
     } catch {
-      // Drop the heavy `items` expand if SF 500s on it (same fallback the tech
+      // Drop the heavy line expands if SF 500s on them (same fallback the tech
       // sync uses); we still refresh the job + its other children.
       raw = unwrap(await sfMirrorGet(`/jobs/${encodeURIComponent(jobId)}`, { expand: BASE_EXPAND }))
     }
     if (!raw || !raw.id) return { ok: false, error: 'Job not found in Service Fusion.' }
+
+    // If the expand didn't surface line items, pull the dedicated sub-resources.
+    // Uses the crm sfGet (not the mirror client) so the /jobs sort default isn't
+    // forced onto these sub-resource paths.
+    const hasLines =
+      (Array.isArray(raw.products) && raw.products.length > 0) ||
+      (Array.isArray(raw.services) && raw.services.length > 0) ||
+      (Array.isArray(raw.items) && raw.items.length > 0)
+    if (!hasLines) {
+      const { sfGet } = await import('@/lib/crm/service-fusion')
+      const rid = encodeURIComponent(toStr(raw.id)!)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sub = async (path: string): Promise<Raw[]> => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const j = (await sfGet(path, { 'per-page': '100' })) as any
+          return (j?.items ?? (Array.isArray(j) ? j : [])) as Raw[]
+        } catch { return [] }
+      }
+      raw.products = await sub(`/jobs/${rid}/products`)
+      raw.services = await sub(`/jobs/${rid}/services`)
+    }
 
     await batchUpsert('sf_jobs', [mapJob(raw)])
     await detectAndRecordReschedules([raw])

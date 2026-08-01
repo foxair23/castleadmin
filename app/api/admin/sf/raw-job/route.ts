@@ -45,14 +45,33 @@ export async function GET(req: NextRequest) {
     const internalId = listJson.items?.[0]?.id
     if (!internalId) return NextResponse.json({ error: 'Job number not found in SF', listJson }, { status: 404 })
 
-    // Now fetch the individual job record
-    const resp = await fetch(`${SF_BASE_URL}/jobs/${internalId}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      cache: 'no-store',
+    const auth = { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store' as const }
+    const getJson = async (path: string) => {
+      const r = await fetch(`${SF_BASE_URL}${path}`, auth)
+      if (!r.ok) return { _error: `${r.status}`, _body: await r.text().catch(() => '') }
+      return r.json()
+    }
+
+    // Individual job WITH the line-item expands, plus the dedicated line-item
+    // sub-resources — so we can see exactly where a job's priced products &
+    // services live and what fields they carry.
+    const raw = await getJson(`/jobs/${internalId}?expand=items,products,services`)
+    const [products, services] = await Promise.all([
+      getJson(`/jobs/${internalId}/products?per-page=100`),
+      getJson(`/jobs/${internalId}/services?per-page=100`),
+    ])
+
+    return NextResponse.json({
+      jobNumber,
+      internalId,
+      fields: raw && typeof raw === 'object' ? Object.keys(raw) : [],
+      expand_items: raw?.items ?? null,
+      expand_products: raw?.products ?? null,
+      expand_services: raw?.services ?? null,
+      subresource_products: products,
+      subresource_services: services,
+      raw,
     })
-    if (!resp.ok) return NextResponse.json({ error: `SF single-job API ${resp.status}`, internalId }, { status: resp.status })
-    const raw = await resp.json()
-    return NextResponse.json({ jobNumber, internalId, fields: Object.keys(raw), raw })
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Unknown error' }, { status: 500 })
   }
