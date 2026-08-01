@@ -15,6 +15,7 @@ import { renderApprovalEmail } from '@/lib/notifications/templates/approval-emai
 import { sendEmail } from '@/lib/notifications/resend'
 import { sendSms, toE164 } from '@/lib/dialpad/client'
 import { ensureShortLink } from '@/lib/short-links'
+import { syncSingleJob } from '@/lib/sf-mirror/sync-engine'
 
 function appBase(): string {
   return (process.env.NEXT_PUBLIC_APP_URL || 'https://hq.castlegaragedoors.com').replace(/\/+$/, '')
@@ -44,6 +45,22 @@ export async function lookupJob(query: string): Promise<LookupResult> {
 
   const ctx = await loadJobApprovalContext(db, jobId)
   if (!ctx) return { ok: false, error: `Job "${q}" not found in the mirror.` }
+  return { ok: true, ctx }
+}
+
+// Pull the latest data for ONE job from Service Fusion right now (line items,
+// customer, totals), then re-load the preview. Use after fixing the job in SF so
+// the operator doesn't have to wait for the hourly sync.
+export async function refreshJob(jobId: string): Promise<LookupResult> {
+  const auth = await requireAdminOrSales()
+  if (!auth) return { ok: false, error: 'Unauthorized' }
+
+  const res = await syncSingleJob(jobId)
+  if (!res.ok) return { ok: false, error: res.error ?? 'Refresh failed.' }
+
+  const db = await createServiceClient()
+  const ctx = await loadJobApprovalContext(db, jobId)
+  if (!ctx) return { ok: false, error: 'Job not found after refresh.' }
   return { ok: true, ctx }
 }
 

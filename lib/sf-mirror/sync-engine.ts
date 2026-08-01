@@ -897,6 +897,40 @@ export async function runIncrementalSyncForEntity(entity: string, deadlineMs?: n
   return runIncrementalSyncForConfig(cfg, deadlineMs)
 }
 
+// Refresh a SINGLE job from Service Fusion on demand — e.g. staff just corrected
+// the job's line items in SF and want them mirrored immediately without waiting
+// for the hourly sync. Fetches that one job with the full expand (incl. items),
+// upserts it, and runs the same child-sync + history hooks the incremental sync
+// uses. Returns quickly (one API call), so it's cheap to call from the UI.
+export async function syncSingleJob(jobId: string): Promise<{ ok: boolean; error?: string }> {
+  const FULL_EXPAND = 'techs_assigned,agents,payments,invoices,notes,items'
+  const BASE_EXPAND = 'techs_assigned,agents,payments,invoices,notes'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const unwrap = (json: any): Raw | null =>
+    json?.items ? (json.items[0] ?? null) : (json?.id ? json : (json?.data ?? null))
+
+  try {
+    let raw: Raw | null = null
+    try {
+      raw = unwrap(await sfMirrorGet(`/jobs/${encodeURIComponent(jobId)}`, { expand: FULL_EXPAND }))
+    } catch {
+      // Drop the heavy `items` expand if SF 500s on it (same fallback the tech
+      // sync uses); we still refresh the job + its other children.
+      raw = unwrap(await sfMirrorGet(`/jobs/${encodeURIComponent(jobId)}`, { expand: BASE_EXPAND }))
+    }
+    if (!raw || !raw.id) return { ok: false, error: 'Job not found in Service Fusion.' }
+
+    await batchUpsert('sf_jobs', [mapJob(raw)])
+    await detectAndRecordReschedules([raw])
+    await syncJobChildren([raw])
+    await recordStatusChanges([raw])
+    await stampWorkCompleted([raw])
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 export async function runIncrementalSync(): Promise<Record<string, number>> {
   const counts: Record<string, number> = {}
   for (const cfg of INCREMENTAL_ENTITIES) {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { lookupJob, sendApproval } from './actions'
+import { lookupJob, refreshJob, sendApproval } from './actions'
 import type { JobApprovalContext } from '@/lib/approvals/contact'
 
 export interface ApprovalRow {
@@ -50,8 +50,16 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
   const [customerName, setCustomerName] = useState('')
   const [channel, setChannel] = useState<'email' | 'sms' | 'both'>('both')
   const [sending, setSending] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+
+  function applyCtx(next: JobApprovalContext) {
+    setCtx(next)
+    setEmail(next.email ?? '')
+    setPhone(next.phone ?? '')
+    setCustomerName(next.contactName ?? next.customerName ?? '')
+  }
 
   async function handleLookup() {
     setError(''); setNotice(''); setCtx(null)
@@ -61,14 +69,27 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
     try {
       const res = await lookupJob(q)
       if (!res.ok) { setError(res.error); return }
-      setCtx(res.ctx)
-      setEmail(res.ctx.email ?? '')
-      setPhone(res.ctx.phone ?? '')
-      setCustomerName(res.ctx.contactName ?? res.ctx.customerName ?? '')
+      applyCtx(res.ctx)
     } catch {
       setError('Lookup failed.')
     } finally {
       setLooking(false)
+    }
+  }
+
+  async function handleRefresh() {
+    if (!ctx) return
+    setError(''); setNotice('')
+    setRefreshing(true)
+    try {
+      const res = await refreshJob(ctx.jobId)
+      if (!res.ok) { setError(res.error); return }
+      applyCtx(res.ctx)
+      setNotice('Pulled the latest from Service Fusion.')
+    } catch {
+      setError('Refresh failed.')
+    } finally {
+      setRefreshing(false)
     }
   }
 
@@ -135,8 +156,21 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
           <div className="border-t border-gray-100 pt-4 space-y-4">
             {/* Line items preview */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                Job {ctx.jobNumber ?? ctx.jobId} — {ctx.customerName ?? 'Customer'}
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Job {ctx.jobNumber ?? ctx.jobId} — {ctx.customerName ?? 'Customer'}
+                </p>
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  title="Pull the latest line items, customer, and total from Service Fusion"
+                  className="text-xs text-gray-600 hover:text-gray-900 disabled:opacity-50 border border-gray-300 rounded px-2 py-1"
+                >
+                  {refreshing ? 'Refreshing…' : '↻ Refresh from Service Fusion'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mb-2">
+                Need to fix something? Update the job in Service Fusion, then Refresh to pull it in.
               </p>
               {ctx.lineItems.length === 0 ? (
                 <p className="text-sm text-red-600">
