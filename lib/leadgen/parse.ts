@@ -5,7 +5,8 @@
 // The forwarded email keeps the original body, which is a simple "Label: value"
 // layout, so we extract each field by its label.
 
-export type LeadProvider = 'home_depot'
+// 'home_depot' today; the AI fallback can emit other provider slugs for new sources.
+export type LeadProvider = string
 
 export interface ParsedLead {
   provider: LeadProvider

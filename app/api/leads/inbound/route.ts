@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parseLead, type RawInboundEmail } from '@/lib/leadgen/parse'
+import { parseLead, emailToText, type RawInboundEmail } from '@/lib/leadgen/parse'
 import { ingestLead, logInboundEvent } from '@/lib/leadgen/engine'
+import { aiExtractLead, isAiExtractConfigured } from '@/lib/leadgen/ai-extract'
 
 export const maxDuration = 60
 
@@ -106,7 +107,17 @@ export async function POST(req: NextRequest) {
     email = full
   }
 
-  const parsed = parseLead(email)
+  // Deterministic parser first (known providers — free + instant); fall back to
+  // AI extraction for unknown providers / unrecognized layouts when configured.
+  let parsed = parseLead(email)
+  let via = 'regex'
+  if (!parsed && isAiExtractConfigured()) {
+    const text = emailToText(email)
+    if (text.trim()) {
+      const aiParsed = await aiExtractLead(text)
+      if (aiParsed) { parsed = { parsed: aiParsed, text }; via = 'ai' }
+    }
+  }
   if (!parsed) {
     await logInboundEvent({ from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, outcome: 'not_lead', detail: 'no recognized provider / no contact info' })
     return NextResponse.json({ ok: true, ignored: 'not a recognized lead' })
@@ -117,9 +128,9 @@ export async function POST(req: NextRequest) {
     await logInboundEvent({
       from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId,
       outcome: result.status, lead_id: result.leadId,
-      detail: result.sent.length ? `sent: ${result.sent.join(', ')}` : null,
+      detail: [via === 'ai' ? 'via AI' : null, result.sent.length ? `sent: ${result.sent.join(', ')}` : null].filter(Boolean).join(' · ') || null,
     })
-    return NextResponse.json({ ok: true, ...result })
+    return NextResponse.json({ ok: true, via, ...result })
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e)
     await logInboundEvent({ from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, outcome: 'error', detail })
