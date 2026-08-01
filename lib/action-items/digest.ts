@@ -16,6 +16,7 @@ import {
   getAwaitingSfJob,
   getOnlineSchedulingLeads,
   getAcceptedEstimatesAwaitingJob,
+  getArHold,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT } from './config'
 
@@ -56,7 +57,7 @@ export function adminDb(): SupabaseClient {
 }
 
 export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest> {
-  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, { data: actionRows }, { data: acksToday }] =
+  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, arHold, { data: actionRows }, { data: acksToday }] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -65,6 +66,7 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       getAwaitingSfJob(),
       getOnlineSchedulingLeads(),
       getAcceptedEstimatesAwaitingJob(),
+      getArHold(),
       db.from('action_item_actions').select('entity_type, entity_id, action_label, actioned_at, follow_up_on'),
       db.from('scheduler_leads').select('id, acknowledged_at').not('acknowledged_at', 'is', null)
         .gte('acknowledged_at', new Date(Date.now() - 36 * 3_600_000).toISOString()),
@@ -99,6 +101,10 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
   // Same order as the Action Items tabs (Online Scheduling is prepended at
   // render time, ahead of these).
   const buckets: TabBucket[] = [
+    // AR Hold sits right after SFI Leads in the tabs (which the digest omits), so
+    // it leads the digest buckets — matching the tabs' left-to-right order.
+    bucketize('ar-hold', 'AR Hold', arHold.items,
+      i => `${i.customer_name ?? '—'} — new job ${i.number ?? '—'} — owes ${money(i.amount_owed)}`, i => i.created_at_sf),
     bucketize('unpaid', 'Unpaid Jobs', unpaid.items,
       i => `${i.customer_name ?? '—'} — ${money(i.due_total)} due — ${i.days_outstanding}d`, i => i.closed_at),
     bucketize('uninvoiced', 'Never Invoiced', uninvoiced.items,
@@ -131,6 +137,7 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       backlogKeys.push(`${tab}:${item.id}`)
     }
   }
+  addBacklog('ar-hold', arHold.items, i => i.created_at_sf)
   addBacklog('unpaid', unpaid.items, i => i.closed_at)
   addBacklog('uninvoiced', uninvoiced.items, i => i.closed_at)
   addBacklog('accepted-no-job', accepted.items, i => i.created_at_sf)
@@ -164,6 +171,7 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
 // ── Yesterday synopsis (morning email only) ──────────────────────────────────
 
 const TAB_LABELS: Record<string, string> = {
+  'ar-hold':           'AR Hold',
   'unpaid':            'Unpaid Jobs',
   'uninvoiced':        'Never Invoiced',
   'accepted-no-job':   'Accepted Estimate - No Job',

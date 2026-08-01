@@ -22,6 +22,8 @@ import type {
   ZeroRevenueJobsResult,
   UncontactedLead,
   UncontactedLeadsResult,
+  ArHoldRow,
+  ArHoldResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
 import PhotoLightbox from '@/components/PhotoLightbox'
@@ -1003,6 +1005,8 @@ interface Props {
   zeroRevenueJobs?: ZeroRevenueJobsResult
   /** LeadGen inbound leads needing a call (not booked within 1h). */
   leadsToCall?: UncontactedLeadsResult
+  /** Open jobs for customers who owe on another job — AR Hold tab. */
+  arHold?: ArHoldResult
   notes: Record<string, string>
   /** Admin-only A/R email trigger (the sales page omits both). */
   showArReport?: boolean
@@ -1117,7 +1121,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call'
+type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -1133,6 +1137,7 @@ export default function ActionItemsClient({
   acceptedEstimates,
   zeroRevenueJobs,
   leadsToCall,
+  arHold,
   actions,
   notes,
   showArReport = false,
@@ -1153,7 +1158,7 @@ export default function ActionItemsClient({
   // useSearchParams Suspense boundary needed).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call']
+    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold']
     if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
   }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
@@ -1223,6 +1228,8 @@ export default function ActionItemsClient({
   const filteredZeroRevenue = notWaiting(
     filterByCutoff(filterByDays(filterBySource(zeroRevenueJobs?.items ?? []), 'days_since_completion'), 'work_completed_at'),
     'sf_job_revenue')
+  // AR Hold: acknowledging a row snoozes it for 3 days (notWaiting on 'ar_hold').
+  const filteredArHold = notWaiting(filterByCutoff((arHold?.items ?? []), 'created_at_sf'), 'ar_hold')
 
   const totalCount =
     filteredUnpaid.length +
@@ -1295,6 +1302,7 @@ export default function ActionItemsClient({
     // Ordered by business importance (owner-specified).
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
     ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'SFI Leads', count: leadsToCallItems.length }] : []),
+    ...(arHold ? [{ key: 'ar-hold' as TabKey, label: 'AR Hold', count: filteredArHold.length }] : []),
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
     ...(zeroRevenueJobs ? [{ key: 'awaiting-revenue' as TabKey, label: 'Awaiting Revenue', count: filteredZeroRevenue.length }] : []),
     { key: 'uninvoiced',   label: 'Never Invoiced', count: filteredUninvoiced.length },
@@ -1566,6 +1574,68 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
+      {activeTab === 'ar-hold' && (
+        <AlertSection
+          title="AR Hold"
+          count={filteredArHold.length}
+        >
+          <p className="text-xs text-gray-400 mb-2">New/open jobs booked by customers who still owe on another job — put these on hold before dispatch. A row clears automatically when the balance is paid or the job completes. Press Acknowledge to snooze it for 3 days.</p>
+          {filteredArHold.length === 0 ? <AllClear /> : <ArHoldTable items={filteredArHold} notes={notes} actions={actions} />}
+        </AlertSection>
+      )}
+
+    </div>
+  )
+}
+
+function ArHoldTable({ items, notes, actions }: { items: ArHoldRow[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
+  const { sorted, sortKey, sortDir, handleSort } = useSortable(items, 'oldest_days_outstanding')
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Acknowledge</th>
+            <SortTh col="customer_name" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="number" label="New Job #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="created_at_sf" label="Created" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="status" label="Status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="amount_owed" label="Amount Owed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Unpaid Job(s)</th>
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
+            <SortTh col="oldest_days_outstanding" label="Oldest (days)" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {sorted.map(j => (
+            <tr key={j.id} className="hover:bg-gray-50">
+              <ActionCell tab="ar-hold" entityId={j.id} record={actions[`ar_hold:${j.id}`]} itemDate={j.created_at_sf} />
+              <td className="px-4 py-2 font-medium text-gray-900">{j.customer_name ?? '—'}</td>
+              <td className="px-4 py-2 font-mono text-xs text-gray-600 whitespace-nowrap">{j.number ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(j.created_at_sf)}</td>
+              <td className="px-4 py-2 text-gray-600">
+                {j.status
+                  ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{j.status}</span>
+                  : <span className="text-gray-400">—</span>
+                }
+              </td>
+              <td className="px-4 py-2 text-gray-900 font-medium whitespace-nowrap">{fmtMoney(j.amount_owed)}</td>
+              <td className="px-4 py-2 text-gray-600">
+                <span className="font-mono text-xs" title={j.unpaid_job_numbers.join(', ')}>
+                  {j.unpaid_job_numbers.length === 0
+                    ? '—'
+                    : j.unpaid_job_numbers.length <= 2
+                      ? j.unpaid_job_numbers.join(', ')
+                      : `${j.unpaid_job_numbers.slice(0, 2).join(', ')} +${j.unpaid_job_numbers.length - 2}`}
+                </span>
+              </td>
+              <NotesCell entityType="ar_hold" entityId={j.id} initialNote={notes[`ar_hold:${j.id}`] ?? ''} />
+              <td className="px-4 py-2"><AgingPill days={j.oldest_days_outstanding} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

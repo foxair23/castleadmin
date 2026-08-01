@@ -820,3 +820,111 @@ export async function getUncontactedLeads(): Promise<UncontactedLeadsResult> {
 
   return { items }
 }
+
+// ── AR Hold — new/open jobs for customers who still owe us money ──────────────
+// Cross-references the unpaid-jobs set (getUnpaidJobs, which reconciles due_total
+// against paid invoices) with currently-open jobs. Any open (not-yet-completed,
+// not-cancelled) job whose customer appears in the unpaid set is an AR Hold: the
+// customer booked new work while carrying a balance, so the new job should be put
+// on hold before dispatch. Purely derived from the mirror — a row clears when the
+// balance is paid or the new job completes/cancels. "Acknowledge" snoozes a row
+// for 3 days (via action_item_actions) so it doesn't nag while being handled.
+
+export interface ArHoldRow {
+  /** Job id — used as the entity id for the Acknowledge action. */
+  id: string
+  number: string | null
+  customer_id: string
+  customer_name: string | null
+  created_at_sf: string | null
+  start_date: string | null
+  status: string | null
+  /** Total the customer owes across all their unpaid jobs. */
+  amount_owed: number
+  /** How many unpaid jobs the customer has. */
+  unpaid_count: number
+  /** Days outstanding on the customer's oldest unpaid job. */
+  oldest_days_outstanding: number
+  /** Job numbers of the customer's unpaid jobs (for reference). */
+  unpaid_job_numbers: string[]
+}
+
+export interface ArHoldResult {
+  items: ArHoldRow[]
+}
+
+export async function getArHold(): Promise<ArHoldResult> {
+  const db = getAdminClient()
+
+  // 1. Owing customers — reuse the reconciled unpaid-jobs set (no cap).
+  const { items: unpaidJobs } = await getUnpaidJobs({ limit: null })
+
+  interface Summary {
+    totalDue: number
+    unpaidCount: number
+    oldestDaysOutstanding: number
+    unpaidJobNumbers: string[]
+  }
+  const byCustomer = new Map<string, Summary>()
+  for (const j of unpaidJobs) {
+    if (!j.customer_id) continue
+    const s = byCustomer.get(j.customer_id) ?? {
+      totalDue: 0,
+      unpaidCount: 0,
+      oldestDaysOutstanding: 0,
+      unpaidJobNumbers: [],
+    }
+    s.totalDue += j.due_total
+    s.unpaidCount += 1
+    s.oldestDaysOutstanding = Math.max(s.oldestDaysOutstanding, j.days_outstanding)
+    if (j.number) s.unpaidJobNumbers.push(j.number)
+    byCustomer.set(j.customer_id, s)
+  }
+
+  const owingCustomerIds = [...byCustomer.keys()]
+  if (owingCustomerIds.length === 0) return { items: [] }
+
+  // 2. Currently-open jobs for those customers. Unpaid jobs always have closed_at
+  //    set, so they're naturally excluded here (they're the trigger, not the hold).
+  const openJobs = await fetchAll<{
+    id: string
+    number: string | null
+    customer_id: string | null
+    customer_name: string | null
+    created_at_sf: string | null
+    start_date: string | null
+    status: string | null
+  }>((from, to) =>
+    db
+      .from('sf_jobs')
+      .select('id, number, customer_id, customer_name, created_at_sf, start_date, status')
+      .in('customer_id', owingCustomerIds)
+      .is('closed_at', null)
+      .is('work_completed_at', null)
+      .not('status', 'in', '("Cancelled","Void","Voided")')
+      .eq('is_deleted', false)
+      .order('created_at_sf', { ascending: false })
+      .range(from, to)
+  )
+
+  const items: ArHoldRow[] = openJobs
+    .filter(j => j.customer_id && byCustomer.has(j.customer_id))
+    .map(j => {
+      const s = byCustomer.get(j.customer_id!)!
+      return {
+        id: j.id,
+        number: j.number,
+        customer_id: j.customer_id!,
+        customer_name: j.customer_name,
+        created_at_sf: j.created_at_sf,
+        start_date: j.start_date,
+        status: j.status,
+        amount_owed: s.totalDue,
+        unpaid_count: s.unpaidCount,
+        oldest_days_outstanding: s.oldestDaysOutstanding,
+        unpaid_job_numbers: s.unpaidJobNumbers,
+      }
+    })
+
+  return { items }
+}
