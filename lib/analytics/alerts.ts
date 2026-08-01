@@ -793,6 +793,7 @@ export async function getUncontactedLeads(): Promise<UncontactedLeadsResult> {
     .select('id, provider, customer_name, phone_e164, phone_raw, email, address_street, address_city, address_state, address_postal, status, reply_text, email_sent_at, sms_sent_at, received_at')
     .in('status', ['new', 'held', 'contacted', 'no_contact', 'callback'])
     .is('matched_job_id', null)
+    .is('acknowledged_at', null)
     .order('received_at', { ascending: true })
     .limit(300)
 
