@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { renderItemsTableHtml, type ApprovalLineItem } from '@/lib/approvals/acceptance'
+import { renderItemsTableHtml, renderDescriptionHtml, type ApprovalLineItem } from '@/lib/approvals/acceptance'
 import { renderApprovalConfirmationEmail } from '@/lib/notifications/templates/approval-email'
 import { sendEmail } from '@/lib/notifications/resend'
 
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const supabase = db()
   const { data: approval } = await supabase
     .from('job_approvals')
-    .select('id, status, source_id, customer_name, customer_email, line_items_snapshot, amount_total, legal_version, terms_fingerprint')
+    .select('id, status, source_id, customer_name, customer_email, job_description, line_items_snapshot, amount_total, legal_version, terms_fingerprint')
     .eq('token', token)
     .maybeSingle()
   if (!approval) return NextResponse.json({ error: 'This approval link is not valid.' }, { status: 404 })
@@ -81,6 +81,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       const { html, text } = renderApprovalConfirmationEmail({
         customerName: (approval.customer_name as string | null) ?? null,
         jobNumber: null,
+        descriptionHtml: renderDescriptionHtml(approval.job_description as string | null),
         itemsHtml: renderItemsTableHtml(items, total),
         approvedName,
         approvedAt: approvedAtHuman,

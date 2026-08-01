@@ -3,6 +3,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
   buildTokens,
   renderItemsTableHtml,
+  renderDescriptionHtml,
   renderLegalHtml,
   type ApprovalLineItem,
 } from '@/lib/approvals/acceptance'
@@ -25,7 +26,7 @@ export default async function ApprovePage({ params }: { params: Promise<{ token:
   const db = adminDb()
   const { data: approval } = await db
     .from('job_approvals')
-    .select('token, status, customer_name, line_items_snapshot, amount_total, legal_version, approved_name, approved_at')
+    .select('token, status, customer_name, job_description, line_items_snapshot, amount_total, legal_version, approved_name, approved_at')
     .eq('token', token)
     .maybeSingle()
 
@@ -38,6 +39,7 @@ export default async function ApprovePage({ params }: { params: Promise<{ token:
     amountTotal: total,
   })
   const itemsHtml = renderItemsTableHtml(items, total)
+  const descriptionHtml = renderDescriptionHtml(approval.job_description as string | null)
   const legalHtml = renderLegalHtml(tokens)
 
   const approvedAtHuman = approval.approved_at
@@ -51,6 +53,7 @@ export default async function ApprovePage({ params }: { params: Promise<{ token:
       token={token}
       status={approval.status as 'pending' | 'approved' | 'declined' | 'expired'}
       customerName={(approval.customer_name as string | null) ?? null}
+      descriptionHtml={descriptionHtml}
       itemsHtml={itemsHtml}
       legalHtml={legalHtml}
       legalVersion={(approval.legal_version as string) ?? LEGAL_VERSION}

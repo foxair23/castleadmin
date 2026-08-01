@@ -8,6 +8,7 @@ import {
   generateApprovalToken,
   itemsTotal,
   renderItemsTableHtml,
+  renderDescriptionHtml,
   fmtCurrency,
 } from '@/lib/approvals/acceptance'
 import { LEGAL_VERSION } from '@/lib/approvals/legal'
@@ -109,6 +110,7 @@ export async function sendApproval(input: {
     customer_name: customerName,
     customer_email: email,
     customer_phone: phoneE164,
+    job_description: ctx.jobDescription,
     line_items_snapshot: items,
     amount_total: total,
     legal_version: LEGAL_VERSION,
@@ -127,7 +129,14 @@ export async function sendApproval(input: {
   if (wantEmail && email) {
     try {
       const itemsHtml = renderItemsTableHtml(items, total)
-      const { html, text } = renderApprovalEmail({ customerName, jobNumber: ctx.jobNumber, itemsHtml, approveUrl })
+      const { html, text } = renderApprovalEmail({
+        customerName,
+        jobNumber: ctx.jobNumber,
+        descriptionHtml: renderDescriptionHtml(ctx.jobDescription),
+        descriptionText: ctx.jobDescription,
+        itemsHtml,
+        approveUrl,
+      })
       await sendEmail({
         to: email,
         subject: `Please approve your work${ctx.jobNumber ? ` — Job ${ctx.jobNumber}` : ''}`,

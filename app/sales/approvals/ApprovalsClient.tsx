@@ -175,6 +175,12 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
               <p className="text-xs text-gray-400 mb-2">
                 Need to fix something? Update the job in Service Fusion, then Refresh to pull it in.
               </p>
+              {ctx.jobDescription && ctx.jobDescription.trim() && (
+                <div className="mb-3 rounded border border-gray-100 bg-gray-50 px-3 py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">Work description</p>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{ctx.jobDescription}</p>
+                </div>
+              )}
               {ctx.lineItems.length === 0 ? (
                 <p className="text-sm text-red-600">
                   No line items are mirrored for this job yet. It can&apos;t be sent until the job syncs.

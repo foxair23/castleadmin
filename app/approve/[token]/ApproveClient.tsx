@@ -9,6 +9,7 @@ export default function ApproveClient({
   token,
   status,
   customerName,
+  descriptionHtml,
   itemsHtml,
   legalHtml,
   legalVersion,
@@ -18,6 +19,7 @@ export default function ApproveClient({
   token: string
   status: 'pending' | 'approved' | 'declined' | 'expired'
   customerName: string | null
+  descriptionHtml: string
   itemsHtml: string
   legalHtml: string
   legalVersion: string
@@ -90,6 +92,12 @@ export default function ApproveClient({
                   we can get started.
                 </p>
               </div>
+
+              {descriptionHtml && (
+                <div className="px-5 pt-4">
+                  <div className="text-gray-900" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />
+                </div>
+              )}
 
               <div className="px-5 py-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Your Quote</p>

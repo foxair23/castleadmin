@@ -96,6 +96,18 @@ export function renderLegalHtml(tokens: Record<string, string>): string {
   ).join('')
 }
 
+// The SF job description as a labeled block. Returns '' when there's no
+// description so callers can concatenate unconditionally. Shared by the email
+// and the approval page so the wording/markup stays consistent.
+export function renderDescriptionHtml(description: string | null | undefined): string {
+  const text = (description ?? '').trim()
+  if (!text) return ''
+  return (
+    `<p style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em;margin:0 0 6px;">Work Description</p>` +
+    `<p style="font-size:14px;line-height:1.6;color:#374151;margin:0 0 4px;white-space:pre-wrap;">${esc(text)}</p>`
+  )
+}
+
 // Itemized quote table (products & services, qty, unit price, line total) + a
 // bold grand total row. Used on both the approval page and the email.
 export function renderItemsTableHtml(items: ApprovalLineItem[], total: number): string {

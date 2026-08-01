@@ -15,11 +15,16 @@ function esc(s: string): string {
 export function renderApprovalEmail(opts: {
   customerName: string | null
   jobNumber: string | null
+  descriptionHtml?: string // pre-rendered work-description block (renderDescriptionHtml)
+  descriptionText?: string | null // raw description for the plain-text part
   itemsHtml: string        // pre-rendered itemized table (renderItemsTableHtml)
   approveUrl: string
 }): { html: string; text: string } {
   const greeting = opts.customerName ? `Hi ${esc(opts.customerName)},` : 'Hello,'
   const jobLine = opts.jobNumber ? ` for job ${esc(opts.jobNumber)}` : ''
+  const descBlock = opts.descriptionHtml
+    ? `<div style="margin:6px 0 18px;">${opts.descriptionHtml}</div>`
+    : ''
 
   const html = `<!doctype html>
 <html>
@@ -36,6 +41,7 @@ export function renderApprovalEmail(opts: {
         Please review and approve the following work${jobLine} before we begin. Tap the button below to review the
         details and add your approval.
       </p>
+      ${descBlock}
       <div style="background:#F7F7F5; border:1px solid #E2E0DC; border-radius:8px; padding:12px 14px; margin:6px 0 24px;">
         ${opts.itemsHtml}
       </div>
@@ -58,6 +64,7 @@ export function renderApprovalEmail(opts: {
     opts.customerName ? `Hi ${opts.customerName},` : 'Hello,',
     '',
     `Please review and approve the following work${opts.jobNumber ? ` for job ${opts.jobNumber}` : ''} before we begin:`,
+    ...(opts.descriptionText && opts.descriptionText.trim() ? ['', `Work description: ${opts.descriptionText.trim()}`] : []),
     '',
     `Review & approve online: ${opts.approveUrl}`,
     '',
@@ -77,6 +84,7 @@ export function renderApprovalEmail(opts: {
 export function renderApprovalConfirmationEmail(opts: {
   customerName: string | null
   jobNumber: string | null
+  descriptionHtml?: string
   itemsHtml: string
   approvedName: string
   approvedAt: string       // human-readable, PT
@@ -115,6 +123,7 @@ export function renderApprovalConfirmationEmail(opts: {
       <p style="font-size:16px; color:#1A1A1A; line-height:1.6; margin:0 0 16px;">
         Thank you — your approval${jobLine} has been recorded. Here is a copy for your records.
       </p>
+      ${opts.descriptionHtml ? `<div style="margin:6px 0 16px;">${opts.descriptionHtml}</div>` : ''}
       <div style="background:#F7F7F5; border:1px solid #E2E0DC; border-radius:8px; padding:12px 14px; margin:6px 0 20px;">
         ${opts.itemsHtml}
       </div>
