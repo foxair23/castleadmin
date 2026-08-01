@@ -21,7 +21,7 @@ export function renderApprovalEmail(opts: {
   approveUrl: string
 }): { html: string; text: string } {
   const greeting = opts.customerName ? `Hi ${esc(opts.customerName)},` : 'Hello,'
-  const jobLine = opts.jobNumber ? ` for job ${esc(opts.jobNumber)}` : ''
+  const jobLine = opts.jobNumber ? ` for Job ${esc(opts.jobNumber)}` : ''
   const descBlock = opts.descriptionHtml
     ? `<div style="margin:6px 0 18px;">${opts.descriptionHtml}</div>`
     : ''
@@ -63,7 +63,7 @@ export function renderApprovalEmail(opts: {
   const text = [
     opts.customerName ? `Hi ${opts.customerName},` : 'Hello,',
     '',
-    `Please review and approve the following work${opts.jobNumber ? ` for job ${opts.jobNumber}` : ''} before we begin:`,
+    `Please review and approve the following work${opts.jobNumber ? ` for Job ${opts.jobNumber}` : ''} before we begin:`,
     ...(opts.descriptionText && opts.descriptionText.trim() ? ['', `Work description: ${opts.descriptionText.trim()}`] : []),
     '',
     `Review & approve online: ${opts.approveUrl}`,
@@ -94,7 +94,7 @@ export function renderApprovalConfirmationEmail(opts: {
   legalVersion?: string | null
 }): { html: string; text: string } {
   const greeting = opts.customerName ? `Hi ${esc(opts.customerName)},` : 'Hello,'
-  const jobLine = opts.jobNumber ? ` for job ${esc(opts.jobNumber)}` : ''
+  const jobLine = opts.jobNumber ? ` for Job ${esc(opts.jobNumber)}` : ''
 
   // The tamper-evident record we stamped: signer, time, IP, device, plus a
   // fingerprint (SHA-256 digest of exactly what was approved) so the customer
@@ -146,7 +146,7 @@ export function renderApprovalConfirmationEmail(opts: {
   const text = [
     opts.customerName ? `Hi ${opts.customerName},` : 'Hello,',
     '',
-    `Thank you — your approval${opts.jobNumber ? ` for job ${opts.jobNumber}` : ''} has been recorded.`,
+    `Thank you — your approval${opts.jobNumber ? ` for Job ${opts.jobNumber}` : ''} has been recorded.`,
     '',
     'Approval record:',
     `  Approved by: ${opts.approvedName}`,
