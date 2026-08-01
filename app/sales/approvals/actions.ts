@@ -42,7 +42,16 @@ export async function lookupJob(query: string): Promise<LookupResult> {
     .eq('number', q)
     .eq('is_deleted', false)
     .limit(1)
-  const jobId = byNumber?.[0]?.id ?? q
+  const resolvedId = byNumber?.[0]?.id ?? null
+  const jobId = resolvedId ?? q
+
+  // Pull the latest for this job (line items) + its customer (email/phone) live
+  // from Service Fusion so the preview is complete, since the mirror's line-item
+  // and contact tables aren't always populated. Best-effort — if SF is
+  // unavailable we still show whatever the mirror already has. Only auto-pull
+  // when we resolved a real internal id from the number, so a typed value can't
+  // coincidentally fetch an unrelated job by its internal id.
+  if (resolvedId) await syncSingleJob(resolvedId)
 
   const ctx = await loadJobApprovalContext(db, jobId)
   if (!ctx) return { ok: false, error: `Job "${q}" not found in the mirror.` }
@@ -97,7 +106,9 @@ export async function sendApproval(input: {
   if (wantSms && !phoneE164) return { ok: false, error: 'No valid mobile number to text.' }
 
   const items = ctx.lineItems
-  const total = itemsTotal(items)
+  // The customer approves the JOB total (matches SF/invoice, incl. any tax/fees);
+  // fall back to the line-item sum only if the job has no total.
+  const total = ctx.jobTotal ?? itemsTotal(items)
   const fingerprint = approvalFingerprint(items, total)
   const token = generateApprovalToken()
   const customerName = (input.customerName ?? ctx.contactName ?? ctx.customerName) || null

@@ -20,6 +20,7 @@ export interface JobApprovalContext {
   customerName: string | null
   contactName: string | null
   jobDescription: string | null
+  jobTotal: number | null
   email: string | null
   phone: string | null
   lineItems: ApprovalLineItem[]
@@ -38,7 +39,7 @@ function pickPrimary(rows: any[] | null | undefined, get: (r: any) => string | n
 export async function loadJobApprovalContext(db: SupabaseClient<any>, jobId: string): Promise<JobApprovalContext | null> {
   const { data: job } = await db
     .from('sf_jobs')
-    .select('id, number, customer_id, customer_name, contact_first_name, contact_last_name, description')
+    .select('id, number, customer_id, customer_name, contact_first_name, contact_last_name, description, total')
     .eq('id', jobId)
     .maybeSingle()
   if (!job) return null
@@ -74,6 +75,7 @@ export async function loadJobApprovalContext(db: SupabaseClient<any>, jobId: str
     customerName: job.customer_name ?? null,
     contactName,
     jobDescription: (job.description as string | null) ?? null,
+    jobTotal: job.total != null ? Number(job.total) : null,
     email,
     phone,
     lineItems: toLineItems(items ?? []),

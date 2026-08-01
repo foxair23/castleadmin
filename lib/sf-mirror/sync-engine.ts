@@ -925,6 +925,25 @@ export async function syncSingleJob(jobId: string): Promise<{ ok: boolean; error
     await syncJobChildren([raw])
     await recordStatusChanges([raw])
     await stampWorkCompleted([raw])
+
+    // Also refresh the job's CUSTOMER contact tree (emails/phones), which the
+    // hourly job sync never touches — customers only refresh on backfill/
+    // reconcile, so a job's contact info can be stale or missing in the mirror.
+    // Best-effort: a contact-refresh failure must not fail the job refresh.
+    const customerId = toStr(raw.customer_id)
+    if (customerId) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cJson = (await sfMirrorGet(`/customers/${encodeURIComponent(customerId)}`, {
+          expand: 'contacts,contacts.phones,contacts.emails,locations',
+        })) as any
+        const cRaw: Raw | null = cJson?.customer ?? (cJson?.items ? cJson.items[0] : (cJson?.id ? cJson : null))
+        if (cRaw && cRaw.id) {
+          await batchUpsert('sf_customers', [mapCustomer(cRaw)])
+          await syncCustomerChildren([cRaw])
+        }
+      } catch { /* contact refresh best-effort */ }
+    }
     return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }

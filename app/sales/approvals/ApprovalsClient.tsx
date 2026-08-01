@@ -118,7 +118,7 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
     }
   }
 
-  const total = ctx ? ctx.lineItems.reduce((s, it) => s + (it.total ?? 0), 0) : 0
+  const total = ctx ? (ctx.jobTotal ?? ctx.lineItems.reduce((s, it) => s + (it.total ?? 0), 0)) : 0
 
   return (
     <div className="space-y-6">
