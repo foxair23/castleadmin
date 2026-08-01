@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { FlowState } from '../../lib/types';
+import { validateEmail } from '../../lib/validation';
 
 interface Props {
   state: FlowState;
@@ -58,7 +59,7 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
   const [isOwner, setIsOwner] = useState(state.address_is_owner);
   const [email, setEmail] = useState(state.customer_email);
   const [additionalNotes, setAdditionalNotes] = useState(state.additional_notes);
-  const [errors, setErrors] = useState<{ address_line1?: string; city?: string; state?: string; zip?: string }>({});
+  const [errors, setErrors] = useState<{ address_line1?: string; city?: string; state?: string; zip?: string; email?: string }>({});
 
   const addressInputRef = useRef<HTMLInputElement>(null);
 
@@ -106,6 +107,8 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
     if (!city.trim()) errs.city = 'City is required.';
     if (!stateAbbr.trim()) errs.state = 'State is required.';
     if (!zip.trim()) errs.zip = 'ZIP code is required.';
+    if (!email.trim()) errs.email = 'Email is required.';
+    else if (!validateEmail(email.trim())) errs.email = 'Enter a valid email address.';
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -283,17 +286,21 @@ export default function StepPropertyDetails({ state, onNext }: Props) {
 
       <div style={fieldStyle}>
         <label htmlFor="customer-email" style={labelStyle}>
-          Email <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>(optional)</span>
+          Email <span style={{ color: 'var(--color-primary)' }}>*</span>
         </label>
         <input
           id="customer-email"
           type="email"
           autoComplete="email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            setErrors((prev) => ({ ...prev, email: undefined }));
+          }}
           placeholder="you@example.com"
-          style={inputStyle(false)}
+          style={inputStyle(!!errors.email)}
         />
+        {errors.email && <p role="alert" style={errorStyle}>{errors.email}</p>}
       </div>
 
       <div style={{ marginBottom: '1rem' }}>

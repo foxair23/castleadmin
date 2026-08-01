@@ -65,7 +65,7 @@ interface BookingPayload {
   address_state?: string
   address_zip: string
   address_is_owner?: boolean
-  customer_email?: string
+  customer_email: string
   additional_notes?: string
   // Widget
   widget_key?: string
@@ -77,6 +77,10 @@ function isValidDate(s: string) {
 
 function isValidTime(s: string) {
   return /^\d{2}:\d{2}$/.test(s)
+}
+
+function isValidEmail(s: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
 }
 
 export async function POST(req: NextRequest) {
@@ -118,6 +122,7 @@ export async function POST(req: NextRequest) {
   if (!body.address_line1?.trim()) missing.push('address_line1')
   if (!body.address_city?.trim()) missing.push('address_city')
   if (!body.address_zip?.trim()) missing.push('address_zip')
+  if (!body.customer_email?.trim()) missing.push('customer_email')
   if (!body.appointment_date) missing.push('appointment_date')
   if (!body.appointment_window_start) missing.push('appointment_window_start')
   if (!body.appointment_window_end) missing.push('appointment_window_end')
@@ -127,6 +132,10 @@ export async function POST(req: NextRequest) {
       { error: `Missing required fields: ${missing.join(', ')}` },
       { status: 400, headers: cors }
     )
+  }
+
+  if (!isValidEmail(body.customer_email.trim())) {
+    return NextResponse.json({ error: 'Invalid customer_email' }, { status: 400, headers: cors })
   }
 
   if (!['garage_door', 'gate'].includes(body.primary_category)) {

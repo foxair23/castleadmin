@@ -151,7 +151,7 @@ export default function StepReview({ state, config, widgetKey, sessionId }: Prop
       address_state: state.address_state,
       address_zip: state.address_zip,
       address_is_owner: state.address_is_owner,
-      customer_email: state.customer_email || undefined,
+      customer_email: state.customer_email.trim(),
       additional_notes: state.additional_notes || undefined,
       widget_key: widgetKey,
     };
