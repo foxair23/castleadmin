@@ -19,6 +19,9 @@ export interface ActionTabConfig {
 }
 
 export const ACTION_TAB_CONFIG: Record<string, ActionTabConfig> = {
+  // AR Hold uses its own entity ('ar_hold') so acknowledging an open job here
+  // doesn't collide with the same customer's unpaid/followup action rows.
+  'ar-hold':         { button: 'Acknowledge',       days: 3, entity: 'ar_hold' },
   'unpaid':          { button: 'Payment Requested', days: 3, entity: 'sf_job' },
   // Distinct entity ('sf_job_revenue', not 'sf_job') so logging "Added Revenue"
   // here doesn't collide with the unpaid/uninvoiced/followup action rows, which
