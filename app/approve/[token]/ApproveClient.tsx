@@ -59,8 +59,13 @@ export default function ApproveClient({
     <div className="min-h-screen bg-gray-50 py-8 px-4">
       <div className="max-w-xl mx-auto">
         <div className="text-center mb-6">
-          <h1 className="text-xl font-bold text-gray-900">Castle Garage Doors &amp; Gates</h1>
-          <p className="text-sm text-gray-500 mt-1">Work Authorization &amp; Approval</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.png"
+            alt="Castle Garage Doors & Gates"
+            className="mx-auto h-12 w-auto object-contain"
+          />
+          <p className="text-sm text-gray-500 mt-2">Work Authorization &amp; Approval</p>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
