@@ -692,7 +692,7 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
 }
 
 // "Done" button — acknowledges an Online Scheduling lead (requires login).
-function DoneButton({ leadId }: { leadId: string }) {
+function DoneButton({ leadId, endpoint = '/api/leads/ack' }: { leadId: string; endpoint?: string }) {
   // Optimistic: flip to the acknowledged chip immediately; the row clears on
   // the next page load. Rolls back if the request fails.
   const [done, setDone] = useState(false)
@@ -701,7 +701,7 @@ function DoneButton({ leadId }: { leadId: string }) {
     if (done) return
     setDone(true)
     try {
-      const res = await fetch('/api/leads/ack', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leadId }),
@@ -1576,6 +1576,7 @@ function LeadsToCallTable({ items }: { items: UncontactedLead[] }) {
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Done</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
@@ -1587,6 +1588,7 @@ function LeadsToCallTable({ items }: { items: UncontactedLead[] }) {
         <tbody className="divide-y divide-gray-100">
           {items.map(l => (
             <tr key={l.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 whitespace-nowrap"><DoneButton leadId={l.id} endpoint="/api/leads/sfi-ack" /></td>
               <td className="px-4 py-2 font-medium text-gray-900">
                 {l.customer_name ?? '—'}
                 {!l.contacted && <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-800">not contacted</span>}
