@@ -80,9 +80,26 @@ export function renderApprovalConfirmationEmail(opts: {
   itemsHtml: string
   approvedName: string
   approvedAt: string       // human-readable, PT
+  ip?: string | null
+  userAgent?: string | null
+  fingerprint?: string | null
+  legalVersion?: string | null
 }): { html: string; text: string } {
   const greeting = opts.customerName ? `Hi ${esc(opts.customerName)},` : 'Hello,'
   const jobLine = opts.jobNumber ? ` for job ${esc(opts.jobNumber)}` : ''
+
+  // The tamper-evident record we stamped: signer, time, IP, device, plus a
+  // fingerprint (SHA-256 digest of exactly what was approved) so the customer
+  // can see this is a recorded, verifiable approval.
+  const recRow = (k: string, v: string) =>
+    `<tr><td style="padding:3px 12px 3px 0;font-size:12px;color:#8A8A94;white-space:nowrap;vertical-align:top;">${esc(k)}</td>` +
+    `<td style="padding:3px 0;font-size:12px;color:#1A1A1A;word-break:break-word;">${esc(v)}</td></tr>`
+  const recordRows =
+    recRow('Approved by', opts.approvedName) +
+    recRow('Date & time', opts.approvedAt) +
+    (opts.ip ? recRow('IP address', opts.ip) : '') +
+    (opts.userAgent ? recRow('Device', opts.userAgent) : '') +
+    (opts.fingerprint ? recRow('Reference', opts.fingerprint + (opts.legalVersion ? ` · v${opts.legalVersion}` : '')) : '')
 
   const html = `<!doctype html>
 <html>
@@ -101,8 +118,12 @@ export function renderApprovalConfirmationEmail(opts: {
       <div style="background:#F7F7F5; border:1px solid #E2E0DC; border-radius:8px; padding:12px 14px; margin:6px 0 20px;">
         ${opts.itemsHtml}
       </div>
-      <p style="font-size:14px; color:#64646E; line-height:1.6; margin:0;">
-        Approved by <strong style="color:#1A1A1A;">${esc(opts.approvedName)}</strong> on ${esc(opts.approvedAt)}.
+      <p style="font-size:13px; font-weight:700; color:#1A1A1A; margin:0 0 8px;">Approval record</p>
+      <div style="border:1px solid #E2E0DC; border-left:4px solid #C81E1E; border-radius:6px; padding:12px 14px;">
+        <table style="border-collapse:collapse;">${recordRows}</table>
+      </div>
+      <p style="font-size:12px; color:#8A8A94; line-height:1.6; margin:14px 0 0;">
+        This confirmation, your typed signature, and the details above are stored as a permanent record of your approval.
       </p>
     </div>
     <div style="background:#0F0F0F; padding:20px 28px;">
@@ -118,7 +139,14 @@ export function renderApprovalConfirmationEmail(opts: {
     '',
     `Thank you — your approval${opts.jobNumber ? ` for job ${opts.jobNumber}` : ''} has been recorded.`,
     '',
-    `Approved by ${opts.approvedName} on ${opts.approvedAt}.`,
+    'Approval record:',
+    `  Approved by: ${opts.approvedName}`,
+    `  Date & time: ${opts.approvedAt}`,
+    ...(opts.ip ? [`  IP address: ${opts.ip}`] : []),
+    ...(opts.userAgent ? [`  Device: ${opts.userAgent}`] : []),
+    ...(opts.fingerprint ? [`  Reference: ${opts.fingerprint}${opts.legalVersion ? ` · v${opts.legalVersion}` : ''}`] : []),
+    '',
+    'This confirmation, your typed signature, and the details above are stored as a permanent record of your approval.',
     '',
     'Castle Garage Inc',
     '(800) 576-1397 · castlegaragedoors.com',

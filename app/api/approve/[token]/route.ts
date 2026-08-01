@@ -33,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const supabase = db()
   const { data: approval } = await supabase
     .from('job_approvals')
-    .select('id, status, source_id, customer_name, customer_email, line_items_snapshot, amount_total')
+    .select('id, status, source_id, customer_name, customer_email, line_items_snapshot, amount_total, legal_version, terms_fingerprint')
     .eq('token', token)
     .maybeSingle()
   if (!approval) return NextResponse.json({ error: 'This approval link is not valid.' }, { status: 404 })
@@ -84,6 +84,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         itemsHtml: renderItemsTableHtml(items, total),
         approvedName,
         approvedAt: approvedAtHuman,
+        ip,
+        userAgent,
+        fingerprint: (approval.terms_fingerprint as string | null) ?? null,
+        legalVersion: (approval.legal_version as string | null) ?? null,
       })
       await sendEmail({ to: email, subject: 'Your approval is recorded', html, text, bcc: COMPLIANCE_BCC })
     }
