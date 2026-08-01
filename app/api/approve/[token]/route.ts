@@ -4,7 +4,7 @@ import { renderItemsTableHtml, renderDescriptionHtml, type ApprovalLineItem } fr
 import { renderApprovalConfirmationEmail } from '@/lib/notifications/templates/approval-email'
 import { sendEmail } from '@/lib/notifications/resend'
 
-const COMPLIANCE_BCC = 'john@castlegaragedoors.com'
+const COMPLIANCE_BCC = 'info@castlegaragedoors.com'
 
 function db() {
   return createAdminClient(
@@ -96,5 +96,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     console.error('[approvals] confirmation email failed:', e)
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, approved_at: approvedAtIso })
 }

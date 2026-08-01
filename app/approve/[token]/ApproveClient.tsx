@@ -31,6 +31,9 @@ export default function ApproveClient({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(status === 'approved')
+  // Time stamped by the server on this session's approval, formatted in Pacific
+  // so the confirmation shows the same PT time as the recorded receipt.
+  const [approvedAtLocal, setApprovedAtLocal] = useState<string | null>(null)
 
   const canSubmit = agree && name.trim().length > 0 && !submitting
 
@@ -46,6 +49,13 @@ export default function ApproveClient({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Failed to approve')
+      if (data.approved_at) {
+        setApprovedAtLocal(
+          new Date(data.approved_at).toLocaleString('en-US', {
+            timeZone: 'America/Los_Angeles', dateStyle: 'long', timeStyle: 'short',
+          }),
+        )
+      }
       setDone(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to approve')
@@ -80,7 +90,7 @@ export default function ApproveClient({
               </p>
               {(approvedName || name) && (
                 <p className="text-xs text-gray-400 mt-4">
-                  Approved by {approvedName ?? name.trim()}{approvedAt ? ` on ${approvedAt}` : ''}.
+                  Approved by {approvedName ?? name.trim()}{(approvedAt ?? approvedAtLocal) ? ` on ${approvedAt ?? approvedAtLocal} PT` : ''}.
                 </p>
               )}
             </div>
