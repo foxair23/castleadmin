@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { sendSms, toE164 } from '@/lib/dialpad/client'
 import { handleLeadReply } from '@/lib/leadgen/engine'
+import { handleCsatReply } from '@/lib/csat/engine'
 
 export const maxDuration = 30
 
@@ -87,6 +88,19 @@ export async function POST(req: NextRequest) {
     await sendSms(from, 'Castle Garage Inc: for help call us, or reply STOP to opt out. Msg & data rates may apply.').catch(() => {})
     return NextResponse.json({ ok: true, action: 'help' })
   }
+
+  // CSAT survey replies (a 1–5 rating, or feedback after a 4). Runs BEFORE the
+  // leadgen handler because a bare "1" is a valid rating here but means "callback"
+  // to leadgen — the survey handler only claims the message when a recent survey
+  // is actually awaiting input, otherwise it returns null and we fall through.
+  const providerMsgId = (evt.id as string) ?? (evt.message_id as string) ?? null
+  try {
+    const csatAction = await handleCsatReply(from, text, providerMsgId != null ? String(providerMsgId) : null)
+    if (csatAction) {
+      await logEvent({ verified: true, from_number: from, message_text: text, action: csatAction })
+      return NextResponse.json({ ok: true, action: csatAction })
+    }
+  } catch { /* non-critical — fall through to leadgen */ }
 
   // Lead outreach replies: "1" = request a callback, "2" = no longer interested.
   // Only acts if this number has a recent active lead; otherwise falls through.
