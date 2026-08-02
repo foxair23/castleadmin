@@ -31,7 +31,7 @@ export const CSAT_DEFAULTS: CsatSettings = {
   excluded_sources: [],
   google_review_url: 'https://maps.app.goo.gl/T9DtTWjanN9Zgyte9',
   survey_sms:
-    'Castle Garage Doors: Thank you for your business! How satisfied were you with today’s service? Reply 1-5, where 5 means extremely satisfied. Reply STOP to opt out.',
+    'Castle Garage Doors: Thank you for your business! How satisfied were you with today\'s service?\n\nRespond with a number from "5" (Very Satisfied) to "1" (Very Dissatisfied).\n\nReply STOP to opt out.',
   thanks_5_sms:
     'Thank you! We’re glad you had a great experience. Would you mind sharing your feedback in a Google review? {{review_url}}',
   ask_4_sms: 'Thank you for the feedback. What could we have done to make your experience a 5?',
