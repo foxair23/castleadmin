@@ -28,7 +28,8 @@ create table if not exists public.csat_settings (
     'Respond with a number from "5" (Very Satisfied) to "1" (Very Dissatisfied).'||chr(10)||chr(10)||
     'Reply STOP to opt out.',
   thanks_5_sms              text not null default
-    'Thank you! We''re glad you had a great experience. Would you mind sharing your feedback in a Google review? {{review_url}}',
+    'We''re glad you had a great experience! Would you mind sharing your feedback in a Google review? {{review_url}}'||chr(10)||chr(10)||
+    'It''s so helpful for our family-owned business. We appreciate you!',
   ask_4_sms                 text not null default
     'Thank you for the feedback. What could we have done to make your experience a 5?',
   ack_low_sms               text not null default
