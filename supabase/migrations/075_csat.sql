@@ -31,7 +31,7 @@ create table if not exists public.csat_settings (
     'We''re glad you had a great experience! Would you mind sharing your feedback in a Google review? {{review_url}}'||chr(10)||chr(10)||
     'It''s so helpful for our family-owned business. We appreciate you!',
   ask_4_sms                 text not null default
-    'Thank you for the feedback. What could we have done to make your experience a 5?',
+    'Thank you for the feedback. We''re always looking to serve you better, what could we have done to make your experience a 5?',
   ack_low_sms               text not null default
     'Thank you for letting us know. We''re sorry your experience did not meet expectations. A member of our team will contact you shortly.',
   clarify_sms               text not null default

@@ -34,7 +34,7 @@ export const CSAT_DEFAULTS: CsatSettings = {
     'Castle Garage Doors: Thank you for your business! How satisfied were you with today\'s service?\n\nRespond with a number from "5" (Very Satisfied) to "1" (Very Dissatisfied).\n\nReply STOP to opt out.',
   thanks_5_sms:
     'We\'re glad you had a great experience! Would you mind sharing your feedback in a Google review? {{review_url}}\n\nIt\'s so helpful for our family-owned business. We appreciate you!',
-  ask_4_sms: 'Thank you for the feedback. What could we have done to make your experience a 5?',
+  ask_4_sms: 'Thank you for the feedback. We\'re always looking to serve you better, what could we have done to make your experience a 5?',
   ack_low_sms:
     'Thank you for letting us know. We’re sorry your experience did not meet expectations. A member of our team will contact you shortly.',
   clarify_sms: 'Thanks! Please reply with one number from 1 to 5, where 5 means extremely satisfied.',
