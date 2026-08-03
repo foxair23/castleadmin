@@ -6,8 +6,9 @@ import LeadGenClient, { type LeadView, type InboundEvent } from '@/app/admin/lea
 export const dynamic = 'force-dynamic'
 
 // Sales-facing LeadGen. Same view as /admin/leadgen (the /admin tree is
-// admin-only via its layout, so sales gets its own route), except only admins
-// may change the outreach reply-to inbox — sales sees it read-only.
+// admin-only via its layout, so sales gets its own route). Sales can work leads
+// but not configure the service: the auto-send toggle and the outreach reply-to
+// inbox are admin-only (view-only for sales), gated by canConfigure.
 const HOUR_MS = 3600 * 1000
 function needsAction(status: string, receivedAt: string): boolean {
   if (['booked', 'not_interested', 'duplicate'].includes(status)) return false
@@ -78,7 +79,7 @@ export default async function SalesLeadGenPage() {
       enabled={settings?.enabled ?? false}
       replyTo={settings?.reply_to_email ?? ''}
       inbound={inbound}
-      canConfigureReplyTo={profile?.role === 'admin'}
+      canConfigure={profile?.role === 'admin'}
     />
   )
 }

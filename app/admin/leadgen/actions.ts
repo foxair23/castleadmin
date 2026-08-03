@@ -35,9 +35,9 @@ function svc() {
   return createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
 }
 
-/** Master on/off for auto-sending lead outreach. Admin + sales. */
+/** Master on/off for auto-sending lead outreach. Admin-only. */
 export async function setLeadGenEnabled(enabled: boolean) {
-  const userId = await assertStaff()
+  const userId = await assertAdmin()
   const { error } = await svc().from('leadgen_settings')
     .update({ enabled, updated_at: new Date().toISOString(), updated_by: userId }).eq('id', 1)
   if (error) throw new Error(error.message)
