@@ -16,7 +16,7 @@ import { renderApprovalEmail } from '@/lib/notifications/templates/approval-emai
 import { sendEmail } from '@/lib/notifications/resend'
 import { sendSms, toE164 } from '@/lib/dialpad/client'
 import { ensureShortLink } from '@/lib/short-links'
-import { syncSingleJob } from '@/lib/sf-mirror/sync-engine'
+import { syncSingleJob, runIncrementalSyncForEntity } from '@/lib/sf-mirror/sync-engine'
 
 function appBase(): string {
   return (process.env.NEXT_PUBLIC_APP_URL || 'https://hq.castlegaragedoors.com').replace(/\/+$/, '')
@@ -72,6 +72,23 @@ export async function refreshJob(jobId: string): Promise<LookupResult> {
   const ctx = await loadJobApprovalContext(db, jobId)
   if (!ctx) return { ok: false, error: 'Job not found after refresh.' }
   return { ok: true, ctx }
+}
+
+export type SyncResult = { ok: true; upserted: number } | { ok: false; error: string }
+
+// Pull recently created/updated jobs from Service Fusion into the mirror, so a
+// job just created in SF can be looked up here without waiting for the hourly
+// sync. Same incremental jobs pass the hourly cron runs; soft-capped so it fits
+// the request budget (newest jobs come first, so a capped run still gets them).
+export async function syncJobsMirror(): Promise<SyncResult> {
+  const auth = await requireAdminOrSales()
+  if (!auth) return { ok: false, error: 'Unauthorized' }
+  try {
+    const upserted = await runIncrementalSyncForEntity('jobs', Date.now() + 50_000)
+    return { ok: true, upserted }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Sync failed' }
+  }
 }
 
 export type SendResult =
