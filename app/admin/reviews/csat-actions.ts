@@ -39,6 +39,7 @@ export interface CsatSettingsInput {
   send_delay_minutes: number
   send_start_hour_pt: number
   send_end_hour_pt: number
+  alert_delay_minutes: number
   excluded_job_categories: string[]
   excluded_sources: string[]
   google_review_url: string
@@ -57,6 +58,7 @@ export async function saveCsatSettings(input: CsatSettingsInput) {
     send_delay_minutes: Math.max(0, Math.round(input.send_delay_minutes)),
     send_start_hour_pt: clampHour(input.send_start_hour_pt),
     send_end_hour_pt: clampHour(input.send_end_hour_pt),
+    alert_delay_minutes: Math.max(0, Math.round(input.alert_delay_minutes)),
     excluded_job_categories: input.excluded_job_categories ?? [],
     excluded_sources: input.excluded_sources ?? [],
     google_review_url: input.google_review_url.trim(),

@@ -286,39 +286,90 @@ export async function handleCsatReply(from: string, text: string, providerMsgId:
     await db.from('csat_surveys').update({ feedback_pending: true, updated_at: new Date().toISOString() }).eq('id', survey.id)
     return 'csat_rating_4'
   }
-  // Low (1–3): acknowledge, open a follow-up, alert admins. The ack asks the
-  // customer to share what happened, so open the feedback window too — their
-  // next free-text reply is stored as feedback on this response.
+  // Low (1–3): acknowledge, open the feedback window (the ack asks what
+  // happened), and open a follow-up whose alert is DEFERRED by
+  // alert_delay_minutes. dispatchLowScoreAlerts (a cron) sends the internal
+  // email once alert_after passes, so any detail the customer texts back in that
+  // window is included. The live thread is also in Dialpad as a fallback.
   if (isLow(rating)) {
     await sendSms(from, settings.ack_low_sms).catch(() => {})
     await db.from('csat_surveys').update({ feedback_pending: true, updated_at: new Date().toISOString() }).eq('id', survey.id)
-    await db.from('csat_follow_ups').upsert({ survey_id: survey.id, sf_job_id: survey.sf_job_id, rating, status: 'open' }, { onConflict: 'survey_id' })
-    // Include inline text only if they wrote more than the number itself.
-    const inline = text.replace(/\d+/g, '').replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
-    await alertLowScore(survey, rating, inline ? text.slice(0, 1000) : null, settings)
+    const alertAfter = new Date(Date.now() + settings.alert_delay_minutes * 60_000).toISOString()
+    await db.from('csat_follow_ups').upsert(
+      { survey_id: survey.id, sf_job_id: survey.sf_job_id, rating, status: 'open', alert_after: alertAfter, alerted_at: null },
+      { onConflict: 'survey_id' },
+    )
     return 'csat_rating_low'
   }
   return 'csat_rating'
 }
 
-async function alertLowScore(survey: SurveyForReply, rating: number, feedback: string | null, settings: CsatSettings): Promise<void> {
-  const { subject, bodyHtml, bodyText } = renderLowCsatAlert({
-    customerName: survey.customer_name ?? 'Customer',
-    score: rating,
-    jobNumber: survey.sf_job_id,
-    employeeName: survey.primary_tech_name,
-    jobType: survey.job_category,
-    completedAt: survey.work_completed_at,
-    customerPhone: survey.phone_e164,
-    feedback,
-    caseUrl: CSAT_URL,
-  })
-  await enqueueForSubscribers({
-    notificationTypeKey: 'low_csat_alert', subject, bodyHtml, bodyText,
-    relatedEntityType: 'csat_survey', relatedEntityId: survey.id,
-  }).catch(() => {})
-  // Configured non-app-user recipients get the same email directly.
-  for (const email of settings.alert_extra_recipient_emails) {
-    await sendEmail({ to: email, subject, html: bodyHtml, text: bodyText }).catch(() => {})
+// ── deferred low-score alert dispatch (cron) ──────────────────────────────────
+
+/**
+ * Send any low-score alerts whose delay window has elapsed. Rendered at dispatch
+ * time so the customer's written detail (texted back after the ack) and full job
+ * info are included. Not gated by the texting window — the team should hear about
+ * an unhappy customer at any hour. Each row is claimed before sending so an
+ * overlapping run can't double-alert.
+ */
+export async function dispatchLowScoreAlerts(): Promise<{ dispatched: number }> {
+  const db = csatDb()
+  const { data: due } = await db
+    .from('csat_follow_ups')
+    .select('id, survey_id, sf_job_id, rating')
+    .is('alerted_at', null)
+    .not('alert_after', 'is', null)
+    .lte('alert_after', new Date().toISOString())
+    .limit(100)
+  const rows = (due ?? []) as Array<{ id: string; survey_id: string; sf_job_id: string; rating: number | null }>
+  if (rows.length === 0) return { dispatched: 0 }
+
+  const settings = await loadCsatSettings()
+  let dispatched = 0
+  for (const fu of rows) {
+    // Claim (atomic-ish) so a concurrent run doesn't re-send this alert.
+    const { data: claimed } = await db.from('csat_follow_ups')
+      .update({ alerted_at: new Date().toISOString() }).eq('id', fu.id).is('alerted_at', null).select('id')
+    if (!claimed || claimed.length === 0) continue
+
+    const { data: survey } = await db.from('csat_surveys')
+      .select('id, sf_job_id, customer_name, phone_e164, primary_tech_name, job_category, work_completed_at')
+      .eq('id', fu.survey_id).maybeSingle()
+    if (!survey) continue
+    const s = survey as { id: string; sf_job_id: string; customer_name: string | null; phone_e164: string | null; primary_tech_name: string | null; job_category: string | null; work_completed_at: string | null }
+
+    const { data: resp } = await db.from('csat_responses')
+      .select('feedback_text, rating').eq('survey_id', fu.survey_id).eq('is_current', true).maybeSingle()
+    const feedback = (resp as { feedback_text: string | null } | null)?.feedback_text ?? null
+
+    const { data: job } = await db.from('sf_jobs')
+      .select('number, street_1, street_2, city, state_prov, postal_code').eq('id', s.sf_job_id).maybeSingle()
+    const j = job as { number: string | null; street_1: string | null; street_2: string | null; city: string | null; state_prov: string | null; postal_code: string | null } | null
+    const address = j
+      ? ([j.street_1, j.street_2, [j.city, j.state_prov, j.postal_code].filter(Boolean).join(' ')].filter(Boolean).join(', ') || null)
+      : null
+
+    const { subject, bodyHtml, bodyText } = renderLowCsatAlert({
+      customerName: s.customer_name ?? 'Customer',
+      score: fu.rating ?? (resp as { rating: number | null } | null)?.rating ?? 0,
+      jobNumber: j?.number ?? s.sf_job_id,
+      address,
+      employeeName: s.primary_tech_name,
+      jobType: s.job_category,
+      completedAt: s.work_completed_at,
+      customerPhone: s.phone_e164,
+      feedback,
+      caseUrl: CSAT_URL,
+    })
+    await enqueueForSubscribers({
+      notificationTypeKey: 'low_csat_alert', subject, bodyHtml, bodyText,
+      relatedEntityType: 'csat_survey', relatedEntityId: s.id,
+    }).catch(() => {})
+    for (const email of settings.alert_extra_recipient_emails) {
+      await sendEmail({ to: email, subject, html: bodyHtml, text: bodyText }).catch(() => {})
+    }
+    dispatched++
   }
+  return { dispatched }
 }

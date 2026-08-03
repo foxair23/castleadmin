@@ -18,6 +18,7 @@ export interface LowCsatAlertData {
   customerName: string
   score: number
   jobNumber: string | null
+  address: string | null
   employeeName: string | null
   jobType: string | null
   completedAt: string | null
@@ -25,6 +26,8 @@ export interface LowCsatAlertData {
   feedback?: string | null
   caseUrl: string
 }
+
+const DIALPAD_NOTE = 'This customer’s full text conversation is in Dialpad — you can reply to them directly there.'
 
 export function renderLowCsatAlert(data: LowCsatAlertData): {
   subject: string
@@ -39,14 +42,18 @@ export function renderLowCsatAlert(data: LowCsatAlertData): {
   const bodyHtml = `
 <div style="${BASE}">
   <p style="${HEADING}">Low CSAT Alert</p>
-  ${row('Customer', data.customerName)}
   ${row('Score', `${data.score}/5`, '#dc2626')}
-  ${row('Job', data.jobNumber)}
+  ${row('Customer', data.customerName)}
+  ${row('Customer Phone', data.customerPhone)}
+  ${row('Job #', data.jobNumber)}
+  ${row('Address', data.address)}
   ${row('Technician / Installer', data.employeeName)}
   ${row('Job Type', data.jobType)}
   ${row('Completed', data.completedAt)}
-  ${row('Customer Phone', data.customerPhone)}
-  ${row('Feedback', data.feedback)}
+  ${row('What they told us', data.feedback)}
+  <p style="font-size:13px; margin:16px 0 0; padding:10px 12px; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; color:#991b1b;">
+    📱 ${DIALPAD_NOTE}
+  </p>
   <p style="${MUTED}">
     <a href="${data.caseUrl}" style="color: #dc2626;">Open in Castle Admin → Reviews → CSAT →</a>
   </p>
@@ -55,14 +62,17 @@ export function renderLowCsatAlert(data: LowCsatAlertData): {
   const lines = [
     'Low CSAT Alert',
     '',
-    `Customer: ${data.customerName}`,
     `Score: ${data.score}/5`,
-    ...(data.jobNumber ? [`Job: ${data.jobNumber}`] : []),
+    `Customer: ${data.customerName}`,
+    ...(data.customerPhone ? [`Customer Phone: ${data.customerPhone}`] : []),
+    ...(data.jobNumber ? [`Job #: ${data.jobNumber}`] : []),
+    ...(data.address ? [`Address: ${data.address}`] : []),
     ...(data.employeeName ? [`Technician/Installer: ${data.employeeName}`] : []),
     ...(data.jobType ? [`Job Type: ${data.jobType}`] : []),
     ...(data.completedAt ? [`Completed: ${data.completedAt}`] : []),
-    ...(data.customerPhone ? [`Customer Phone: ${data.customerPhone}`] : []),
-    ...(data.feedback ? [`Feedback: ${data.feedback}`] : []),
+    ...(data.feedback ? [`What they told us: ${data.feedback}`] : []),
+    '',
+    `📱 ${DIALPAD_NOTE}`,
     '',
     `Open in Castle Admin: ${data.caseUrl}`,
   ]

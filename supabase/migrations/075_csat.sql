@@ -20,6 +20,8 @@ create table if not exists public.csat_settings (
   send_delay_minutes        int not null default 15,        -- min wait after completion is detected
   send_start_hour_pt        int not null default 8,         -- texting window open (PT)
   send_end_hour_pt          int not null default 19,        -- texting window close (PT, exclusive)
+  alert_delay_minutes       int not null default 5,         -- wait before the low-score alert so the customer's reply detail can be included
+
   excluded_job_categories   text[] not null default '{}',   -- SF categories to skip (e.g. warranty)
   excluded_sources          text[] not null default '{}',   -- SF Job Sources to skip
   google_review_url         text not null default 'https://maps.app.goo.gl/T9DtTWjanN9Zgyte9',
@@ -109,10 +111,16 @@ create table if not exists public.csat_follow_ups (
   resolved_by       uuid references public.profiles(id),
   resolved_at       timestamptz,
   notes             text,
+  -- Deferred alert: the internal email is dispatched once alert_after passes, so
+  -- any detail the customer texts back in that window is included. alerted_at is
+  -- stamped when the email has been enqueued (null = still pending).
+  alert_after       timestamptz,
+  alerted_at        timestamptz,
   created_at        timestamptz not null default now(),
   unique (survey_id)
 );
 create index if not exists idx_csat_follow_ups_status on public.csat_follow_ups(status);
+create index if not exists idx_csat_follow_ups_pending on public.csat_follow_ups(alert_after) where alerted_at is null;
 
 -- ── Low-score alert notification type (email to subscribed admins) ──────────
 insert into public.notification_types

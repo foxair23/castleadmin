@@ -288,6 +288,7 @@ function SettingsPanel({ settings, onSaved }: { settings: CsatSettings; onSaved:
     send_delay_minutes: settings.send_delay_minutes,
     send_start_hour_pt: settings.send_start_hour_pt,
     send_end_hour_pt: settings.send_end_hour_pt,
+    alert_delay_minutes: settings.alert_delay_minutes,
     excluded_job_categories: settings.excluded_job_categories,
     excluded_sources: settings.excluded_sources,
     google_review_url: settings.google_review_url,
@@ -323,6 +324,9 @@ function SettingsPanel({ settings, onSaved }: { settings: CsatSettings; onSaved:
           <input type="number" value={form.send_end_hour_pt} onChange={e => set({ send_end_hour_pt: Number(e.target.value) })} className={INPUT} />
         </label>
       </div>
+      <label className="text-xs text-gray-600 block">Low-score alert delay (min) — waits this long before emailing the team so the customer’s reply detail is included
+        <input type="number" value={form.alert_delay_minutes} onChange={e => set({ alert_delay_minutes: Number(e.target.value) })} className={INPUT} />
+      </label>
       <label className="text-xs text-gray-600 block">Google review link
         <input value={form.google_review_url} onChange={e => set({ google_review_url: e.target.value })} className={INPUT} />
       </label>

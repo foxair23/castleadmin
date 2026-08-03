@@ -9,6 +9,7 @@ export interface CsatSettings {
   send_delay_minutes: number
   send_start_hour_pt: number
   send_end_hour_pt: number
+  alert_delay_minutes: number
   excluded_job_categories: string[]
   excluded_sources: string[]
   google_review_url: string
@@ -27,6 +28,7 @@ export const CSAT_DEFAULTS: CsatSettings = {
   send_delay_minutes: 15,
   send_start_hour_pt: 8,
   send_end_hour_pt: 19,
+  alert_delay_minutes: 5,
   excluded_job_categories: [],
   excluded_sources: [],
   google_review_url: 'https://maps.app.goo.gl/T9DtTWjanN9Zgyte9',
@@ -59,6 +61,7 @@ export async function loadCsatSettings(): Promise<CsatSettings> {
     send_delay_minutes: s.send_delay_minutes ?? CSAT_DEFAULTS.send_delay_minutes,
     send_start_hour_pt: s.send_start_hour_pt ?? CSAT_DEFAULTS.send_start_hour_pt,
     send_end_hour_pt: s.send_end_hour_pt ?? CSAT_DEFAULTS.send_end_hour_pt,
+    alert_delay_minutes: s.alert_delay_minutes ?? CSAT_DEFAULTS.alert_delay_minutes,
     excluded_job_categories: s.excluded_job_categories ?? [],
     excluded_sources: s.excluded_sources ?? [],
     google_review_url: s.google_review_url ?? CSAT_DEFAULTS.google_review_url,
