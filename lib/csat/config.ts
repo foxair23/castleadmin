@@ -33,13 +33,13 @@ export const CSAT_DEFAULTS: CsatSettings = {
   excluded_sources: [],
   google_review_url: 'https://maps.app.goo.gl/T9DtTWjanN9Zgyte9',
   survey_sms:
-    'Castle Garage Doors: Thank you for your business! How satisfied were you with today\'s service?\n\nRespond with a number from "5" (Very Satisfied) to "1" (Very Dissatisfied).\n\nReply STOP to opt out.',
+    'Castle Garage Doors: Thank you for your business! How satisfied were you with today\'s service?\n\nReply with a number from 1 to 5, where 5 means Very Satisfied and 1 means Very Dissatisfied.\n\nReply STOP to opt out.',
   thanks_5_sms:
-    'We\'re glad you had a great experience! Would you mind sharing your feedback in a Google review? {{review_url}}\n\nIt\'s so helpful for our family-owned business. We appreciate you!',
-  ask_4_sms: 'Thank you for the feedback. We\'re always looking to serve you better, what could we have done to make your experience a 5?',
+    'We\'re glad you had a great experience! Would you be willing to share your experience in a Google review? Click here: {{review_url}}\n\nYour feedback means a lot to our family-owned business. We appreciate you!',
+  ask_4_sms: 'Thank you for the feedback. We\'re always looking for ways to serve you better. What could we have done to make your experience a 5?',
   ack_low_sms:
-    'Thank you for letting us know. We\'re sorry your experience did not meet expectations. Could you share a bit more about what happened? We would love to give you a call to learn more, if that\'s ok.',
-  clarify_sms: 'Thanks! It would be super helpful if you could respond with a number from "5" (Very Satisfied) to "1" (Very Dissatisfied).\nThanks!',
+    'Thank you for letting us know. We\'re sorry your experience did not meet expectations.\n\nCould you share a little more about what happened? A member of our team will also reach out so we can better understand the issue and help.',
+  clarify_sms: 'Thanks! Please reply with one number from 1 to 5, where 5 means Very Satisfied and 1 means Very Dissatisfied.',
   alert_extra_recipient_emails: [],
   template_version: 1,
 }

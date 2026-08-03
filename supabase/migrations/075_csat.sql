@@ -27,17 +27,18 @@ create table if not exists public.csat_settings (
   google_review_url         text not null default 'https://maps.app.goo.gl/T9DtTWjanN9Zgyte9',
   survey_sms                text not null default
     'Castle Garage Doors: Thank you for your business! How satisfied were you with today''s service?'||chr(10)||chr(10)||
-    'Respond with a number from "5" (Very Satisfied) to "1" (Very Dissatisfied).'||chr(10)||chr(10)||
+    'Reply with a number from 1 to 5, where 5 means Very Satisfied and 1 means Very Dissatisfied.'||chr(10)||chr(10)||
     'Reply STOP to opt out.',
   thanks_5_sms              text not null default
-    'We''re glad you had a great experience! Would you mind sharing your feedback in a Google review? {{review_url}}'||chr(10)||chr(10)||
-    'It''s so helpful for our family-owned business. We appreciate you!',
+    'We''re glad you had a great experience! Would you be willing to share your experience in a Google review? Click here: {{review_url}}'||chr(10)||chr(10)||
+    'Your feedback means a lot to our family-owned business. We appreciate you!',
   ask_4_sms                 text not null default
-    'Thank you for the feedback. We''re always looking to serve you better, what could we have done to make your experience a 5?',
+    'Thank you for the feedback. We''re always looking for ways to serve you better. What could we have done to make your experience a 5?',
   ack_low_sms               text not null default
-    'Thank you for letting us know. We''re sorry your experience did not meet expectations. Could you share a bit more about what happened? We would love to give you a call to learn more, if that''s ok.',
+    'Thank you for letting us know. We''re sorry your experience did not meet expectations.'||chr(10)||chr(10)||
+    'Could you share a little more about what happened? A member of our team will also reach out so we can better understand the issue and help.',
   clarify_sms               text not null default
-    'Thanks! It would be super helpful if you could respond with a number from "5" (Very Satisfied) to "1" (Very Dissatisfied).'||chr(10)||'Thanks!',
+    'Thanks! Please reply with one number from 1 to 5, where 5 means Very Satisfied and 1 means Very Dissatisfied.',
   alert_extra_recipient_emails text[] not null default '{}', -- non-app-user emails to also alert on low scores
   template_version          int not null default 1,
   updated_at                timestamptz not null default now(),
