@@ -33,7 +33,7 @@ create table if not exists public.csat_settings (
   ask_4_sms                 text not null default
     'Thank you for the feedback. We''re always looking to serve you better, what could we have done to make your experience a 5?',
   ack_low_sms               text not null default
-    'Thank you for letting us know. We''re sorry your experience did not meet expectations. A member of our team will contact you shortly.',
+    'Thank you for letting us know. We''re sorry your experience did not meet expectations. Could you share a bit more about what happened? We would love to give you a call to learn more, if that''s ok.',
   clarify_sms               text not null default
     'Thanks! Please reply with one number from 1 to 5, where 5 means extremely satisfied.',
   alert_extra_recipient_emails text[] not null default '{}', -- non-app-user emails to also alert on low scores

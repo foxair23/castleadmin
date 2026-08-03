@@ -286,17 +286,22 @@ export async function handleCsatReply(from: string, text: string, providerMsgId:
     await db.from('csat_surveys').update({ feedback_pending: true, updated_at: new Date().toISOString() }).eq('id', survey.id)
     return 'csat_rating_4'
   }
-  // Low (1–3): acknowledge, open a follow-up, alert admins.
+  // Low (1–3): acknowledge, open a follow-up, alert admins. The ack asks the
+  // customer to share what happened, so open the feedback window too — their
+  // next free-text reply is stored as feedback on this response.
   if (isLow(rating)) {
     await sendSms(from, settings.ack_low_sms).catch(() => {})
+    await db.from('csat_surveys').update({ feedback_pending: true, updated_at: new Date().toISOString() }).eq('id', survey.id)
     await db.from('csat_follow_ups').upsert({ survey_id: survey.id, sf_job_id: survey.sf_job_id, rating, status: 'open' }, { onConflict: 'survey_id' })
-    await alertLowScore(survey, rating, text.slice(0, 1000), settings)
+    // Include inline text only if they wrote more than the number itself.
+    const inline = text.replace(/\d+/g, '').replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
+    await alertLowScore(survey, rating, inline ? text.slice(0, 1000) : null, settings)
     return 'csat_rating_low'
   }
   return 'csat_rating'
 }
 
-async function alertLowScore(survey: SurveyForReply, rating: number, feedback: string, settings: CsatSettings): Promise<void> {
+async function alertLowScore(survey: SurveyForReply, rating: number, feedback: string | null, settings: CsatSettings): Promise<void> {
   const { subject, bodyHtml, bodyText } = renderLowCsatAlert({
     customerName: survey.customer_name ?? 'Customer',
     score: rating,

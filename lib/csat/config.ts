@@ -36,7 +36,7 @@ export const CSAT_DEFAULTS: CsatSettings = {
     'We\'re glad you had a great experience! Would you mind sharing your feedback in a Google review? {{review_url}}\n\nIt\'s so helpful for our family-owned business. We appreciate you!',
   ask_4_sms: 'Thank you for the feedback. We\'re always looking to serve you better, what could we have done to make your experience a 5?',
   ack_low_sms:
-    'Thank you for letting us know. We’re sorry your experience did not meet expectations. A member of our team will contact you shortly.',
+    'Thank you for letting us know. We\'re sorry your experience did not meet expectations. Could you share a bit more about what happened? We would love to give you a call to learn more, if that\'s ok.',
   clarify_sms: 'Thanks! Please reply with one number from 1 to 5, where 5 means extremely satisfied.',
   alert_extra_recipient_emails: [],
   template_version: 1,
