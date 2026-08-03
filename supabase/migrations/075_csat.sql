@@ -47,6 +47,9 @@ create table if not exists public.csat_settings (
 
 insert into public.csat_settings (id) values (1) on conflict (id) do nothing;
 
+-- Idempotent: add columns introduced after this table may have first been created.
+alter table public.csat_settings add column if not exists alert_delay_minutes int not null default 5;
+
 -- ── Surveys (one per job) ───────────────────────────────────────────────────
 create table if not exists public.csat_surveys (
   id                   uuid primary key default gen_random_uuid(),
@@ -79,6 +82,10 @@ create table if not exists public.csat_surveys (
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now()
 );
+-- Idempotent: add columns introduced after this table may have first been created.
+alter table public.csat_surveys add column if not exists assigned_tech_names text[] not null default '{}';
+alter table public.csat_surveys add column if not exists primary_tech_name   text;
+
 create index if not exists idx_csat_surveys_status  on public.csat_surveys(status);
 create index if not exists idx_csat_surveys_phone   on public.csat_surveys(phone_e164);
 create index if not exists idx_csat_surveys_sent_at on public.csat_surveys(sent_at desc);
@@ -120,6 +127,10 @@ create table if not exists public.csat_follow_ups (
   created_at        timestamptz not null default now(),
   unique (survey_id)
 );
+-- Idempotent: add columns introduced after this table may have first been created.
+alter table public.csat_follow_ups add column if not exists alert_after timestamptz;
+alter table public.csat_follow_ups add column if not exists alerted_at  timestamptz;
+
 create index if not exists idx_csat_follow_ups_status on public.csat_follow_ups(status);
 create index if not exists idx_csat_follow_ups_pending on public.csat_follow_ups(alert_after) where alerted_at is null;
 
