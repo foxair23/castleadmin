@@ -31,7 +31,7 @@ export const CSAT_DEFAULTS: CsatSettings = {
   alert_delay_minutes: 5,
   excluded_job_categories: [],
   excluded_sources: [],
-  google_review_url: 'https://maps.app.goo.gl/T9DtTWjanN9Zgyte9',
+  google_review_url: 'https://g.page/r/CaHFdfDPyEDjEBE/review',
   survey_sms:
     'Castle Garage Doors: Thank you for your business! How satisfied were you with today\'s service?\n\nReply with a number from 1 to 5, where 5 means Very Satisfied and 1 means Very Dissatisfied.\n\nReply STOP to opt out.',
   thanks_5_sms:

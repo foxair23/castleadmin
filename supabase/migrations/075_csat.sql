@@ -24,7 +24,7 @@ create table if not exists public.csat_settings (
 
   excluded_job_categories   text[] not null default '{}',   -- SF categories to skip (e.g. warranty)
   excluded_sources          text[] not null default '{}',   -- SF Job Sources to skip
-  google_review_url         text not null default 'https://maps.app.goo.gl/T9DtTWjanN9Zgyte9',
+  google_review_url         text not null default 'https://g.page/r/CaHFdfDPyEDjEBE/review',
   survey_sms                text not null default
     'Castle Garage Doors: Thank you for your business! How satisfied were you with today''s service?'||chr(10)||chr(10)||
     'Reply with a number from 1 to 5, where 5 means Very Satisfied and 1 means Very Dissatisfied.'||chr(10)||chr(10)||
