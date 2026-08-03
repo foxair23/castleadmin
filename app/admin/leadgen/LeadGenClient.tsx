@@ -68,7 +68,7 @@ function StatusBadge({ status, needsAction }: { status: string; needsAction: boo
 
 type Filter = 'action' | 'all' | 'open' | 'booked' | 'closed'
 
-export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { leads: LeadView[]; enabled: boolean; replyTo: string; inbound: InboundEvent[] }) {
+export default function LeadGenClient({ leads, enabled, replyTo, inbound, canConfigure = true }: { leads: LeadView[]; enabled: boolean; replyTo: string; inbound: InboundEvent[]; canConfigure?: boolean }) {
   const router = useRouter()
   const [filter, setFilter] = useState<Filter>('action')
   const [pending, startTransition] = useTransition()
@@ -130,14 +130,24 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { le
           <span className={`text-sm font-medium ${enabled ? 'text-green-700' : 'text-gray-500'}`}>
             Auto-send {enabled ? 'ON' : 'OFF'}
           </span>
-          <button
-            onClick={toggleEnabled}
-            disabled={pending}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enabled ? 'bg-green-600' : 'bg-gray-300'} disabled:opacity-50`}
-            title={enabled ? 'Auto-send is on — new leads are contacted immediately' : 'Auto-send is off — leads are recorded but not contacted'}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
+          {canConfigure ? (
+            <button
+              onClick={toggleEnabled}
+              disabled={pending}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enabled ? 'bg-green-600' : 'bg-gray-300'} disabled:opacity-50`}
+              title={enabled ? 'Auto-send is on — new leads are contacted immediately' : 'Auto-send is off — leads are recorded but not contacted'}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          ) : (
+            <span
+              className={`relative inline-flex h-6 w-11 items-center rounded-full opacity-60 cursor-not-allowed ${enabled ? 'bg-green-600' : 'bg-gray-300'}`}
+              title="Only an admin can turn auto-send on or off"
+              aria-disabled="true"
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </span>
+          )}
         </div>
       </div>
 
@@ -148,23 +158,32 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound }: { le
       )}
 
       {/* Reply-To: customer replies to the outreach email must reach a human,
-          not the inbound webhook. */}
+          not the inbound webhook. Admin-only to configure; sales sees it read-only. */}
       <div className="mb-4 rounded-lg border border-gray-200 bg-white px-4 py-3">
         <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Outreach reply-to inbox</label>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="email"
-            value={replyToInput}
-            onChange={e => setReplyToInput(e.target.value)}
-            placeholder="e.g. vanessa@castlegaragedoors.com"
-            className="flex-1 min-w-[220px] rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
-          />
-          <button onClick={saveReplyTo} disabled={pending} className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50">Save</button>
-          {replySaved && <span className="text-sm text-green-700">Saved</span>}
-        </div>
-        <p className="mt-1 text-xs text-gray-500">
-          The outreach email invites customers to reply. Set a monitored inbox here — <strong>not</strong> an <code>@updates.castlegaragedoors.com</code> address, or replies loop back into the inbound webhook.
-        </p>
+        {canConfigure ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="email"
+                value={replyToInput}
+                onChange={e => setReplyToInput(e.target.value)}
+                placeholder="e.g. vanessa@castlegaragedoors.com"
+                className="flex-1 min-w-[220px] rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
+              />
+              <button onClick={saveReplyTo} disabled={pending} className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50">Save</button>
+              {replySaved && <span className="text-sm text-green-700">Saved</span>}
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              The outreach email invites customers to reply. Set a monitored inbox here — <strong>not</strong> an <code>@updates.castlegaragedoors.com</code> address, or replies loop back into the inbound webhook.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-gray-900">{replyTo || <span className="text-gray-400">Not set</span>}</p>
+            <p className="mt-1 text-xs text-gray-500">Customer replies to outreach emails go here. Contact an admin to change it.</p>
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
