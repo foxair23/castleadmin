@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { lookupJob, refreshJob, sendApproval } from './actions'
+import { lookupJob, refreshJob, sendApproval, syncJobsMirror } from './actions'
 import type { JobApprovalContext } from '@/lib/approvals/contact'
 
 export interface ApprovalRow {
@@ -54,6 +54,7 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
   const [channel, setChannel] = useState<'email' | 'sms' | 'both'>('both')
   const [sending, setSending] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -77,6 +78,24 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
       setError('Lookup failed.')
     } finally {
       setLooking(false)
+    }
+  }
+
+  // Pull the newest jobs from Service Fusion into the mirror, then (if the
+  // operator already typed a number) retry the lookup — for a job just created
+  // in SF that isn't mirrored yet.
+  async function handleSync() {
+    setError(''); setNotice('')
+    setSyncing(true)
+    try {
+      const res = await syncJobsMirror()
+      if (!res.ok) { setError(res.error); return }
+      setNotice(`Synced ${res.upserted} job${res.upserted === 1 ? '' : 's'} from Service Fusion.`)
+      if (query.trim()) await handleLookup()
+    } catch {
+      setError('Sync failed.')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -145,12 +164,23 @@ export default function ApprovalsClient({ initialRows }: { initialRows: Approval
           </div>
           <button
             onClick={handleLookup}
-            disabled={looking}
+            disabled={looking || syncing}
             className="bg-gray-800 hover:bg-gray-900 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-md"
           >
             {looking ? 'Looking…' : 'Look up'}
           </button>
+          <button
+            onClick={handleSync}
+            disabled={syncing || looking}
+            title="Pull the newest jobs from Service Fusion into the mirror — use if a job was just created in SF and isn't found yet"
+            className="border border-gray-300 hover:bg-gray-50 disabled:opacity-50 text-gray-700 text-sm font-medium px-4 py-2 rounded-md whitespace-nowrap"
+          >
+            {syncing ? 'Syncing…' : '↻ Sync from SF'}
+          </button>
         </div>
+        <p className="text-xs text-gray-400 -mt-1">
+          Just created the job in Service Fusion? Press <strong>Sync from SF</strong> to pull it into Castle Admin, then look it up.
+        </p>
 
         {error && <div className="bg-red-50 border border-red-200 rounded px-4 py-2 text-sm text-red-600">{error}</div>}
         {notice && <div className="bg-green-50 border border-green-200 rounded px-4 py-2 text-sm text-green-700">{notice}</div>}
