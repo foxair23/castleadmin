@@ -4,6 +4,7 @@ import { ensureShortLink } from '@/lib/short-links'
 import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 import { sendEmail } from '@/lib/notifications/resend'
 import { renderLowCsatAlert } from '@/lib/notifications/templates/low-csat-alert'
+import { syncSingleJob } from '@/lib/sf-mirror/sync-engine'
 import { csatDb, loadCsatSettings, renderCsatTemplate, type CsatSettings } from './config'
 import { parseRating, classify, isLow } from './parse'
 
@@ -46,6 +47,21 @@ async function pickCustomerPhone(db: SupabaseClient, customerId: string | null):
   const { data: cust } = await db.from('sf_customers').select('raw_data').eq('id', customerId).maybeSingle()
   const raw = ((cust as { raw_data?: Record<string, unknown> } | null)?.raw_data) ?? {}
   return toE164((raw['phone'] as string) || (raw['mobile'] as string) || (raw['cell'] as string) || null)
+}
+
+/**
+ * Resolve a textable number, pulling the customer's contacts LIVE from Service
+ * Fusion when the mirror has none. The hourly job sync mirrors the job but not
+ * the customer's contact/phone records (those only refresh on backfill), so a
+ * just-created customer's number is in SF but not yet copied locally.
+ * syncSingleJob refreshes that job's customer contact tree, then we re-resolve.
+ * Only fires the (heavier) SF pull when the mirror lookup comes up empty.
+ */
+async function resolvePhone(db: SupabaseClient, customerId: string | null, jobId: string): Promise<string | null> {
+  const local = await pickCustomerPhone(db, customerId)
+  if (local) return local
+  try { await syncSingleJob(jobId) } catch { /* best-effort live pull */ }
+  return pickCustomerPhone(db, customerId)
 }
 
 /** Map the job's first assigned tech to an app user via commission_agent_map. */
@@ -106,7 +122,10 @@ export async function scheduleEligibleSurveys(settings: CsatSettings): Promise<n
     if (job.category && excludedCats.has(job.category.trim().toLowerCase())) continue
     if (job.source && excludedSrcs.has(job.source.trim().toLowerCase())) continue
 
-    const phone = await pickCustomerPhone(db, job.customer_id)
+    // Pull the phone live from SF if the mirror doesn't have it yet (new-customer
+    // contact lag). A miss here isn't fatal — the survey stays 'scheduled' and
+    // runDueSurveys retries the pull for up to 2 days before giving up.
+    const phone = await resolvePhone(db, job.customer_id, job.id)
 
     // Tech attribution snapshot.
     const { data: techRows } = await db
@@ -134,8 +153,8 @@ export async function scheduleEligibleSurveys(settings: CsatSettings): Promise<n
       city: job.city,
       postal_code: job.postal_code,
       work_completed_at: completedAt,
-      status: phone ? 'scheduled' : 'excluded',
-      excluded_reason: phone ? null : 'no_phone',
+      status: 'scheduled',              // stays retryable even without a phone yet
+      excluded_reason: null,
       scheduled_send_at: scheduledSendAt,
     })
     created++
@@ -145,19 +164,29 @@ export async function scheduleEligibleSurveys(settings: CsatSettings): Promise<n
 
 // ── sending ──────────────────────────────────────────────────────────────────
 
-/** Send the survey SMS for any scheduled survey now due, within texting hours. */
+// A survey with no phone yet keeps retrying the SF pull until this long after
+// completion, then gives up as no_phone. The pull is throttled so a stuck survey
+// doesn't hammer SF on every 15-minute run.
+const PHONE_RETRY_MS = 2 * 86_400_000       // 2 days
+const PHONE_RETRY_THROTTLE_MS = 3 * 3_600_000 // at most one live SF pull per 3h per survey
+
+/** Send the survey SMS for any scheduled survey now due, within texting hours.
+ *  A due survey missing its phone re-pulls it from SF (throttled), and is only
+ *  settled as no_phone once the 2-day retry window has passed. */
 export async function runDueSurveys(settings: CsatSettings): Promise<{ sent: number; failed: number }> {
   const db = csatDb()
   if (!isDialpadConfigured()) return { sent: 0, failed: 0 }
 
   const { data: due } = await db
     .from('csat_surveys')
-    .select('id, sf_job_id, phone_e164')
+    .select('id, sf_job_id, sf_customer_id, phone_e164, work_completed_at, updated_at')
     .eq('status', 'scheduled')
-    .not('phone_e164', 'is', null)
     .lte('scheduled_send_at', new Date().toISOString())
     .limit(200)
-  const rows = (due ?? []) as Array<{ id: string; sf_job_id: string; phone_e164: string }>
+  const rows = (due ?? []) as Array<{
+    id: string; sf_job_id: string; sf_customer_id: string | null
+    phone_e164: string | null; work_completed_at: string | null; updated_at: string | null
+  }>
   if (rows.length === 0) return { sent: 0, failed: 0 }
 
   // Shared SMS opt-out suppression.
@@ -166,11 +195,29 @@ export async function runDueSurveys(settings: CsatSettings): Promise<{ sent: num
 
   let sent = 0, failed = 0
   for (const s of rows) {
-    if (optSet.has(s.phone_e164.toLowerCase())) {
+    let phone = s.phone_e164
+    if (!phone) {
+      // Retry the live pull, but no more than once per throttle window per survey.
+      const lastTouch = s.updated_at ? new Date(s.updated_at).getTime() : 0
+      if (Date.now() - lastTouch > PHONE_RETRY_THROTTLE_MS) {
+        phone = await resolvePhone(db, s.sf_customer_id, s.sf_job_id)
+        await db.from('csat_surveys').update({ phone_e164: phone, updated_at: new Date().toISOString() }).eq('id', s.id)
+      }
+      if (!phone) {
+        // Give up only after the retry window elapses; otherwise wait for a later run.
+        const completed = s.work_completed_at ? new Date(s.work_completed_at).getTime() : 0
+        if (completed > 0 && Date.now() - completed > PHONE_RETRY_MS) {
+          await db.from('csat_surveys').update({ status: 'excluded', excluded_reason: 'no_phone', updated_at: new Date().toISOString() }).eq('id', s.id)
+        }
+        continue
+      }
+    }
+
+    if (optSet.has(phone.toLowerCase())) {
       await db.from('csat_surveys').update({ status: 'excluded', excluded_reason: 'opted_out', updated_at: new Date().toISOString() }).eq('id', s.id)
       continue
     }
-    const res = await sendSms(s.phone_e164, settings.survey_sms)
+    const res = await sendSms(phone, settings.survey_sms)
     if (res.ok) {
       await db.from('csat_surveys').update({
         status: 'sent', sent_at: new Date().toISOString(), provider_message_id: res.messageId, updated_at: new Date().toISOString(),
@@ -179,7 +226,7 @@ export async function runDueSurveys(settings: CsatSettings): Promise<{ sent: num
     } else {
       // Dialpad may reject an opted-out number without a webhook — record it.
       if (res.error && /opt.?out|unsubscrib|\bstop\b|consent|blocked/i.test(res.error)) {
-        await db.from('invoice_reminder_optouts').upsert({ channel: 'sms', value: s.phone_e164, reason: 'stop' }, { onConflict: 'channel,value' })
+        await db.from('invoice_reminder_optouts').upsert({ channel: 'sms', value: phone, reason: 'stop' }, { onConflict: 'channel,value' })
       }
       await db.from('csat_surveys').update({ status: 'failed', send_error: res.error ?? 'sms failed', updated_at: new Date().toISOString() }).eq('id', s.id)
       failed++
