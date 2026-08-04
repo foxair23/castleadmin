@@ -211,6 +211,17 @@ export async function populateEligibility(): Promise<{ scanned: number; written:
     }
   }
 
+  // Prune eligibility rows whose job is no longer a commission candidate. The
+  // loop above only revisits CURRENT candidates, so a job that dropped out of
+  // the candidate set entirely — a reverted completion whose work_completed_at
+  // was cleared, or a job later cancelled/deleted — would keep its stale row and
+  // keep showing on the old month's report. Remove any existing row whose job
+  // isn't in the current candidate set.
+  const candidateIds = new Set(jobs.map(j => j.id))
+  for (const existing of existingRows) {
+    if (!candidateIds.has(existing.sf_job_id)) deletes.push(existing.sf_job_id)
+  }
+
   // Apply.
   if (deletes.length > 0) {
     for (let i = 0; i < deletes.length; i += 200) {
