@@ -10,6 +10,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { sfMirrorPaginateAll, sfMirrorGet } from './client'
+import { COMPLETEDISH, isRevertedCandidateStatus } from './completion-status'
 
 // ─── Supabase admin client ─────────────────────────────────────────────────
 
@@ -466,7 +467,7 @@ async function recordStatusChanges(jobsRaw: Raw[]) {
 // is the app's source of truth for "when was the work actually done" (the
 // Monthly Revenue chart buckets by it — see migration 054). Never overwritten:
 // only null rows are stamped, so later re-syncs can't move a job's month.
-const COMPLETEDISH = /complet|invoic|paid/i
+// (COMPLETEDISH lives in ./completion-status so the reset predicate can share it.)
 
 async function stampWorkCompleted(jobsRaw: Raw[]) {
   const supabase = db()
@@ -506,6 +507,77 @@ async function stampWorkCompleted(jobsRaw: Raw[]) {
       .update({ work_completed_at: value })
       .eq('id', id)
       .is('work_completed_at', null)
+  }
+}
+
+// Undo a PREMATURE completion. A job can be marked Completed in SF (e.g. when a
+// part is paid for) and then corrected back to an open status like "Waiting on
+// Parts". Since work_completed_at is never overwritten, the job would stay
+// recognized as complete forever — inflating the tech's commission pipeline and
+// the revenue chart. When a batch job now carries work_completed_at but its
+// CURRENT status is no longer completed-ish (and isn't cancelled), clear the
+// stamp so it re-recognizes on its real completion date later, and log the reset
+// to commission_completion_resets (Commission → Completion Resets) so nothing
+// moves silently.
+async function resetRevertedCompletions(jobsRaw: Raw[]) {
+  const supabase = db()
+  const jobs = dedupeByKey(jobsRaw as unknown as Record<string, unknown>[], 'id') as unknown as Raw[]
+  // Current status is NOT completed-ish and NOT cancelled → possible reversion.
+  const suspectIds = jobs
+    .filter(j => isRevertedCandidateStatus(toStr(j.status)))
+    .map(j => toStr(j.id)!)
+    .filter(Boolean)
+  if (suspectIds.length === 0) return
+
+  // Of those, the ones the mirror still has stamped as work-complete = reverted.
+  const { data: reverted } = await supabase
+    .from('sf_jobs')
+    .select('id, number, customer_name, status, work_completed_at, closed_at, total')
+    .in('id', suspectIds)
+    .not('work_completed_at', 'is', null)
+  const rows = (reverted ?? []) as Array<{
+    id: string; number: string | null; customer_name: string | null; status: string | null
+    work_completed_at: string; closed_at: string | null; total: number | null
+  }>
+  if (rows.length === 0) return
+  const jobIds = rows.map(r => r.id)
+
+  // Snapshot the credited rep + revenue from the eligibility row (if any), and
+  // whether the job already carries a payment (paid invoice or a close stamp).
+  const [{ data: elig }, { data: paidInv }] = await Promise.all([
+    supabase.from('commission_job_eligibility').select('sf_job_id, tech_user_id, revenue').in('sf_job_id', jobIds),
+    supabase.from('sf_invoices').select('job_id').in('job_id', jobIds).eq('is_paid', true).eq('is_deleted', false),
+  ])
+  const eligByJob = new Map((elig ?? []).map(e => [e.sf_job_id as string, e as { tech_user_id: string | null; revenue: number | null }]))
+  const paidJobs = new Set((paidInv ?? []).map(i => (i as { job_id: string | null }).job_id).filter(Boolean) as string[])
+
+  const techIds = [...new Set((elig ?? []).map(e => (e as { tech_user_id: string | null }).tech_user_id).filter(Boolean))] as string[]
+  const techNames = new Map<string, string>()
+  if (techIds.length > 0) {
+    const { data: profs } = await supabase.from('profiles').select('id, full_name').in('id', techIds)
+    for (const p of profs ?? []) techNames.set(p.id as string, (p.full_name as string | null) ?? '')
+  }
+
+  for (const r of rows) {
+    const e = eligByJob.get(r.id)
+    const techUserId = e?.tech_user_id ?? null
+    // Log first (the audit record), then clear the stamp.
+    await supabase.from('commission_completion_resets').insert({
+      sf_job_id: r.id,
+      job_number: r.number,
+      customer_name: r.customer_name,
+      old_work_completed_at: r.work_completed_at,
+      current_status: r.status,
+      job_total: e?.revenue ?? r.total ?? null,
+      had_payment: paidJobs.has(r.id) || !!r.closed_at,
+      tech_user_id: techUserId,
+      tech_name: techUserId ? (techNames.get(techUserId) ?? null) : null,
+    })
+    await supabase
+      .from('sf_jobs')
+      .update({ work_completed_at: null })
+      .eq('id', r.id)
+      .not('work_completed_at', 'is', null)
   }
 }
 
@@ -822,6 +894,7 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
       await syncJobChildren(items)
       await recordStatusChanges(items)
       await stampWorkCompleted(items)
+      await resetRevertedCompletions(items)
     },
   },
   {
@@ -967,6 +1040,7 @@ export async function syncSingleJob(jobId: string): Promise<{ ok: boolean; error
     await syncJobChildren([raw])
     await recordStatusChanges([raw])
     await stampWorkCompleted([raw])
+    await resetRevertedCompletions([raw])
 
     // Also refresh the job's CUSTOMER contact tree (emails/phones), which the
     // hourly job sync never touches — customers only refresh on backfill/
