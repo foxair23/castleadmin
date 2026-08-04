@@ -780,6 +780,8 @@ export interface UncontactedLead {
   received_at: string
   hours_waiting: number
   contacted: boolean
+  /** SF customer pre-created/linked for this lead, so CS can build the job from it. */
+  sf_customer_id: string | null
 }
 
 export interface UncontactedLeadsResult {
@@ -790,7 +792,7 @@ export async function getUncontactedLeads(): Promise<UncontactedLeadsResult> {
   const db = getAdminClient()
   const { data } = await db
     .from('leads')
-    .select('id, provider, customer_name, phone_e164, phone_raw, email, address_street, address_city, address_state, address_postal, status, reply_text, email_sent_at, sms_sent_at, received_at')
+    .select('id, provider, customer_name, phone_e164, phone_raw, email, address_street, address_city, address_state, address_postal, status, reply_text, email_sent_at, sms_sent_at, received_at, sf_customer_id')
     .in('status', ['new', 'held', 'contacted', 'no_contact', 'callback'])
     .is('matched_job_id', null)
     .is('acknowledged_at', null)
@@ -816,6 +818,7 @@ export async function getUncontactedLeads(): Promise<UncontactedLeadsResult> {
       received_at: r.received_at as string,
       hours_waiting: Math.floor((Date.now() - new Date(r.received_at as string).getTime()) / HOUR),
       contacted: !!(r.email_sent_at || r.sms_sent_at),
+      sf_customer_id: (r.sf_customer_id as string) ?? null,
     }))
 
   return { items }

@@ -1662,6 +1662,7 @@ function LeadsToCallTable({ items }: { items: UncontactedLead[] }) {
               <td className="px-4 py-2 font-medium text-gray-900">
                 {l.customer_name ?? '—'}
                 {!l.contacted && <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-800">not contacted</span>}
+                {l.sf_customer_id && <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-800" title={`SF customer ${l.sf_customer_id}`}>✓ Customer in SF</span>}
               </td>
               <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{l.phone ?? '—'}</td>
               <td className="px-4 py-2 text-gray-600"><div className="max-w-[180px] truncate">{l.email ?? '—'}</div></td>
