@@ -27,6 +27,7 @@ export interface LeadView {
   jobNumber: string | null
   convertedAt: string | null
   needsAction: boolean
+  sfCustomerId: string | null
 }
 
 export interface InboundEvent {
@@ -227,6 +228,7 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound, canCon
                   <div className="font-medium text-gray-900">
                     <span className="text-gray-400 mr-1">{expandedId === l.id ? '▾' : '▸'}</span>
                     {l.customerName ?? '—'}
+                    {l.sfCustomerId && <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-800" title={`SF customer ${l.sfCustomerId}`}>✓ In SF</span>}
                   </div>
                   {l.address && <div className="text-[11px] text-gray-400 max-w-[220px]">{l.address}</div>}
                 </td>

@@ -62,6 +62,7 @@ export default async function SalesLeadGenPage() {
     jobNumber: r.matched_job_id ? (jobNumbers.get(r.matched_job_id) || r.matched_job_id) : null,
     convertedAt: r.converted_at,
     needsAction: needsAction(r.status, r.received_at),
+    sfCustomerId: r.sf_customer_id ?? null,
   }))
 
   const inbound: InboundEvent[] = (inboundRows ?? []).map(r => ({
