@@ -1,32 +1,50 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { RemittanceLine, RemittanceVendor } from './parse'
 
-// Match a remittance line to an SF job by PO number. A job may carry several POs
-// separated by ; or / — we check membership, not equality. Clopay lines also
-// carry a customer name, which we use to validate/disambiguate the PO match.
+// Match a remittance line to an SF job. Two stages:
+//   1. PO — a job may carry several POs separated by ; or / (we check membership,
+//      not equality). Clopay lines carry a customer name too, used to validate /
+//      disambiguate the PO match.
+//   2. Name fallback — when the PO matches nothing (vendor wrote a PO never
+//      entered in SF, or a wrong/transposed PO), fall back to the customer name.
+//      Guarded hard because it moves money: requires a strong, unique name match,
+//      prefers the customer's job whose open balance covers the payment, and
+//      returns 'ambiguous' rather than guess when two jobs remain plausible.
+//
+// match_method records HOW a line matched ('po' | 'po_name' | 'name') so review /
+// autopilot can trust PO matches and require a human on name-only matches.
 
 export type MatchStatus = 'matched' | 'ambiguous' | 'no_match' | 'amount_mismatch'
+export type MatchMethod = 'po' | 'po_name' | 'name' | null
+
+export interface MatchCandidate { id: string; number: string | null; customer_name: string | null; po_number: string | null }
 
 export interface LineMatch {
   match_status: MatchStatus
+  match_method: MatchMethod
   sf_job_id: string | null
   sf_job_number: string | null
   matched_customer: string | null
   open_amount: number | null
   match_confidence: number | null
-  candidates: Array<{ id: string; number: string | null; customer_name: string | null; po_number: string | null }> | null
+  candidates: MatchCandidate[] | null
 }
 
 interface JobRow { id: string; number: string | null; customer_name: string | null; po_number: string | null; due_total: number | null }
 
+/** A name is a confident match only at/above this token-set overlap. */
+const NAME_STRONG = 0.9
+
 const splitPos = (raw: string | null): string[] =>
   (raw ?? '').split(/[;/,]/).map(s => s.trim()).filter(Boolean)
 
-function normName(s: string | null | undefined): string {
+export function normName(s: string | null | undefined): string {
   return (s ?? '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
 }
-/** Token-set overlap 0..1 between two names ("MENDOZA, ASIA" vs "Asia Mendoza"). */
-function nameScore(a: string | null, b: string | null): number {
+
+/** Token-set overlap 0..1 between two names — order/comma-insensitive, so
+ *  "PEARSON TUYETLE" and "Pearson, Tuyetle" score 1.0. */
+export function nameScore(a: string | null, b: string | null): number {
   const ta = new Set(normName(a).split(' ').filter(Boolean))
   const tb = new Set(normName(b).split(' ').filter(Boolean))
   if (ta.size === 0 || tb.size === 0) return 0
@@ -34,6 +52,9 @@ function nameScore(a: string | null, b: string | null): number {
   for (const t of ta) if (tb.has(t)) hit++
   return hit / Math.max(ta.size, tb.size)
 }
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000
+const toCandidate = (j: JobRow): MatchCandidate => ({ id: j.id, number: j.number, customer_name: j.customer_name, po_number: j.po_number })
 
 /** Open balance for a job: sum of its unpaid, non-deleted invoices, else due_total. */
 async function openAmount(db: SupabaseClient, job: JobRow): Promise<number | null> {
@@ -47,55 +68,98 @@ async function openAmount(db: SupabaseClient, job: JobRow): Promise<number | nul
   return job.due_total ?? null
 }
 
-export async function matchLine(db: SupabaseClient, vendor: RemittanceVendor, line: RemittanceLine): Promise<LineMatch> {
-  const empty: LineMatch = { match_status: 'no_match', sf_job_id: null, sf_job_number: null, matched_customer: null, open_amount: null, match_confidence: null, candidates: null }
-  if (!line.po) return empty
+/** Build a matched/amount_mismatch result for a chosen job. */
+async function resolve(db: SupabaseClient, job: JobRow, method: MatchMethod, confidence: number, amount: number): Promise<LineMatch> {
+  const open = await openAmount(db, job)
+  const status: MatchStatus = open != null && amount > open + 0.01 ? 'amount_mismatch' : 'matched'
+  return {
+    match_status: status,
+    match_method: method,
+    sf_job_id: job.id,
+    sf_job_number: job.number,
+    matched_customer: job.customer_name,
+    open_amount: open,
+    match_confidence: round3(confidence),
+    candidates: null,
+  }
+}
 
-  // Candidate jobs whose PO field contains this PO (narrow via ILIKE, then exact-
-  // membership check to avoid partial-number false positives).
+/** Jobs whose customer name strongly matches, best score first. Narrows via the
+ *  most distinctive name token, then scores in JS (order/comma-insensitive). */
+async function findByName(db: SupabaseClient, name: string): Promise<Array<JobRow & { score: number }>> {
+  const tokens = normName(name).split(' ').filter(t => t.length >= 3)
+  if (tokens.length === 0) return []
+  const longest = [...tokens].sort((a, b) => b.length - a.length)[0]
   const { data } = await db
     .from('sf_jobs')
     .select('id, number, customer_name, po_number, due_total')
     .eq('is_deleted', false)
-    .ilike('po_number', `%${line.po}%`)
-    .limit(50)
-  const candidates = ((data ?? []) as JobRow[]).filter(j => splitPos(j.po_number).includes(line.po!))
-  if (candidates.length === 0) return empty
+    .ilike('customer_name', `%${longest}%`)
+    .limit(100)
+  return ((data ?? []) as JobRow[])
+    .map(j => ({ ...j, score: nameScore(name, j.customer_name) }))
+    .filter(j => j.score >= NAME_STRONG)
+    .sort((a, b) => b.score - a.score)
+}
 
-  let chosen: JobRow | null = null
-  let confidence = 1
+export async function matchLine(db: SupabaseClient, vendor: RemittanceVendor, line: RemittanceLine): Promise<LineMatch> {
+  const empty: LineMatch = { match_status: 'no_match', match_method: null, sf_job_id: null, sf_job_number: null, matched_customer: null, open_amount: null, match_confidence: null, candidates: null }
 
-  if (candidates.length === 1) {
-    chosen = candidates[0]
-    // Clopay: validate the name; a mismatch drops confidence but still matches.
-    if (vendor === 'clopay' && line.customer_name) {
-      confidence = Math.max(0.5, nameScore(line.customer_name, candidates[0].customer_name))
-    }
-  } else {
-    // Multiple jobs share this PO. Disambiguate: Clopay by best name score, else
-    // by an open balance that fits the paid amount; unresolved → ambiguous.
-    if (vendor === 'clopay' && line.customer_name) {
-      const scored = candidates.map(j => ({ j, s: nameScore(line.customer_name, j.customer_name) })).sort((a, b) => b.s - a.s)
-      if (scored[0].s >= 0.5 && (scored.length < 2 || scored[0].s > scored[1].s)) { chosen = scored[0].j; confidence = scored[0].s }
-    }
-    if (!chosen) {
-      return {
-        ...empty,
-        match_status: 'ambiguous',
-        candidates: candidates.map(j => ({ id: j.id, number: j.number, customer_name: j.customer_name, po_number: j.po_number })),
+  // ── Stage 1: PO ──────────────────────────────────────────────────────────
+  if (line.po) {
+    const { data } = await db
+      .from('sf_jobs')
+      .select('id, number, customer_name, po_number, due_total')
+      .eq('is_deleted', false)
+      .ilike('po_number', `%${line.po}%`)
+      .limit(50)
+    const candidates = ((data ?? []) as JobRow[]).filter(j => splitPos(j.po_number).includes(line.po!))
+
+    if (candidates.length === 1) {
+      const job = candidates[0]
+      // Clopay: validate the name; a mismatch drops confidence but still matches.
+      if (vendor === 'clopay' && line.customer_name) {
+        return resolve(db, job, 'po_name', Math.max(0.5, nameScore(line.customer_name, job.customer_name)), line.amount)
       }
+      return resolve(db, job, 'po', 1, line.amount)
+    }
+    if (candidates.length > 1) {
+      // Multiple jobs share this PO — disambiguate Clopay by best name score.
+      if (vendor === 'clopay' && line.customer_name) {
+        const scored = candidates.map(j => ({ j, s: nameScore(line.customer_name, j.customer_name) })).sort((a, b) => b.s - a.s)
+        if (scored[0].s >= 0.5 && (scored.length < 2 || scored[0].s > scored[1].s)) return resolve(db, scored[0].j, 'po_name', scored[0].s, line.amount)
+      }
+      return { ...empty, match_status: 'ambiguous', match_method: 'po', candidates: candidates.map(toCandidate) }
+    }
+    // candidates.length === 0 → PO isn't in SF; fall through to the name stage.
+  }
+
+  // ── Stage 2: name fallback ───────────────────────────────────────────────
+  // Only when the PO didn't resolve. Handles vendor POs missing from SF or
+  // written wrong, as long as the customer name is a strong, unambiguous match.
+  if (line.customer_name) {
+    const named = await findByName(db, line.customer_name)
+    if (named.length > 0) {
+      const withOpen = [] as Array<{ j: JobRow & { score: number }; open: number | null }>
+      for (const j of named) withOpen.push({ j, open: await openAmount(db, j) })
+
+      // Choose a single job: the lone match; else the one whose open balance can
+      // cover the payment; else the one whose open equals the amount exactly.
+      let winner = withOpen.length === 1 ? withOpen[0] : null
+      if (!winner) {
+        const canCover = withOpen.filter(x => x.open != null && x.open + 0.01 >= line.amount)
+        if (canCover.length === 1) winner = canCover[0]
+      }
+      if (!winner) {
+        const exact = withOpen.filter(x => x.open != null && Math.abs(x.open - line.amount) < 0.01)
+        if (exact.length === 1) winner = exact[0]
+      }
+
+      if (winner) return resolve(db, winner.j, 'name', winner.j.score, line.amount)
+      // Several plausible same-name jobs — let a human/AI pick.
+      return { ...empty, match_status: 'ambiguous', match_method: 'name', candidates: named.map(toCandidate) }
     }
   }
 
-  const open = await openAmount(db, chosen)
-  const status: MatchStatus = open != null && line.amount > open + 0.01 ? 'amount_mismatch' : 'matched'
-  return {
-    match_status: status,
-    sf_job_id: chosen.id,
-    sf_job_number: chosen.number,
-    matched_customer: chosen.customer_name,
-    open_amount: open,
-    match_confidence: Math.round(confidence * 1000) / 1000,
-    candidates: null,
-  }
+  return empty
 }
