@@ -1,0 +1,664 @@
+Delivered-To: john@castlegaragedoors.com
+Received: by 2002:a05:7000:6448:b0:87d:a5eb:b892 with SMTP id n8csp6038683mag;
+        Wed, 5 Aug 2026 04:16:44 -0700 (PDT)
+X-Forwarded-Encrypted: i=5; AHgh+Rrq2MgH/QkdD4bc3kNRmsQdgQQ1j0u+JsNpbhb6gnDMu6RlpdXBKmslusf4QWwtHyn1ZjiA@castlegaragedoors.com
+X-Received: by 2002:a05:6a00:4394:b0:837:f79d:909 with SMTP id d2e1a72fcca58-84f2e0cc739mr7130998b3a.39.1785928603815;
+        Wed, 05 Aug 2026 04:16:43 -0700 (PDT)
+ARC-Seal: i=4; a=rsa-sha256; t=1785928603; cv=pass;
+        d=google.com; s=arc-20260327;
+        b=nWecqKaG5eztyW9SAQ7RqyxxPcdZojWrVRDDyowBW/YK0QReMpXaSAL3E6ScCx3xAo
+         GzQ9Cx0YXCxoLvvcHkPY9kmIuPA13LCAxhRptsSATgn8NfGruxkvqBlYM/oxUeIsk+/p
+         giVP/nKuziqqeROhhIGfwhaAGWMNNU6wSY0pQr0herqf6i5Qgb8Whs8fdPnUqqLAMbJU
+         CCrnjHWa/LSqpJsq+Ph/XdzljuLi434HMGakEeUuL94Cv9HtAYJttTd26GONlMYBUUNV
+         FklIUzd5t8qOkTMDLI1ylQIVi+jKygSnmMaazQVD6ZbWwv9pSxrff2V+YiB3CyJ2NiO2
+         q8nw==
+ARC-Message-Signature: i=4; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=list-unsubscribe:list-archive:list-help:list-post:list-id
+         :mailing-list:precedence:reply-to:mime-version:subject:message-id:to
+         :from:date:dkim-signature;
+        bh=DuOCQjbJW7y/94f5vo73DgF2UGKdxSraqUnEH4AkUaw=;
+        fh=IsXdFj+3oab6LnMirwZq6R/zcthDmkLuY520Yzo6K2E=;
+        b=jCdkFrKtlQWjfwou6B7dlAkZkJj6M9f6YyDXkb6w3E4CpNZoVDS9qPImmxwTYWPI/i
+         +XQumPgfPEjrkydmNOQvhVVB8kBOKDnyDlLTRpgiJoB6TqBa0Cs3Wt+YAoX0h5Y/F9ku
+         OBnC6LvwqXjIHUcSWmTrnJkDvAxRz0EBY3XtayJu7O2QmX1ITgCXs9kK9+wpdzQHroFf
+         +GnCdHPh+ntHelLXhOib06L5zyJmUymJk8NTg2RyMKjJabhCQ6Ht8K21u9xyvEq3N6Jr
+         WEXTQ9f/dMrx8yWznGhQHkkrfqE+bEeXjHawBnqzEKTFJTrLB+lFm8UeNbENYGLsH9fq
+         RzKw==;
+        dara=google.com
+ARC-Authentication-Results: i=4; mx.google.com;
+       dkim=pass header.i=@castlegaragedoors.com header.s=google header.b=b1Fg9geB;
+       arc=pass (i=3 spf=pass spfdomain=overheaddoor.com dkim=pass dkdomain=overheaddoor.com dmarc=pass fromdomain=overheaddoor.com);
+       spf=none (google.com: ar+bncbcx7jxhhuagbbgvxztjqmgqez7ggnfy@castlegaragedoors.com does not designate permitted sender hosts) smtp.mailfrom=ar+bncBCX7JXHHUAGBBGVXZTJQMGQEZ7GGNFY@castlegaragedoors.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=castlegaragedoors.com;
+       dara=fail header.i=@castlegaragedoors.com
+Return-Path: <ar+bncBCX7JXHHUAGBBGVXZTJQMGQEZ7GGNFY@castlegaragedoors.com>
+Received: from mail-sor-f69.google.com (mail-sor-f69.google.com. [209.85.220.69])
+        by mx.google.com with SMTPS id d2e1a72fcca58-84f2e4db16asor1679537b3a.7.2026.08.05.04.16.43
+        for <john@castlegaragedoors.com>
+        (Google Transport Security);
+        Wed, 05 Aug 2026 04:16:43 -0700 (PDT)
+Received-SPF: none (google.com: ar+bncbcx7jxhhuagbbgvxztjqmgqez7ggnfy@castlegaragedoors.com does not designate permitted sender hosts) client-ip=209.85.220.69;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@castlegaragedoors.com header.s=google header.b=b1Fg9geB;
+       arc=pass (i=3 spf=pass spfdomain=overheaddoor.com dkim=pass dkdomain=overheaddoor.com dmarc=pass fromdomain=overheaddoor.com);
+       spf=none (google.com: ar+bncbcx7jxhhuagbbgvxztjqmgqez7ggnfy@castlegaragedoors.com does not designate permitted sender hosts) smtp.mailfrom=ar+bncBCX7JXHHUAGBBGVXZTJQMGQEZ7GGNFY@castlegaragedoors.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=castlegaragedoors.com;
+       dara=fail header.i=@castlegaragedoors.com
+ARC-Seal: i=3; a=rsa-sha256; t=1785928603; cv=pass;
+        d=google.com; s=arc-20260327;
+        b=XH8fZqcOqVfRSijhshrrBl1Vfw9V25fgHZnVN4P7wVlNHIkF1XCOIs4ogSLGzNfuVq
+         uxHX10Wxx9JY1rT2qq9GJfIOTL0h/J7PQb+imTp/bEFP7je1TJ5aYCeg5PQhrgd4oti1
+         r4V6SjM25jB/umQ8rMpN/dAqTXf5AfZIBugpkqiCNaDXtX1xiCiS0f7Xt5kfT080OqEb
+         S1w6VnMbV3TDcIrXADpOtoGSDKGgElOIIxcd+HLNgbR3x/vFNBw5yDqCEhvei4TrHVYF
+         FjMWbs4CdwUrHMoRBo+U3DPWjN12ktZI7gth+YifuGNV0UpAxO2RcU4temQHagydwLFo
+         x5Gg==
+ARC-Message-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=list-unsubscribe:list-archive:list-help:list-post:list-id
+         :mailing-list:precedence:reply-to:mime-version:subject:message-id:to
+         :from:date:dkim-signature;
+        bh=DuOCQjbJW7y/94f5vo73DgF2UGKdxSraqUnEH4AkUaw=;
+        fh=IsXdFj+3oab6LnMirwZq6R/zcthDmkLuY520Yzo6K2E=;
+        b=plFMfxk00oZ0mQurXDQvzfjIMCo2r3xL8k0g6oy+3BIwHcygyo4aHwoGY/7i7M4TpP
+         GJewvotGUjpI+ITkYpEf0ZdhpKuVehnVMGaL5JapZxpDxUsT0npYbN502BNpQ5CgdwFM
+         rhznwVruSRlNBZUFvRO6Ae77d0PP8m+b3irlKisbi+r0bY2R/I+VSsB/uGijJ0DNgQIA
+         ZYWfrDFoa5yaQsidm4xJyF3ckA/Q9Rd/fXjvAb/GgmdLc9QeXCVE6Hm+VX1j6ZFTAt23
+         mH1NUXvGDh5QwpLomnJ+sDu308l9OdTrrDdrmDVeklluac2GSztkJ+7n8nVbKtK8fOGy
+         LtDg==;
+        darn=castlegaragedoors.com
+ARC-Authentication-Results: i=3; mx.google.com;
+       dkim=pass header.i=@overheaddoor.com header.s=selector2 header.b="Slv9+/aE";
+       arc=pass (i=1 spf=pass spfdomain=overheaddoor.com dmarc=pass fromdomain=overheaddoor.com);
+       spf=pass (google.com: domain of noreply@overheaddoor.com designates 2a01:111:f403:c110::1 as permitted sender) smtp.mailfrom=noreply@overheaddoor.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=overheaddoor.com
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=castlegaragedoors.com; s=google; t=1785928603; x=1786533403; darn=castlegaragedoors.com;
+        h=list-unsubscribe:list-archive:list-help:list-post:list-id
+         :mailing-list:precedence:reply-to:x-original-authentication-results
+         :x-original-sender:content-type:mime-version:subject:message-id:to
+         :from:date:from:to:cc:subject:date:message-id:reply-to:content-type;
+        bh=DuOCQjbJW7y/94f5vo73DgF2UGKdxSraqUnEH4AkUaw=;
+        b=b1Fg9geBSb0QYMw1CFBtod+A+dnbz5l6rkw6RUhcLzp3/+VN/jMKI5yR7oHXmFRIgh
+         G2H6o1Sjc7rCRqzYSf54xHoef39aSUKcDUPv7h0kyrNQQJamVk1LEgRLeDqRodQwyRuu
+         KaPmWqxs92L0zmNFa7axHC/H2VLys+r/nNmolIUvXVch+/ylJ0K9tlpJOVb0wbyb3ih1
+         Lj6GcMNZoJXjKBtn86gt1hgY6XujBQLTj/senaRnTwiMO5EFnYXfkeheBIpEGNo0LGV+
+         E2LqmaNAXFS/NUBCqhV0nbYGPHRgaa/4XiwnfB9vukAGNhdWo1CNF+4D4rw6sKpNunRb
+         XToA==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20251104; t=1785928603; x=1786533403;
+        h=list-unsubscribe:list-archive:list-help:list-post
+         :x-spam-checked-in-group:list-id:mailing-list:precedence:reply-to
+         :x-original-authentication-results:x-original-sender:content-type
+         :mime-version:subject:message-id:to:from:date:x-beenthere
+         :x-gm-message-state:from:to:cc:subject:date:message-id:reply-to
+         :content-type;
+        bh=DuOCQjbJW7y/94f5vo73DgF2UGKdxSraqUnEH4AkUaw=;
+        b=MWVJS2bfnW1VDHJIU6W0qMEFHuzrQ68vPJLHwYELIe5174q5GS2Dnso2modgBFReHF
+         xeYPc5B7kRcry0rWRDzVd04wiP2sPo1c2xp65wA26xpl7pbslFj91cWq3QJcqRo0MgdK
+         42HpYuQFSJDnmdM/J7WG62mGdI8ALSlNAti5X3k+Jte7PhIgVvMVrjLs0tJLztXGxvLr
+         PRk9T67ET6OYdpkAu/g+Qio4vVhkqCv6KbFxqTeMSE8SqSvZ9r5JznQ5CQqrEmK/sGC1
+         hHoYsRzju1mvXAmSnSjqAPge2r/r37TVNRxtE4Kv7nd9OHw318ztIgjdN4adrjP4yMtF
+         KYFA==
+X-Forwarded-Encrypted: i=3; AHgh+RrQPqMkCZJANDHevVf19Z3zvaT+NTtMrcfXCq4R2JmYBJkWG62H9w8wcDquZaZte4kBMpNd@castlegaragedoors.com
+X-Gm-Message-State: AOJu0YzGkJKST6jvKOUORML2uzo6X8DRQ2ocXHgDLcjmEsWf+BB2xB/4
+	WLwRZpOjo7Fy/Fa1GJGK6kNZsUIHtOruOVTTz54o/je0POpRmok4jYPsgRziDTgaBmm6L97daXl
+	LbdY=
+X-Received: by 2002:a05:6a00:4fc4:b0:847:99bb:b6d8 with SMTP id d2e1a72fcca58-84f2e009b31mr5931778b3a.26.1785928602953;
+        Wed, 05 Aug 2026 04:16:42 -0700 (PDT)
+X-BeenThere: ar@castlegaragedoors.com; h="Aa7YSPRYPufZ5RiTihrR5/vk5L9xvU+4EIrAsnrzLEXYfuBXiQ=="
+Received: by 2002:a05:6a00:1821:b0:847:af78:acc6 with SMTP id
+ d2e1a72fcca58-84eb7329c08ls10375814b3a.2.-pod-prod-05-us; Wed, 05 Aug 2026
+ 04:16:42 -0700 (PDT)
+X-Received: by 2002:a05:6a00:3315:b0:842:7296:dba with SMTP id d2e1a72fcca58-84f2dfc476emr7211658b3a.7.1785928601883;
+        Wed, 05 Aug 2026 04:16:41 -0700 (PDT)
+ARC-Seal: i=2; a=rsa-sha256; t=1785928601; cv=pass;
+        d=google.com; s=arc-20260327;
+        b=jhIL2/XavVbqtZ6DBDhIaLHlU+TcPCzxhsHSZZGaiavbazRf/5CL6DTug4Vb5L/RUp
+         FxBYLIw/rz70CuszcSZ2GiJG/ABN8Qdg4Bezs1iFgn9CxSWN7SIInkbmH8BQipLhZfcT
+         xDD8a1SAV3kEjJieoZN6yeQp/C/Iuerv9P1ycvs+M6O86A0BBT2mlmQJPTdJrxBg1LlK
+         Q+fAVNReLr7TDNS1uPlU92dRAkRjqBnArpJsWaAfAXaK/EIEeAIi0WfnKcR+ojxrHx3g
+         GY+SjhCfHOIdb1H0Vo5BiZZGwN2AI/R4wWyD1onP+MQssxsR/gE8UZS5Da8UVSms/buN
+         eLog==
+ARC-Message-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=mime-version:subject:message-id:to:from:date:dkim-signature;
+        bh=DuOCQjbJW7y/94f5vo73DgF2UGKdxSraqUnEH4AkUaw=;
+        fh=LUUAj4Xq0spgZGzL6fBzqmuImB+hW/5pO7AowCjyY6s=;
+        b=ER9wHGszU4KIlGWMK7uIshpUkAid3oMPDzoEsndXOaPT02V/LVRj5N0sDg2Mecp7QS
+         MYM546qOCL2HG8hrlsPngNluRaNcRWpagw3BGGrBu1Em1aRkrhApvYsL7I4MVkvErTAO
+         UTy70o+4IhHyZiN9ayATcQeA14hN6CxT5ikHr4vElwUsX8zrK2C7skIUvw8eXkbLnPSm
+         NLZPUz24UG/GdqDzn8Z+R6VsoTK0YSSMkA+L6xgzN01ogAqx2rVAQmUcUi22HvPT6o/p
+         JjtKSZmFS17ozDsqndOagzrF99dx+72vk/zW4BjCxwnVmZHTRRd0wrKZGtwsz7is+kgO
+         P0FQ==;
+        dara=google.com
+ARC-Authentication-Results: i=2; mx.google.com;
+       dkim=pass header.i=@overheaddoor.com header.s=selector2 header.b="Slv9+/aE";
+       arc=pass (i=1 spf=pass spfdomain=overheaddoor.com dmarc=pass fromdomain=overheaddoor.com);
+       spf=pass (google.com: domain of noreply@overheaddoor.com designates 2a01:111:f403:c110::1 as permitted sender) smtp.mailfrom=noreply@overheaddoor.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=overheaddoor.com
+Received: from BN1PR04CU002.outbound.protection.outlook.com (mail-eastus2azlp170100001.outbound.protection.outlook.com. [2a01:111:f403:c110::1])
+        by mx.google.com with ESMTPS id d2e1a72fcca58-84f2e32c9f7si4796586b3a.1.2026.08.05.04.16.41
+        for <ar@castlegaragedoors.com>
+        (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384 bits=256/256);
+        Wed, 05 Aug 2026 04:16:41 -0700 (PDT)
+Received-SPF: pass (google.com: domain of noreply@overheaddoor.com designates 2a01:111:f403:c110::1 as permitted sender) client-ip=2a01:111:f403:c110::1;
+ARC-Seal: i=1; a=rsa-sha256; s=arcselector10001; d=microsoft.com; cv=none;
+ b=phcXCcgLhQIMzJkJixE3sl6mu1MgnQmNDxCo1DDLROomaQpjBWwm6w4d2oKlMglQk/anjIAQ0LwhMkIsdB9PRKILva5oRPMCLhLGxGens6PCTFnyRoWvkJvaJ4XVtsEUDErn1ev4ZXKc94L0fw0bikKIDnykNbefNI0nMOnVhsxQzhNFHXhD6AKTlZOw+Yne2pRJztVUg6oCGNrLE3UUcCeJXbt6/aB8LCTke9fiW+W40FWfrpZXxAeSur2fKq6Cp9oVwHsoqPpvxwJBPtDZzijGFjvuw1Vf+POM/tiQVIZprMsJhueC7zXco9XR3oDtvgxroOxgN99dtYTGKUmm4w==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=microsoft.com;
+ s=arcselector10001;
+ h=From:Date:Subject:Message-ID:Content-Type:MIME-Version:X-MS-Exchange-AntiSpam-MessageData-ChunkCount:X-MS-Exchange-AntiSpam-MessageData-0:X-MS-Exchange-AntiSpam-MessageData-1;
+ bh=DuOCQjbJW7y/94f5vo73DgF2UGKdxSraqUnEH4AkUaw=;
+ b=ysJQm4TaijZ5oTAXHaVeZq1bAz/tZxPPKx47Gkf8JERbklEMjQSktrfm8P3xcu6n7QPXq6PsrXoTURmrxKUaL7XXBCVt2SY5LQFMC1vkup/9KUTUWazDC/5bDZ2EJWxcmCJS+VZXEG70zaTnhP6UKqrn1ZMzrOTFCFljOjrOF6NtpOTIUzCv5HM/ZssJlmWVhuGFRej8ThtTXyZm7GIZolc+EvLrw/QKeK9WYqUxsVLSmxnzH7XkBzut2qmWO2LzUt9bpNqyUFEhEKLfpsx8AWL88IesxogKfvaBbuQ3UBy6USEfFypSDIPKLxACgL85XLBhjrODyZQdJduwpT2ZNg==
+ARC-Authentication-Results: i=1; mx.microsoft.com 1; spf=pass (sender ip is
+ 199.1.42.16) smtp.rcpttodomain=castlegaragedoors.com
+ smtp.mailfrom=overheaddoor.com; dmarc=pass (p=reject sp=reject pct=100)
+ action=none header.from=overheaddoor.com; dkim=none (message not signed);
+ arc=none (0)
+Received: from SJ0PR03CA0180.namprd03.prod.outlook.com (2603:10b6:a03:338::35)
+ by DS0PR04MB8722.namprd04.prod.outlook.com (2603:10b6:8:12b::6) with
+ Microsoft SMTP Server (version=TLS1_2,
+ cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id 15.21.292.16; Wed, 5 Aug
+ 2026 11:16:33 +0000
+Received: from SJ5PEPF000001F4.namprd05.prod.outlook.com
+ (2603:10b6:a03:338:cafe::a8) by SJ0PR03CA0180.outlook.office365.com
+ (2603:10b6:a03:338::35) with Microsoft SMTP Server (version=TLS1_3,
+ cipher=TLS_AES_256_GCM_SHA384) id 15.21.292.19 via Frontend Transport; Wed, 5
+ Aug 2026 11:16:33 +0000
+X-MS-Exchange-Authentication-Results: spf=pass (sender IP is 199.1.42.16)
+ smtp.mailfrom=overheaddoor.com; dkim=none (message not signed)
+ header.d=none;dmarc=pass action=none header.from=overheaddoor.com;
+Received-SPF: Pass (protection.outlook.com: domain of overheaddoor.com
+ designates 199.1.42.16 as permitted sender) receiver=protection.outlook.com;
+ client-ip=199.1.42.16; helo=owa.overheaddoor.com; pr=C
+Received: from owa.overheaddoor.com (199.1.42.16) by
+ SJ5PEPF000001F4.mail.protection.outlook.com (10.167.242.72) with Microsoft
+ SMTP Server (version=TLS1_2, cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id
+ 15.21.292.8 via Frontend Transport; Wed, 5 Aug 2026 11:16:33 +0000
+Received: from RICTX-EXH19-P01.ohdc.com (10.91.0.141) by
+ RICTX-EXH19-P01.ohdc.com (10.91.0.141) with Microsoft SMTP Server
+ (version=TLS1_2, cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id
+ 15.2.1544.25; Wed, 5 Aug 2026 06:16:24 -0500
+Received: from prd-ebs023.ohdc.com (10.91.1.113) by RICTX-EXH19-P01.ohdc.com
+ (10.91.0.141) with Microsoft SMTP Server id 15.2.1544.25 via Frontend
+ Transport; Wed, 5 Aug 2026 06:16:24 -0500
+Date: Wed, 5 Aug 2026 06:16:24 -0500
+From: noreply via Accounts Receivable <ar@castlegaragedoors.com>
+To: <ar@castlegaragedoors.com>
+Message-ID: <1507416391.377.1785928584677@mail.overheaddoor.com>
+Subject: Separate Remittance Advice: payment reference number - 9000003
+MIME-Version: 1.0
+Content-Type: multipart/mixed;
+	boundary="----=_Part_375_1243471481.1785928584670"
+X-EOPAttributedMessage: 0
+X-MS-PublicTrafficType: Email
+X-MS-TrafficTypeDiagnostic: SJ5PEPF000001F4:EE_|DS0PR04MB8722:EE_
+X-MS-Office365-Filtering-Correlation-Id: 43da35d3-17b1-48c8-83de-08def2e301af
+X-Forefront-Antispam-Report: CIP:199.1.42.16;CTRY:US;LANG:en;SCL:1;SRV:;IPV:CAL;SFV:NSPM;H:owa.overheaddoor.com;PTR:user16.overheaddoor.com;CAT:NONE;SFS:(13230040)(82310400026)(61400799027)(23010399003)(376014)(36860700016)(3613699012)(6133799003)(56012099006)(10067099003)(8096899003)(18002099003)(16102099003)(6143699003);DIR:OUT;SFP:1102;
+X-MS-Exchange-SenderADCheck: 1
+X-MS-Exchange-AntiSpam-Relay: 0
+X-Microsoft-Antispam: BCL:0;ARA:13230040|82310400026|61400799027|23010399003|376014|36860700016|3613699012|6133799003|56012099006|10067099003|8096899003|18002099003|16102099003|6143699003;
+X-Microsoft-Antispam-Message-Info: U08z+Zq7Yd/5ToAZee6iZF2d01DK4Kz4BL0uE2+gSXWoGOv0g/xV2t47cmXt27KGxXE/2THL3EvXDhDv7OF8bG+FtOl89/7jMPbeFUf4GDlnRG280prcc2Y8eSTWNA9OO27KrfzLrMdshBWlmv5Ehn6QDjq1U/McM+EX+xFv/uuMNqB/gEavZZeKPIw7cG4ezLrREO9xZCvYdzwywezKRri3Fo/fjGoVvWZ9N5zfckaVts7NPt1d9il3jgr7gQkz56EW/7sg6ZKFz6zlgIsK4ryx92IXBwYE2hdJloP5BBDaB5Ng/vRUpt49awIchnl1viY023V+FUOL+B6ZWc2ljF+HBSlTfPncNfPfXgEdZQ5CRYfW0XN5jn6SWhCqoGZpCnURZZJFhufI2PkWSJtehoqKxZ2m54+q/8Sosz7dXdvtoUfZJ7h1BKGpXY7E8xGK+O/LotsmMLzlkXLWxnPzOta0qBKpyJdelOQw4B3M4LHrpWYvBSDKyPdLhE32gdo8qysG0D12MNZve6CUGOSezFbthQ2kQEKLlvLKGNZhiwGbg3/KKhVwuDLyeqtJEhyrdpfxl2cEl4i4V5R23KEkeYBNtvphxAU08BU2+SipqTD8+Z0YDHd2p9QVKvCxCmhuRW4gHjMg/R8t5qJ0T0ZEG4mt03H4BkYTfoHU3uyGt35lKqLYbbX+ScbqgNd0abg89GLBE9i6dlj5Qvkweyfhj/r06po0Gn/ro8ruiRXdZ/wF3DiM6tqeVyU47kPazlT4
+X-MS-Exchange-AntiSpam-MessageData-ChunkCount: 1
+X-MS-Exchange-AntiSpam-MessageData-0: aeXBoJI4cH9A2Dhf4ZVCGjRTYKnHNw8xnCuKxuu2Xy5Bju9EBhK8IFojCR1x+rGRo9HBZxB+07Rx9gz7d7FxCCI3SgEIpGxGRXUmKqDtfazwWSy+ZsA6g7isEOo74byn7jxmmalzRKM2YFpCh/JhOB3HaqkCLq87MAFyDPhQD2dRi55+prjzDhoIkK+hRjfHT1Ggq4ofIL9+qOE/00/0GuUonhoI7QxRr0qmrwGeFCT3DiihCqhHMJNlCMSqZ5mmZZFZ7I2qCHpIFZBOPm265Idv6D4saoMerCh+4visddSkcfvUzi8y9GoklIL4BxPNp1ziBkCfCKagvRlR++v6yjBp5zlplsyatWDtVtiPG0JDqzj4F776JdMSPVvYNvjVOMNLPl6qfKkPDl+fWiyxX9736o2nPOkccUW8Eg3jVsAuv34h+hq5G/lt8ZdB24FZ
+X-OriginatorOrg: overheaddoor.com
+X-MS-Exchange-CrossTenant-OriginalArrivalTime: 05 Aug 2026 11:16:33.1968
+ (UTC)
+X-MS-Exchange-CrossTenant-Network-Message-Id: 43da35d3-17b1-48c8-83de-08def2e301af
+X-MS-Exchange-CrossTenant-Id: 10fb28a1-1065-4caf-aea8-3e9c04e6cd24
+X-MS-Exchange-CrossTenant-OriginalAttributedTenantConnectingIp: TenantId=10fb28a1-1065-4caf-aea8-3e9c04e6cd24;Ip=[199.1.42.16];Helo=[owa.overheaddoor.com]
+X-MS-Exchange-CrossTenant-AuthSource: SJ5PEPF000001F4.namprd05.prod.outlook.com
+X-MS-Exchange-CrossTenant-AuthAs: Anonymous
+X-MS-Exchange-CrossTenant-FromEntityHeader: HybridOnPrem
+X-MS-Exchange-Transport-CrossTenantHeadersStamped: DS0PR04MB8722
+X-Original-Sender: noreply@overheaddoor.com
+X-Original-Authentication-Results: mx.google.com;       dkim=pass
+ header.i=@overheaddoor.com header.s=selector2 header.b="Slv9+/aE";
+       arc=pass (i=1 spf=pass spfdomain=overheaddoor.com dmarc=pass
+ fromdomain=overheaddoor.com);       spf=pass (google.com: domain of
+ noreply@overheaddoor.com designates 2a01:111:f403:c110::1 as permitted
+ sender) smtp.mailfrom=noreply@overheaddoor.com;       dmarc=pass (p=REJECT
+ sp=REJECT dis=NONE) header.from=overheaddoor.com
+X-Original-From: <noreply@overheaddoor.com>
+Reply-To: <noreply@overheaddoor.com>
+Precedence: list
+Mailing-list: list ar@castlegaragedoors.com; contact ar+owners@castlegaragedoors.com
+List-ID: <ar.castlegaragedoors.com>
+X-Spam-Checked-In-Group: ar@castlegaragedoors.com
+X-Google-Group-Id: 222438431517
+List-Post: <https://groups.google.com/a/castlegaragedoors.com/group/ar/post>, <mailto:ar@castlegaragedoors.com>
+List-Help: <https://support.google.com/a/castlegaragedoors.com/bin/topic.py?topic=25838>,
+ <mailto:ar+help@castlegaragedoors.com>
+List-Archive: <https://groups.google.com/a/castlegaragedoors.com/group/ar/>
+List-Unsubscribe: <mailto:googlegroups-manage+222438431517+unsubscribe@googlegroups.com>,
+ <https://groups.google.com/a/castlegaragedoors.com/group/ar/subscribe>
+
+------=_Part_375_1243471481.1785928584670
+Content-Type: multipart/related;
+	boundary="----=_Part_376_1861812210.1785928584670"
+
+------=_Part_376_1861812210.1785928584670
+Content-Type: text/html; charset="UTF-8"; name="Payment9000003.html"
+Content-Transfer-Encoding: quoted-printable
+
+<?xml version=3D"1.0" encoding=3D"UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns=3D"http://www.w3.org/1999/xhtml">
+<!-- Generated by Oracle BI Publisher 10.1.3.4.2 -->
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<title>Payment Remittance Advice</title>
+<style type=3D"text/css" id=3D"internalStyle">
+.c0 {height: 13.872pt;}
+.c1 {width:100.0%;background-color: #ffffff;}
+.c2 {text-align: center;line-height: 13.872pt;margin-top: 0.0pt;margin-bott=
+om: 0.0pt;margin-left: 5.4pt;margin-right: 5.299pt;}
+.c3 {font-family: 'Arial';font-size: 12.0pt;color: #000000;background-color=
+: #ffffff;}
+.c4 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 6.0pt;margin-right=
+: auto;width: 557.1pt;border-collapse: collapse;}
+.c5 {line-height: 11.56pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-lef=
+t: 6.0pt;margin-right: 6.25pt;}
+.c6 {font-family: 'CourierNewPSMT-Identity-H';font-size: 10.0pt;color: #000=
+000;}
+.c7 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 6.0pt;margin-right=
+: 6.25pt;}
+.c8 {height: 72.828pt;}
+.c9 {width:16.328%;background-color: #a5c3db;}
+.c10 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.4pt;margin-right: 5.0pt;}
+.c11 {font-family: 'Arial';font-size: 9.0pt;color: #000000;background-color=
+: #a5c3db;}
+.c12 {width:34.016%;background-color: #a5c3db;}
+.c13 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.8pt;margin-right: 5.0pt;}
+.c14 {font-family: 'Arial';font-size: 9.0pt;color: #000000;}
+.c15 {width:17.008%;background-color: #a5c3db;}
+.c16 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.799pt;margin-right: 5.0pt;}
+.c17 {width:32.646%;background-color: #a5c3db;}
+.c18 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.799pt;margin-right: 4.25pt;}
+.c19 {height: 10.404pt;}
+.c20 {width:16.328%;background-color: #ffffff;}
+.c21 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 5.4pt;margin-righ=
+t: 5.0pt;}
+.c22 {width:34.016%;background-color: #ffffff;}
+.c23 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 5.8pt;margin-righ=
+t: 5.0pt;}
+.c24 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 0.6pt;margin-righ=
+t: auto;width: 529.15pt;border-collapse: collapse;}
+.c25 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 6.0pt;margin-right: 6.25pt;}
+.c26 {width:51.163%;background-color: #a5c3db;}
+.c27 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.4pt;margin-right: 4.549pt;}
+.c28 {width:48.836%;background-color: #a5c3db;}
+.c29 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 6.25pt;margin-right: 3.649pt;}
+.c30 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 0.6pt;margin-righ=
+t: auto;width: 255.75pt;border-collapse: collapse;}
+.c31 {width:100.0%;background-color: #72a1c8;}
+.c32 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.4pt;margin-right: 4.901pt;}
+.c33 {font-family: 'Arial';font-size: 9.0pt;color: #000000;background-color=
+: #72a1c8;}
+.c34 {width:20.684%;background-color: #f5fafd;}
+.c35 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.4pt;margin-right: 5.049pt;}
+.c36 {font-family: 'Arial';font-size: 9.0pt;color: #000000;background-color=
+: #f5fafd;}
+.c37 {width:11.44%;background-color: #f5fafd;}
+.c38 {line-height: 10.404pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 5.75pt;margin-right: 4.7pt;}
+.c39 {width:14.168%;background-color: #f5fafd;}
+.c40 {text-align: right;line-height: 10.404pt;margin-top: 0.0pt;margin-bott=
+om: 0.0pt;margin-left: 6.1pt;margin-right: 4.0pt;}
+.c41 {width:12.266%;background-color: #f5fafd;}
+.c42 {text-align: center;line-height: 10.404pt;margin-top: 0.0pt;margin-bot=
+tom: 0.0pt;margin-left: 5.799pt;margin-right: 5.0pt;}
+.c43 {width:16.0%;background-color: #f5fafd;}
+.c44 {text-align: right;line-height: 10.404pt;margin-top: 0.0pt;margin-bott=
+om: 0.0pt;margin-left: 5.799pt;margin-right: 5.0pt;}
+.c45 {width:11.635%;background-color: #f5fafd;}
+.c46 {text-align: right;line-height: 10.404pt;margin-top: 0.0pt;margin-bott=
+om: 0.0pt;margin-left: 5.799pt;margin-right: 4.55pt;}
+.c47 {width:13.804%;background-color: #f5fafd;}
+.c48 {text-align: right;line-height: 10.404pt;margin-top: 0.0pt;margin-bott=
+om: 0.0pt;margin-left: 6.248pt;margin-right: 3.901pt;}
+.c49 {width:20.684%;background-color: #ffffff;}
+.c50 {width:11.44%;background-color: #ffffff;}
+.c51 {width:14.168%;background-color: #ffffff;}
+.c52 {width:12.266%;background-color: #ffffff;}
+.c53 {width:16.0%;background-color: #ffffff;}
+.c54 {width:11.635%;background-color: #ffffff;}
+.c55 {width:13.804%;background-color: #ffffff;}
+.c56 {height: 9.0pt;}
+.c57 {width:74.56%;background-color: #ffffff;}
+.c58 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 5.799pt;margin-ri=
+ght: 4.55pt;}
+.c59 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 5.4pt;margin-righ=
+t: 5.049pt;}
+.c60 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 5.75pt;margin-rig=
+ht: 4.7pt;}
+.c61 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 6.1pt;margin-righ=
+t: 4.0pt;}
+.c62 {width:12.266%;background-color: #72a1c8;}
+.c63 {width:16.0%;background-color: #72a1c8;}
+.c64 {width:11.635%;background-color: #72a1c8;}
+.c65 {width:13.804%;background-color: #72a1c8;}
+.c66 {margin-top: 0.0pt;margin-bottom: 0.0pt;margin-left: 0.6pt;margin-righ=
+t: auto;width: 562.499pt;border-collapse: collapse;}
+.c67 {line-height: 13.872pt;margin-top: 0.0pt;margin-bottom: 0.0pt;margin-l=
+eft: 6.0pt;margin-right: 6.25pt;}
+.c68 {font-family: 'Times New Roman';font-size: 12.0pt;color: #000000;}
+</style>
+</head>
+<body>
+<table class=3D"c4">
+<tbody>
+<tr class=3D"c0">
+<td valign=3D"top" class=3D"c1">
+<p class=3D"c2"><span class=3D"c3"><b>Payment Remittance Advice</b></span><=
+/p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class=3D"c5"><span class=3D"c6">Aug 5, 2026</span></p>
+<p class=3D"c7"><br>
+</p>
+<p class=3D"c7"><br>
+</p>
+<table class=3D"c24">
+<tbody>
+<tr class=3D"c8">
+<td valign=3D"top" class=3D"c9">
+<p class=3D"c10"><span class=3D"c11"><b>From Payer</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c12">
+<p class=3D"c13"><span class=3D"c11">Overhead Door Corporation</span></p>
+<p class=3D"c13"><span class=3D"c14">2501 S State Hwy 121 BusSte 200</span>=
+</p>
+<p class=3D"c13"><span class=3D"c14">Lewisville</span></p>
+<p class=3D"c13"><span class=3D"c14">TX</span></p>
+<p class=3D"c13"><span class=3D"c14">US</span></p>
+<p class=3D"c13"><span class=3D"c14">75067</span></p>
+</td>
+<td valign=3D"top" class=3D"c15">
+<p class=3D"c16"><span class=3D"c11"><b>Trading Partner</b></span></p>
+<p class=3D"c16"><span class=3D"c14"><b>To Payee</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c17">
+<p class=3D"c18"><span class=3D"c11">Castle Garage Inc</span></p>
+<p class=3D"c18"><span class=3D"c14">Castle Garage Inc</span></p>
+<p class=3D"c18"><span class=3D"c14">1291 Simpson Way Ste D</span></p>
+<p class=3D"c18"><span class=3D"c14">Escondido</span></p>
+<p class=3D"c18"><span class=3D"c14">CA</span></p>
+<p class=3D"c18"><span class=3D"c14">US</span></p>
+<p class=3D"c18"><span class=3D"c14">92029-1434</span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c20">
+<p class=3D"c21"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c22">
+<p class=3D"c23"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c15">
+<p class=3D"c16"><span class=3D"c11"><b>Bank Name</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c17">
+<p class=3D"c18"><span class=3D"c11">JPMorgan Chase</span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c20">
+<p class=3D"c21"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c22">
+<p class=3D"c23"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c15">
+<p class=3D"c16"><span class=3D"c11"><b>Bank No.</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c17"></td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c20">
+<p class=3D"c21"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c22">
+<p class=3D"c23"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c15">
+<p class=3D"c16"><span class=3D"c11"><b>Branch No.</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c17">
+<p class=3D"c18"><span class=3D"c11">000000000</span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c20">
+<p class=3D"c21"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c22">
+<p class=3D"c23"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c15">
+<p class=3D"c16"><span class=3D"c11"><b>Bank BIC Code</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c17"></td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c20">
+<p class=3D"c21"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c22">
+<p class=3D"c23"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c15">
+<p class=3D"c16"><span class=3D"c11"><b>Bank Account</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c17">
+<p class=3D"c18"><span class=3D"c11">XXXXXX5411</span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c20">
+<p class=3D"c21"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c22">
+<p class=3D"c23"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c15">
+<p class=3D"c16"><span class=3D"c11"><b>IBAN</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c17"></td>
+</tr>
+</tbody>
+</table>
+<p class=3D"c7"><br>
+</p>
+<p class=3D"c25"><span class=3D"c14">The following payment has been remitte=
+d.</span></p>
+<p class=3D"c7"><br>
+</p>
+<table class=3D"c30">
+<tbody>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c26">
+<p class=3D"c27"><span class=3D"c11"><b>Payment Reference Number</b></span>=
+</p>
+</td>
+<td valign=3D"top" class=3D"c28">
+<p class=3D"c29"><span class=3D"c11">9000003</span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c26">
+<p class=3D"c27"><span class=3D"c11"><b>Paper Document Number</b></span></p=
+>
+</td>
+<td valign=3D"top" class=3D"c28"></td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c26">
+<p class=3D"c27"><span class=3D"c11"><b>Payment Date</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c28">
+<p class=3D"c29"><span class=3D"c11">Aug 5, 2026</span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c26">
+<p class=3D"c27"><span class=3D"c11"><b>Payment Currency</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c28">
+<p class=3D"c29"><span class=3D"c11">USD</span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c26">
+<p class=3D"c27"><span class=3D"c11"><b>Payment Amount</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c28">
+<p class=3D"c29"><span class=3D"c11">130.00</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class=3D"c7"><br>
+</p>
+<p class=3D"c7"><br>
+</p>
+<table class=3D"c66">
+<tbody>
+<tr class=3D"c19">
+<td valign=3D"top" colspan=3D"7" class=3D"c31">
+<p class=3D"c32"><span class=3D"c33"><b>Remittance Detail</b></span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c34">
+<p class=3D"c35"><span class=3D"c36"><b>Document Reference Number</b></span=
+></p>
+</td>
+<td valign=3D"top" class=3D"c37">
+<p class=3D"c38"><span class=3D"c36"><b>Document Date</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c39">
+<p class=3D"c40"><span class=3D"c36"><b>Document Amount</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c41">
+<p class=3D"c42"><span class=3D"c36"><b>Document Currency</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c43">
+<p class=3D"c44"><span class=3D"c36"><b>Amount Withheld</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c45">
+<p class=3D"c46"><span class=3D"c36"><b>Discount Taken</b></span></p>
+</td>
+<td valign=3D"top" class=3D"c47">
+<p class=3D"c48"><span class=3D"c36"><b>Amount Paid</b></span></p>
+</td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c49">
+<p class=3D"c35"><span class=3D"c14">90000101-3802192</span></p>
+</td>
+<td valign=3D"top" class=3D"c50">
+<p class=3D"c38"><span class=3D"c14">Aug 4, 2026</span></p>
+</td>
+<td valign=3D"top" class=3D"c51">
+<p class=3D"c40"><span class=3D"c14">130.00</span></p>
+</td>
+<td valign=3D"top" class=3D"c52">
+<p class=3D"c42"><span class=3D"c14">USD</span></p>
+</td>
+<td valign=3D"top" class=3D"c53"></td>
+<td valign=3D"top" class=3D"c54">
+<p class=3D"c46"><span class=3D"c14">.00</span></p>
+</td>
+<td valign=3D"top" class=3D"c55">
+<p class=3D"c48"><span class=3D"c14">130.00 </span></p>
+</td>
+</tr>
+<tr class=3D"c56">
+<td valign=3D"top" colspan=3D"5" class=3D"c57"></td>
+<td valign=3D"top" class=3D"c54">
+<p class=3D"c58"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c55"></td>
+</tr>
+<tr class=3D"c19">
+<td valign=3D"top" class=3D"c49">
+<p class=3D"c59"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c50">
+<p class=3D"c60"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c51">
+<p class=3D"c61"><br>
+</p>
+</td>
+<td valign=3D"top" class=3D"c62">
+<h3 class=3D"c44"><span class=3D"c33"><b>Total</b></span></h3>
+</td>
+<td valign=3D"top" class=3D"c63"></td>
+<td valign=3D"top" class=3D"c64">
+<p class=3D"c46"><span class=3D"c33">.00</span></p>
+</td>
+<td valign=3D"top" class=3D"c65">
+<p class=3D"c48"><span class=3D"c33">130.00</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class=3D"c7"><br>
+</p>
+<p class=3D"c7"><br>
+</p>
+<p class=3D"c7"><br>
+</p>
+<p class=3D"c67"><span class=3D"c68"></span><br>
+</p>
+<p class=3D"c67"><span class=3D"c68">&nbsp;&nbsp; </span><br>
+</p>
+<p class=3D"c67"><span class=3D"c68">&nbsp;&nbsp; </span><br>
+</p>
+<p class=3D"c67"><span class=3D"c68"></span><br>
+</p>
+<p class=3D"c67"><span class=3D"c68">&nbsp;&nbsp; </span><a name=3D"page-to=
+tal-master0" id=3D"page-total-master0"></a><a name=3D"page-total" id=3D"pag=
+e-total"></a><br>
+</p>
+<br>
+<br>
+Confidentiality notice: This e-mail (including any attachments) is for the =
+sole use of the intended recipient(s), and it may contain private, confiden=
+tial or privileged information. If you have received this e-mail in error, =
+you are not authorized to copy,
+ disclose or use it, so please delete it from your system and notify the se=
+nder by reply e-mail.
+<p></p>
+</body>
+</html>
+
+------=_Part_376_1861812210.1785928584670--
+
+------=_Part_375_1243471481.1785928584670--
