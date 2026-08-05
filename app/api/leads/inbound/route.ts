@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { parseLead, emailToText, type RawInboundEmail } from '@/lib/leadgen/parse'
 import { ingestLead, logInboundEvent } from '@/lib/leadgen/engine'
 import { aiExtractLead, isAiExtractConfigured } from '@/lib/leadgen/ai-extract'
+import { ingestRemittance } from '@/lib/remittance/engine'
 
 export const maxDuration = 60
 
@@ -34,6 +35,21 @@ function extractEmail(d: Record<string, unknown>): RawInboundEmail {
     text: (d.text as string) ?? (d.plain as string) ?? null,
     html: (d.html as string) ?? null,
   }
+}
+
+// Recipient(s) as a flat string — Resend delivers `to` as a string, an array of
+// strings, or an array of {address}. Used to route by local-part (leads@ vs
+// remittances@) since one inbound webhook serves the whole receiving domain.
+function recipientToString(toField: unknown): string {
+  if (typeof toField === 'string') return toField
+  if (Array.isArray(toField)) {
+    return toField.map(t => (typeof t === 'string' ? t : String((t as Record<string, unknown>)?.address ?? (t as Record<string, unknown>)?.email ?? ''))).join(', ')
+  }
+  if (toField && typeof toField === 'object') {
+    const o = toField as Record<string, unknown>
+    return String(o.address ?? o.email ?? '')
+  }
+  return ''
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -105,6 +121,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, ignored: 'could not fetch email body', detail: error })
     }
     email = full
+  }
+
+  // One inbound webhook serves every address on this receiving domain, so route
+  // by recipient: vendor payment remittances (remittances@…) — or anything from a
+  // known vendor sender, as a safety net — go to the remittance pipeline; every-
+  // thing else is treated as a lead.
+  const recipient = recipientToString(data.to)
+  const fromVendor = /(clopay|overheaddoor)\.com/i.test(email.from ?? metaFrom ?? '')
+  if (/remittances@/i.test(recipient) || fromVendor) {
+    try {
+      const result = await ingestRemittance(email, emailId)
+      return NextResponse.json({ route: 'remittance', ...result })
+    } catch (e) {
+      return NextResponse.json({ ok: true, route: 'remittance', error: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   // Deterministic parser first (known providers — free + instant); fall back to
