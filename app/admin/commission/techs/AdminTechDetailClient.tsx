@@ -83,6 +83,7 @@ export default function AdminTechDetailClient({ techs, todayStr }: { techs: Tech
             techUserId: techId,
             periodStart: period.start,
             periodEnd: period.end,
+            todayStr,
             onChanged: load,
           } : undefined}
         />
