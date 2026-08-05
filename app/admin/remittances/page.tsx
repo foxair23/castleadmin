@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { rematchAllAction, aiReviewAction } from './actions'
 import { isAiMatchConfigured } from '@/lib/remittance/ai-match'
+import { ActionButton } from './ActionButton'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Remittances' }
@@ -63,17 +64,19 @@ export default async function RemittancesPage() {
         </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <form action={rematchAllAction}>
-            <button type="submit" className="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap">
-              Re-run matching
-            </button>
-          </form>
+          <ActionButton
+            action={rematchAllAction}
+            label="Re-run matching"
+            pendingLabel="Re-running…"
+            className="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+          />
           {isAiMatchConfigured() && (
-            <form action={aiReviewAction}>
-              <button type="submit" title="Ask AI to suggest matches for lines the PO/name match couldn't place" className="px-3 py-1.5 text-sm rounded-md border border-indigo-300 text-indigo-700 hover:bg-indigo-50 whitespace-nowrap">
-                AI review
-              </button>
-            </form>
+            <ActionButton
+              action={aiReviewAction}
+              label="AI review"
+              pendingLabel="AI reviewing…"
+              className="px-3 py-1.5 text-sm rounded-md border border-indigo-300 text-indigo-700 hover:bg-indigo-50 whitespace-nowrap"
+            />
           )}
         </div>
       </div>
