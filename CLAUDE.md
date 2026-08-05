@@ -52,7 +52,7 @@ RLS policies, triggers, and seeds the 9 initial job types.
 
 ## Key Business Rules
 - Workweek: Monday–Sunday, America/Los_Angeles timezone
-- Submission deadline: Wednesday 23:59 PT of the following week
+- Submission deadline: Tuesday 23:59 PT of the following week
 - Pay formula: flat = base_rate; tiered = base_rate + (qty-1) × additional_rate
 - Submitted week totals are frozen — rate changes don't retroactively recalculate
 - Techs cannot self-register; admin creates accounts via Manage Technicians

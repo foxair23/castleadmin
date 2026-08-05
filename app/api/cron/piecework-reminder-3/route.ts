@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { enqueuePieceworkReminders } from '../piecework-reminder-1/route'
 import { isPtHour } from '@/lib/cron/pt-gate'
 
-// Mon 9 AM PT (early reminder, 2 days before deadline). Scheduled at both
-// 16:00 and 17:00 UTC; the PT gate runs it only on the 9 AM PT firing.
+// Mon 9 AM PT (early reminder, the day before the Tuesday deadline). Scheduled
+// at both 16:00 and 17:00 UTC; the PT gate runs it only on the 9 AM PT firing.
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
