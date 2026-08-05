@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { RawInboundEmail } from '@/lib/inbound/resend'
 import { detectVendor, parseRemittance, type ParsedRemittance } from './parse'
-import { matchLine } from './match'
+import { matchLine, jobOpenAmount } from './match'
 import { isAiMatchConfigured, buildCandidates, aiSuggestMatch } from './ai-match'
 
 // Ingest one remittance email: detect vendor → parse → match each line → store a
@@ -155,4 +155,36 @@ export async function aiReviewPending(): Promise<{ reviewed: number; suggested: 
     await supabase.from('remittance_payments').update(update).eq('id', row.id)
   }
   return { reviewed, suggested }
+}
+
+// Manually allocate a remittance line to a specific SF job — by job id (from the
+// suggestions) or by a typed job number. Records a 'manual' match. Never touches
+// an already-applied line.
+export async function assignLineJob(lineId: string, opts: { jobId?: string; jobNumber?: string }): Promise<{ ok: boolean; error?: string; jobNumber?: string | null }> {
+  const supabase = db()
+  type JobLite = { id: string; number: string | null; customer_name: string | null; due_total: number | null }
+  let job: JobLite | null = null
+  if (opts.jobId) {
+    const { data } = await supabase.from('sf_jobs').select('id, number, customer_name, due_total').eq('id', opts.jobId).eq('is_deleted', false).maybeSingle()
+    job = data as JobLite | null
+  } else if (opts.jobNumber && opts.jobNumber.trim()) {
+    const { data } = await supabase.from('sf_jobs').select('id, number, customer_name, due_total').eq('number', opts.jobNumber.trim()).eq('is_deleted', false).maybeSingle()
+    job = data as JobLite | null
+  } else {
+    return { ok: false, error: 'Pick a suggested job or enter a job number.' }
+  }
+  if (!job) return { ok: false, error: 'No matching job found in Service Fusion.' }
+
+  const open = await jobOpenAmount(supabase, job.id, job.due_total)
+  const { data: updated } = await supabase.from('remittance_payments').update({
+    sf_job_id: job.id,
+    sf_job_number: job.number,
+    matched_customer: job.customer_name,
+    match_status: 'matched',
+    match_method: 'manual',
+    match_confidence: 1,
+    open_amount: open,
+  }).eq('id', lineId).neq('apply_status', 'applied').select('id')
+  if (!updated || updated.length === 0) return { ok: false, error: 'Line not found or already applied.' }
+  return { ok: true, jobNumber: job.number }
 }

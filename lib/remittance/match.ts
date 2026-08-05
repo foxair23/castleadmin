@@ -57,15 +57,31 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000
 const toCandidate = (j: JobRow): MatchCandidate => ({ id: j.id, number: j.number, customer_name: j.customer_name, po_number: j.po_number })
 
 /** Open balance for a job: sum of its unpaid, non-deleted invoices, else due_total. */
-async function openAmount(db: SupabaseClient, job: JobRow): Promise<number | null> {
-  const { data } = await db.from('sf_invoices').select('total, is_paid').eq('job_id', job.id).eq('is_deleted', false)
+export async function jobOpenAmount(db: SupabaseClient, jobId: string, dueTotal: number | null): Promise<number | null> {
+  const { data } = await db.from('sf_invoices').select('total, is_paid').eq('job_id', jobId).eq('is_deleted', false)
   const rows = (data ?? []) as Array<{ total: number | null; is_paid: boolean | null }>
   if (rows.length > 0) {
     const openInv = rows.filter(r => !r.is_paid)
     if (openInv.length === 0) return 0 // invoices exist and all are paid → nothing open
     return openInv.reduce((s, r) => s + (r.total ?? 0), 0)
   }
-  return job.due_total ?? null
+  return dueTotal ?? null
+}
+const openAmount = (db: SupabaseClient, job: JobRow) => jobOpenAmount(db, job.id, job.due_total)
+
+/** Pick one job from several by open balance: the lone job whose open balance
+ *  covers the payment, else the one whose open equals the amount exactly. Returns
+ *  null if that doesn't uniquely resolve (→ ambiguous). Used to break ties when
+ *  the same customer has multiple jobs sharing a PO or a name. */
+async function pickByOpen(db: SupabaseClient, jobs: JobRow[], amount: number): Promise<JobRow | null> {
+  if (jobs.length === 1) return jobs[0]
+  const withOpen: Array<{ j: JobRow; open: number | null }> = []
+  for (const j of jobs) withOpen.push({ j, open: await openAmount(db, j) })
+  const canCover = withOpen.filter(x => x.open != null && x.open + 0.01 >= amount)
+  if (canCover.length === 1) return canCover[0].j
+  const exact = withOpen.filter(x => x.open != null && Math.abs(x.open - amount) < 0.01)
+  if (exact.length === 1) return exact[0].j
+  return null
 }
 
 /** Build a matched/amount_mismatch result for a chosen job. */
@@ -124,12 +140,24 @@ export async function matchLine(db: SupabaseClient, vendor: RemittanceVendor, li
       return resolve(db, job, 'po', 1, line.amount)
     }
     if (candidates.length > 1) {
-      // Multiple jobs share this PO — disambiguate Clopay by best name score.
+      // Multiple jobs share this PO (same customer can have several jobs). Prefer
+      // the best name match; if names tie — which they do when it's the same
+      // customer — break the tie by which job's open balance covers the payment.
+      let pool = candidates
+      let method: MatchMethod = 'po'
+      let confidence = 1
       if (vendor === 'clopay' && line.customer_name) {
         const scored = candidates.map(j => ({ j, s: nameScore(line.customer_name, j.customer_name) })).sort((a, b) => b.s - a.s)
-        if (scored[0].s >= 0.5 && (scored.length < 2 || scored[0].s > scored[1].s)) return resolve(db, scored[0].j, 'po_name', scored[0].s, line.amount)
+        const top = scored[0].s
+        if (top >= 0.5) {
+          const tied = scored.filter(x => Math.abs(x.s - top) < 1e-9).map(x => x.j)
+          if (tied.length === 1) return resolve(db, tied[0], 'po_name', top, line.amount)
+          pool = tied; method = 'po_name'; confidence = top
+        }
       }
-      return { ...empty, match_status: 'ambiguous', match_method: 'po', candidates: candidates.map(toCandidate) }
+      const winner = await pickByOpen(db, pool, line.amount)
+      if (winner) return resolve(db, winner, method, confidence, line.amount)
+      return { ...empty, match_status: 'ambiguous', match_method: 'po', candidates: pool.map(toCandidate) }
     }
     // candidates.length === 0 → PO isn't in SF; fall through to the name stage.
   }
@@ -140,22 +168,11 @@ export async function matchLine(db: SupabaseClient, vendor: RemittanceVendor, li
   if (line.customer_name) {
     const named = await findByName(db, line.customer_name)
     if (named.length > 0) {
-      const withOpen = [] as Array<{ j: JobRow & { score: number }; open: number | null }>
-      for (const j of named) withOpen.push({ j, open: await openAmount(db, j) })
-
-      // Choose a single job: the lone match; else the one whose open balance can
-      // cover the payment; else the one whose open equals the amount exactly.
-      let winner = withOpen.length === 1 ? withOpen[0] : null
-      if (!winner) {
-        const canCover = withOpen.filter(x => x.open != null && x.open + 0.01 >= line.amount)
-        if (canCover.length === 1) winner = canCover[0]
+      const winner = await pickByOpen(db, named, line.amount)
+      if (winner) {
+        const score = named.find(j => j.id === winner.id)?.score ?? NAME_STRONG
+        return resolve(db, winner, 'name', score, line.amount)
       }
-      if (!winner) {
-        const exact = withOpen.filter(x => x.open != null && Math.abs(x.open - line.amount) < 0.01)
-        if (exact.length === 1) winner = exact[0]
-      }
-
-      if (winner) return resolve(db, winner.j, 'name', winner.j.score, line.amount)
       // Several plausible same-name jobs — let a human/AI pick.
       return { ...empty, match_status: 'ambiguous', match_method: 'name', candidates: named.map(toCandidate) }
     }
