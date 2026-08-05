@@ -57,16 +57,17 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000
 const toCandidate = (j: JobRow): MatchCandidate => ({ id: j.id, number: j.number, customer_name: j.customer_name, po_number: j.po_number })
 
 /** Open balance for a job: sum of its unpaid, non-deleted invoices, else due_total. */
-async function openAmount(db: SupabaseClient, job: JobRow): Promise<number | null> {
-  const { data } = await db.from('sf_invoices').select('total, is_paid').eq('job_id', job.id).eq('is_deleted', false)
+export async function jobOpenAmount(db: SupabaseClient, jobId: string, dueTotal: number | null): Promise<number | null> {
+  const { data } = await db.from('sf_invoices').select('total, is_paid').eq('job_id', jobId).eq('is_deleted', false)
   const rows = (data ?? []) as Array<{ total: number | null; is_paid: boolean | null }>
   if (rows.length > 0) {
     const openInv = rows.filter(r => !r.is_paid)
     if (openInv.length === 0) return 0 // invoices exist and all are paid → nothing open
     return openInv.reduce((s, r) => s + (r.total ?? 0), 0)
   }
-  return job.due_total ?? null
+  return dueTotal ?? null
 }
+const openAmount = (db: SupabaseClient, job: JobRow) => jobOpenAmount(db, job.id, job.due_total)
 
 /** Pick one job from several by open balance: the lone job whose open balance
  *  covers the payment, else the one whose open equals the amount exactly. Returns
