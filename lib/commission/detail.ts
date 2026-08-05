@@ -44,6 +44,15 @@ export interface AdjustmentLine {
   created_at: string
 }
 
+export interface PaymentLine {
+  id: string
+  amount: number
+  paid_on: string
+  method: string | null
+  note: string | null
+  created_at: string
+}
+
 export interface TechPeriodDetail {
   period: { start: string; end: string; label: string }
   summary: {
@@ -62,9 +71,14 @@ export interface TechPeriodDetail {
     /** received + pending — what they'd get if everything pays. */
     commission_total: number
     adjustments_total: number
+    /** Sum of what's actually been paid out to the tech this period. */
+    paid_total: number
+    /** Owed but unpaid: commission_received − paid_total (negative = overpaid). */
+    balance: number
   }
   jobs: JobLine[]
   adjustments: AdjustmentLine[]
+  payments: PaymentLine[]
 }
 
 const EXCLUDED_STATUSES = '("Cancelled","Void","Voided")'
@@ -99,8 +113,8 @@ export async function computeTechPeriodDetail(
   const elig = (eligData ?? []) as EligRow[]
   const eligIds = elig.map(e => e.sf_job_id)
 
-  // 2. Plan + adjustments.
-  const [{ data: planData }, { data: adjData }] = await Promise.all([
+  // 2. Plan + adjustments + payments (disbursements to the tech).
+  const [{ data: planData }, { data: adjData }, { data: payData }] = await Promise.all([
     db.from('commission_plans')
       .select('sales_target, rate_below, rate_above')
       .eq('tech_user_id', techUserId).eq('period_start', period.start).eq('period_end', period.end)
@@ -109,11 +123,16 @@ export async function computeTechPeriodDetail(
       .select('id, amount, note, created_at')
       .eq('tech_user_id', techUserId).eq('period_start', period.start).eq('period_end', period.end)
       .order('created_at', { ascending: true }),
+    db.from('commission_payments')
+      .select('id, amount, paid_on, method, note, created_at')
+      .eq('tech_user_id', techUserId).eq('period_start', period.start).eq('period_end', period.end)
+      .order('paid_on', { ascending: true }),
   ])
   const plan: CommissionPlan | null = planData
     ? { sales_target: planData.sales_target, rate_below: planData.rate_below, rate_above: planData.rate_above }
     : null
   const adjustments = (adjData ?? []) as AdjustmentLine[]
+  const payments = (payData ?? []) as PaymentLine[]
 
   // 3. Job metadata + invoice presence (for the pipeline stage).
   const [{ data: jobMeta }, { data: invMeta }] = await Promise.all([
@@ -180,6 +199,11 @@ export async function computeTechPeriodDetail(
     (a.date ?? '') < (b.date ?? '') ? 1 : (a.date ?? '') > (b.date ?? '') ? -1 : 0,
   )
 
+  // Payments reconcile against collected commission only — you can only disburse
+  // what the customer has actually paid. Overpayment ⇒ negative balance.
+  const paid_total = round2(payments.reduce((s, p) => s + p.amount, 0))
+  const balance = round2(result.commission_received - paid_total)
+
   return {
     period: { start: period.start, end: period.end, label: period.label },
     summary: {
@@ -192,9 +216,12 @@ export async function computeTechPeriodDetail(
       commission_pending,
       commission_total,
       adjustments_total: result.adjustments_total,
+      paid_total,
+      balance,
     },
     jobs,
     adjustments,
+    payments,
   }
 }
 

@@ -41,6 +41,8 @@ export interface AdminControls {
   techUserId: string
   periodStart: string
   periodEnd: string
+  /** Today (America/LA), used to default the payment date. */
+  todayStr?: string
   /** Re-fetch the detail after a change. */
   onChanged: () => void
 }
@@ -122,6 +124,18 @@ export default function CommissionDetailPanel({
         </div>
       )}
 
+      {/* Payout status: what's collected & payable, paid so far, and remaining. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Stat label="Collected commission" value={formatMoney(s.commission_received)} sub="payable now" />
+        <Stat label="Paid to date" value={formatMoney(s.paid_total)} />
+        <Stat
+          label={s.balance < 0 ? 'Overpaid' : 'Balance owed'}
+          value={formatMoney(Math.abs(s.balance))}
+          accent={s.balance > 0 ? 'amber' : s.balance < 0 ? 'green' : undefined}
+          sub={s.balance < 0 ? 'paid more than collected' : undefined}
+        />
+      </div>
+
       {error && (
         <div className="bg-red-50 border border-red-200 rounded px-4 py-2 text-sm text-red-600">{error}</div>
       )}
@@ -170,6 +184,11 @@ export default function CommissionDetailPanel({
       {/* Adjustments */}
       {(detail.adjustments.length > 0 || admin) && (
         <AdjustmentsSection detail={detail} admin={admin} />
+      )}
+
+      {/* Payments — money actually paid out to the tech */}
+      {(detail.payments.length > 0 || admin) && (
+        <PaymentsSection detail={detail} admin={admin} />
       )}
 
       {/* Unified job pipeline */}
@@ -340,6 +359,124 @@ function AdjustmentsSection({ detail, admin }: { detail: TechPeriodDetail; admin
               className="bg-red-600 text-white rounded px-3 py-1 text-sm font-medium hover:bg-red-700 disabled:opacity-60"
             >
               {busy ? 'Saving…' : 'Add adjustment'}
+            </button>
+          </div>
+        )}
+      </div>
+      {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+    </div>
+  )
+}
+
+function PaymentsSection({ detail, admin }: { detail: TechPeriodDetail; admin?: AdminControls }) {
+  const [amount, setAmount] = useState('')
+  const [paidOn, setPaidOn] = useState(admin?.todayStr ?? '')
+  const [method, setMethod] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function add() {
+    if (!admin) return
+    const amt = parseFloat(amount)
+    if (!isFinite(amt) || amt <= 0) { setError('Enter a positive amount'); return }
+    if (!paidOn) { setError('Pick a payment date'); return }
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fetch('/api/admin/commission/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tech_user_id: admin.techUserId,
+          period_start: admin.periodStart,
+          period_end: admin.periodEnd,
+          amount: amt,
+          paid_on: paidOn,
+          method: method.trim() || undefined,
+          note: note.trim() || undefined,
+        }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
+      setAmount(''); setMethod(''); setNote(''); setPaidOn(admin.todayStr ?? '')
+      admin.onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove(id: string) {
+    if (!admin) return
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/commission/payments?id=${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
+      admin.onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-700 mb-2">Payments to tech</h3>
+      {admin && (
+        <p className="text-xs text-gray-400 mb-2">
+          Log what you&rsquo;ve actually paid this tech for the period — partial payments are fine (add one
+          per disbursement). This only tracks payouts; it never changes the commission math.
+        </p>
+      )}
+      <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
+        {detail.payments.map(p => (
+          <div key={p.id} className="flex items-center justify-between px-4 py-2 text-sm gap-3">
+            <div className="min-w-0">
+              <span className="text-gray-700">{p.paid_on}</span>
+              {p.method && <span className="text-gray-400 ml-2">{p.method}</span>}
+              {p.note && <span className="text-gray-500 ml-2 truncate">· {p.note}</span>}
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-green-700 font-medium">{formatMoney(p.amount)}</span>
+              {admin && (
+                <button onClick={() => remove(p.id)} disabled={busy} className="text-gray-400 hover:text-red-600 disabled:opacity-50" title="Remove">×</button>
+              )}
+            </div>
+          </div>
+        ))}
+        {detail.payments.length === 0 && (
+          <div className="px-4 py-2 text-sm text-gray-400">No payments logged this period.</div>
+        )}
+        {admin && (
+          <div className="px-4 py-3 flex flex-wrap items-center gap-2">
+            <input
+              type="number" inputMode="decimal" placeholder="Amount" min="0" step="0.01"
+              value={amount} onChange={e => setAmount(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 w-28 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <input
+              type="date"
+              value={paidOn} onChange={e => setPaidOn(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <input
+              type="text" placeholder="Method (optional)"
+              value={method} onChange={e => setMethod(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 w-36 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <input
+              type="text" placeholder="Note (optional)"
+              value={note} onChange={e => setNote(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 flex-1 min-w-[140px] focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <button
+              onClick={add} disabled={busy}
+              className="bg-green-700 text-white rounded px-3 py-1 text-sm font-medium hover:bg-green-800 disabled:opacity-60"
+            >
+              {busy ? 'Saving…' : 'Add payment'}
             </button>
           </div>
         )}
