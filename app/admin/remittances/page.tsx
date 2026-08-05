@@ -1,4 +1,5 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { rematchAllAction } from './actions'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Remittances' }
@@ -9,7 +10,7 @@ interface EmailRow {
 }
 interface PayRow {
   id: string; email_id: string; line_no: number; po: string | null; customer_name: string | null
-  vendor_ref: string | null; amount: number; match_status: string; sf_job_number: string | null
+  vendor_ref: string | null; amount: number; match_status: string; match_method: string | null; sf_job_number: string | null
   matched_customer: string | null; open_amount: number | null; apply_status: string
 }
 
@@ -23,6 +24,14 @@ const MATCH_STYLE: Record<string, string> = {
   no_match: 'bg-red-100 text-red-700',
 }
 
+// How the line matched. Name-only matches are correct but unverified by PO, so
+// they're flagged amber to draw a human check before applying.
+const METHOD_LABEL: Record<string, { label: string; cls: string }> = {
+  po: { label: 'PO', cls: 'bg-gray-100 text-gray-500' },
+  po_name: { label: 'PO + name', cls: 'bg-gray-100 text-gray-500' },
+  name: { label: 'name only — verify', cls: 'bg-amber-100 text-amber-800' },
+}
+
 export default async function RemittancesPage() {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
   const { data: emailData } = await db.from('remittance_emails')
@@ -31,7 +40,7 @@ export default async function RemittancesPage() {
   const emails = (emailData ?? []) as EmailRow[]
   const { data: payData } = emails.length
     ? await db.from('remittance_payments')
-        .select('id, email_id, line_no, po, customer_name, vendor_ref, amount, match_status, sf_job_number, matched_customer, open_amount, apply_status')
+        .select('id, email_id, line_no, po, customer_name, vendor_ref, amount, match_status, match_method, sf_job_number, matched_customer, open_amount, apply_status')
         .in('email_id', emails.map(e => e.id)).order('line_no')
     : { data: [] }
   const linesByEmail = new Map<string, PayRow[]>()
@@ -42,13 +51,20 @@ export default async function RemittancesPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-4">
-      <div>
+      <div className="flex items-start justify-between gap-4">
+        <div>
         <h1 className="text-2xl font-bold text-gray-900">Vendor Remittances</h1>
         <p className="text-sm text-gray-500 mt-1">
           Parsed payment remittances matched to jobs by PO. Applying to Service Fusion is pending a one-time live
           verification of SF&rsquo;s payment-apply behavior — this view is the parse + match + audit log, with each
           email&rsquo;s raw copy retained.
         </p>
+        </div>
+        <form action={rematchAllAction}>
+          <button type="submit" className="shrink-0 px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap">
+            Re-run matching
+          </button>
+        </form>
       </div>
 
       {emails.length === 0 ? (
@@ -73,7 +89,7 @@ export default async function RemittancesPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-100">
-                  <tr>{['#', 'PO', 'Customer (remit)', 'Vendor ref', 'Amount', 'Match', 'Matched job', 'Open'].map(h => (
+                  <tr>{['#', 'PO', 'Customer (remit)', 'Vendor ref', 'Amount', 'Match', 'How', 'Matched job', 'Open'].map(h => (
                     <th key={h} className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">{h}</th>
                   ))}</tr>
                 </thead>
@@ -86,6 +102,7 @@ export default async function RemittancesPage() {
                       <td className="px-3 py-1.5 font-mono text-xs text-gray-500">{l.vendor_ref ?? '—'}</td>
                       <td className="px-3 py-1.5 text-gray-900 whitespace-nowrap">{money(l.amount)}</td>
                       <td className="px-3 py-1.5"><span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${MATCH_STYLE[l.match_status] ?? 'bg-gray-100 text-gray-600'}`}>{l.match_status}</span></td>
+                      <td className="px-3 py-1.5">{l.match_method && METHOD_LABEL[l.match_method] ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${METHOD_LABEL[l.match_method].cls}`}>{METHOD_LABEL[l.match_method].label}</span> : <span className="text-gray-300">—</span>}</td>
                       <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{l.sf_job_number ? `#${l.sf_job_number}` : '—'}{l.matched_customer ? ` · ${l.matched_customer}` : ''}</td>
                       <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{money(l.open_amount)}</td>
                     </tr>

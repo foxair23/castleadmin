@@ -70,6 +70,7 @@ export async function ingestRemittance(email: RawInboundEmail, resendId: string 
       amount: line.amount,
       doc_date: line.doc_date,
       match_status: m.match_status,
+      match_method: m.match_method,
       sf_job_id: m.sf_job_id,
       sf_job_number: m.sf_job_number,
       matched_customer: m.matched_customer,
@@ -81,4 +82,38 @@ export async function ingestRemittance(email: RawInboundEmail, resendId: string 
   }
 
   return { ok: true, status: 'needs_review', emailId, vendor, lines: parsed.lines.length }
+}
+
+// Re-run matching on every not-yet-applied line with the current matcher (e.g.
+// after a matching-logic change). Only touches lines still in review — applied /
+// approved lines are left alone — so it's safe to run repeatedly.
+export async function rematchPending(): Promise<{ updated: number }> {
+  const supabase = db()
+  const { data: emailRows } = await supabase.from('remittance_emails').select('id, vendor_id')
+  const vendorByEmail = new Map<string, string | null>((emailRows ?? []).map((e: { id: string; vendor_id: string | null }) => [e.id, e.vendor_id]))
+
+  const { data: rows } = await supabase
+    .from('remittance_payments')
+    .select('id, email_id, po, customer_name, vendor_ref, amount, doc_date, apply_status')
+    .in('apply_status', ['pending', 'failed'])
+  const lines = (rows ?? []) as Array<{ id: string; email_id: string; po: string | null; customer_name: string | null; vendor_ref: string | null; amount: number; doc_date: string | null }>
+
+  let updated = 0
+  for (const row of lines) {
+    const vendor = vendorByEmail.get(row.email_id)
+    if (vendor !== 'clopay' && vendor !== 'overhead_door') continue
+    const m = await matchLine(supabase, vendor, { po: row.po, customer_name: row.customer_name, vendor_ref: row.vendor_ref, amount: row.amount, doc_date: row.doc_date })
+    await supabase.from('remittance_payments').update({
+      match_status: m.match_status,
+      match_method: m.match_method,
+      sf_job_id: m.sf_job_id,
+      sf_job_number: m.sf_job_number,
+      matched_customer: m.matched_customer,
+      open_amount: m.open_amount,
+      match_confidence: m.match_confidence,
+      candidates: m.candidates,
+    }).eq('id', row.id)
+    updated++
+  }
+  return { updated }
 }
