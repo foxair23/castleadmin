@@ -9,8 +9,11 @@ export const dynamic = 'force-dynamic'
 // admin-only via its layout, so sales gets its own route). Sales can work leads
 // but not configure the service: the auto-send toggle and the outreach reply-to
 // inbox are admin-only (view-only for sales), gated by canConfigure.
+// "Handled" (acknowledged_at) — dealt with manually and marked Done on the Action
+// Items "SFI Leads" list — drops a lead off Needs Action here too, matching /admin.
 const HOUR_MS = 3600 * 1000
-function needsAction(status: string, receivedAt: string): boolean {
+function needsAction(status: string, receivedAt: string, acknowledgedAt: string | null): boolean {
+  if (acknowledgedAt) return false
   if (['booked', 'not_interested', 'duplicate'].includes(status)) return false
   if (status === 'callback') return true
   return Date.now() - new Date(receivedAt).getTime() >= HOUR_MS
@@ -61,7 +64,8 @@ export default async function SalesLeadGenPage() {
     replyText: r.reply_text,
     jobNumber: r.matched_job_id ? (jobNumbers.get(r.matched_job_id) || r.matched_job_id) : null,
     convertedAt: r.converted_at,
-    needsAction: needsAction(r.status, r.received_at),
+    needsAction: needsAction(r.status, r.received_at, r.acknowledged_at ?? null),
+    acknowledgedAt: r.acknowledged_at ?? null,
     sfCustomerId: r.sf_customer_id ?? null,
   }))
 

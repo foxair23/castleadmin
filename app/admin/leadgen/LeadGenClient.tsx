@@ -27,6 +27,7 @@ export interface LeadView {
   jobNumber: string | null
   convertedAt: string | null
   needsAction: boolean
+  acknowledgedAt: string | null
   sfCustomerId: string | null
 }
 
@@ -47,7 +48,7 @@ function fmtDateTime(s: string): string {
   return d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-function StatusBadge({ status, needsAction }: { status: string; needsAction: boolean }) {
+function StatusBadge({ status, needsAction, acknowledged }: { status: string; needsAction: boolean; acknowledged?: boolean }) {
   const map: Record<string, { label: string; cls: string }> = {
     new: { label: 'New', cls: 'bg-gray-100 text-gray-700' },
     held: { label: 'Held — review', cls: 'bg-amber-100 text-amber-800' },
@@ -63,6 +64,9 @@ function StatusBadge({ status, needsAction }: { status: string; needsAction: boo
     <span className="inline-flex items-center gap-1">
       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.cls}`}>{s.label}</span>
       {needsAction && status !== 'callback' && <span title="Not booked within 1 hour" className="inline-block h-2 w-2 rounded-full bg-red-500" />}
+      {acknowledged && !['booked', 'not_interested', 'duplicate'].includes(status) && (
+        <span title="Handled via Action Items (Done)" className="text-green-600 text-xs">✓ handled</span>
+      )}
     </span>
   )
 }
@@ -248,7 +252,7 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound, canCon
                 </td>
                 <td className="px-3 py-2 text-gray-600">{l.program ?? '—'}</td>
                 <td className="px-3 py-2">
-                  <StatusBadge status={l.status} needsAction={l.needsAction} />
+                  <StatusBadge status={l.status} needsAction={l.needsAction} acknowledged={!!l.acknowledgedAt} />
                   {l.heldReason && l.status === 'held' && <div className="text-[11px] text-amber-700 mt-0.5 max-w-[180px]">{l.heldReason}</div>}
                 </td>
                 <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{l.jobNumber ? `#${l.jobNumber}` : '—'}</td>

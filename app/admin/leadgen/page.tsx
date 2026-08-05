@@ -5,10 +5,14 @@ import LeadGenClient, { type LeadView, type InboundEvent } from './LeadGenClient
 
 export const dynamic = 'force-dynamic'
 
-// A lead needs a call if it's not in a terminal state and either the customer
-// asked for a callback, or an hour has passed (literal, 24/7) without booking.
+// A lead needs a call if it hasn't been handled and it's not in a terminal state
+// and either the customer asked for a callback, or an hour has passed (literal,
+// 24/7) without booking. "Handled" covers a lead that was dealt with manually and
+// marked Done on the Action Items "SFI Leads" list (acknowledged_at) — it drops
+// off Needs Action here too, while keeping its real lifecycle status.
 const HOUR_MS = 3600 * 1000
-function needsAction(status: string, receivedAt: string): boolean {
+function needsAction(status: string, receivedAt: string, acknowledgedAt: string | null): boolean {
+  if (acknowledgedAt) return false
   if (['booked', 'not_interested', 'duplicate'].includes(status)) return false
   if (status === 'callback') return true
   return Date.now() - new Date(receivedAt).getTime() >= HOUR_MS
@@ -59,7 +63,8 @@ export default async function LeadGenPage() {
     replyText: r.reply_text,
     jobNumber: r.matched_job_id ? (jobNumbers.get(r.matched_job_id) || r.matched_job_id) : null,
     convertedAt: r.converted_at,
-    needsAction: needsAction(r.status, r.received_at),
+    needsAction: needsAction(r.status, r.received_at, r.acknowledged_at ?? null),
+    acknowledgedAt: r.acknowledged_at ?? null,
     sfCustomerId: r.sf_customer_id ?? null,
   }))
 
