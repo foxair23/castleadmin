@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { RawInboundEmail } from '@/lib/inbound/resend'
 import { detectVendor, parseRemittance, type ParsedRemittance } from './parse'
 import { matchLine } from './match'
+import { isAiMatchConfigured, buildCandidates, aiSuggestMatch } from './ai-match'
 
 // Ingest one remittance email: detect vendor → parse → match each line → store a
 // remittance_emails record (with the raw copy retained) plus one
@@ -116,4 +117,42 @@ export async function rematchPending(): Promise<{ updated: number }> {
     updated++
   }
   return { updated }
+}
+
+// AI residual review: for lines deterministic matching left as no_match/ambiguous
+// and not yet AI-reviewed, ask the model to suggest a job or abstain. Stores an
+// advisory suggestion only — never changes match_status/sf_job_id. No-op without
+// ANTHROPIC_API_KEY.
+export async function aiReviewPending(): Promise<{ reviewed: number; suggested: number }> {
+  if (!isAiMatchConfigured()) return { reviewed: 0, suggested: 0 }
+  const supabase = db()
+  const { data: rows } = await supabase
+    .from('remittance_payments')
+    .select('id, po, customer_name, vendor_ref, amount, doc_date, match_status, apply_status, ai_reviewed_at')
+    .in('match_status', ['no_match', 'ambiguous'])
+    .in('apply_status', ['pending', 'failed'])
+    .is('ai_reviewed_at', null)
+  const lines = (rows ?? []) as Array<{ id: string; po: string | null; customer_name: string | null; vendor_ref: string | null; amount: number; doc_date: string | null }>
+
+  let reviewed = 0, suggested = 0
+  for (const row of lines) {
+    const line = { po: row.po, customer_name: row.customer_name, vendor_ref: row.vendor_ref, amount: row.amount, doc_date: row.doc_date }
+    const candidates = await buildCandidates(supabase, line)
+    const sug = await aiSuggestMatch(line, candidates)
+    reviewed++
+    const update: Record<string, unknown> = { ai_reviewed_at: new Date().toISOString() }
+    if (sug?.job_id) {
+      update.ai_suggested_job_id = sug.job_id
+      update.ai_suggested_job_number = sug.job_number
+      update.ai_suggested_customer = sug.customer_name
+      update.ai_confidence = sug.confidence
+      update.ai_reason = sug.reason
+      suggested++
+    } else if (sug) {
+      update.ai_confidence = 0
+      update.ai_reason = sug.reason // explicit abstention, reason retained
+    }
+    await supabase.from('remittance_payments').update(update).eq('id', row.id)
+  }
+  return { reviewed, suggested }
 }

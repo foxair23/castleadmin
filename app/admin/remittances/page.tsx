@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { rematchAllAction } from './actions'
+import { rematchAllAction, aiReviewAction } from './actions'
+import { isAiMatchConfigured } from '@/lib/remittance/ai-match'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Remittances' }
@@ -12,6 +13,7 @@ interface PayRow {
   id: string; email_id: string; line_no: number; po: string | null; customer_name: string | null
   vendor_ref: string | null; amount: number; match_status: string; match_method: string | null; sf_job_number: string | null
   matched_customer: string | null; open_amount: number | null; apply_status: string
+  ai_suggested_job_number: string | null; ai_suggested_customer: string | null; ai_confidence: number | null; ai_reason: string | null
 }
 
 const money = (n: number | null) => n == null ? '—' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
@@ -40,7 +42,7 @@ export default async function RemittancesPage() {
   const emails = (emailData ?? []) as EmailRow[]
   const { data: payData } = emails.length
     ? await db.from('remittance_payments')
-        .select('id, email_id, line_no, po, customer_name, vendor_ref, amount, match_status, match_method, sf_job_number, matched_customer, open_amount, apply_status')
+        .select('id, email_id, line_no, po, customer_name, vendor_ref, amount, match_status, match_method, sf_job_number, matched_customer, open_amount, apply_status, ai_suggested_job_number, ai_suggested_customer, ai_confidence, ai_reason')
         .in('email_id', emails.map(e => e.id)).order('line_no')
     : { data: [] }
   const linesByEmail = new Map<string, PayRow[]>()
@@ -60,11 +62,20 @@ export default async function RemittancesPage() {
           email&rsquo;s raw copy retained.
         </p>
         </div>
-        <form action={rematchAllAction}>
-          <button type="submit" className="shrink-0 px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap">
-            Re-run matching
-          </button>
-        </form>
+        <div className="flex items-center gap-2 shrink-0">
+          <form action={rematchAllAction}>
+            <button type="submit" className="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap">
+              Re-run matching
+            </button>
+          </form>
+          {isAiMatchConfigured() && (
+            <form action={aiReviewAction}>
+              <button type="submit" title="Ask AI to suggest matches for lines the PO/name match couldn't place" className="px-3 py-1.5 text-sm rounded-md border border-indigo-300 text-indigo-700 hover:bg-indigo-50 whitespace-nowrap">
+                AI review
+              </button>
+            </form>
+          )}
+        </div>
       </div>
 
       {emails.length === 0 ? (
@@ -103,7 +114,16 @@ export default async function RemittancesPage() {
                       <td className="px-3 py-1.5 text-gray-900 whitespace-nowrap">{money(l.amount)}</td>
                       <td className="px-3 py-1.5"><span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${MATCH_STYLE[l.match_status] ?? 'bg-gray-100 text-gray-600'}`}>{l.match_status}</span></td>
                       <td className="px-3 py-1.5">{l.match_method && METHOD_LABEL[l.match_method] ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${METHOD_LABEL[l.match_method].cls}`}>{METHOD_LABEL[l.match_method].label}</span> : <span className="text-gray-300">—</span>}</td>
-                      <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{l.sf_job_number ? `#${l.sf_job_number}` : '—'}{l.matched_customer ? ` · ${l.matched_customer}` : ''}</td>
+                      <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">
+                        {l.sf_job_number ? (
+                          <>#{l.sf_job_number}{l.matched_customer ? ` · ${l.matched_customer}` : ''}</>
+                        ) : l.ai_suggested_job_number ? (
+                          <span title={l.ai_reason ?? undefined} className="text-indigo-700">
+                            🤖 suggests #{l.ai_suggested_job_number}{l.ai_suggested_customer ? ` · ${l.ai_suggested_customer}` : ''}
+                            {l.ai_confidence != null ? ` (${Math.round(l.ai_confidence * 100)}%)` : ''}
+                          </span>
+                        ) : '—'}
+                      </td>
                       <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{money(l.open_amount)}</td>
                     </tr>
                   ))}
