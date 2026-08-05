@@ -3,6 +3,8 @@ import { rematchAllAction, aiReviewAction } from './actions'
 import { isAiMatchConfigured } from '@/lib/remittance/ai-match'
 import { ActionButton } from './ActionButton'
 import { AssignJob, type AssignCandidate } from './AssignJob'
+import { ApplyControls } from './ApplyControls'
+import { AutopilotToggle } from './AutopilotToggle'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Remittances' }
@@ -14,10 +16,11 @@ interface EmailRow {
 interface PayRow {
   id: string; email_id: string; line_no: number; po: string | null; customer_name: string | null
   vendor_ref: string | null; amount: number; match_status: string; match_method: string | null; sf_job_number: string | null
-  matched_customer: string | null; open_amount: number | null; apply_status: string
+  matched_customer: string | null; open_amount: number | null; apply_status: string; error: string | null
   ai_suggested_job_id: string | null; ai_suggested_job_number: string | null; ai_suggested_customer: string | null; ai_confidence: number | null; ai_reason: string | null
   candidates: AssignCandidate[] | null
 }
+interface VendorRow { id: string; name: string; autopilot: boolean }
 
 // Options for the manual-assign dropdown: the matcher's candidate jobs plus the
 // AI-suggested job (if any), deduped by id.
@@ -53,9 +56,11 @@ export default async function RemittancesPage() {
     .select('id, vendor_id, payment_reference, payment_date, payment_amount, received_at, status, subject, raw_text')
     .order('received_at', { ascending: false }).limit(200)
   const emails = (emailData ?? []) as EmailRow[]
+  const { data: vendorData } = await db.from('remittance_vendors').select('id, name, autopilot').order('name')
+  const vendors = (vendorData ?? []) as VendorRow[]
   const { data: payData } = emails.length
     ? await db.from('remittance_payments')
-        .select('id, email_id, line_no, po, customer_name, vendor_ref, amount, match_status, match_method, sf_job_number, matched_customer, open_amount, apply_status, ai_suggested_job_id, ai_suggested_job_number, ai_suggested_customer, ai_confidence, ai_reason, candidates')
+        .select('id, email_id, line_no, po, customer_name, vendor_ref, amount, match_status, match_method, sf_job_number, matched_customer, open_amount, apply_status, error, ai_suggested_job_id, ai_suggested_job_number, ai_suggested_customer, ai_confidence, ai_reason, candidates')
         .in('email_id', emails.map(e => e.id)).order('line_no')
     : { data: [] }
   const linesByEmail = new Map<string, PayRow[]>()
@@ -70,10 +75,16 @@ export default async function RemittancesPage() {
         <div>
         <h1 className="text-2xl font-bold text-gray-900">Vendor Remittances</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Parsed payment remittances matched to jobs by PO. Applying to Service Fusion is pending a one-time live
-          verification of SF&rsquo;s payment-apply behavior — this view is the parse + match + audit log, with each
-          email&rsquo;s raw copy retained.
+          Parsed payment remittances matched to jobs, then applied to Service Fusion. <strong>Preview</strong> shows the
+          exact payload without posting; <strong>Apply</strong> posts the payment. To stay safe while SF&rsquo;s
+          append/replace behavior is being verified, posting is limited to jobs with no existing payments. Each
+          email&rsquo;s raw copy is retained.
         </p>
+        {vendors.length > 0 && (
+          <div className="flex flex-wrap items-center gap-4 mt-3">
+            {vendors.map(v => <AutopilotToggle key={v.id} vendorId={v.id} vendorName={v.name} on={v.autopilot} />)}
+          </div>
+        )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <ActionButton
@@ -115,7 +126,7 @@ export default async function RemittancesPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-100">
-                  <tr>{['#', 'PO', 'Customer (remit)', 'Vendor ref', 'Amount', 'Match', 'How', 'Matched job', 'Open'].map(h => (
+                  <tr>{['#', 'PO', 'Customer (remit)', 'Vendor ref', 'Amount', 'Match', 'How', 'Matched job', 'Open', 'Apply'].map(h => (
                     <th key={h} className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">{h}</th>
                   ))}</tr>
                 </thead>
@@ -144,6 +155,9 @@ export default async function RemittancesPage() {
                         )}
                       </td>
                       <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{money(l.open_amount)}</td>
+                      <td className="px-3 py-1.5">
+                        <ApplyControls lineId={l.id} applyStatus={l.apply_status} matched={l.match_status === 'matched' && !!l.sf_job_number} error={l.error} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
