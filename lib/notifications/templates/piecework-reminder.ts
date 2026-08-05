@@ -13,7 +13,7 @@ const MUTED = `font-size: 13px; color: #6b7280; margin: 24px 0 0;`
 export interface PieceworkReminderData {
   fullName: string
   weekLabel: string     // e.g. "June 2 – 8"
-  deadlineDate: string  // e.g. "Wednesday at 11:59 PM"
+  deadlineDate: string  // e.g. "Tuesday at 11:59 PM"
   submitUrl: string
 }
 

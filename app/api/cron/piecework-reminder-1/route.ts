@@ -5,7 +5,7 @@ import { renderPieceworkReminder } from '@/lib/notifications/templates/piecework
 import { isPtHour } from '@/lib/cron/pt-gate'
 import { getWeekStart, getWeekEnd, formatDate } from '@/lib/week'
 
-// Wed 9 AM PT (morning reminder on deadline day). Scheduled at both 16:00 and
+// Tue 9 AM PT (morning reminder on deadline day). Scheduled at both 16:00 and
 // 17:00 UTC; the PT gate runs it only on the 9 AM PT firing so it stays pinned
 // across the PDT/PST switch.
 export const maxDuration = 60
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 export async function enqueuePieceworkReminders(): Promise<number> {
   const supabase = db()
 
-  // The week with a deadline today (Wednesday): started 9 days ago (the previous Monday)
+  // The week with a deadline today (Tuesday): started 8 days ago (the previous Monday)
   const now = new Date()
   const currentWeekStart = getWeekStart(now)
   const d = new Date(currentWeekStart)
@@ -69,7 +69,7 @@ export async function enqueuePieceworkReminders(): Promise<number> {
   const enabledIds = new Set((prefs ?? []).map(p => p.user_id as string))
 
   // Format the deadline for the email
-  const deadlineDate = 'Wednesday at 11:59 PM'
+  const deadlineDate = 'Tuesday at 11:59 PM'
   const weekLabel = `${formatMonthDay(targetWeekStart)} – ${formatMonthDay(targetWeekEnd)}`
 
   let count = 0

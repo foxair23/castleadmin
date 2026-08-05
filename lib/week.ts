@@ -20,12 +20,12 @@ export function getWeekEnd(weekStart: string): string {
 
 /**
  * Returns the submission deadline for a workweek:
- * Wednesday 23:59 of the FOLLOWING week.
+ * Tuesday 23:59 of the FOLLOWING week.
  */
 export function getSubmissionDeadline(weekStart: string): Date {
   const d = parseDate(weekStart)
-  // weekStart is Monday; next Wednesday = +9 days
-  d.setDate(d.getDate() + 9)
+  // weekStart is Monday; next Tuesday = +8 days
+  d.setDate(d.getDate() + 8)
   // Set to 23:59:59 LA time — build as string for Date constructor
   const dateStr = `${formatDate(d)}T23:59:59`
   // Create Date in LA timezone
@@ -44,7 +44,7 @@ export function isDeadlinePassed(weekStart: string): boolean {
 /** Deadline as a plain Date (treated as LA time internally) */
 export function getDeadlineForWeek(weekStart: string): Date {
   const d = parseDate(weekStart)
-  d.setDate(d.getDate() + 9) // Monday + 9 = next Wednesday
+  d.setDate(d.getDate() + 8) // Monday + 8 = next Tuesday
   d.setHours(23, 59, 59, 999)
   return d
 }
