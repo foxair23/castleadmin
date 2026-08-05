@@ -3,6 +3,11 @@ import type { RawInboundEmail } from '@/lib/inbound/resend'
 import { detectVendor, parseRemittance, type ParsedRemittance } from './parse'
 import { matchLine, jobOpenAmount } from './match'
 import { isAiMatchConfigured, buildCandidates, aiSuggestMatch } from './ai-match'
+import { applyLine, refreshEmailStatus } from './apply'
+
+// Matches confident enough to auto-apply under a vendor's autopilot. Name-only,
+// AI, manual, and ambiguous matches always require a human, regardless.
+const AUTOPILOT_METHODS = new Set(['po', 'po_name'])
 
 // Ingest one remittance email: detect vendor → parse → match each line → store a
 // remittance_emails record (with the raw copy retained) plus one
@@ -57,12 +62,16 @@ export async function ingestRemittance(email: RawInboundEmail, resendId: string 
   if (insErr || !emailRow) return { ok: false, status: 'error' }
   const emailId = (emailRow as { id: string }).id
 
+  // Per-vendor autopilot: auto-apply confident (PO / PO+name) matches on ingest.
+  const { data: vendorCfg } = await supabase.from('remittance_vendors').select('autopilot').eq('id', vendor).maybeSingle()
+  const autopilot = vendorCfg?.autopilot === true
+
   let lineNo = 0
   for (const line of parsed.lines) {
     lineNo++
     const m = await matchLine(supabase, vendor, line)
     const dedupKey = `${vendor}:${parsed.payment_reference ?? ''}:${lineNo}:${line.vendor_ref ?? ''}:${line.amount}`
-    await supabase.from('remittance_payments').insert({
+    const { data: inserted } = await supabase.from('remittance_payments').insert({
       email_id: emailId,
       line_no: lineNo,
       po: line.po,
@@ -79,10 +88,24 @@ export async function ingestRemittance(email: RawInboundEmail, resendId: string 
       match_confidence: m.match_confidence,
       candidates: m.candidates,
       dedup_key: dedupKey,
-    })
+    }).select('id').single()
+
+    // Autopilot: only confident matches, and applyLine still enforces every money
+    // guard (matched, no existing SF payments, idempotent). Failures are recorded
+    // on the line and never abort ingest.
+    if (autopilot && inserted && m.match_status === 'matched' && m.match_method && AUTOPILOT_METHODS.has(m.match_method)) {
+      try { await applyLine((inserted as { id: string }).id, null) } catch { /* recorded on the line */ }
+    }
   }
 
+  await refreshEmailStatus(supabase, emailId)
   return { ok: true, status: 'needs_review', emailId, vendor, lines: parsed.lines.length }
+}
+
+// Turn a vendor's autopilot on/off.
+export async function setVendorAutopilot(vendorId: string, on: boolean): Promise<void> {
+  const supabase = db()
+  await supabase.from('remittance_vendors').update({ autopilot: on, updated_at: new Date().toISOString() }).eq('id', vendorId)
 }
 
 // Re-run matching on every not-yet-applied line with the current matcher (e.g.
