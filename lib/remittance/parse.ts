@@ -61,15 +61,22 @@ function detailRows(html: string, marker: string): string[][] {
 // this shifts further once a mail client re-wraps the HTML on forward). Reading
 // from the text in label→value order handles both; each value is bounded by the
 // next known label so multi-word values (dates) capture in full.
-const HEADER_STOPS = ['Paper Document Number', 'Payment Reference Number', 'Payment Date', 'Payment Currency', 'Payment Amount', 'Remittance Detail', 'Document Reference Number', 'Invoice Number']
 const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// The value is captured by its SHAPE right after the label — a bare reference
+// token, a date, or a money amount — never "everything up to the next label"
+// (which over-captures when a forwarded email's HTML reorders the fields).
+const FIELD_PATTERNS: Record<string, string> = {
+  'Payment Reference Number': '[A-Za-z0-9][A-Za-z0-9\\-]*',
+  'Payment Date': '[A-Za-z]{3,9}\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}/\\d{1,2}/\\d{2,4}',
+  'Payment Amount': '[\\d,]*\\.\\d{2}',
+}
 
 function labeledValue(html: string, label: string): string | null {
   const text = stripTags(html)
-  const stops = HEADER_STOPS.filter(s => s !== label).map(reEsc)
-  const m = text.match(new RegExp(`${reEsc(label)}\\s+(.*?)\\s*(?:${stops.join('|')})`, 'i'))
-  const v = m ? m[1].trim() : ''
-  return v || null
+  const pattern = FIELD_PATTERNS[label] ?? '[^\\s].*?(?=\\s{2,}|$)'
+  const m = text.match(new RegExp(`${reEsc(label)}\\s+(${pattern})`, 'i'))
+  return m ? m[1].trim() || null : null
 }
 
 /** Parse "1,535.20" / ".00" / "130.00 " → number, or NaN. */

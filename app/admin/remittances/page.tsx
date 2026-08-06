@@ -128,7 +128,7 @@ export default async function RemittancesPage() {
               <div>
                 <span className="font-semibold text-gray-900">{e.vendor_id === 'clopay' ? 'Clopay' : e.vendor_id === 'overhead_door' ? 'Overhead Door' : 'Unknown'}</span>
                 <span className="ml-2 text-sm text-gray-500">Ref <span className="font-mono">{e.payment_reference ?? '—'}</span></span>
-                <span className="ml-2 text-sm text-gray-500" title={`received ${fmtDate(e.received_at)}`}>{e.payment_date ?? fmtDate(e.received_at)}</span>
+                <span className="ml-2 text-sm text-gray-500" title={`received ${fmtDate(e.received_at)}`}>{e.payment_date && e.payment_date.length <= 24 ? e.payment_date : fmtDate(e.received_at)}</span>
               </div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-gray-700 font-medium">{money(e.payment_amount)}</span>
