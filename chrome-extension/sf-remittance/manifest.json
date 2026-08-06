@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Castle — Service Fusion Remittance Poster",
+  "version": "0.1.0",
+  "description": "Posts approved vendor payment-remittance lines from Castle Admin into Service Fusion automatically, in your logged-in session.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://admin.servicefusion.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "SF Remittance Poster" },
+  "options_page": "options.html"
+}

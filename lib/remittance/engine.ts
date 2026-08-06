@@ -3,9 +3,10 @@ import type { RawInboundEmail } from '@/lib/inbound/resend'
 import { detectVendor, parseRemittance, type ParsedRemittance } from './parse'
 import { matchLine, jobOpenAmount } from './match'
 import { isAiMatchConfigured, buildCandidates, aiSuggestMatch } from './ai-match'
-import { applyLine, refreshEmailStatus } from './apply'
+import { refreshEmailStatus } from './apply'
+import { setApproved } from './apply-queue'
 
-// Matches confident enough to auto-apply under a vendor's autopilot. Name-only,
+// Matches confident enough to auto-approve under a vendor's autopilot. Name-only,
 // AI, manual, and ambiguous matches always require a human, regardless.
 const AUTOPILOT_METHODS = new Set(['po', 'po_name'])
 
@@ -90,11 +91,10 @@ export async function ingestRemittance(email: RawInboundEmail, resendId: string 
       dedup_key: dedupKey,
     }).select('id').single()
 
-    // Autopilot: only confident matches, and applyLine still enforces every money
-    // guard (matched, no existing SF payments, idempotent). Failures are recorded
-    // on the line and never abort ingest.
+    // Autopilot: confident PO matches are auto-approved (queued for the SF poster
+    // extension). Name-only/AI/ambiguous always wait for a human. Never aborts ingest.
     if (autopilot && inserted && m.match_status === 'matched' && m.match_method && AUTOPILOT_METHODS.has(m.match_method)) {
-      try { await applyLine((inserted as { id: string }).id, null) } catch { /* recorded on the line */ }
+      try { await setApproved((inserted as { id: string }).id, true) } catch { /* stays pending */ }
     }
   }
 

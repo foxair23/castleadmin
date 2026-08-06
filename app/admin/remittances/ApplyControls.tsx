@@ -1,19 +1,26 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { previewLineAction, applyLineAction, setLineExcludedAction } from './actions'
+import { previewLineAction, applyLineAction, unapproveLineAction, setLineExcludedAction } from './actions'
 import type { PaymentPreview } from '@/lib/remittance/apply'
 
 const money = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 
-// Per-line apply flow: Preview shows the exact SF payload without posting; Apply
-// posts it; Exclude skips the line. Applied/excluded lines show their state.
+// Per-line flow: Preview shows the SF payload; Approve queues the line for the
+// Chrome extension to post into SF (SF has no payment API); Exclude skips it.
+// applied/approved/excluded lines show their state.
 export function ApplyControls({ lineId, applyStatus, matched, error }: { lineId: string; applyStatus: string; matched: boolean; error: string | null }) {
   const [pending, start] = useTransition()
   const [preview, setPreview] = useState<PaymentPreview | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
 
   if (applyStatus === 'applied') return <span className="text-green-700 text-xs font-medium whitespace-nowrap">✓ applied</span>
+  if (applyStatus === 'approved') return (
+    <span className="flex items-center gap-2 whitespace-nowrap">
+      <span className="text-indigo-700 text-xs font-medium">⏳ queued for SF</span>
+      <button onClick={() => start(async () => { await unapproveLineAction(lineId) })} disabled={pending} className="text-xs text-gray-400 hover:text-gray-700 underline">undo</button>
+    </span>
+  )
   if (applyStatus === 'excluded') return (
     <button onClick={() => start(async () => { await setLineExcludedAction(lineId, false) })} disabled={pending}
       className="text-xs text-gray-400 hover:text-gray-700 underline whitespace-nowrap">excluded — undo</button>
@@ -28,7 +35,7 @@ export function ApplyControls({ lineId, applyStatus, matched, error }: { lineId:
     <div className="flex flex-col gap-1 items-start">
       <div className="flex items-center gap-1">
         <button onClick={doPreview} disabled={pending} className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">Preview</button>
-        <button onClick={doApply} disabled={pending} className="text-xs px-2 py-0.5 rounded bg-green-700 text-white hover:bg-green-800 disabled:opacity-50">{pending ? '…' : 'Apply'}</button>
+        <button onClick={doApply} disabled={pending} title="Queue this line for the SF poster extension" className="text-xs px-2 py-0.5 rounded bg-green-700 text-white hover:bg-green-800 disabled:opacity-50">{pending ? '…' : 'Approve'}</button>
         <button onClick={doExclude} disabled={pending} title="Skip this line (e.g. handled manually in SF)" className="text-xs px-1.5 py-0.5 rounded text-gray-400 hover:text-gray-700">Exclude</button>
       </div>
       {(msg || (applyStatus === 'failed' && error)) && <span className="text-[10px] text-red-600 max-w-[240px]">{msg ?? error}</span>}

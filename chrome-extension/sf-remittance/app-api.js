@@ -1,0 +1,20 @@
+// Talks to the Castle Admin server (the queue + callback). CORS is open on those
+// endpoints, so no host permission is needed for the admin origin.
+
+export async function fetchQueue(baseUrl, token) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/remittance/apply-queue`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error(`queue ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json() // { items: [...], skipped: [...] }
+}
+
+export async function postResult(baseUrl, token, payload) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/remittance/apply-callback`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`callback ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}

@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { rematchPending, aiReviewPending, assignLineJob, setVendorAutopilot } from '@/lib/remittance/engine'
-import { previewLine, applyLine, setLineExcluded, type PaymentPreview } from '@/lib/remittance/apply'
+import { previewLine, setLineExcluded, type PaymentPreview } from '@/lib/remittance/apply'
+import { setApproved } from '@/lib/remittance/apply-queue'
 
 /** Returns the admin's user id, or null if the caller isn't an admin. */
 async function adminUserId(): Promise<string | null> {
@@ -45,11 +46,19 @@ export async function previewLineAction(lineId: string): Promise<{ preview?: Pay
   return previewLine(lineId)
 }
 
-// Post a matched line's payment to Service Fusion.
+// Approve a matched line for posting. The Chrome extension posts approved lines
+// into Service Fusion (SF has no payment API) and calls back to mark them applied.
 export async function applyLineAction(lineId: string): Promise<{ ok?: boolean; error?: string }> {
-  const userId = await adminUserId()
-  if (!userId) return { error: 'Not authorized.' }
-  const res = await applyLine(lineId, userId)
+  if (!(await isAdmin())) return { error: 'Not authorized.' }
+  const res = await setApproved(lineId, true)
+  if (res.ok) revalidatePath('/admin/remittances')
+  return res.ok ? { ok: true } : { error: res.error }
+}
+
+// Un-approve (pull back from the extension queue).
+export async function unapproveLineAction(lineId: string): Promise<{ ok?: boolean; error?: string }> {
+  if (!(await isAdmin())) return { error: 'Not authorized.' }
+  const res = await setApproved(lineId, false)
   if (res.ok) revalidatePath('/admin/remittances')
   return res.ok ? { ok: true } : { error: res.error }
 }

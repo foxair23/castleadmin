@@ -1,0 +1,28 @@
+import { getConfig, getStatus } from './store.js'
+
+function fmt(ts) { return ts ? new Date(ts).toLocaleString() : '—' }
+
+async function render() {
+  const cfg = await getConfig()
+  const pills = document.getElementById('pills')
+  pills.innerHTML =
+    `<span class="pill ${cfg.enabled ? 'on' : 'off'}">${cfg.enabled ? 'Enabled' : 'Disabled'}</span> ` +
+    `<span class="pill ${cfg.dryRun ? 'dry' : 'on'}">${cfg.dryRun ? 'Dry run' : 'LIVE'}</span>`
+
+  const s = await getStatus()
+  const el = document.getElementById('status')
+  if (!s) { el.textContent = 'No runs yet.'; return }
+  const head = s.error
+    ? `Error: ${s.error}`
+    : `Last run: ${fmt(s.at)}\nqueued ${s.queued ?? 0} · applied ${s.applied ?? 0} · failed ${s.failed ?? 0}${s.dryRun ? ' (dry run)' : ''}`
+  const detail = (s.log || []).map(l => `#${l.invoiceNumber ?? '?'} $${l.amount ?? '?'} → ${l.ok ? (l.dryRun ? 'would post' : 'posted') : 'FAIL: ' + (l.error || '')}`).join('\n')
+  el.textContent = [head, detail].filter(Boolean).join('\n\n')
+}
+
+document.getElementById('run').addEventListener('click', () => {
+  const el = document.getElementById('status'); el.textContent = 'Running…'
+  chrome.runtime.sendMessage({ type: 'run-now' }, () => render())
+})
+document.getElementById('options').addEventListener('click', () => chrome.runtime.openOptionsPage())
+
+render()
