@@ -46,7 +46,7 @@ export function ApplyControls({ lineId, applyStatus, matched, error }: { lineId:
           <div>{money(preview.payment.amount)} · ref <span className="font-mono">{preview.payment.reference_number || '—'}</span></div>
           <div>received_on {preview.payment.received_on ?? '—'} · apply_to {preview.payment.apply_to ?? '—'}</div>
           <div className="truncate" title={preview.payment.memo}>memo: {preview.payment.memo}</div>
-          <div>existing SF payments on job: {preview.existingPaymentCount}{!preview.safeToApply && ' — blocked'}</div>
+          <div>existing SF payments on job: {preview.existingPaymentCount}</div>
           {preview.warnings.map((w, i) => <div key={i} className="text-amber-700">⚠ {w}</div>)}
         </div>
       )}

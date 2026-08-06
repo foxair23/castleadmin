@@ -76,16 +76,32 @@ export default async function RemittancesPage() {
     arr.push(p); linesByEmail.set(p.email_id, arr)
   }
 
+  // Per-job overpayment heads-up: sum the matched, not-excluded lines going to
+  // each job (across emails) and flag when the total exceeds the job's open
+  // balance. The extension enforces this hard against the live invoice balance;
+  // this just surfaces it before you run.
+  const jobTotals = new Map<string, { sum: number; open: number | null }>()
+  for (const p of (payData ?? []) as PayRow[]) {
+    if (p.match_status !== 'matched' || !p.sf_job_number || p.apply_status === 'excluded') continue
+    const t = jobTotals.get(p.sf_job_number) ?? { sum: 0, open: p.open_amount }
+    t.sum += p.amount
+    jobTotals.set(p.sf_job_number, t)
+  }
+  const jobOverpaid = (jobNumber: string | null): { over: boolean; sum: number; open: number | null } => {
+    const t = jobNumber ? jobTotals.get(jobNumber) : undefined
+    return { over: !!(t && t.open != null && t.sum > t.open + 0.01), sum: t?.sum ?? 0, open: t?.open ?? null }
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
         <h1 className="text-2xl font-bold text-gray-900">Vendor Remittances</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Parsed payment remittances matched to jobs, then applied to Service Fusion. <strong>Preview</strong> shows the
-          exact payload without posting; <strong>Apply</strong> posts the payment. To stay safe while SF&rsquo;s
-          append/replace behavior is being verified, posting is limited to jobs with no existing payments. Each
-          email&rsquo;s raw copy is retained.
+          Parsed payment remittances matched to jobs, then posted to Service Fusion by the poster extension.
+          <strong> Approve</strong> a line (or turn on a vendor&rsquo;s autopilot) to queue it. Multiple line items can go
+          to the same job — each posts against the invoice&rsquo;s remaining balance, and any payment that would exceed
+          what&rsquo;s still owed is flagged and skipped. Each email&rsquo;s raw copy is retained.
         </p>
         {vendors.length > 0 && (
           <div className="flex flex-wrap items-center gap-4 mt-3">
@@ -167,7 +183,14 @@ export default async function RemittancesPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{money(l.open_amount)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap">
+                        {(() => { const o = jobOverpaid(l.sf_job_number); return (
+                          <span className={o.over ? 'text-amber-700' : 'text-gray-500'}>
+                            {money(l.open_amount)}
+                            {o.over && <span title={`Lines matched to job #${l.sf_job_number} total ${money(o.sum)}, exceeding its ${money(o.open)} open balance — the extension will skip the payment(s) that go over.`} className="ml-1 text-[10px] font-medium">⚠ over balance</span>}
+                          </span>
+                        ) })()}
+                      </td>
                       <td className="px-3 py-1.5">
                         <ApplyControls lineId={l.id} applyStatus={l.apply_status} matched={l.match_status === 'matched' && !!l.sf_job_number} error={l.error} />
                       </td>
