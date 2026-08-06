@@ -5,6 +5,7 @@ import { ActionButton } from './ActionButton'
 import { AssignJob, type AssignCandidate } from './AssignJob'
 import { ApplyControls } from './ApplyControls'
 import { AutopilotToggle } from './AutopilotToggle'
+import { SyncFromSfButton } from './SyncFromSfButton'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Remittances' }
@@ -94,6 +95,7 @@ export default async function RemittancesPage() {
         )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <SyncFromSfButton />
           <ActionButton
             action={rematchAllAction}
             label="Re-run matching"
