@@ -31,7 +31,15 @@ export async function run(source) {
   const log = []
   let applied = 0, failed = 0
   try {
-    const { items, skipped } = await fetchQueue(cfg.baseUrl, cfg.token)
+    let queue
+    try {
+      queue = await fetchQueue(cfg.baseUrl, cfg.token)
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e)
+      throw new Error(/fetch/i.test(m) ? `Could not reach Castle Admin at ${cfg.baseUrl} (check the URL / that it's deployed). ${m}` : m)
+    }
+    const { items, skipped } = queue
+    console.log('[sf-remittance] queue', { items: items.length, skipped })
     for (const item of items) {
       const res = await applyOne(item, cfg)
       log.push({ lineId: item.lineId, invoiceNumber: item.invoiceNumber, amount: item.amount, ...res })
@@ -48,7 +56,7 @@ export async function run(source) {
       res.ok ? applied++ : failed++
       await sleep(1500) // be gentle on SF
     }
-    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped?.length ?? 0, applied, failed, log })
+    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, log })
     console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, log })
     return { ok: true, dryRun: cfg.dryRun, applied, failed, log }
   } catch (e) {
