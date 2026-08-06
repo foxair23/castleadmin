@@ -1,5 +1,5 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { rematchAllAction, aiReviewAction } from './actions'
+import { rematchAllAction, reparseAction, aiReviewAction } from './actions'
 import { isAiMatchConfigured } from '@/lib/remittance/ai-match'
 import { ActionButton } from './ActionButton'
 import { AssignJob, type AssignCandidate } from './AssignJob'
@@ -91,6 +91,12 @@ export default async function RemittancesPage() {
             action={rematchAllAction}
             label="Re-run matching"
             pendingLabel="Re-running…"
+            className="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+          />
+          <ActionButton
+            action={reparseAction}
+            label="Re-parse"
+            pendingLabel="Re-parsing…"
             className="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap"
           />
           {isAiMatchConfigured() && (

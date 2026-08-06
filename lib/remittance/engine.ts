@@ -108,6 +108,33 @@ export async function setVendorAutopilot(vendorId: string, on: boolean): Promise
   await supabase.from('remittance_vendors').update({ autopilot: on, updated_at: new Date().toISOString() }).eq('id', vendorId)
 }
 
+// Re-parse each email's retained raw copy with the current parser and refresh the
+// header fields (payment_reference / date / amount). Fixes emails ingested by an
+// earlier parser build where a field (e.g. the OHD Payment Reference Number) came
+// through null. Header-only — line rows are left as-is; the reference/memo are
+// rebuilt from the email at apply time, so this is enough to fix the posted ref.
+export async function reparseEmails(): Promise<{ updated: number }> {
+  const supabase = db()
+  const { data: rows } = await supabase.from('remittance_emails').select('id, vendor_id, from_addr, raw_html, payment_reference, payment_date, payment_amount')
+  const emails = (rows ?? []) as Array<{ id: string; vendor_id: string | null; from_addr: string | null; raw_html: string | null; payment_reference: string | null; payment_date: string | null; payment_amount: number | null }>
+  let updated = 0
+  for (const e of emails) {
+    if (!e.raw_html) continue
+    const vendor = e.vendor_id === 'clopay' || e.vendor_id === 'overhead_door' ? e.vendor_id : detectVendor(e.from_addr, e.raw_html)
+    if (vendor !== 'clopay' && vendor !== 'overhead_door') continue
+    const p = parseRemittance(vendor, e.raw_html)
+    const patch: Record<string, unknown> = {}
+    if (p.payment_reference && p.payment_reference !== e.payment_reference) patch.payment_reference = p.payment_reference
+    if (p.payment_date && p.payment_date !== e.payment_date) patch.payment_date = p.payment_date
+    if (p.payment_amount != null && p.payment_amount !== e.payment_amount) patch.payment_amount = p.payment_amount
+    if (Object.keys(patch).length > 0) {
+      await supabase.from('remittance_emails').update(patch).eq('id', e.id)
+      updated++
+    }
+  }
+  return { updated }
+}
+
 // Re-run matching on every not-yet-applied line with the current matcher (e.g.
 // after a matching-logic change). Only touches lines still in review — applied /
 // approved lines are left alone — so it's safe to run repeatedly.
