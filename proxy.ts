@@ -59,7 +59,11 @@ export async function proxy(request: NextRequest) {
     // so they must bypass the login redirect (otherwise the provider's POST is
     // 307'd to /login and never runs).
     pathname === '/api/leads/inbound' ||
-    pathname.startsWith('/api/dialpad/')
+    pathname.startsWith('/api/dialpad/') ||
+    // Remittance endpoints are token/secret-authed (inbound webhook + the Chrome
+    // extension's apply queue/callback), not session-authed — so they must skip
+    // the login redirect, or the extension's CORS preflight is 307'd and fails.
+    pathname.startsWith('/api/remittance/')
   ) {
     if (pathname === '/login' && user) {
       return NextResponse.redirect(new URL('/', request.url))
