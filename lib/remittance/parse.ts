@@ -56,12 +56,19 @@ function detailRows(html: string, marker: string): string[][] {
 }
 
 /** Value of the cell immediately following a labelled cell (summary tables). */
+// Header fields (Payment Reference Number / Date / Amount) sit either in the same
+// table row as their label (Clopay) or in the row BELOW it (Overhead Door — and
+// this shifts further once a mail client re-wraps the HTML on forward). Reading
+// from the text in label→value order handles both; each value is bounded by the
+// next known label so multi-word values (dates) capture in full.
+const HEADER_STOPS = ['Paper Document Number', 'Payment Reference Number', 'Payment Date', 'Payment Currency', 'Payment Amount', 'Remittance Detail', 'Document Reference Number', 'Invoice Number']
+const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 function labeledValue(html: string, label: string): string | null {
-  const re = new RegExp(`${label}[\\s\\S]*?<\\/td>([\\s\\S]*?)<\\/tr>`, 'i')
-  const m = html.match(re)
-  if (!m) return null
-  const nextCell = m[1].match(/<td[\s\S]*?<\/td>/i)
-  const v = nextCell ? stripTags(nextCell[0]) : ''
+  const text = stripTags(html)
+  const stops = HEADER_STOPS.filter(s => s !== label).map(reEsc)
+  const m = text.match(new RegExp(`${reEsc(label)}\\s+(.*?)\\s*(?:${stops.join('|')})`, 'i'))
+  const v = m ? m[1].trim() : ''
   return v || null
 }
 

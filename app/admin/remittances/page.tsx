@@ -56,6 +56,13 @@ export default async function RemittancesPage() {
     .select('id, vendor_id, payment_reference, payment_date, payment_amount, received_at, status, subject, raw_text')
     .order('received_at', { ascending: false }).limit(200)
   const emails = (emailData ?? []) as EmailRow[]
+  // Order by the remittance's OWN date (what the vendor put on it) so the list
+  // lines up with the emails you received; fall back to ingest time if unparsed.
+  const remitTime = (e: EmailRow) => {
+    const d = e.payment_date ? Date.parse(e.payment_date) : NaN
+    return Number.isNaN(d) ? Date.parse(e.received_at) : d
+  }
+  emails.sort((a, b) => remitTime(b) - remitTime(a))
   const { data: vendorData } = await db.from('remittance_vendors').select('id, name, autopilot').order('name')
   const vendors = (vendorData ?? []) as VendorRow[]
   const { data: payData } = emails.length
@@ -121,7 +128,7 @@ export default async function RemittancesPage() {
               <div>
                 <span className="font-semibold text-gray-900">{e.vendor_id === 'clopay' ? 'Clopay' : e.vendor_id === 'overhead_door' ? 'Overhead Door' : 'Unknown'}</span>
                 <span className="ml-2 text-sm text-gray-500">Ref <span className="font-mono">{e.payment_reference ?? '—'}</span></span>
-                <span className="ml-2 text-sm text-gray-500">{fmtDate(e.received_at)}</span>
+                <span className="ml-2 text-sm text-gray-500" title={`received ${fmtDate(e.received_at)}`}>{e.payment_date ?? fmtDate(e.received_at)}</span>
               </div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-gray-700 font-medium">{money(e.payment_amount)}</span>

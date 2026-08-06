@@ -73,6 +73,16 @@ describe('Overhead Door parsing', () => {
     expect(p.payment_reference).toBe('9000004')
     expect(p.lines).toHaveLength(1)
   })
+  it('reads header fields when label and value are in SEPARATE rows (forwarded layout)', () => {
+    // A mail client re-wrapping the HTML on forward can push each value into the
+    // row below its label; header extraction must read label→value by text order.
+    const rows = ['Payment Reference Number', '590053', 'Paper Document Number', 'Payment Date', 'Aug 5, 2026', 'Payment Currency', 'USD', 'Payment Amount', '130.00', 'Remittance Detail']
+      .map(x => `<tr><td><p><span><b>${x}</b></span></p></td></tr>`).join('')
+    const p = parseRemittance('overhead_door', `<table>${rows}</table>`)
+    expect(p.payment_reference).toBe('590053')
+    expect(p.payment_date).toBe('Aug 5, 2026')
+    expect(p.payment_amount).toBe(130)
+  })
   it('parses a multi-line payment; every PO is 8 digits and lines sum to the total', () => {
     const p = parseRemittance('overhead_door', htmlFromEml('ohd-multi.eml'))
     expect(p.payment_reference).toBe('9000005')
