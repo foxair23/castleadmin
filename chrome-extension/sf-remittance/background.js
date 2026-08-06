@@ -24,7 +24,8 @@ let running = false
 export async function run(source) {
   if (running) return { ok: false, error: 'already running' }
   const cfg = await getConfig()
-  if (!cfg.enabled) { await setStatus({ source, skipped: 'disabled' }); return { ok: false, error: 'disabled' } }
+  // The "Enabled" toggle only gates the background poll; "Run now" always runs.
+  if (source === 'alarm' && !cfg.enabled) { await setStatus({ source, skipped: 'background poll disabled' }); return { ok: false, error: 'disabled' } }
   if (!cfg.baseUrl || !cfg.token) { await setStatus({ source, error: 'not configured (set base URL + token in Options)' }); return { ok: false, error: 'not configured' } }
 
   running = true
