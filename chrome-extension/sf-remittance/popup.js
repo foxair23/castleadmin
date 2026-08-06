@@ -6,7 +6,7 @@ async function render() {
   const cfg = await getConfig()
   const pills = document.getElementById('pills')
   pills.innerHTML =
-    `<span class="pill ${cfg.enabled ? 'on' : 'off'}">${cfg.enabled ? 'Enabled' : 'Disabled'}</span> ` +
+    `<span class="pill ${cfg.enabled ? 'on' : 'off'}">${cfg.enabled ? 'Auto-poll ON' : 'Auto-poll OFF'}</span> ` +
     `<span class="pill ${cfg.dryRun ? 'dry' : 'on'}">${cfg.dryRun ? 'Dry run' : 'LIVE'}</span>`
 
   const s = await getStatus()
