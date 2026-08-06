@@ -68,6 +68,11 @@ describe('Overhead Door parsing', () => {
     expect(p.lines).toHaveLength(1)
     expect(p.lines[0]).toMatchObject({ po: '90000101', vendor_ref: '90000101-3802192', amount: 130.00, customer_name: null })
   })
+  it('parses the reference on the single-line 589709 variant', () => {
+    const p = parseRemittance('overhead_door', htmlFromEml('ohd-single2.eml'))
+    expect(p.payment_reference).toBe('9000004')
+    expect(p.lines).toHaveLength(1)
+  })
   it('parses a multi-line payment; every PO is 8 digits and lines sum to the total', () => {
     const p = parseRemittance('overhead_door', htmlFromEml('ohd-multi.eml'))
     expect(p.payment_reference).toBe('9000005')

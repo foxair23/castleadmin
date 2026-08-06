@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { rematchPending, aiReviewPending, assignLineJob, setVendorAutopilot } from '@/lib/remittance/engine'
+import { rematchPending, reparseEmails, aiReviewPending, assignLineJob, setVendorAutopilot } from '@/lib/remittance/engine'
 import { previewLine, setLineExcluded, type PaymentPreview } from '@/lib/remittance/apply'
 import { setApproved } from '@/lib/remittance/apply-queue'
 
@@ -28,6 +28,14 @@ export async function rematchAllAction() {
 export async function aiReviewAction() {
   if (!(await isAdmin())) return
   await aiReviewPending()
+  revalidatePath('/admin/remittances')
+}
+
+// Re-parse retained raw emails to refresh header fields (fixes a null reference
+// from an earlier parser build).
+export async function reparseAction() {
+  if (!(await isAdmin())) return
+  await reparseEmails()
   revalidatePath('/admin/remittances')
 }
 
