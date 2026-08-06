@@ -49,14 +49,28 @@ export async function resolveInvoiceId(invoiceNumber, trace) {
   return inv.value || inv.id
 }
 
+/** The customer's hashed web id, scraped from the invoice page (the payment form
+ *  needs it). Returns null if not found. */
+export async function getCustomerId(invoiceId, trace) {
+  const r = await sfFetch(`/viewInvoice?id=${encodeURIComponent(invoiceId)}`)
+  trace.push({ step: 'viewInvoice', status: r.status })
+  const m = r.text.match(/editCustomer\?id=([A-Za-z0-9_\-]+)/)
+    || r.text.match(/name=["']?invoice\[customerId\]["']?[^>]*value=["']([^"']+)["']/i)
+    || r.text.match(/customerId["']?\s*[:=]\s*["']([A-Za-z0-9_\-]+)["']/)
+  return m ? m[1] : null
+}
+
 /** POST the receive-payment form for an invoice; returns the form HTML. */
-export async function openPaymentForm(invoiceId, amount, trace) {
-  const r = await sfFetch('/accounting/receiveAPayment', {
-    method: 'POST',
-    body: form({ 'invoiceIds[]': invoiceId, 'invoice[paymentsSelected]': amount }),
-  })
-  trace.push({ step: 'openForm', status: r.status })
-  if (!/id=["']?form-payment-transaction/.test(r.text)) throw new Error('receiveAPayment did not return the payment form')
+export async function openPaymentForm(invoiceId, customerId, amount, trace) {
+  const body = { 'invoiceIds[]': invoiceId, 'invoice[paymentsSelected]': amount }
+  if (customerId) body.customerId = customerId
+  const r = await sfFetch('/accounting/receiveAPayment', { method: 'POST', body: form(body) })
+  trace.push({ step: 'openForm', status: r.status, sentCustomerId: !!customerId })
+  if (!/id=["']?form-payment-transaction/.test(r.text)) {
+    const title = (r.text.match(/<title>([^<]*)<\/title>/i)?.[1] || '').trim()
+    const snippet = r.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+    throw new Error(`receiveAPayment did not return the form (title="${title}"; snippet="${snippet}")`)
+  }
   return r.text
 }
 
@@ -125,7 +139,8 @@ export async function applyOne(item, cfg) {
   const trace = []
   try {
     const invoiceId = await resolveInvoiceId(item.invoiceNumber, trace)
-    const html = await openPaymentForm(invoiceId, item.amount, trace)
+    const customerId = await getCustomerId(invoiceId, trace)
+    const html = await openPaymentForm(invoiceId, customerId, item.amount, trace)
     const parsed = parseForm(html)
     trace.push({ step: 'parse', ...parsed })
     if (!parsed.customerId || !parsed.invoiceId || !parsed.jobs) throw new Error('could not parse required ids from the form')
