@@ -85,3 +85,15 @@ export async function setAutopilotAction(vendorId: string, on: boolean): Promise
   await setVendorAutopilot(vendorId, on)
   revalidatePath('/admin/remittances')
 }
+
+// Mark whether the bank deposit for a remittance email has landed.
+export async function setBankReceivedAction(emailId: string, received: boolean): Promise<void> {
+  const userId = await adminUserId()
+  if (!userId) return
+  const supabase = await createClient()
+  await supabase.from('remittance_emails').update({
+    bank_received_at: received ? new Date().toISOString() : null,
+    bank_received_by: received ? userId : null,
+  }).eq('id', emailId)
+  revalidatePath('/admin/remittances')
+}
