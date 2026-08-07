@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Castle — Service Fusion Remittance Poster",
-  "version": "0.1.0",
-  "description": "Posts approved vendor payment-remittance lines from Castle Admin into Service Fusion automatically, in your logged-in session.",
+  "version": "0.2.0",
+  "description": "Posts approved vendor payment-remittance lines and customer-action job notes from Castle Admin into Service Fusion automatically, in your logged-in session.",
   "permissions": ["storage", "alarms"],
   "host_permissions": ["https://admin.servicefusion.com/*", "https://hq.castlegaragedoors.com/*"],
   "background": { "service_worker": "background.js", "type": "module" },

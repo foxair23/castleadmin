@@ -19,6 +19,19 @@ job (`PUT /jobs` returns 405), so this extension drives SF's own web form using
 
 It only needs Chrome open and you logged into `admin.servicefusion.com`.
 
+### Job notes (customer-action audit trail)
+
+The same poll also posts **job notes** into SF. Whenever Castle Admin does
+something the customer sees — today, sending an **invoice reminder** (email/SMS)
+— it queues a note, and this extension posts it onto the SF job so the office has
+one source of truth. It uses SF's own "Add Note" AJAX request
+(`POST /jobs/addNewNoteAjax`, body `note=…&id=<numeric job id>&updateChildrenJobs=0`).
+
+- Reads `/api/sf-notes/queue`, posts each note (**skipped in dry-run**), reports
+  back to `/api/sf-notes/callback` → row marked **posted**.
+- Deduped per (invoice, reminder stage), so an email+SMS escalation logs one note.
+- Extensible by `event`: CSAT, lead-gen outreach, etc. can queue notes the same way.
+
 ## Setup
 
 **Server (Castle Admin / Vercel):** set an env var
@@ -55,7 +68,8 @@ interval.
 
 ## Files
 
-- `background.js` — poll loop + orchestration
-- `sf.js` — the Service Fusion form automation (the reverse-engineered flow)
-- `app-api.js` — talks to Castle Admin (queue + callback)
+- `background.js` — poll loop + orchestration (payments pass + notes pass)
+- `sf.js` — the Service Fusion payment form automation (reverse-engineered flow)
+- `sf-note.js` — the Service Fusion add-note automation
+- `app-api.js` — talks to Castle Admin (payment + note queue / callback)
 - `options.html/js`, `popup.html/js`, `store.js`
