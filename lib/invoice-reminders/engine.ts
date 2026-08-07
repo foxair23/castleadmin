@@ -6,6 +6,7 @@ import { sendSms, toE164, isDialpadConfigured } from '@/lib/dialpad/client'
 import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoice-reminder-email'
 import { greetingFirstName } from '@/lib/names'
 import { ensureShortLink } from '@/lib/short-links'
+import { enqueueNote } from '@/lib/sf-notes/queue'
 
 const BUSINESS_NAME = 'Castle Garage Inc'
 
@@ -233,6 +234,15 @@ function templateVars(p: {
   }
 }
 
+/** The SF job note recorded when a reminder is sent. Human-readable for the
+ *  office, deduped per stage so the channel named is whichever fired first. */
+function reminderNoteText(p: PlannedSend): string {
+  const step = p.stageIndex + 1
+  const via = p.channel === 'sms' ? 'text' : 'email'
+  const inv = p.invoiceNumber ? `Invoice #${p.invoiceNumber}` : `Invoice ${p.sfInvoiceId}`
+  return `Castle Admin: invoice reminder sent to customer via ${via} (series step ${step}, day ${p.stageDay}). ${inv} · ${money(p.amountDue)} due.`
+}
+
 /**
  * Render + send a single reminder on a single channel and log the result to
  * `invoice_reminders`. Shared by the automated run and manual resends; `manual`
@@ -294,6 +304,22 @@ async function deliverReminder(
     pay_url: p.payUrl,
     manual: opts.manual,
   })
+
+  // Audit trail on the SF job: a note the office sees in Service Fusion whenever
+  // a reminder actually goes out to the customer. Queued (not posted directly)
+  // because SF has no note API — the browser extension posts it. Deduped per
+  // (invoice, stage) so an email+SMS escalation logs one note, not two. Never
+  // blocks or fails the send.
+  if (ok && p.sfJobId) {
+    await enqueueNote({
+      sfJobId: p.sfJobId,
+      noteText: reminderNoteText(p),
+      event: 'invoice_reminder',
+      dedupKey: `invoice_reminder:${p.sfInvoiceId}:${p.stageIndex}`,
+      refTable: 'invoice_reminders',
+      refId: p.sfInvoiceId,
+    })
+  }
   return { ok, error }
 }
 

@@ -37,6 +37,9 @@ function assignOptions(l: PayRow): AssignCandidate[] {
 
 const money = (n: number | null) => n == null ? '—' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtDate = (s: string) => new Date(s).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+// Date-only in PT — for the received/ingest fallback, so a late-evening ingest
+// doesn't visually roll to the next calendar day.
+const fmtDateShort = (s: string) => new Date(s).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' })
 
 const MATCH_STYLE: Record<string, string> = {
   matched: 'bg-green-100 text-green-800',
@@ -111,7 +114,7 @@ export default async function RemittancesPage() {
           <div>
             <span className="font-semibold text-gray-900">{e.vendor_id === 'clopay' ? 'Clopay' : e.vendor_id === 'overhead_door' ? 'Overhead Door' : 'Unknown'}</span>
             <span className="ml-2 text-sm text-gray-500">Ref <span className="font-mono">{e.payment_reference ?? '—'}</span></span>
-            <span className="ml-2 text-sm text-gray-500" title={`received ${fmtDate(e.received_at)}`}>{e.payment_date && e.payment_date.length <= 24 ? e.payment_date : fmtDate(e.received_at)}</span>
+            <span className="ml-2 text-sm text-gray-500" title={`received ${fmtDate(e.received_at)} PT`}>{e.payment_date && e.payment_date.length <= 24 ? e.payment_date : `received ${fmtDateShort(e.received_at)}`}</span>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span className="text-gray-700 font-medium">{money(e.payment_amount)}</span>
