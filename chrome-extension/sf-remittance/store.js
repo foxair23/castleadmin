@@ -7,6 +7,7 @@ export const DEFAULTS = {
   token: '',               // matches REMITTANCE_APPLY_TOKEN on the server
   pollMinutes: 10,
   receivedBy: 'RA',        // Payment[received_by] value in SF
+  genieEnabled: true,      // scrape + log Genie/Home Depot portal orders (content script)
 }
 
 export async function getConfig() {
