@@ -20,7 +20,7 @@ async function render() {
     : `Last run: ${fmt(s.at)}\nqueued ${s.queued ?? 0} · applied ${s.applied ?? 0} · failed ${s.failed ?? 0} · skipped ${skipped.length}${s.dryRun ? ' (dry run)' : ''}${notesLine}`
   const detail = (s.log || [])
     .map(l => l.noteId
-      ? `note[${l.event ?? '?'}] job ${l.jobId ?? '?'} → ${l.ok ? (l.dryRun ? 'would post' : 'posted') : 'FAIL: ' + (l.error || '')}`
+      ? `note[${l.event ?? '?'}] job #${l.jobNumber ?? l.jobId ?? '?'} → ${l.ok ? (l.dryRun ? 'would post' : 'posted') : 'FAIL: ' + (l.error || '')}`
       : l.invoiceNumber || l.amount ? `#${l.invoiceNumber ?? '?'} $${l.amount ?? '?'} → ${l.ok ? (l.dryRun ? 'would post' : 'posted') : 'FAIL: ' + (l.error || '')}` : null)
     .filter(Boolean).join('\n')
   // Approved-in-app lines the server couldn't queue (e.g. no linked open invoice).

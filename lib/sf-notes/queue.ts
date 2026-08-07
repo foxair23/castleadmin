@@ -59,7 +59,11 @@ export async function enqueueNote(input: EnqueueNoteInput): Promise<{ ok: boolea
 
 export interface NoteQueueItem {
   id: string
+  /** Internal SF job id — the value posted to addNewNoteAjax. */
   sfJobId: string
+  /** Human-readable job number (sf_jobs.number) for display/reporting. Falls
+   *  back to the internal id if the job isn't in the mirror. */
+  jobNumber: string
   noteText: string
   event: string
 }
@@ -73,8 +77,21 @@ export async function getNoteQueue(): Promise<{ items: NoteQueueItem[] }> {
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
     .limit(200)
-  const items = ((data ?? []) as Array<{ id: string; sf_job_id: string; note_text: string; event: string }>)
-    .map(r => ({ id: r.id, sfJobId: r.sf_job_id, noteText: r.note_text, event: r.event }))
+  const rows = (data ?? []) as Array<{ id: string; sf_job_id: string; note_text: string; event: string }>
+
+  // Resolve the readable job number for each queued note so the extension can
+  // report by the number the office recognizes (not the internal id it posts to).
+  const jobIds = [...new Set(rows.map(r => r.sf_job_id))]
+  const { data: jobs } = await supabase.from('sf_jobs').select('id, number').in('id', jobIds.length ? jobIds : ['__none__'])
+  const numberById = new Map(((jobs ?? []) as Array<{ id: string; number: string | null }>).map(j => [j.id, j.number]))
+
+  const items = rows.map(r => ({
+    id: r.id,
+    sfJobId: r.sf_job_id,
+    jobNumber: numberById.get(r.sf_job_id) || r.sf_job_id,
+    noteText: r.note_text,
+    event: r.event,
+  }))
   return { items }
 }
 

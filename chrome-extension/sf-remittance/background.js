@@ -35,7 +35,7 @@ async function runNotes(cfg, log) {
   let posted = 0, failed = 0
   for (const item of items) {
     const res = await postNote(item, cfg)
-    log.push({ noteId: item.id, event: item.event, jobId: item.sfJobId, ...res })
+    log.push({ noteId: item.id, event: item.event, jobNumber: item.jobNumber, jobId: item.sfJobId, ...res })
     if (!cfg.dryRun) {
       try {
         await postNoteResult(cfg.baseUrl, cfg.token, {
