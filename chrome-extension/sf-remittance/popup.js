@@ -32,6 +32,15 @@ document.getElementById('run').addEventListener('click', () => {
   const el = document.getElementById('status'); el.textContent = 'Running…'
   chrome.runtime.sendMessage({ type: 'run-now' }, () => render())
 })
+
+document.getElementById('crawl').addEventListener('click', () => {
+  const el = document.getElementById('status')
+  chrome.runtime.sendMessage({ type: 'genie-crawl-now' }, (r) => {
+    el.textContent = r?.ok
+      ? 'Full Genie crawl started in a background tab — it pages the whole list and details every order, then closes itself. Watch the [genie] console for progress.'
+      : `Could not start crawl: ${r?.error || 'unknown'}`
+  })
+})
 document.getElementById('options').addEventListener('click', () => chrome.runtime.openOptionsPage())
 
 render()

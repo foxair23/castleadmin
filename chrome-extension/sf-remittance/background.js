@@ -101,6 +101,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'run-now') { run('manual').then(r => sendResponse(r)); return true }
 })
 
+// "Full Genie crawl now" from the popup — same machinery as a scheduled full
+// crawl (opens a background tab, details every order, closes when done), but on
+// demand and regardless of the schedule/auto-detail toggles.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'genie-crawl-now') return
+  ;(async () => {
+    const cfg = await getConfig()
+    if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'set Castle Admin URL + token in Options' }); return }
+    setBadge('')
+    await startCrawl('full')
+    sendResponse({ ok: true })
+  })()
+  return true
+})
+
 // Content scripts signal a scheduled crawl's outcome.
 chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
   if (msg?.type === 'genie-crawl-done') {
