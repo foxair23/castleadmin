@@ -234,14 +234,28 @@
     return false
   }
 
+  /** Full mouse-event sequence — the portal's row navigation is a delegated JS
+   *  handler that a bare .click() sometimes doesn't trigger. */
+  function realClick(el) {
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
+    }
+  }
+
+  async function dropHead(sweep) {
+    await setSweep({ ...sweep, queue: sweep.queue.slice(1) })
+    return resumeSweepOnList()
+  }
+
   /** On the list page mid-sweep: find the next queued order (paging to it if
-   *  needed) and click into its detail. Drops an order it can't locate. */
+   *  needed) and click into its detail. Drops an order it can't locate/open. */
   async function resumeSweepOnList() {
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) { await clearSweep(); return }
     const id = sweep.queue[0]
     LOG(`detail sweep: locating #${id} (${sweep.queue.length} left)`)
     await waitForRows()
+    await sleep(1200) // let List.js bind row click handlers before we click
     let link = findOrderLink(id), pages = 0
     while (!link && pages < MAX_PAGES) {
       const next = findNextPager(); if (!next) break
@@ -251,10 +265,19 @@
     }
     if (!link) {
       LOG(`detail sweep: could not find #${id} — skipping`)
-      await setSweep({ ...sweep, queue: sweep.queue.slice(1) })
-      return resumeSweepOnList()
+      return dropHead(sweep)
     }
-    link.click() // navigates to the detail page; the detail branch takes over
+    // Click to open the detail page. If the delegated handler wasn't live yet the
+    // page won't navigate and this code keeps running — so retry a few times,
+    // then skip. On a successful nav the page unloads mid-sleep and we stop here.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt) LOG(`detail sweep: #${id} didn't open, retry ${attempt}`)
+      realClick(link)
+      await sleep(2000)
+      link = findOrderLink(id) || link // still running ⇒ no nav; re-find and retry
+    }
+    LOG(`detail sweep: #${id} wouldn't open — skipping`)
+    return dropHead(sweep)
   }
 
   async function runList() {
