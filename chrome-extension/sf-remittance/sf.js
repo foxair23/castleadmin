@@ -16,10 +16,16 @@ const SF = 'https://admin.servicefusion.com'
 const form = (obj) => Object.entries(obj).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v ?? '')}`).join('&')
 
 async function sfFetch(path, { method = 'GET', body } = {}) {
+  // X-Requested-With marks these as AJAX — SF's form/save endpoints return their
+  // fragment for XHR but a full page (login chrome and all) for a plain request,
+  // which otherwise reads like a logged-out redirect. Matches the working note poster.
   const res = await fetch(`${SF}${path}`, {
     method,
     credentials: 'include',
-    headers: body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {},
+    headers: {
+      'X-Requested-With': 'XMLHttpRequest',
+      ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
+    },
     body,
   })
   const text = await res.text()
@@ -57,13 +63,12 @@ export async function openPaymentForm(invoiceId, amount, trace) {
   })
   trace.push({ step: 'openForm', status: r.status, len: r.text.length, url: r.url })
   if (!/id=["']?form-payment-transaction/.test(r.text)) {
-    // Surface WHY, so a systemic failure is diagnosable from the log instead of
-    // a generic message: session drop → login page; anything else → a snippet of
-    // what SF actually returned (markup may have changed).
-    if (r.redirected && /login|signin/i.test(r.url)) throw new Error('receiveAPayment: SF session expired (redirected to login) — log in to admin.servicefusion.com')
-    if (/name=["']?(password|_username)["']?/i.test(r.text) || /<title>[^<]*(log ?in|sign ?in)/i.test(r.text)) throw new Error('receiveAPayment: SF session expired (got login page)')
-    const snippet = r.text.replace(/\s+/g, ' ').slice(0, 240)
-    throw new Error(`receiveAPayment did not return the payment form (status ${r.status}, ${r.text.length}b, url ${r.url}): ${snippet}`)
+    // Always surface what SF actually returned (tags stripped) so we can tell a
+    // real login page from a changed/other response. `login?` flags whether it
+    // looks like a sign-in page, but we no longer trust it enough to hide the body.
+    const looksLogin = /name=["']?(password|_username)["']?/i.test(r.text) || /(log ?in|sign ?in)/i.test(r.text.match(/<title>([^<]*)<\/title>/i)?.[1] || '')
+    const snippet = r.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
+    throw new Error(`receiveAPayment: no payment form (status ${r.status}, ${r.text.length}b, redirected ${r.redirected}, login?${looksLogin}) — ${snippet}`)
   }
   return r.text
 }
