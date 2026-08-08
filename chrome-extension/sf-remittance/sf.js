@@ -55,8 +55,16 @@ export async function openPaymentForm(invoiceId, amount, trace) {
     method: 'POST',
     body: form({ 'invoiceIds[]': invoiceId, 'invoice[paymentsSelected]': amount }),
   })
-  trace.push({ step: 'openForm', status: r.status })
-  if (!/id=["']?form-payment-transaction/.test(r.text)) throw new Error('receiveAPayment did not return the payment form')
+  trace.push({ step: 'openForm', status: r.status, len: r.text.length, url: r.url })
+  if (!/id=["']?form-payment-transaction/.test(r.text)) {
+    // Surface WHY, so a systemic failure is diagnosable from the log instead of
+    // a generic message: session drop → login page; anything else → a snippet of
+    // what SF actually returned (markup may have changed).
+    if (r.redirected && /login|signin/i.test(r.url)) throw new Error('receiveAPayment: SF session expired (redirected to login) — log in to admin.servicefusion.com')
+    if (/name=["']?(password|_username)["']?/i.test(r.text) || /<title>[^<]*(log ?in|sign ?in)/i.test(r.text)) throw new Error('receiveAPayment: SF session expired (got login page)')
+    const snippet = r.text.replace(/\s+/g, ' ').slice(0, 240)
+    throw new Error(`receiveAPayment did not return the payment form (status ${r.status}, ${r.text.length}b, url ${r.url}): ${snippet}`)
+  }
   return r.text
 }
 
