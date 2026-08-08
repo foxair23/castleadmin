@@ -16,16 +16,12 @@ const SF = 'https://admin.servicefusion.com'
 const form = (obj) => Object.entries(obj).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v ?? '')}`).join('&')
 
 async function sfFetch(path, { method = 'GET', body } = {}) {
-  // X-Requested-With marks these as AJAX — SF's form/save endpoints return their
-  // fragment for XHR but a full page (login chrome and all) for a plain request,
-  // which otherwise reads like a logged-out redirect. Matches the working note poster.
+  // These endpoints are form-POST navigations in the browser (no X-Requested-With);
+  // send them the same way so SF returns the form instead of bouncing home.
   const res = await fetch(`${SF}${path}`, {
     method,
     credentials: 'include',
-    headers: {
-      'X-Requested-With': 'XMLHttpRequest',
-      ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
-    },
+    headers: body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {},
     body,
   })
   const text = await res.text()
@@ -55,20 +51,38 @@ export async function resolveInvoiceId(invoiceNumber, trace) {
   return inv.value || inv.id
 }
 
+/** The invoice's customer (hashed web id), read off the invoice page. SF's
+ *  receive-payment form POST requires it; without it SF bounces to the home page. */
+export async function resolveCustomerId(invoiceId, trace) {
+  const r = await sfFetch(`/viewInvoice?id=${encodeURIComponent(invoiceId)}`)
+  trace.push({ step: 'viewInvoice', status: r.status, len: r.text.length })
+  // Try a hidden field first, then a customer link / JSON, all hashed-id shaped.
+  const id =
+    inputValue(r.text, 'customerId') ||
+    (r.text.match(/customerId=([A-Za-z0-9_-]{20,})/)?.[1] ?? null) ||
+    (r.text.match(/customer(?:View|Detail)s?\?id=([A-Za-z0-9_-]{20,})/i)?.[1] ?? null) ||
+    (r.text.match(/["']customerId["']\s*:\s*["']([A-Za-z0-9_-]{20,})["']/)?.[1] ?? null)
+  if (!id) throw new Error(`could not find customerId on viewInvoice for ${invoiceId} (status ${r.status}, ${r.text.length}b)`)
+  return id
+}
+
 /** POST the receive-payment form for an invoice; returns the form HTML. */
 export async function openPaymentForm(invoiceId, amount, trace) {
+  const customerId = await resolveCustomerId(invoiceId, trace)
+  trace.push({ step: 'customerId', customerId })
   const r = await sfFetch('/accounting/receiveAPayment', {
     method: 'POST',
-    body: form({ 'invoiceIds[]': invoiceId, 'invoice[paymentsSelected]': amount }),
+    body: form({ customerId, 'invoiceIds[]': invoiceId, 'invoice[paymentsSelected]': amount }),
   })
   trace.push({ step: 'openForm', status: r.status, len: r.text.length, url: r.url })
   if (!/id=["']?form-payment-transaction/.test(r.text)) {
-    // Always surface what SF actually returned (tags stripped) so we can tell a
-    // real login page from a changed/other response. `login?` flags whether it
-    // looks like a sign-in page, but we no longer trust it enough to hide the body.
-    const looksLogin = /name=["']?(password|_username)["']?/i.test(r.text) || /(log ?in|sign ?in)/i.test(r.text.match(/<title>([^<]*)<\/title>/i)?.[1] || '')
-    const snippet = r.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
-    throw new Error(`receiveAPayment: no payment form (status ${r.status}, ${r.text.length}b, redirected ${r.redirected}, login?${looksLogin}) — ${snippet}`)
+    // Login is judged by WHERE it landed (redirect URL), not page text — the SF
+    // app shell contains "login"/"password" strings and was giving false positives.
+    const looksLogin = /login|signin|customlogin/i.test(r.url)
+    // Name the page SF bounced us to, so we can tell a rejected request (→ home /
+    // dispatch) from a genuine login redirect or a changed form.
+    const landed = r.url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]
+    throw new Error(`receiveAPayment: no payment form (status ${r.status}, ${r.text.length}b, invoiceId "${invoiceId}", landed ${landed}, login?${looksLogin})`)
   }
   return r.text
 }
