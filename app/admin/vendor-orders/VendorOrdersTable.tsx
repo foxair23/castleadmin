@@ -22,6 +22,7 @@ export interface VendorOrder {
   scope: string | null
   sf_job_id: string | null
   sf_job_number: string | null
+  sf_match_method: 'linked' | 'po' | 'name' | 'email' | 'phone' | null
   detail_scraped_at: string | null
   last_seen_at: string
 }
@@ -179,7 +180,16 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.schedule_date)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.store_number || '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{o.sf_job_number ? <span className="text-green-700 font-medium">{o.sf_job_number}</span> : <span className="text-gray-300">—</span>}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {o.sf_job_number ? (
+                    <span className="inline-flex items-center gap-1.5" title={o.sf_match_method ? `matched by ${o.sf_match_method}` : undefined}>
+                      <span className={`font-medium ${o.sf_match_method === 'po' || o.sf_match_method === 'linked' ? 'text-green-700' : 'text-amber-700'}`}>{o.sf_job_number}</span>
+                      {o.sf_match_method && o.sf_match_method !== 'po' && o.sf_match_method !== 'linked' && (
+                        <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
+                      )}
+                    </span>
+                  ) : <span className="text-gray-300">—</span>}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-400 text-xs">{fmtSeen(o.last_seen_at)}</td>
               </tr>
             ))}
