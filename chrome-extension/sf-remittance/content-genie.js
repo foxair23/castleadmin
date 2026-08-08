@@ -16,7 +16,10 @@
 
 (() => {
   const VENDOR = 'genie_thd'
+  const AUTO_PAGE = true          // walk all list pages (List.js client-side pager — instant, no network)
+  const MAX_PAGES = 40            // safety cap
   const LOG = (...a) => console.log('[genie]', ...a)
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms))
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
   const key = (s) => norm(s).toLowerCase().replace(/[:*]/g, '').trim()
 
@@ -80,6 +83,48 @@
       if (o.external_id) out.push(o)
     }
     return out
+  }
+
+  // A signature of the current list page (first order + row count) so we can tell
+  // when a pager click has actually swapped the rows in.
+  function pageSig() {
+    const r = scrapeListPage()
+    return r.length ? `${r[0].external_id}#${r.length}` : ''
+  }
+
+  /** The pager's "next" control, if present and not on the last page. */
+  function findNextPager() {
+    const cands = [...document.querySelectorAll('.pagination a, .pagination li, ul.pagination *, nav a, a, button, span, li')]
+    return cands.find(el => {
+      const t = norm(el.innerText)
+      const meta = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.className || ''}`
+      const isNext = t === '>' || t === '›' || t === '»' || /(?:^|[^a-z])next(?:[^a-z]|$)/i.test(meta)
+      if (!isNext) return false
+      const disabled = /disabl/i.test(el.className) || el.getAttribute('aria-disabled') === 'true' || el.closest('.disabled')
+      return !disabled && el.offsetParent !== null
+    })
+  }
+
+  async function waitForPageChange(prevSig, ms = 6000) {
+    const start = Date.now()
+    while (Date.now() - start < ms) { await sleep(200); if (pageSig() !== prevSig) return true }
+    return false
+  }
+
+  /** Scrape every list page by clicking through the client-side pager. Dedups by
+   *  order number. Falls back to the current page if paging misbehaves. */
+  async function scrapeAllListPages() {
+    const byId = new Map()
+    for (let page = 0; page < MAX_PAGES; page++) {
+      for (const o of scrapeListPage()) if (o.external_id) byId.set(o.external_id, o)
+      const next = findNextPager()
+      if (!next) break
+      const prev = pageSig()
+      next.click()
+      if (!(await waitForPageChange(prev))) break // last page or stuck
+      if (page > 0 && page % 5 === 0) LOG(`paged ${page + 1}…`)
+    }
+    return [...byId.values()]
   }
 
   // ── Order Detail ──────────────────────────────────────────────────────────
@@ -170,11 +215,15 @@
     const type = pageType()
     if (!type) return
     let tries = 0
-    const timer = setInterval(() => {
+    const timer = setInterval(async () => {
       tries++
       if (type === 'list') {
-        const orders = scrapeListPage()
-        if (orders.length) { clearInterval(timer); LOG(`list: scraped ${orders.length} on this page`); send('list', orders) }
+        if (scrapeListPage().length) {
+          clearInterval(timer)
+          const orders = AUTO_PAGE ? await scrapeAllListPages() : scrapeListPage()
+          LOG(`list: scraped ${orders.length} order(s) across ${AUTO_PAGE ? 'all pages' : 'this page'}`)
+          send('list', orders)
+        }
       } else {
         const o = scrapeDetail()
         if (o) { clearInterval(timer); LOG('detail: scraped', o.external_id); send('detail', o) }
