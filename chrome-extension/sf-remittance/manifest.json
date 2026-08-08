@@ -1,11 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Castle — Service Fusion Remittance Poster",
-  "version": "0.2.0",
-  "description": "Posts approved vendor payment-remittance lines and customer-action job notes from Castle Admin into Service Fusion automatically, in your logged-in session.",
+  "version": "0.3.0",
+  "description": "Automates Castle Admin ↔ Service Fusion (remittance posting, job notes) and logs vendor-portal orders (Genie/Home Depot), all in your logged-in sessions.",
   "permissions": ["storage", "alarms"],
-  "host_permissions": ["https://admin.servicefusion.com/*", "https://hq.castlegaragedoors.com/*"],
+  "host_permissions": ["https://admin.servicefusion.com/*", "https://hq.castlegaragedoors.com/*", "https://install.openings.net/*"],
   "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://install.openings.net/webcenter/portal/installerconnect/*"],
+      "js": ["content-genie.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": { "default_popup": "popup.html", "default_title": "SF Remittance Poster" },
   "options_page": "options.html"
 }

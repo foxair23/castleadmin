@@ -38,3 +38,15 @@ export async function postNoteResult(baseUrl, token, payload) {
   if (!res.ok) throw new Error(`note callback ${res.status}: ${(await res.text()).slice(0, 200)}`)
   return res.json()
 }
+
+// ── Vendor portal orders (Genie / Home Depot, etc.) ─────────────────────────
+
+export async function postVendorOrders(baseUrl, token, vendor, orders) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/ingest`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vendor, orders }),
+  })
+  if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json() // { inserted, updated, statusChanges, needDetail: [...] }
+}

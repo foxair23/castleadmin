@@ -1,5 +1,5 @@
 import { getConfig, setStatus } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult } from './app-api.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders } from './app-api.js'
 import { applyOne } from './sf.js'
 import { postNote } from './sf-note.js'
 
@@ -18,6 +18,31 @@ chrome.alarms.onAlarm.addListener(a => { if (a.name === ALARM) run('alarm') })
 // Manual "Run now" from the popup.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'run-now') { run('manual').then(r => sendResponse(r)); return true }
+})
+
+// Orders scraped from a vendor portal (content-genie.js) → Castle Admin ingest.
+// Independent of the SF poll loop; posts in the user's session using the same
+// base URL + token.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'genie') return
+  ;(async () => {
+    const cfg = await getConfig()
+    if (cfg.genieEnabled === false) { sendResponse({ ok: false, error: 'genie disabled' }); return }
+    if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'not configured' }); return }
+    const orders = msg.kind === 'detail' ? [msg.payload] : (msg.payload || [])
+    if (!orders.length) { sendResponse({ ok: true, skipped: 'no orders' }); return }
+    try {
+      const res = await postVendorOrders(cfg.baseUrl, cfg.token, msg.vendor, orders)
+      await setStatus({ source: 'genie', vendor: msg.vendor, kind: msg.kind, ingest: res })
+      console.log('[sf-remittance] genie ingest', res)
+      sendResponse({ ok: true, ...res })
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e)
+      console.error('[sf-remittance] genie ingest failed', error)
+      sendResponse({ ok: false, error })
+    }
+  })()
+  return true // async response
 })
 
 /** Post queued SF job notes. Mirrors the payment pass: dry-run never writes back;

@@ -92,6 +92,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                 <NavLink href="/admin/reviews" current={pathname.startsWith('/admin/reviews')}>Reviews</NavLink>
                 <NavLink href="/admin/commission" current={pathname.startsWith('/admin/commission')}>Commission</NavLink>
                 <NavLink href="/admin/remittances" current={pathname.startsWith('/admin/remittances')}>Remittances</NavLink>
+                <NavLink href="/admin/vendor-orders" current={pathname.startsWith('/admin/vendor-orders')}>HD Orders</NavLink>
                 <NavLink href="/sales/approvals" current={pathname.startsWith('/sales/approvals')}>Approvals</NavLink>
               </>
             ) : (
