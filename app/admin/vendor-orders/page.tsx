@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { VENDORS } from '@/lib/vendor-orders/config'
+import { resolveSfJobNumbers } from '@/lib/vendor-orders/sf-match'
 import VendorOrdersTable, { type VendorOrder } from './VendorOrdersTable'
 
 export const dynamic = 'force-dynamic'
@@ -20,7 +21,11 @@ export default async function VendorOrdersPage() {
     .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, detail_scraped_at, last_seen_at')
     .order('order_date', { ascending: false, nullsFirst: false })
     .limit(1000)
-  const orders = (data ?? []) as VendorOrder[]
+  const base = (data ?? []) as VendorOrder[]
+
+  // Resolve each order's SF job number (PO match against sf_jobs, like Remittances).
+  const jobNumbers = await resolveSfJobNumbers(db, base)
+  const orders: VendorOrder[] = base.map(o => ({ ...o, sf_job_number: jobNumbers.get(o.id) ?? null }))
 
   const counts = orders.reduce<Record<string, number>>((a, o) => {
     const k = (o.status || 'unknown').toLowerCase().startsWith('open') ? 'Open' : (o.status || 'Unknown')
