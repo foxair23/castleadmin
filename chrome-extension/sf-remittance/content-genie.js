@@ -16,7 +16,10 @@
 
 (() => {
   const VENDOR = 'genie_thd'
+  const AUTO_PAGE = true          // walk all list pages (List.js client-side pager — instant, no network)
+  const MAX_PAGES = 40            // safety cap
   const LOG = (...a) => console.log('[genie]', ...a)
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms))
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
   const key = (s) => norm(s).toLowerCase().replace(/[:*]/g, '').trim()
 
@@ -42,7 +45,6 @@
     { match: 'next step', field: 'next_step' },
     { match: 'document', field: null }, // document signature — ignore
   ]
-  const STATUS_RE = /^(open|clos|cancel|complet|pend|schedul|hold)/i
 
   function rowsWithCells() {
     return [...document.querySelectorAll('tr')]
@@ -70,16 +72,59 @@
     const out = []
     for (const { cells } of rows) {
       if (header && cells === header.cells) continue
-      if (!STATUS_RE.test(cells[0] || '')) continue // data rows start with a status word
       const o = {}
       cells.forEach((val, i) => {
         const c = colMap[i]
         if (!c || !c.field) return
         o[c.field] = c.iso ? (toISO(val) ?? null) : (norm(val) || null)
       })
-      if (o.external_id) out.push(o)
+      // A real data row is identified by a numeric Order Number — robust across
+      // any status wording (don't gate on the status column).
+      if (o.external_id && /^\d{4,}$/.test(o.external_id)) out.push(o)
     }
     return out
+  }
+
+  // A signature of the current list page (first order + row count) so we can tell
+  // when a pager click has actually swapped the rows in.
+  function pageSig() {
+    const r = scrapeListPage()
+    return r.length ? `${r[0].external_id}#${r.length}` : ''
+  }
+
+  /** The pager's "next" control, if present and not on the last page. */
+  function findNextPager() {
+    const cands = [...document.querySelectorAll('.pagination a, .pagination li, ul.pagination *, nav a, a, button, span, li')]
+    return cands.find(el => {
+      const t = norm(el.innerText)
+      const meta = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.className || ''}`
+      const isNext = t === '>' || t === '›' || t === '»' || /(?:^|[^a-z])next(?:[^a-z]|$)/i.test(meta)
+      if (!isNext) return false
+      const disabled = /disabl/i.test(el.className) || el.getAttribute('aria-disabled') === 'true' || el.closest('.disabled')
+      return !disabled && el.offsetParent !== null
+    })
+  }
+
+  async function waitForPageChange(prevSig, ms = 6000) {
+    const start = Date.now()
+    while (Date.now() - start < ms) { await sleep(200); if (pageSig() !== prevSig) return true }
+    return false
+  }
+
+  /** Scrape every list page by clicking through the client-side pager. Dedups by
+   *  order number. Falls back to the current page if paging misbehaves. */
+  async function scrapeAllListPages() {
+    const byId = new Map()
+    for (let page = 0; page < MAX_PAGES; page++) {
+      for (const o of scrapeListPage()) if (o.external_id) byId.set(o.external_id, o)
+      const next = findNextPager()
+      if (!next) break
+      const prev = pageSig()
+      next.click()
+      if (!(await waitForPageChange(prev))) break // last page or stuck
+      if (page > 0 && page % 5 === 0) LOG(`paged ${page + 1}…`)
+    }
+    return [...byId.values()]
   }
 
   // ── Order Detail ──────────────────────────────────────────────────────────
@@ -158,42 +203,111 @@
     return null
   }
 
-  function send(kind, payload) {
-    chrome.runtime.sendMessage({ type: 'genie', kind, vendor: VENDOR, payload }, (res) => {
-      if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); return }
-      LOG('ingest result', res)
+  /** Post scraped orders to the background → Castle Admin ingest. Resolves with
+   *  the ingest result (incl. needDetail), or null on error. */
+  function ingest(kind, payload) {
+    return new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: 'genie', kind, vendor: VENDOR, payload }, (res) => {
+        if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); resolve(null); return }
+        resolve(res)
+      })
     })
   }
 
-  // ADF renders asynchronously; wait for content to settle, then scrape once.
-  function waitAndRun() {
-    const type = pageType()
-    if (!type) return
-    let tries = 0
-    const timer = setInterval(() => {
-      tries++
-      if (type === 'list') {
-        const orders = scrapeListPage()
-        if (orders.length) { clearInterval(timer); LOG(`list: scraped ${orders.length} on this page`); send('list', orders) }
-      } else {
-        const o = scrapeDetail()
-        if (o) { clearInterval(timer); LOG('detail: scraped', o.external_id); send('detail', o) }
-      }
-      if (tries > 40) { clearInterval(timer); LOG(`${type}: nothing scraped after waiting — DOM likely differs, check selectors`) }
-    }, 500)
+  // ── Auto-detail sweep ────────────────────────────────────────────────────
+  // Order detail has no direct URL — you must click the order-number link, which
+  // navigates to the detail page. So the sweep is a state machine persisted in
+  // chrome.storage across those navigations: hold a queue of order #s, click into
+  // each, scrape on the detail page, return to the list, repeat. Gated by the
+  // genieAutoDetail option (default off) and capped per run so it never runs away
+  // or hijacks the portal unasked.
+  const SWEEP_KEY = 'genieSweep'
+  const getCfg = () => new Promise(r => chrome.storage.local.get({ genieAutoDetail: false, maxDetailPerRun: 12 }, r))
+  const getSweep = () => new Promise(r => chrome.storage.local.get({ [SWEEP_KEY]: null }, d => r(d[SWEEP_KEY])))
+  const setSweep = (s) => new Promise(r => chrome.storage.local.set({ [SWEEP_KEY]: s }, r))
+  const clearSweep = () => new Promise(r => chrome.storage.local.remove(SWEEP_KEY, r))
+  const findOrderLink = (id) => [...document.querySelectorAll('a')].find(a => norm(a.textContent) === String(id))
+
+  async function waitForRows(ms = 20000) {
+    const start = Date.now()
+    while (Date.now() - start < ms) { if (scrapeListPage().length) return true; await sleep(500) }
+    return false
   }
 
-  // Manual re-scrape from the popup ("Scrape this page now").
+  /** On the list page mid-sweep: find the next queued order (paging to it if
+   *  needed) and click into its detail. Drops an order it can't locate. */
+  async function resumeSweepOnList() {
+    const sweep = await getSweep()
+    if (!sweep || !sweep.queue.length) { await clearSweep(); return }
+    const id = sweep.queue[0]
+    LOG(`detail sweep: locating #${id} (${sweep.queue.length} left)`)
+    await waitForRows()
+    let link = findOrderLink(id), pages = 0
+    while (!link && pages < MAX_PAGES) {
+      const next = findNextPager(); if (!next) break
+      const prev = pageSig(); next.click()
+      if (!(await waitForPageChange(prev))) break
+      link = findOrderLink(id); pages++
+    }
+    if (!link) {
+      LOG(`detail sweep: could not find #${id} — skipping`)
+      await setSweep({ ...sweep, queue: sweep.queue.slice(1) })
+      return resumeSweepOnList()
+    }
+    link.click() // navigates to the detail page; the detail branch takes over
+  }
+
+  async function runList() {
+    // Mid-sweep: don't re-scrape the whole list, just advance the sweep.
+    const active = await getSweep()
+    if (active && active.queue.length) { await resumeSweepOnList(); return }
+
+    if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); return }
+    const orders = AUTO_PAGE ? await scrapeAllListPages() : scrapeListPage()
+    LOG(`list: scraped ${orders.length} order(s) across ${AUTO_PAGE ? 'all pages' : 'this page'}`)
+    const res = await ingest('list', orders)
+    LOG('ingest result', res)
+
+    const cfg = await getCfg()
+    if (cfg.genieAutoDetail && res && res.needDetail && res.needDetail.length) {
+      const queue = res.needDetail.slice(0, cfg.maxDetailPerRun)
+      LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail`)
+      await setSweep({ queue, listUrl: location.href })
+      await resumeSweepOnList()
+    }
+  }
+
+  async function runDetail() {
+    let tries = 0, o = null
+    while (tries++ < 40 && !(o = scrapeDetail())) await sleep(500)
+    if (o) { LOG('detail: scraped', o.external_id); await ingest('detail', o) }
+    else LOG('detail: nothing scraped — DOM likely differs')
+
+    const sweep = await getSweep()
+    if (sweep && sweep.queue.length) {
+      const remaining = o ? sweep.queue.filter(x => x !== o.external_id) : sweep.queue.slice(1)
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining }); LOG(`detail sweep: ${remaining.length} left, returning to list`); location.href = sweep.listUrl }
+      else { await clearSweep(); LOG('detail sweep: complete') }
+    }
+  }
+
+  async function main() {
+    const type = pageType()
+    if (type === 'list') await runList()
+    else if (type === 'detail') await runDetail()
+  }
+
+  // Manual re-scrape from the popup / console (single page, no sweep).
   chrome.runtime.onMessage.addListener((msg, _s, reply) => {
     if (msg?.type === 'genie-rescrape') {
       const type = pageType()
-      if (type === 'list') { const o = scrapeListPage(); send('list', o); reply({ ok: true, type, count: o.length }) }
-      else if (type === 'detail') { const o = scrapeDetail(); if (o) send('detail', o); reply({ ok: !!o, type }) }
+      if (type === 'list') { scrapeAllListPages().then(o => ingest('list', o)).then(() => reply({ ok: true, type })) }
+      else if (type === 'detail') { const o = scrapeDetail(); if (o) ingest('detail', o); reply({ ok: !!o, type }) }
       else reply({ ok: false, error: 'not a Genie order page' })
       return true
     }
   })
 
   LOG('loaded on', location.href, '→', pageType())
-  waitAndRun()
+  main()
 })()

@@ -35,6 +35,15 @@
   <div class="row"><input id="enabled" type="checkbox" /><label for="enabled">Enabled (poll & post in the background)</label></div>
   <div class="row"><input id="dryRun" type="checkbox" /><label for="dryRun">Dry run (don't actually submit)</label></div>
 
+  <h1 style="font-size:15px;margin-top:26px;">Genie / Home Depot orders</h1>
+  <div class="row"><input id="genieEnabled" type="checkbox" /><label for="genieEnabled">Log orders from the Genie portal</label></div>
+  <div class="hint">Scrapes the order list into Castle Admin whenever you open the portal.</div>
+  <div class="row"><input id="genieAutoDetail" type="checkbox" /><label for="genieAutoDetail">Auto-open orders to capture full detail</label></div>
+  <div class="hint">Opens each order needing detail (address, phone, store #) and returns to the list. Leave off while you're actively using the portal — it navigates for you. Backfills a few per visit.</div>
+
+  <label>Max orders to detail per visit</label>
+  <input id="maxDetailPerRun" type="number" min="1" max="220" />
+
   <div><button id="save">Save</button><span id="saved" class="saved" style="display:none">Saved ✓</span></div>
   <script type="module" src="options.js"></script>
 </body>
