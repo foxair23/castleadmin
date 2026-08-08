@@ -245,6 +245,16 @@
   const clearSweep = () => new Promise(r => chrome.storage.local.remove(SWEEP_KEY, r))
   const findOrderLink = (id) => [...document.querySelectorAll('a')].find(a => norm(a.textContent) === String(id))
 
+  // A scheduled crawl sets genieCrawlMode ('full' backfills everything nightly;
+  // 'incremental' details only new orders hourly). Manual crawls leave it null.
+  const getCrawlMode = () => new Promise(r => chrome.storage.local.get({ genieCrawlMode: null }, d => r(d.genieCrawlMode)))
+  // Tell the background a crawl reached a terminal state, so a scheduled run can
+  // close its tab. Harmless for manual crawls (background ignores non-crawl tabs).
+  function endCrawl() {
+    chrome.storage.local.remove('genieCrawlMode')
+    try { chrome.runtime.sendMessage({ type: 'genie-crawl-done' }) } catch { /* SW asleep — timeout alarm covers it */ }
+  }
+
   async function waitForRows(ms = 20000) {
     const start = Date.now()
     while (Date.now() - start < ms) { if (scrapeListPage().length) return true; await sleep(500) }
@@ -279,7 +289,7 @@
    *  that has failed too many times (so one bad order never wedges the crawl). */
   async function resumeSweepOnList() {
     const sweep = await getSweep()
-    if (!sweep || !sweep.queue.length) { await clearSweep(); return }
+    if (!sweep || !sweep.queue.length) { await clearSweep(); endCrawl(); return }
     const id = sweep.queue[0]
     // Count this attempt; give up on an order that keeps failing.
     const attempts = { ...(sweep.attempts || {}) }
@@ -342,14 +352,20 @@
     LOG('ingest result', res)
 
     const cfg = await getCfg()
-    if (cfg.genieAutoDetail && res && res.needDetail && res.needDetail.length) {
-      const queue = res.needDetail.slice(0, cfg.maxDetailPerRun)
-      LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail`)
+    const mode = await getCrawlMode()
+    // Scheduled crawls always detail (full backfills all; incremental just new).
+    const autoDetail = !!mode || cfg.genieAutoDetail
+    const cap = mode === 'full' ? 250 : mode === 'incremental' ? 25 : cfg.maxDetailPerRun
+    if (autoDetail && res && res.needDetail && res.needDetail.length) {
+      const queue = res.needDetail.slice(0, cap)
+      LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail${mode ? ` (${mode})` : ''}`)
       await setSweep({ queue, listUrl: LIST_URL, startedAt: Date.now() })
       // The full-list scrape left us on the LAST page; the sweep only pages
       // forward, so go to a clean page-1 list before it begins. The (fresh,
       // non-stale) sweep resumes on load.
       goToList()
+    } else {
+      endCrawl() // nothing to sweep — a scheduled crawl is done, close its tab
     }
   }
 
@@ -367,7 +383,7 @@
       const attempts = { ...(sweep.attempts || {}) }; delete attempts[o.external_id]
       const remaining = sweep.queue.filter(x => x !== o.external_id)
       if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList() }
-      else { await clearSweep(); LOG('detail sweep: complete') }
+      else { await clearSweep(); LOG('detail sweep: complete'); endCrawl() }
     } else {
       LOG('detail sweep: scrape missed, returning to list to retry/skip'); goToList()
     }

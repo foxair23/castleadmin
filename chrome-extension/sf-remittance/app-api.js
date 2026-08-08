@@ -50,3 +50,14 @@ export async function postVendorOrders(baseUrl, token, vendor, orders) {
   if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`)
   return res.json() // { inserted, updated, statusChanges, needDetail: [...] }
 }
+
+// Report a site logged out → Castle Admin emails the chosen recipients (deduped).
+export async function postSessionAlert(baseUrl, token, site) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ops/session-alert`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ site }),
+  })
+  if (!res.ok) throw new Error(`session-alert ${res.status}: ${(await res.text()).slice(0, 160)}`)
+  return res.json()
+}
