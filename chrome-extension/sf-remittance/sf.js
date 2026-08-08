@@ -63,12 +63,13 @@ export async function openPaymentForm(invoiceId, amount, trace) {
   })
   trace.push({ step: 'openForm', status: r.status, len: r.text.length, url: r.url })
   if (!/id=["']?form-payment-transaction/.test(r.text)) {
-    // Always surface what SF actually returned (tags stripped) so we can tell a
-    // real login page from a changed/other response. `login?` flags whether it
-    // looks like a sign-in page, but we no longer trust it enough to hide the body.
-    const looksLogin = /name=["']?(password|_username)["']?/i.test(r.text) || /(log ?in|sign ?in)/i.test(r.text.match(/<title>([^<]*)<\/title>/i)?.[1] || '')
-    const snippet = r.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
-    throw new Error(`receiveAPayment: no payment form (status ${r.status}, ${r.text.length}b, redirected ${r.redirected}, login?${looksLogin}) — ${snippet}`)
+    // Login is judged by WHERE it landed (redirect URL), not page text — the SF
+    // app shell contains "login"/"password" strings and was giving false positives.
+    const looksLogin = /login|signin|customlogin/i.test(r.url)
+    // Name the page SF bounced us to, so we can tell a rejected request (→ home /
+    // dispatch) from a genuine login redirect or a changed form.
+    const landed = r.url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]
+    throw new Error(`receiveAPayment: no payment form (status ${r.status}, ${r.text.length}b, invoiceId "${invoiceId}", landed ${landed}, login?${looksLogin})`)
   }
   return r.text
 }
