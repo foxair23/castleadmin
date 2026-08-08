@@ -280,10 +280,16 @@
     await sleep(1200) // let List.js bind row click handlers before we click
     let link = findOrderLink(id), pages = 0
     while (!link && pages < MAX_PAGES) {
-      const next = findNextPager(); if (!next) break
-      const prev = pageSig(); next.click()
-      if (!(await waitForPageChange(prev))) break
-      link = findOrderLink(id); pages++
+      const next = findNextPager()
+      if (!next) { LOG(`detail sweep: no next-page control while seeking #${id} (on page ${pages + 1})`); break }
+      // The pager's click handler may not be bound yet right after a reload, so
+      // fire a full mouse sequence and retry until the page actually advances.
+      const prev = pageSig()
+      let advanced = false
+      for (let a = 0; a < 3 && !advanced; a++) { realClick(next); advanced = await waitForPageChange(prev) }
+      if (!advanced) { LOG(`detail sweep: page wouldn't advance while seeking #${id}`); break }
+      pages++
+      link = findOrderLink(id)
     }
     if (!link) {
       LOG(`detail sweep: could not find #${id} — skipping`)
