@@ -1,5 +1,5 @@
 import { getConfig, setStatus } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postSessionAlert } from './app-api.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert } from './app-api.js'
 import { applyOne } from './sf.js'
 import { postNote } from './sf-note.js'
 
@@ -16,8 +16,16 @@ chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleGenieCrawl
 chrome.alarms.onAlarm.addListener(a => {
   if (a.name === ALARM) run('alarm')
   else if (a.name === GENIE_ALARM) maybeScheduledCrawl()
-  else if (a.name === GENIE_TIMEOUT_ALARM) finishCrawl('timeout')
+  else if (a.name === GENIE_TIMEOUT_ALARM) onCrawlTimeout()
 })
+
+// A scheduled crawl that never signalled done → it stalled. Close its tab and
+// alert, so a silently-broken crawl doesn't go unnoticed.
+async function onCrawlTimeout() {
+  const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
+  await finishCrawl('timeout')
+  if (genieCrawl) { setBadge('!'); await notifyAlert('genie', 'error', 'scheduled crawl did not finish (timed out)') }
+}
 
 // ── Scheduled Genie crawl ───────────────────────────────────────────────────
 // An always-on office PC runs this: hourly during work hours (incremental — just
@@ -81,10 +89,11 @@ function setBadge(text) {
   } catch { /* ignore */ }
 }
 
-async function sessionAlert(site) {
+// Email the chosen recipients about an automation problem (deduped server-side).
+async function notifyAlert(source, kind, detail) {
   const cfg = await getConfig()
   if (!cfg.baseUrl || !cfg.token) return
-  try { await postSessionAlert(cfg.baseUrl, cfg.token, site) } catch (e) { console.warn('[session-alert] failed', e) }
+  try { await postAlert(cfg.baseUrl, cfg.token, { source, kind, detail }) } catch (e) { console.warn('[alert] failed', e) }
 }
 
 // Manual "Run now" from the popup.
@@ -106,7 +115,7 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
     ;(async () => {
       await setStatus({ source: 'genie-schedule', state: 'login_required' })
       setBadge('!')
-      await sessionAlert('genie') // email chosen recipients (deduped server-side)
+      await notifyAlert('genie', 'logged_out') // email chosen recipients (deduped server-side)
       const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
       if (genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) {
         try { await chrome.tabs.update(genieCrawl.tabId, { active: true }) } catch { /* ignore */ } // surface for one-click login
@@ -213,10 +222,13 @@ export async function run(source) {
     // etc.). Independent of the payment pass — a failure here never affects it.
     const notes = await runNotes(cfg, log)
 
-    // If SF looks logged out (failures reading as a login page), flag it + email
-    // the chosen recipients so someone re-auths on the office PC.
-    if (!cfg.dryRun && log.some(l => l.ok === false && /login\?true|session expired|got login page/i.test(l.error || ''))) {
-      setBadge('!'); await sessionAlert('service_fusion')
+    // Alert on SF trouble: a login-looking failure → logged_out; any other apply
+    // failure → error. Deduped server-side so it's one email, not one per line.
+    if (!cfg.dryRun) {
+      const failures = log.filter(l => l.ok === false)
+      const loggedOut = failures.some(l => /login\?true|session expired|got login page/i.test(l.error || ''))
+      if (loggedOut) { setBadge('!'); await notifyAlert('service_fusion', 'logged_out') }
+      else if (failures.length) { setBadge('!'); await notifyAlert('service_fusion', 'error', `${failures.length} remittance line(s) failed to post`) }
     }
 
     await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, notes, log })
