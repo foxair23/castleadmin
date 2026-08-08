@@ -121,15 +121,21 @@
    *  order number. Falls back to the current page if paging misbehaves. */
   async function scrapeAllListPages() {
     const byId = new Map()
+    await sleep(1000) // let List.js bind the pager + row handlers before we page
     for (let page = 0; page < MAX_PAGES; page++) {
       for (const o of scrapeListPage()) if (o.external_id) byId.set(o.external_id, o)
-      const next = findNextPager()
-      if (!next) break
+      // The pager can render / bind its handler a beat after the rows, so re-find
+      // it and fire a full mouse sequence, retrying until the page advances.
+      let next = findNextPager()
+      if (!next) { await sleep(500); next = findNextPager() }
+      if (!next) break // truly the last page
       const prev = pageSig()
-      next.click()
-      if (!(await waitForPageChange(prev))) break // last page or stuck
+      let advanced = false
+      for (let a = 0; a < 3 && !advanced; a++) { realClick(next); advanced = await waitForPageChange(prev) }
+      if (!advanced) break // last page or stuck
       if (page > 0 && page % 5 === 0) LOG(`paged ${page + 1}…`)
     }
+    LOG(`paged through ${byId.size} order(s)`)
     return [...byId.values()]
   }
 
