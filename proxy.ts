@@ -64,10 +64,12 @@ export async function proxy(request: NextRequest) {
     // extension's apply queue/callback), not session-authed — so they must skip
     // the login redirect, or the extension's CORS preflight is 307'd and fails.
     pathname.startsWith('/api/remittance/') ||
-    // Same for the extension's SF-note queue and vendor-portal order ingest —
-    // shared-token authed, called cross-origin by the extension.
+    // Same for the extension's SF-note queue, vendor-portal order ingest, and
+    // session-logged-out alert — shared-token authed, called cross-origin by the
+    // extension.
     pathname.startsWith('/api/sf-notes/') ||
-    pathname.startsWith('/api/vendor-orders/')
+    pathname.startsWith('/api/vendor-orders/') ||
+    pathname.startsWith('/api/ops/')
   ) {
     if (pathname === '/login' && user) {
       return NextResponse.redirect(new URL('/', request.url))

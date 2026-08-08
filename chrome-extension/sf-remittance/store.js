@@ -10,6 +10,7 @@ export const DEFAULTS = {
   genieEnabled: true,      // scrape + log Genie/Home Depot portal orders (content script)
   genieAutoDetail: false,  // after a list scrape, auto-open orders to scrape their detail (backfills address/phone/store#)
   maxDetailPerRun: 12,     // cap orders auto-detailed per list visit (keeps the sweep bounded/reliable)
+  genieScheduleEnabled: false, // auto-crawl on a schedule (hourly 7a–6p Mon–Sat + nightly full) — office PC only
 }
 
 export async function getConfig() {

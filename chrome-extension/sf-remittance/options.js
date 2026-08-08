@@ -1,7 +1,7 @@
 import { getConfig, setConfig } from './store.js'
 
 const fields = ['baseUrl', 'token', 'receivedBy', 'pollMinutes', 'maxDetailPerRun']
-const checks = ['enabled', 'dryRun', 'genieEnabled', 'genieAutoDetail']
+const checks = ['enabled', 'dryRun', 'genieEnabled', 'genieAutoDetail', 'genieScheduleEnabled']
 
 async function load() {
   const c = await getConfig()

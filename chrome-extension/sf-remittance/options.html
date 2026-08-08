@@ -44,6 +44,9 @@
   <label>Max orders to detail per visit</label>
   <input id="maxDetailPerRun" type="number" min="1" max="220" />
 
+  <div class="row"><input id="genieScheduleEnabled" type="checkbox" /><label for="genieScheduleEnabled">Crawl automatically on a schedule</label></div>
+  <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, crawls, closes it. Needs Chrome running and logged into the Genie portal; if it finds you logged out, it tries your saved password, then badges the icon and emails whoever you pick in Notifications.</div>
+
   <div><button id="save">Save</button><span id="saved" class="saved" style="display:none">Saved ✓</span></div>
   <script type="module" src="options.js"></script>
 </body>

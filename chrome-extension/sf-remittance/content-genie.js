@@ -18,6 +18,8 @@
   const VENDOR = 'genie_thd'
   const AUTO_PAGE = true          // walk all list pages (List.js client-side pager — instant, no network)
   const MAX_PAGES = 40            // safety cap
+  const MAX_ATTEMPTS = 3          // per-order tries in a sweep before giving up (retried next crawl)
+  const WATCHDOG_MS = 60000       // if a page doesn't progress in this long mid-sweep, recover to the list
   // Canonical order-list URL — the sweep returns here between orders. Using a
   // clean, stable URL (not whatever variant was opened, which may carry a stale
   // ?currentDate= cache-buster that doesn't re-render the grid) keeps it reliable.
@@ -243,6 +245,16 @@
   const clearSweep = () => new Promise(r => chrome.storage.local.remove(SWEEP_KEY, r))
   const findOrderLink = (id) => [...document.querySelectorAll('a')].find(a => norm(a.textContent) === String(id))
 
+  // A scheduled crawl sets genieCrawlMode ('full' backfills everything nightly;
+  // 'incremental' details only new orders hourly). Manual crawls leave it null.
+  const getCrawlMode = () => new Promise(r => chrome.storage.local.get({ genieCrawlMode: null }, d => r(d.genieCrawlMode)))
+  // Tell the background a crawl reached a terminal state, so a scheduled run can
+  // close its tab. Harmless for manual crawls (background ignores non-crawl tabs).
+  function endCrawl() {
+    chrome.storage.local.remove('genieCrawlMode')
+    try { chrome.runtime.sendMessage({ type: 'genie-crawl-done' }) } catch { /* SW asleep — timeout alarm covers it */ }
+  }
+
   async function waitForRows(ms = 20000) {
     const start = Date.now()
     while (Date.now() - start < ms) { if (scrapeListPage().length) return true; await sleep(500) }
@@ -264,18 +276,30 @@
     }
   }
 
+  // Drop the head of the queue (and its attempt count) and move on.
   async function dropHead(sweep) {
-    await setSweep({ ...sweep, queue: sweep.queue.slice(1) })
+    const [head, ...rest] = sweep.queue
+    const attempts = { ...(sweep.attempts || {}) }; delete attempts[head]
+    await setSweep({ ...sweep, queue: rest, attempts })
     return resumeSweepOnList()
   }
 
   /** On the list page mid-sweep: find the next queued order (paging to it if
-   *  needed) and click into its detail. Drops an order it can't locate/open. */
+   *  needed) and click into its detail. Drops an order it can't locate/open, or
+   *  that has failed too many times (so one bad order never wedges the crawl). */
   async function resumeSweepOnList() {
     const sweep = await getSweep()
-    if (!sweep || !sweep.queue.length) { await clearSweep(); return }
+    if (!sweep || !sweep.queue.length) { await clearSweep(); endCrawl(); return }
     const id = sweep.queue[0]
-    LOG(`detail sweep: locating #${id} (${sweep.queue.length} left)`)
+    // Count this attempt; give up on an order that keeps failing.
+    const attempts = { ...(sweep.attempts || {}) }
+    attempts[id] = (attempts[id] || 0) + 1
+    if (attempts[id] > MAX_ATTEMPTS) {
+      LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} tries — skipping`)
+      return dropHead({ ...sweep, attempts })
+    }
+    await setSweep({ ...sweep, attempts })
+    LOG(`detail sweep: locating #${id} (${sweep.queue.length} left, try ${attempts[id]})`)
     await waitForRows()
     await sleep(1200) // let List.js bind row click handlers before we click
     let link = findOrderLink(id), pages = 0
@@ -328,35 +352,75 @@
     LOG('ingest result', res)
 
     const cfg = await getCfg()
-    if (cfg.genieAutoDetail && res && res.needDetail && res.needDetail.length) {
-      const queue = res.needDetail.slice(0, cfg.maxDetailPerRun)
-      LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail`)
+    const mode = await getCrawlMode()
+    // Scheduled crawls always detail (full backfills all; incremental just new).
+    const autoDetail = !!mode || cfg.genieAutoDetail
+    const cap = mode === 'full' ? 250 : mode === 'incremental' ? 25 : cfg.maxDetailPerRun
+    if (autoDetail && res && res.needDetail && res.needDetail.length) {
+      const queue = res.needDetail.slice(0, cap)
+      LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail${mode ? ` (${mode})` : ''}`)
       await setSweep({ queue, listUrl: LIST_URL, startedAt: Date.now() })
       // The full-list scrape left us on the LAST page; the sweep only pages
       // forward, so go to a clean page-1 list before it begins. The (fresh,
       // non-stale) sweep resumes on load.
       goToList()
+    } else {
+      endCrawl() // nothing to sweep — a scheduled crawl is done, close its tab
     }
   }
 
   async function runDetail() {
     let tries = 0, o = null
-    while (tries++ < 40 && !(o = scrapeDetail())) await sleep(500)
+    while (tries++ < 40 && !(o = safeScrapeDetail())) await sleep(500)
     if (o) { LOG('detail: scraped', o.external_id); await ingest('detail', o) }
     else LOG('detail: nothing scraped — DOM likely differs')
 
     const sweep = await getSweep()
-    if (sweep && sweep.queue.length) {
-      const remaining = o ? sweep.queue.filter(x => x !== o.external_id) : sweep.queue.slice(1)
-      if (remaining.length) { await setSweep({ ...sweep, queue: remaining }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList() }
-      else { await clearSweep(); LOG('detail sweep: complete') }
+    if (!sweep || !sweep.queue.length) return
+    // Advance: on a good scrape the order is done (remove it + its attempts); on a
+    // miss, leave it in place so attempts-tracking retries/gives-up on next visit.
+    if (o) {
+      const attempts = { ...(sweep.attempts || {}) }; delete attempts[o.external_id]
+      const remaining = sweep.queue.filter(x => x !== o.external_id)
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList() }
+      else { await clearSweep(); LOG('detail sweep: complete'); endCrawl() }
+    } else {
+      LOG('detail sweep: scrape missed, returning to list to retry/skip'); goToList()
     }
+  }
+
+  // scrapeDetail can touch a half-rendered/odd page; never let it throw the crawl dead.
+  function safeScrapeDetail() {
+    try { return scrapeDetail() } catch (e) { LOG('detail: scrape error', e?.message || e); return null }
   }
 
   async function main() {
     const type = pageType()
-    if (type === 'list') await runList()
-    else if (type === 'detail') await runDetail()
+    const sweep = await getSweep()
+    const sweeping = !!(sweep && sweep.queue.length)
+
+    // Landed somewhere unexpected (blank/error/timeout page) mid-sweep → recover.
+    if (!type) { if (sweeping) { LOG('genie: unexpected page during sweep — recovering to list'); goToList() } return }
+
+    // Watchdog: if this page doesn't progress (navigate away) within the timeout,
+    // recover to the list so one stuck page can't wedge the whole crawl. Normal
+    // navigation unloads the page and cancels this; it only fires on a real stall,
+    // and only if the sweep is still active.
+    if (sweeping) {
+      setTimeout(async () => {
+        const s = await getSweep()
+        if (s && s.queue.length) { LOG('genie watchdog: page stalled, recovering to list'); goToList() }
+      }, WATCHDOG_MS)
+    }
+
+    try {
+      if (type === 'list') await runList()
+      else if (type === 'detail') await runDetail()
+    } catch (e) {
+      LOG('genie: run error — recovering', e?.message || e)
+      if (sweeping) goToList()
+    }
+    return
   }
 
   // Manual re-scrape from the popup / console (single page, no sweep).
