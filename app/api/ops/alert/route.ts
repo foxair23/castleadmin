@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { alertSessionLoggedOut } from '@/lib/ops/session-alert'
+import { sendAutomationAlert } from '@/lib/ops/alert'
 
 export const dynamic = 'force-dynamic'
 
-// POST { site: 'service_fusion' | 'genie' } — the browser extension reports a
-// site logged out; we email the chosen recipients (deduped). Same shared-token
-// guard + open CORS as the other extension endpoints.
+// POST { source, kind?, detail? } — the browser extension reports an automation
+// problem (site logged out, crawl failed, post failed); we email the chosen
+// recipients (deduped). Same shared-token guard + open CORS as the other
+// extension endpoints.
 function authed(req: NextRequest): boolean {
   const token = process.env.REMITTANCE_APPLY_TOKEN
   if (!token) return false
@@ -19,9 +20,9 @@ export function OPTIONS() { return new NextResponse(null, { status: 204, headers
 
 export async function POST(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors })
-  let body: { site?: string }
+  let body: { source?: string; kind?: 'logged_out' | 'error'; detail?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400, headers: cors }) }
-  if (!body.site) return NextResponse.json({ error: 'site required' }, { status: 400, headers: cors })
-  const res = await alertSessionLoggedOut(body.site)
+  if (!body.source) return NextResponse.json({ error: 'source required' }, { status: 400, headers: cors })
+  const res = await sendAutomationAlert({ source: body.source, kind: body.kind, detail: body.detail })
   return NextResponse.json(res, { status: res.ok ? 200 : 400, headers: cors })
 }

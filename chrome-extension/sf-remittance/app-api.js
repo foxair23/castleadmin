@@ -51,13 +51,14 @@ export async function postVendorOrders(baseUrl, token, vendor, orders) {
   return res.json() // { inserted, updated, statusChanges, needDetail: [...] }
 }
 
-// Report a site logged out → Castle Admin emails the chosen recipients (deduped).
-export async function postSessionAlert(baseUrl, token, site) {
-  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ops/session-alert`, {
+// Report an automation problem (site logged out, crawl/post failed) → Castle
+// Admin emails the chosen recipients (deduped). source: 'service_fusion'|'genie'|…
+export async function postAlert(baseUrl, token, { source, kind, detail }) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ops/alert`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ site }),
+    body: JSON.stringify({ source, kind, detail }),
   })
-  if (!res.ok) throw new Error(`session-alert ${res.status}: ${(await res.text()).slice(0, 160)}`)
+  if (!res.ok) throw new Error(`alert ${res.status}: ${(await res.text()).slice(0, 160)}`)
   return res.json()
 }
