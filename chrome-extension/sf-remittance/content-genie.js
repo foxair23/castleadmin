@@ -18,6 +18,10 @@
   const VENDOR = 'genie_thd'
   const AUTO_PAGE = true          // walk all list pages (List.js client-side pager — instant, no network)
   const MAX_PAGES = 40            // safety cap
+  // Canonical order-list URL — the sweep returns here between orders. Using a
+  // clean, stable URL (not whatever variant was opened, which may carry a stale
+  // ?currentDate= cache-buster that doesn't re-render the grid) keeps it reliable.
+  const LIST_URL = 'https://install.openings.net/webcenter/portal/installerconnect/orderlist'
   const LOG = (...a) => console.log('[genie]', ...a)
   const sleep = (ms) => new Promise(r => setTimeout(r, ms))
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
@@ -245,6 +249,13 @@
     return false
   }
 
+  // Go to the clean list page. Forces a reload if we're already at that exact URL
+  // (setting location.href to the current URL wouldn't navigate).
+  function goToList() {
+    if (location.href === LIST_URL) location.reload()
+    else location.href = LIST_URL
+  }
+
   /** Full mouse-event sequence — the portal's row navigation is a delegated JS
    *  handler that a bare .click() sometimes doesn't trigger. */
   function realClick(el) {
@@ -314,11 +325,11 @@
     if (cfg.genieAutoDetail && res && res.needDetail && res.needDetail.length) {
       const queue = res.needDetail.slice(0, cfg.maxDetailPerRun)
       LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail`)
-      await setSweep({ queue, listUrl: location.href, startedAt: Date.now() })
+      await setSweep({ queue, listUrl: LIST_URL, startedAt: Date.now() })
       // The full-list scrape left us on the LAST page; the sweep only pages
-      // forward, so reload to reset to page 1 before it begins. On reload the
-      // (fresh, non-stale) sweep resumes from page 1.
-      location.reload()
+      // forward, so go to a clean page-1 list before it begins. The (fresh,
+      // non-stale) sweep resumes on load.
+      goToList()
     }
   }
 
@@ -331,7 +342,7 @@
     const sweep = await getSweep()
     if (sweep && sweep.queue.length) {
       const remaining = o ? sweep.queue.filter(x => x !== o.external_id) : sweep.queue.slice(1)
-      if (remaining.length) { await setSweep({ ...sweep, queue: remaining }); LOG(`detail sweep: ${remaining.length} left, returning to list`); location.href = sweep.listUrl }
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList() }
       else { await clearSweep(); LOG('detail sweep: complete') }
     }
   }
