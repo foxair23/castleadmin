@@ -21,6 +21,7 @@ export interface VendorOrder {
   email: string | null
   scope: string | null
   sf_job_id: string | null
+  sf_job_number: string | null
   detail_scraped_at: string | null
   last_seen_at: string
 }
@@ -41,7 +42,7 @@ const statusStyle = (s: string | null) => {
 type SortKey =
   | 'external_id' | 'status' | 'next_step' | 'customer_name' | 'street_address'
   | 'phone' | 'email' | 'scope' | 'order_date' | 'schedule_date' | 'customer_po'
-  | 'store_number' | 'sf_job_id' | 'last_seen_at'
+  | 'store_number' | 'sf_job_number' | 'last_seen_at'
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'external_id', label: 'Order #' },
@@ -56,14 +57,13 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'schedule_date', label: 'Scheduled' },
   { key: 'customer_po', label: 'PO' },
   { key: 'store_number', label: 'Store' },
-  { key: 'sf_job_id', label: 'SF Job' },
+  { key: 'sf_job_number', label: 'SF Job #' },
   { key: 'last_seen_at', label: 'Seen' },
 ]
 
 const uniq = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b))
 
 function sortVal(o: VendorOrder, k: SortKey): string | number | null {
-  if (k === 'sf_job_id') return o.sf_job_id ? 1 : 0
   return o[k]
 }
 
@@ -86,7 +86,7 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
       if (nextStep && o.next_step !== nextStep) return false
       if (orderType && o.order_type !== orderType) return false
       if (q) {
-        const hay = [o.external_id, o.customer_name, o.street_address, o.city, o.customer_po, o.store_number, o.email, o.phone, o.scope, o.next_step, o.status]
+        const hay = [o.external_id, o.customer_name, o.street_address, o.city, o.customer_po, o.store_number, o.email, o.phone, o.scope, o.next_step, o.status, o.sf_job_number]
           .filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
@@ -179,7 +179,7 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.schedule_date)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.store_number || '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{o.sf_job_id ? <span className="text-green-700">✓</span> : <span className="text-gray-300">—</span>}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{o.sf_job_number ? <span className="text-green-700 font-medium">{o.sf_job_number}</span> : <span className="text-gray-300">—</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-400 text-xs">{fmtSeen(o.last_seen_at)}</td>
               </tr>
             ))}
