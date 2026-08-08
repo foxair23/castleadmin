@@ -16,8 +16,10 @@ interface OrderRow {
   store_number: string | null
   order_date: string | null
   schedule_date: string | null
+  street_address: string | null
   city: string | null
   state_prov: string | null
+  postal_code: string | null
   phone: string | null
   email: string | null
   scope: string | null
@@ -43,7 +45,7 @@ export default async function VendorOrdersPage() {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
   const { data } = await db
     .from('vendor_orders')
-    .select('id, vendor, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, city, state_prov, phone, email, scope, sf_job_id, detail_scraped_at, last_seen_at')
+    .select('id, vendor, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, detail_scraped_at, last_seen_at')
     .order('order_date', { ascending: false, nullsFirst: false })
     .limit(500)
   const orders = (data ?? []) as OrderRow[]
@@ -82,7 +84,7 @@ export default async function VendorOrdersPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-gray-600">
               <tr>
-                {['Order #', 'Status', 'Next Step', 'Customer', 'City', 'Order', 'Scheduled', 'PO', 'Store', 'SF Job', 'Seen'].map(h => (
+                {['Order #', 'Status', 'Next Step', 'Customer', 'Address', 'Phone', 'Email', 'Scope', 'Order', 'Scheduled', 'PO', 'Store', 'SF Job', 'Seen'].map(h => (
                   <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -94,7 +96,10 @@ export default async function VendorOrdersPage() {
                   <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusStyle(o.status)}`}>{o.status || '—'}</span></td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.next_step || '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{o.customer_name || '—'}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.city ? `${o.city}${o.state_prov ? ', ' + o.state_prov : ''}` : '—'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.street_address ? `${o.street_address}${o.city ? ', ' + o.city : ''}${o.state_prov ? ', ' + o.state_prov : ''}${o.postal_code ? ' ' + o.postal_code : ''}` : (o.city ? `${o.city}${o.state_prov ? ', ' + o.state_prov : ''}` : '—')}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.phone || '—'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.email || '—'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600 max-w-[200px] truncate" title={o.scope || ''}>{o.scope || '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.order_date)}</td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.schedule_date)}</td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>

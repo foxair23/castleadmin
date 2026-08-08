@@ -168,15 +168,25 @@
     return null
   }
 
+  // Extra labels we don't have typed columns for — captured into `raw` so nothing
+  // on the detail page is lost (promote to columns later if needed).
+  const EXTRA_LABELS = ['source from', 'mxp number', 'vendor site name', 'year home built', 'schedule date']
+
   function scrapeDetail() {
     const o = { hasDetail: true }
     const tmp = {}
+    const raw = {}
     for (const [label, field] of Object.entries(DETAIL_LABELS)) {
       const v = valueForLabel(label)
       if (v == null) continue
+      raw[label] = v
       if (field.startsWith('__')) tmp[field] = v
       else if (field === 'order_date') o[field] = toISO(v) ?? null
       else o[field] = v
+    }
+    for (const label of EXTRA_LABELS) {
+      const v = valueForLabel(label)
+      if (v != null) raw[label] = v
     }
     // phone fallback: work → home → other
     if (!o.phone) o.phone = tmp.__homePhone || tmp.__otherPhone || null
@@ -191,6 +201,7 @@
       const desc = scopeRow.cells.find(c => /install|gdo|opener|door/i.test(c))
       if (desc) o.scope = desc.replace(/^\(|\)$/g, '').trim()
     }
+    o.raw = raw
     if (!o.external_id) { LOG('detail: no order number found — DOM may differ'); return null }
     return o
   }
@@ -280,10 +291,18 @@
     return dropHead(sweep)
   }
 
+  const SWEEP_STALE_MS = 15 * 60 * 1000 // a sweep older than this is abandoned, not resumed
+
   async function runList() {
-    // Mid-sweep: don't re-scrape the whole list, just advance the sweep.
+    // Mid-sweep: don't re-scrape the whole list, just advance the sweep — unless
+    // it's stale (left over from a prior session / a crash), in which case drop it
+    // and start fresh so we never get wedged on an old queue.
     const active = await getSweep()
-    if (active && active.queue.length) { await resumeSweepOnList(); return }
+    if (active && active.queue.length) {
+      const stale = !active.startedAt || (Date.now() - active.startedAt > SWEEP_STALE_MS)
+      if (!stale) { await resumeSweepOnList(); return }
+      LOG('detail sweep: discarding stale queue'); await clearSweep()
+    }
 
     if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); return }
     const orders = AUTO_PAGE ? await scrapeAllListPages() : scrapeListPage()
@@ -295,8 +314,11 @@
     if (cfg.genieAutoDetail && res && res.needDetail && res.needDetail.length) {
       const queue = res.needDetail.slice(0, cfg.maxDetailPerRun)
       LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail`)
-      await setSweep({ queue, listUrl: location.href })
-      await resumeSweepOnList()
+      await setSweep({ queue, listUrl: location.href, startedAt: Date.now() })
+      // The full-list scrape left us on the LAST page; the sweep only pages
+      // forward, so reload to reset to page 1 before it begins. On reload the
+      // (fresh, non-stale) sweep resumes from page 1.
+      location.reload()
     }
   }
 
