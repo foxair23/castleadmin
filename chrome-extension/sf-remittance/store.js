@@ -8,6 +8,8 @@ export const DEFAULTS = {
   pollMinutes: 10,
   receivedBy: 'RA',        // Payment[received_by] value in SF
   genieEnabled: true,      // scrape + log Genie/Home Depot portal orders (content script)
+  genieAutoDetail: false,  // after a list scrape, auto-open orders to scrape their detail (backfills address/phone/store#)
+  maxDetailPerRun: 12,     // cap orders auto-detailed per list visit (keeps the sweep bounded/reliable)
 }
 
 export async function getConfig() {
