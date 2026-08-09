@@ -26,6 +26,7 @@ export interface VendorOrder {
   sf_job_number: string | null
   sf_match_method: 'linked' | 'po' | 'name' | 'email' | 'phone' | 'pending' | null
   detail_scraped_at: string | null
+  first_seen_at: string
   last_seen_at: string
 }
 
@@ -45,9 +46,10 @@ const statusStyle = (s: string | null) => {
 type SortKey =
   | 'external_id' | 'status' | 'next_step' | 'customer_name' | 'street_address'
   | 'phone' | 'email' | 'scope' | 'order_date' | 'schedule_date' | 'customer_po'
-  | 'store_number' | 'sf_job_number' | 'last_seen_at'
+  | 'store_number' | 'sf_job_number' | 'first_seen_at' | 'last_seen_at'
 
 const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'first_seen_at', label: 'First Seen' },
   { key: 'order_date', label: 'Order Date' },
   { key: 'external_id', label: 'HD Order #' },
   { key: 'status', label: 'Status' },
@@ -89,7 +91,7 @@ function CreateJobButton({ orderId }: { orderId: string }) {
 }
 
 export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] }) {
-  const [sortKey, setSortKey] = useState<SortKey>('order_date')
+  const [sortKey, setSortKey] = useState<SortKey>('first_seen_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
@@ -130,7 +132,7 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
 
   function toggleSort(k: SortKey) {
     if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
-    else { setSortKey(k); setSortDir(k === 'order_date' || k === 'schedule_date' || k === 'last_seen_at' ? 'desc' : 'asc') }
+    else { setSortKey(k); setSortDir(['order_date', 'schedule_date', 'first_seen_at', 'last_seen_at'].includes(k) ? 'desc' : 'asc') }
   }
 
   const selectCls = 'text-gray-900 border border-gray-300 rounded-md px-2 py-1 text-sm bg-white'
@@ -188,6 +190,7 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
           <tbody className="divide-y divide-gray-100 bg-white text-gray-900">
             {rows.map(o => (
               <tr key={o.id} className="hover:bg-gray-50">
+                <td className="px-3 py-2 whitespace-nowrap text-gray-700">{fmtSeen(o.first_seen_at)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.order_date)}</td>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{o.external_id}</td>
                 <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusStyle(o.status)}`}>{o.status || '—'}</span></td>

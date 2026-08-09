@@ -20,8 +20,8 @@ export default async function VendorOrdersView({ canManage = false }: { canManag
   const autopilot = await getAutopilot()
   const { data } = await db
     .from('vendor_orders')
-    .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, last_seen_at')
-    .order('order_date', { ascending: false, nullsFirst: false })
+    .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at')
+    .order('first_seen_at', { ascending: false })
     .limit(1000)
   const base = (data ?? []) as VendorOrder[]
 
