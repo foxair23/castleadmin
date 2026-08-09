@@ -37,7 +37,7 @@ export default function SalesNav({ role, fullName }: SalesNavProps) {
           </Link>
 
           {(() => {
-            const OTHER = ['/sales/action-items', '/sales/leaderboard', '/sales/reviews', '/sales/approvals', '/sales/leadgen']
+            const OTHER = ['/sales/action-items', '/sales/leaderboard', '/sales/reviews', '/sales/approvals', '/sales/leadgen', '/sales/hd-orders']
             const salesActive = pathname === '/sales' || (pathname.startsWith('/sales') && !OTHER.some(p => pathname.startsWith(p)))
             return (
               <Link
@@ -75,6 +75,13 @@ export default function SalesNav({ role, fullName }: SalesNavProps) {
             className={`text-sm font-medium pb-0.5 transition-colors ${pathname.startsWith('/sales/leadgen') ? 'text-white [box-shadow:0_2px_0_0_#ef4444]' : 'text-gray-400 hover:text-white'}`}
           >
             LeadGen
+          </Link>
+
+          <Link
+            href="/sales/hd-orders"
+            className={`text-sm font-medium pb-0.5 transition-colors ${pathname.startsWith('/sales/hd-orders') ? 'text-white [box-shadow:0_2px_0_0_#ef4444]' : 'text-gray-400 hover:text-white'}`}
+          >
+            HD Orders
           </Link>
 
           {role === 'admin' && (

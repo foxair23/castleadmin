@@ -26,6 +26,7 @@ import type {
   ArHoldResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
+import type { GenieActionItem, GenieActionItemsResult } from '@/lib/vendor-orders/action-items'
 import PhotoLightbox from '@/components/PhotoLightbox'
 import ResendReminderModal from './ResendReminderModal'
 
@@ -1007,6 +1008,8 @@ interface Props {
   leadsToCall?: UncontactedLeadsResult
   /** Open jobs for customers who owe on another job — AR Hold tab. */
   arHold?: ArHoldResult
+  /** Genie SF jobs our service created, awaiting handling — Genie tab. */
+  genie?: GenieActionItemsResult
   notes: Record<string, string>
   /** Admin-only A/R email trigger (the sales page omits both). */
   showArReport?: boolean
@@ -1121,7 +1124,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold'
+type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold' | 'genie'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -1138,12 +1141,14 @@ export default function ActionItemsClient({
   zeroRevenueJobs,
   leadsToCall,
   arHold,
+  genie,
   actions,
   notes,
   showArReport = false,
   lastSyncAt = null,
 }: Props) {
   const leadsToCallItems = leadsToCall?.items ?? []
+  const genieItems = genie?.items ?? []
   const router = useRouter()
   const [arModalOpen, setArModalOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -1158,7 +1163,7 @@ export default function ActionItemsClient({
   // useSearchParams Suspense boundary needed).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold']
+    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold', 'genie']
     if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
   }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
@@ -1302,6 +1307,7 @@ export default function ActionItemsClient({
     // Ordered by business importance (owner-specified).
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
     ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'SFI Leads', count: leadsToCallItems.length }] : []),
+    ...(genie ? [{ key: 'genie' as TabKey, label: 'Genie', count: genieItems.length }] : []),
     ...(arHold ? [{ key: 'ar-hold' as TabKey, label: 'AR Hold', count: filteredArHold.length }] : []),
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
     ...(zeroRevenueJobs ? [{ key: 'awaiting-revenue' as TabKey, label: 'Awaiting Revenue', count: filteredZeroRevenue.length }] : []),
@@ -1574,6 +1580,16 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
+      {activeTab === 'genie' && (
+        <AlertSection
+          title="Genie — New SF Jobs to Handle"
+          count={genieItems.length}
+        >
+          <p className="text-xs text-gray-400 mb-2">A row is added when our service creates an SF job from a Genie order. Press Done once it&apos;s been handled (scheduled, etc.).</p>
+          {genieItems.length === 0 ? <AllClear /> : <GenieTable items={genieItems} />}
+        </AlertSection>
+      )}
+
       {activeTab === 'ar-hold' && (
         <AlertSection
           title="AR Hold"
@@ -1632,6 +1648,39 @@ function ArHoldTable({ items, notes, actions }: { items: ArHoldRow[]; notes: Rec
               </td>
               <NotesCell entityType="ar_hold" entityId={j.id} initialNote={notes[`ar_hold:${j.id}`] ?? ''} />
               <td className="px-4 py-2"><AgingPill days={j.oldest_days_outstanding} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function GenieTable({ items }: { items: GenieActionItem[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Done</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">HD Order #</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">SF Job #</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order Date</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {items.map(g => (
+            <tr key={g.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 whitespace-nowrap"><DoneButton leadId={g.id} endpoint="/api/vendor-orders/ack" /></td>
+              <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{g.external_id}</td>
+              <td className="px-4 py-2 text-gray-900">{g.customer_name ?? '—'}</td>
+              <td className="px-4 py-2 font-mono text-xs text-gray-600 whitespace-nowrap">{g.sf_job_number ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-500"><div className="max-w-[220px] truncate" title={g.address ?? undefined}>{g.address ?? '—'}</div></td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(g.order_date)}</td>
+              <td className="px-4 py-2 text-gray-600">{g.status ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{g.status}</span> : <span className="text-gray-400">—</span>}</td>
             </tr>
           ))}
         </tbody>

@@ -13,6 +13,7 @@ import {
   getUncontactedLeads,
   getArHold,
 } from '@/lib/analytics/alerts'
+import { getGenieActionItems } from '@/lib/vendor-orders/action-items'
 import ActionItemsClient from './ActionItemsClient'
 
 export default async function ActionItemsPage() {
@@ -33,7 +34,7 @@ export default async function ActionItemsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, notesResult, lastSyncResult] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, genie, notesResult, lastSyncResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -45,6 +46,7 @@ export default async function ActionItemsPage() {
       getZeroRevenueJobs(),
       getUncontactedLeads(),
       getArHold(),
+      getGenieActionItems(),
       db.from('action_item_notes').select('entity_type, entity_id, note'),
       db.from('sf_sync_runs').select('completed_at').eq('status', 'completed').order('completed_at', { ascending: false }).limit(1).maybeSingle(),
     ])
@@ -88,6 +90,7 @@ export default async function ActionItemsPage() {
       zeroRevenueJobs={zeroRevenueJobs}
       leadsToCall={leadsToCall}
       arHold={arHold}
+      genie={genie}
       actions={actions}
       notes={notes}
       showArReport

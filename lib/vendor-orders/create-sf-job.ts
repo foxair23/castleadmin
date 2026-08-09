@@ -147,8 +147,19 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
     const sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? jobResp?.data?.id ?? '')
     if (!sfJobId || sfJobId === 'undefined') return { ok: false, error: `no job id returned from SF: ${JSON.stringify(jobResp).slice(0, 200)}` }
 
+    // Capture the human job number now (the create response usually has it; else
+    // fetch it) so HD Orders can show it before the mirror ingests the new job.
+    let sfJobNumber: string | null = jobResp?.number ?? jobResp?.job?.number ?? null
+    if (!sfJobNumber) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const g = (await sfGet(`/jobs/${sfJobId}`, { fields: 'number' })) as any
+        sfJobNumber = g?.number ?? g?.items?.[0]?.number ?? null
+      } catch { /* non-fatal — mirror will fill it in */ }
+    }
+
     // 3. Link it back + log.
-    await supabase.from('vendor_orders').update({ sf_job_id: sfJobId, updated_at: new Date().toISOString() }).eq('id', orderId)
+    await supabase.from('vendor_orders').update({ sf_job_id: sfJobId, sf_created_job_number: sfJobNumber, updated_at: new Date().toISOString() }).eq('id', orderId)
     await supabase.from('vendor_order_events').insert({ order_id: orderId, event_type: 'sf_job_created', to_value: sfJobId, detail: { customerId: sfCustomerId, warning: warning ?? null } })
     return { ok: true, sfJobId, warning }
   } catch (e) {
