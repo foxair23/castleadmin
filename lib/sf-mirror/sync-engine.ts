@@ -42,6 +42,11 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
+// A mirror row must be missing from the SF scan for at least this long before the
+// weekly reconcile soft-deletes it — i.e. missing across two consecutive weekly
+// runs — so a single dropped/empty page can't false-delete active records.
+const RECONCILE_GRACE_MS = 6 * 24 * 3600 * 1000
+
 // SF sometimes stores names reversed: fname="Bourcy," lname="Susan"
 // Detect by comma at end of first name and swap.
 // SF also sometimes stores names in ALL CAPS — convert to title case with
@@ -1192,24 +1197,41 @@ export async function runWeeklyReconcileForEntity(
       }
     }
 
-    // Soft-delete detection: find IDs in our DB not returned by SF.
-    // seenIds is the complete set from a fully-paginated SF scan (errors throw
-    // before reaching here), so we must read ALL our rows — paginate past the
-    // 1000-row cap, or large tables (jobs ~4.5k) would under-detect deletions.
+    // Soft-delete detection with a TWO-STRIKES grace period. SF's paginated scan
+    // occasionally drops a page (or returns an empty body without erroring), which
+    // would false-flag active rows as deleted. So a row missing from a single scan
+    // is only stamped (sf_missing_since); it's soft-deleted only once it's been
+    // missing past the grace window (≈ two weekly reconciles). Seen rows clear the
+    // stamp, and seen rows are re-upserted with is_deleted=false (auto-recovery of
+    // anything a prior bad scan wrongly deleted).
     if (seenIds.size > 0) {
-      const allOurs = await fetchAllRows<{ id: string }>((from, to) =>
-        supabase.from(cfg.table).select('id').eq('is_deleted', false)
+      const allOurs = await fetchAllRows<{ id: string; sf_missing_since: string | null }>((from, to) =>
+        supabase.from(cfg.table).select('id, sf_missing_since').eq('is_deleted', false)
           .order('id', { ascending: true }).range(from, to)
       )
+      const candidates = allOurs.filter(r => !seenIds.has(r.id))
 
-      const deletedIds = allOurs
-        .filter(r => !seenIds.has(r.id))
-        .map(r => r.id)
-
-      if (deletedIds.length > 0) {
-        await supabase.from(cfg.table).update({ is_deleted: true, sf_synced_at: nowIso() }).in('id', deletedIds)
-        console.log(`[sf-reconcile] ${cfg.entity}: marked ${deletedIds.length} as deleted`)
+      // Catastrophic-scan guard: a real week deletes a handful. A large candidate
+      // set means the scan was incomplete — do nothing at all (don't even stamp),
+      // so a bad fetch can never cascade.
+      const cap = Math.max(100, Math.floor(allOurs.length * 0.05))
+      if (candidates.length > cap) {
+        console.warn(`[sf-reconcile] ${cfg.entity}: ${candidates.length} deletion candidates exceed cap ${cap} — likely an incomplete SF scan; skipping soft-delete this run`)
+      } else if (candidates.length > 0) {
+        const now = nowIso()
+        const cutoff = new Date(Date.now() - RECONCILE_GRACE_MS).toISOString()
+        const firstMiss = candidates.filter(r => !r.sf_missing_since).map(r => r.id)                       // strike 1: stamp only
+        const confirmed = candidates.filter(r => r.sf_missing_since && r.sf_missing_since < cutoff).map(r => r.id) // missing past grace → delete
+        for (const c of chunk(firstMiss, 500)) await supabase.from(cfg.table).update({ sf_missing_since: now }).in('id', c)
+        for (const c of chunk(confirmed, 500)) await supabase.from(cfg.table).update({ is_deleted: true, sf_synced_at: now }).in('id', c)
+        if (firstMiss.length) console.log(`[sf-reconcile] ${cfg.entity}: ${firstMiss.length} newly missing (grace started)`)
+        if (confirmed.length) console.log(`[sf-reconcile] ${cfg.entity}: marked ${confirmed.length} deleted (missing past grace)`)
       }
+
+      // Reappeared: a seen row that still carried a missing-stamp → clear it.
+      const reappeared = allOurs.filter(r => r.sf_missing_since && seenIds.has(r.id)).map(r => r.id)
+      for (const c of chunk(reappeared, 500)) await supabase.from(cfg.table).update({ sf_missing_since: null }).in('id', c)
+      if (reappeared.length) console.log(`[sf-reconcile] ${cfg.entity}: cleared missing-stamp on ${reappeared.length} reappeared`)
     }
 
     await completeRun(handle, fetched, upserted, pages)
