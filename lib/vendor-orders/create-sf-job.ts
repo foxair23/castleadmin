@@ -91,6 +91,15 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
 
     // 2. Create the job.
     const status = await pickStatus()
+
+    // Custom fields set by name (per the SF API: custom_fields: [{ name, value }]).
+    // Only include ones we actually have a value for.
+    const customFields = (vendor?.sfCustomFields ?? [])
+      .map(cf => ({ name: cf.sfFieldName, value: (o as unknown as Record<string, unknown>)[cf.from] }))
+      .filter(cf => cf.value != null && cf.value !== '')
+    // Service line items every job of this vendor gets (SF: services: [{ name, multiplier }]).
+    const services = (vendor?.sfServiceLines ?? []).map(s => ({ name: s.name, multiplier: s.quantity ?? 1 }))
+
     const jobPayload: Record<string, unknown> = {
       customer_name: parseInt(String(sfCustomerId), 10),
       contact_first_name: name.first,
@@ -103,6 +112,8 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       ...(vendor?.sfJobSource ? { source: vendor.sfJobSource } : {}),
       ...(o.customer_po ? { po_number: o.customer_po } : {}),
       description: buildDescription(o, vendor?.label ?? 'Genie'),
+      ...(customFields.length ? { custom_fields: customFields } : {}),
+      ...(services.length ? { services } : {}),
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

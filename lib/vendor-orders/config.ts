@@ -15,6 +15,8 @@ export interface VendorConfig {
    * field's display name; value is the vendor_orders column to pull from.
    */
   sfCustomFields: Array<{ sfFieldName: string; from: keyof VendorOrderFields }>
+  /** Service line items added to every created job (Phase 2), by name. */
+  sfServiceLines?: Array<{ name: string; quantity?: number }>
 }
 
 /** The columns a scraper can populate (subset of vendor_orders). */
@@ -47,6 +49,8 @@ export const VENDORS: Record<string, VendorConfig> = {
       { sfFieldName: 'Home Depot Order #', from: 'external_id' },
       { sfFieldName: 'Home Depot Store #', from: 'store_number' },
     ],
+    // Every Genie job gets this service line added.
+    sfServiceLines: [{ name: 'Overhead Door Motor Install', quantity: 1 }],
   },
 }
 
