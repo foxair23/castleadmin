@@ -153,7 +153,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const orders = msg.kind === 'detail' ? [msg.payload] : (msg.payload || [])
     if (!orders.length) { sendResponse({ ok: true, skipped: 'no orders' }); return }
     try {
-      const res = await postVendorOrders(cfg.baseUrl, cfg.token, msg.vendor, orders)
+      const res = await postVendorOrders(cfg.baseUrl, cfg.token, msg.vendor, orders, { kind: msg.kind, mode: msg.mode })
       await setStatus({ source: 'genie', vendor: msg.vendor, kind: msg.kind, ingest: res })
       console.log('[sf-remittance] genie ingest', res)
       sendResponse({ ok: true, ...res })

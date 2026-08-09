@@ -38,16 +38,49 @@ export default async function VendorOrdersPage() {
   }, {})
   const needDetail = orders.filter(o => !o.detail_scraped_at).length
 
+  // Last scrape from the vendor portal — freshness + kind, so a broken scraper
+  // (stale time, or an unexpectedly small order count) is obvious at a glance.
+  const { data: runRow } = await db
+    .from('vendor_scrape_runs')
+    .select('mode, received, inserted, updated, status_changes, created_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const lastRun = runRow as { mode: string | null; received: number; inserted: number; updated: number; status_changes: number; created_at: string } | null
+  // eslint-disable-next-line react-hooks/purity -- server render; wall-clock freshness is intentional
+  const hoursSince = lastRun ? (Date.now() - new Date(lastRun.created_at).getTime()) / 3600000 : null
+  const stale = hoursSince != null && hoursSince > 3
+  const thin = lastRun != null && orders.length > 50 && lastRun.received < orders.length * 0.5
+  const fmtRun = (s: string) => new Date(s).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const rel = (h: number) => h < 1 ? `${Math.max(1, Math.round(h * 60))}m ago` : h < 24 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
       <div className="flex items-baseline justify-between mb-1">
         <h1 className="text-2xl font-bold text-gray-900">Vendor Orders</h1>
         <span className="text-sm text-gray-500">{orders.length} total</span>
       </div>
-      <p className="text-sm text-gray-500 mb-4">
+      <p className="text-sm text-gray-500 mb-3">
         Orders scraped from vendor portals by the browser extension.{' '}
         {Object.values(VENDORS).map(v => v.label).join(' · ') || 'No vendors configured.'}
       </p>
+
+      <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${stale || thin ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+        {lastRun ? (
+          <span>
+            {(stale || thin) && <span className="font-semibold">⚠ </span>}
+            <span className="font-medium">Last Genie scrape:</span>{' '}
+            {fmtRun(lastRun.created_at)} ({rel(hoursSince!)})
+            {lastRun.mode && <> · <span className="uppercase text-xs tracking-wide">{lastRun.mode}</span></>}
+            {' · '}{lastRun.received} orders
+            <span className="text-gray-500"> ({lastRun.inserted} new, {lastRun.updated} updated, {lastRun.status_changes} status changes)</span>
+            {stale && <span className="ml-1 font-medium">— stale, check the crawler</span>}
+            {thin && <span className="ml-1 font-medium">— fewer orders than expected, check pagination</span>}
+          </span>
+        ) : (
+          <span>No scrapes recorded yet — open the Genie order list with the extension installed.</span>
+        )}
+      </div>
 
       <div className="flex flex-wrap gap-2 mb-4 text-sm">
         {Object.entries(counts).map(([k, n]) => (

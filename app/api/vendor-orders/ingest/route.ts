@@ -20,9 +20,9 @@ export function OPTIONS() { return new NextResponse(null, { status: 204, headers
 
 export async function POST(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors })
-  let body: { vendor?: string; orders?: ScrapedOrder[] }
+  let body: { vendor?: string; orders?: ScrapedOrder[]; kind?: 'list' | 'detail'; mode?: string | null }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400, headers: cors }) }
   if (!body.vendor) return NextResponse.json({ error: 'vendor required' }, { status: 400, headers: cors })
-  const res = await ingestOrders(body.vendor, body.orders ?? [])
+  const res = await ingestOrders(body.vendor, body.orders ?? [], { kind: body.kind, mode: body.mode })
   return NextResponse.json(res, { status: res.ok ? 200 : 400, headers: cors })
 }

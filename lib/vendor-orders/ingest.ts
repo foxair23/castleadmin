@@ -46,7 +46,9 @@ export interface IngestResult {
   error?: string
 }
 
-export async function ingestOrders(vendor: string, orders: ScrapedOrder[]): Promise<IngestResult> {
+export interface IngestMeta { kind?: 'list' | 'detail'; mode?: string | null }
+
+export async function ingestOrders(vendor: string, orders: ScrapedOrder[], meta: IngestMeta = {}): Promise<IngestResult> {
   const base = { ok: false, vendor, received: orders?.length ?? 0, inserted: 0, updated: 0, statusChanges: 0, needDetail: [] as string[] }
   if (!getVendor(vendor)) return { ...base, error: `unknown vendor '${vendor}'` }
   if (!Array.isArray(orders) || orders.length === 0) return { ...base, ok: true }
@@ -102,6 +104,15 @@ export async function ingestOrders(vendor: string, orders: ScrapedOrder[]): Prom
   }
 
   if (events.length) await supabase.from('vendor_order_events').insert(events)
+
+  // Record a scrape-run for the health readout. Only for list scrapes — those are
+  // the "we read the whole order list" events; per-order detail posts would be noise.
+  const kind = meta.kind ?? 'list'
+  if (kind === 'list') {
+    await supabase.from('vendor_scrape_runs').insert({
+      vendor, kind, mode: meta.mode ?? null, received: orders.length, inserted, updated, status_changes: statusChanges,
+    })
+  }
 
   return { ok: true, vendor, received: orders.length, inserted, updated, statusChanges, needDetail: [...new Set(needDetail)] }
 }

@@ -227,10 +227,12 @@
   }
 
   /** Post scraped orders to the background → Castle Admin ingest. Resolves with
-   *  the ingest result (incl. needDetail), or null on error. */
-  function ingest(kind, payload) {
+   *  the ingest result (incl. needDetail), or null on error. Tags the scrape mode
+   *  (full/incremental from a scheduled crawl, else manual) for the health readout. */
+  async function ingest(kind, payload) {
+    const mode = (await getCrawlMode()) || 'manual'
     return new Promise(resolve => {
-      chrome.runtime.sendMessage({ type: 'genie', kind, vendor: VENDOR, payload }, (res) => {
+      chrome.runtime.sendMessage({ type: 'genie', kind, mode, vendor: VENDOR, payload }, (res) => {
         if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); resolve(null); return }
         resolve(res)
       })
