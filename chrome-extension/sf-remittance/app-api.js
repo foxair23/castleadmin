@@ -41,11 +41,11 @@ export async function postNoteResult(baseUrl, token, payload) {
 
 // ── Vendor portal orders (Genie / Home Depot, etc.) ─────────────────────────
 
-export async function postVendorOrders(baseUrl, token, vendor, orders) {
+export async function postVendorOrders(baseUrl, token, vendor, orders, { kind, mode } = {}) {
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/ingest`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vendor, orders }),
+    body: JSON.stringify({ vendor, orders, kind, mode }),
   })
   if (!res.ok) throw new Error(`ingest ${res.status}: ${(await res.text()).slice(0, 200)}`)
   return res.json() // { inserted, updated, statusChanges, needDetail: [...] }
