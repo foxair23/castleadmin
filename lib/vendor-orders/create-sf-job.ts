@@ -55,7 +55,7 @@ async function pickStatus(): Promise<{ id: number; name: string }> {
   return open
 }
 
-export interface CreateJobResult { ok: boolean; sfJobId?: string; error?: string }
+export interface CreateJobResult { ok: boolean; sfJobId?: string; error?: string; warning?: string }
 
 export async function createSfJobForOrder(orderId: string): Promise<CreateJobResult> {
   const supabase = db()
@@ -97,8 +97,10 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
     const customFields = (vendor?.sfCustomFields ?? [])
       .map(cf => ({ name: cf.sfFieldName, value: (o as unknown as Record<string, unknown>)[cf.from] }))
       .filter(cf => cf.value != null && cf.value !== '')
-    // Service line items every job of this vendor gets (SF: services: [{ name, multiplier }]).
-    const services = (vendor?.sfServiceLines ?? []).map(s => ({ name: s.name, multiplier: s.quantity ?? 1 }))
+    // Service line items every job of this vendor gets. SF requires `service` — a
+    // header matching an existing catalog service (the service list's name) — not
+    // a free-form name; `multiplier` is the quantity.
+    const services = (vendor?.sfServiceLines ?? []).map(s => ({ service: s.name, name: s.name, multiplier: s.quantity ?? 1 }))
 
     const jobPayload: Record<string, unknown> = {
       customer_name: parseInt(String(sfCustomerId), 10),
@@ -118,26 +120,31 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let jobResp: any
+    let warning: string | undefined
     try {
       jobResp = await sfPost('/jobs', jobPayload)
     } catch (postErr) {
-      // Retry once without `source` on a 4xx (SF doesn't recognize the source);
-      // never blind-retry on 5xx (SF may have already created the job).
+      // On a 4xx (validation), drop the field(s) SF rejected and retry once, so a
+      // bad service reference or unknown source never blocks the job. Never
+      // blind-retry a 5xx (SF may have already created the job).
       const msg = postErr instanceof Error ? postErr.message : String(postErr)
-      if (/\(4\d\d\)/.test(msg) && 'source' in jobPayload) {
-        const retry = { ...jobPayload }; delete retry.source
-        jobResp = await sfPost('/jobs', retry)
-      } else {
-        throw postErr
-      }
+      if (!/\(4\d\d\)/.test(msg)) throw postErr
+      const retry: Record<string, unknown> = { ...jobPayload }
+      const dropped: string[] = []
+      if (/service/i.test(msg) && 'services' in retry) { delete retry.services; dropped.push('service line') }
+      if (/custom/i.test(msg) && 'custom_fields' in retry) { delete retry.custom_fields; dropped.push('custom fields') }
+      if (/source/i.test(msg) && 'source' in retry) { delete retry.source; dropped.push('source') }
+      if (dropped.length === 0) throw postErr // a 4xx we don't know how to recover from
+      jobResp = await sfPost('/jobs', retry)
+      warning = `job created, but SF rejected ${dropped.join(' + ')}: ${msg.slice(0, 160)}`
     }
     const sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? jobResp?.data?.id ?? '')
     if (!sfJobId || sfJobId === 'undefined') return { ok: false, error: `no job id returned from SF: ${JSON.stringify(jobResp).slice(0, 200)}` }
 
     // 3. Link it back + log.
     await supabase.from('vendor_orders').update({ sf_job_id: sfJobId, updated_at: new Date().toISOString() }).eq('id', orderId)
-    await supabase.from('vendor_order_events').insert({ order_id: orderId, event_type: 'sf_job_created', to_value: sfJobId, detail: { customerId: sfCustomerId } })
-    return { ok: true, sfJobId }
+    await supabase.from('vendor_order_events').insert({ order_id: orderId, event_type: 'sf_job_created', to_value: sfJobId, detail: { customerId: sfCustomerId, warning: warning ?? null } })
+    return { ok: true, sfJobId, warning }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }

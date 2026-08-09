@@ -13,9 +13,9 @@ async function isAdmin(): Promise<boolean> {
 }
 
 /** Create the SF job for one vendor order (manual "Create SF Job" button). */
-export async function createSfJobAction(orderId: string): Promise<{ ok: boolean; error?: string }> {
+export async function createSfJobAction(orderId: string): Promise<{ ok: boolean; error?: string; warning?: string }> {
   if (!(await isAdmin())) return { ok: false, error: 'not authorized' }
   const res = await createSfJobForOrder(orderId)
   if (res.ok) revalidatePath('/admin/vendor-orders')
-  return { ok: res.ok, error: res.error }
+  return { ok: res.ok, error: res.error, warning: res.warning }
 }
