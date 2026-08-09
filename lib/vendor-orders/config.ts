@@ -45,8 +45,11 @@ export const VENDORS: Record<string, VendorConfig> = {
     label: 'Genie — Home Depot',
     // Per business rule: jobs from this vendor are Source = "Genie" in SF.
     sfJobSource: 'Genie',
+    // Field names must match SF EXACTLY, including a trailing space on "Order # "
+    // (SF stores it that way; without it SF rejects the whole custom_fields array
+    // with "should not be set according to current parameters").
     sfCustomFields: [
-      { sfFieldName: 'Home Depot Order #', from: 'external_id' },
+      { sfFieldName: 'Home Depot Order # ', from: 'external_id' },
       { sfFieldName: 'Home Depot Store #', from: 'store_number' },
     ],
     // Every Genie job gets this service line added.
