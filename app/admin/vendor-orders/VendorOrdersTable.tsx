@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useTransition } from 'react'
+import { createSfJobAction } from './actions'
 
 export interface VendorOrder {
   id: string
@@ -66,6 +67,24 @@ const uniq = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string =
 
 function sortVal(o: VendorOrder, k: SortKey): string | number | null {
   return o[k]
+}
+
+function CreateJobButton({ orderId }: { orderId: string }) {
+  const [pending, start] = useTransition()
+  const [err, setErr] = useState<string | null>(null)
+  return (
+    <span className="inline-flex flex-col gap-0.5">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => { setErr(null); start(async () => { const r = await createSfJobAction(orderId); if (!r.ok) setErr(r.error ?? 'failed') }) }}
+        className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50 disabled:cursor-progress"
+      >
+        {pending ? 'creating…' : '+ Create SF Job'}
+      </button>
+      {err && <span className="text-[10px] text-red-600 max-w-[180px] whitespace-normal">{err}</span>}
+    </span>
+  )
 }
 
 export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] }) {
@@ -188,7 +207,7 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
                         <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
                       )}
                     </span>
-                  ) : <span className="text-gray-300">—</span>}
+                  ) : <CreateJobButton orderId={o.id} />}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-400 text-xs">{fmtSeen(o.last_seen_at)}</td>
               </tr>
