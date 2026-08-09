@@ -22,8 +22,9 @@ export interface VendorOrder {
   email: string | null
   scope: string | null
   sf_job_id: string | null
+  sf_created_job_number: string | null
   sf_job_number: string | null
-  sf_match_method: 'linked' | 'po' | 'name' | 'email' | 'phone' | null
+  sf_match_method: 'linked' | 'po' | 'name' | 'email' | 'phone' | 'pending' | null
   detail_scraped_at: string | null
   last_seen_at: string
 }
@@ -47,19 +48,19 @@ type SortKey =
   | 'store_number' | 'sf_job_number' | 'last_seen_at'
 
 const COLUMNS: { key: SortKey; label: string }[] = [
-  { key: 'external_id', label: 'Order #' },
+  { key: 'order_date', label: 'Order Date' },
+  { key: 'external_id', label: 'HD Order #' },
   { key: 'status', label: 'Status' },
+  { key: 'customer_po', label: 'PO' },
+  { key: 'sf_job_number', label: 'SF Job #' },
   { key: 'next_step', label: 'Next Step' },
   { key: 'customer_name', label: 'Customer' },
   { key: 'street_address', label: 'Address' },
   { key: 'phone', label: 'Phone' },
   { key: 'email', label: 'Email' },
   { key: 'scope', label: 'Scope' },
-  { key: 'order_date', label: 'Order' },
   { key: 'schedule_date', label: 'Scheduled' },
-  { key: 'customer_po', label: 'PO' },
   { key: 'store_number', label: 'Store' },
-  { key: 'sf_job_number', label: 'SF Job #' },
   { key: 'last_seen_at', label: 'Seen' },
 ]
 
@@ -187,28 +188,29 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
           <tbody className="divide-y divide-gray-100 bg-white text-gray-900">
             {rows.map(o => (
               <tr key={o.id} className="hover:bg-gray-50">
+                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.order_date)}</td>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{o.external_id}</td>
                 <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusStyle(o.status)}`}>{o.status || '—'}</span></td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {o.sf_job_number ? (
+                    <span className="inline-flex items-center gap-1.5" title={o.sf_match_method === 'pending' ? 'created — awaiting mirror sync' : (o.sf_match_method ? `matched by ${o.sf_match_method}` : undefined)}>
+                      <span className={`font-medium ${o.sf_match_method === 'po' || o.sf_match_method === 'linked' ? 'text-green-700' : o.sf_match_method === 'pending' ? 'text-blue-600' : 'text-amber-700'}`}>{o.sf_job_number}</span>
+                      {o.sf_match_method === 'pending' && <span className="text-[10px] uppercase tracking-wide text-blue-600 bg-blue-50 rounded px-1">pending sync</span>}
+                      {o.sf_match_method && !['po', 'linked', 'pending'].includes(o.sf_match_method) && (
+                        <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
+                      )}
+                    </span>
+                  ) : <CreateJobButton orderId={o.id} />}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.next_step || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.customer_name || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.street_address ? `${o.street_address}${o.city ? ', ' + o.city : ''}${o.state_prov ? ', ' + o.state_prov : ''}${o.postal_code ? ' ' + o.postal_code : ''}` : (o.city ? `${o.city}${o.state_prov ? ', ' + o.state_prov : ''}` : '—')}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.phone || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.email || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600 max-w-[200px] truncate" title={o.scope || ''}>{o.scope || '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.order_date)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.schedule_date)}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.store_number || '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">
-                  {o.sf_job_number ? (
-                    <span className="inline-flex items-center gap-1.5" title={o.sf_match_method ? `matched by ${o.sf_match_method}` : undefined}>
-                      <span className={`font-medium ${o.sf_match_method === 'po' || o.sf_match_method === 'linked' ? 'text-green-700' : 'text-amber-700'}`}>{o.sf_job_number}</span>
-                      {o.sf_match_method && o.sf_match_method !== 'po' && o.sf_match_method !== 'linked' && (
-                        <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
-                      )}
-                    </span>
-                  ) : <CreateJobButton orderId={o.id} />}
-                </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-400 text-xs">{fmtSeen(o.last_seen_at)}</td>
               </tr>
             ))}
