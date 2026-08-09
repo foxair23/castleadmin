@@ -1,7 +1,9 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { VENDORS } from '@/lib/vendor-orders/config'
 import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
+import { getAutopilot } from '@/lib/vendor-orders/autopilot'
 import VendorOrdersTable, { type VendorOrder } from './VendorOrdersTable'
+import { AutopilotToggle } from './AutopilotToggle'
 
 const statusStyle = (s: string | null) => {
   const k = (s || '').toLowerCase()
@@ -13,8 +15,9 @@ const statusStyle = (s: string | null) => {
 
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales). Data is service-role; each page guards its own role.
-export default async function VendorOrdersView() {
+export default async function VendorOrdersView({ canManage = false }: { canManage?: boolean }) {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+  const autopilot = await getAutopilot()
   const { data } = await db
     .from('vendor_orders')
     .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, last_seen_at')
@@ -61,7 +64,10 @@ export default async function VendorOrdersView() {
     <div className="max-w-7xl mx-auto px-4 py-6">
       <div className="flex items-baseline justify-between mb-1">
         <h1 className="text-2xl font-bold text-gray-900">HD Orders</h1>
-        <span className="text-sm text-gray-500">{orders.length} total</span>
+        <div className="flex items-center gap-4">
+          <AutopilotToggle on={autopilot.enabled} canManage={canManage} />
+          <span className="text-sm text-gray-500">{orders.length} total</span>
+        </div>
       </div>
       <p className="text-sm text-gray-500 mb-3">
         Orders scraped from vendor portals by the browser extension.{' '}
