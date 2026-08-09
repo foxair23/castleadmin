@@ -115,18 +115,25 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
       }
       return true
     })
-    return filtered.sort((a, b) => {
-      const av = sortVal(a, sortKey), bv = sortVal(b, sortKey)
+    const cmpBy = (a: VendorOrder, b: VendorOrder, key: SortKey, dir: 'asc' | 'desc'): number => {
+      const av = sortVal(a, key), bv = sortVal(b, key)
       const an = av == null || av === ''
       const bn = bv == null || bv === ''
       if (an && bn) return 0
       if (an) return 1  // empties always last
       if (bn) return -1
       let c: number
-      if (sortKey === 'external_id') c = (Number(av) - Number(bv)) || String(av).localeCompare(String(bv))
+      if (key === 'external_id') c = (Number(av) - Number(bv)) || String(av).localeCompare(String(bv))
       else if (typeof av === 'number' && typeof bv === 'number') c = av - bv
       else c = String(av).localeCompare(String(bv))
-      return sortDir === 'asc' ? c : -c
+      return dir === 'asc' ? c : -c
+    }
+    return filtered.sort((a, b) => {
+      const primary = cmpBy(a, b, sortKey, sortDir)
+      if (primary !== 0) return primary
+      // Secondary tiebreak: Order Date, newest first — so within one scrape batch
+      // (which shares a first_seen_at) orders sort by their order date.
+      return sortKey === 'order_date' ? 0 : cmpBy(a, b, 'order_date', 'desc')
     })
   }, [orders, search, status, nextStep, orderType, sortKey, sortDir])
 
