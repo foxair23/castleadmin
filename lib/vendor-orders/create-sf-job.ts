@@ -129,14 +129,20 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       // blind-retry a 5xx (SF may have already created the job).
       const msg = postErr instanceof Error ? postErr.message : String(postErr)
       if (!/\(4\d\d\)/.test(msg)) throw postErr
+      // Drop only the field(s) SF actually named in its 422 array — parse the
+      // field names rather than string-match the message (the generic "Service
+      // Fusion API error" prefix contains "service" and caused false drops).
+      let rejected: string[] = []
+      const arr = msg.match(/\[[\s\S]*\]/)
+      if (arr) { try { rejected = (JSON.parse(arr[0]) as Array<{ field?: string }>).map(e => e.field ?? '').filter(Boolean) } catch { /* leave empty */ } }
       const retry: Record<string, unknown> = { ...jobPayload }
       const dropped: string[] = []
-      if (/service/i.test(msg) && 'services' in retry) { delete retry.services; dropped.push('service line') }
-      if (/custom/i.test(msg) && 'custom_fields' in retry) { delete retry.custom_fields; dropped.push('custom fields') }
-      if (/source/i.test(msg) && 'source' in retry) { delete retry.source; dropped.push('source') }
+      for (const f of ['services', 'custom_fields', 'source'] as const) {
+        if (rejected.includes(f) && f in retry) { delete retry[f]; dropped.push(f) }
+      }
       if (dropped.length === 0) throw postErr // a 4xx we don't know how to recover from
       jobResp = await sfPost('/jobs', retry)
-      warning = `job created, but SF rejected ${dropped.join(' + ')}: ${msg.slice(0, 160)}`
+      warning = `job created, but SF rejected ${dropped.join(' + ')}: ${msg.slice(0, 200)}`
     }
     const sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? jobResp?.data?.id ?? '')
     if (!sfJobId || sfJobId === 'undefined') return { ok: false, error: `no job id returned from SF: ${JSON.stringify(jobResp).slice(0, 200)}` }
