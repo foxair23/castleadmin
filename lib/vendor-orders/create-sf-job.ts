@@ -133,7 +133,7 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       // field names rather than string-match the message (the generic "Service
       // Fusion API error" prefix contains "service" and caused false drops).
       let rejected: string[] = []
-      const arr = msg.match(/\[.*\]/s)
+      const arr = msg.match(/\[[\s\S]*\]/)
       if (arr) { try { rejected = (JSON.parse(arr[0]) as Array<{ field?: string }>).map(e => e.field ?? '').filter(Boolean) } catch { /* leave empty */ } }
       const retry: Record<string, unknown> = { ...jobPayload }
       const dropped: string[] = []
