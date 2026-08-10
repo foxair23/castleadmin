@@ -17,9 +17,11 @@
   const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
   // hostname → which saved credentials to use + which alert the background fires.
+  // `company` is set for sites whose login also asks for a Company ID / account
+  // (Service Fusion) — filled into a field matched by name/placeholder.
   const SITES = [
     { host: /(^|\.)install\.openings\.net$/, user: 'genieUser', pass: 'geniePass', label: 'Genie', flag: 'genie-login-detected' },
-    { host: /(^|\.)servicefusion\.com$/, user: 'sfUser', pass: 'sfPass', label: 'Service Fusion', flag: 'sf-login-detected' },
+    { host: /(^|\.)servicefusion\.com$/, user: 'sfUser', pass: 'sfPass', company: 'sfCompany', label: 'Service Fusion', flag: 'sf-login-detected' },
     { host: /(^|\.)castlegaragedoors\.com$/, user: 'castleUser', pass: 'castlePass', label: 'Castle Admin', flag: 'castle-login-detected' },
   ]
   const site = SITES.find(s => s.host.test(location.hostname))
@@ -45,7 +47,18 @@
       .find(el => visible(el) && /log ?in|sign ?in|submit|continue|next/i.test(`${el.innerText || ''} ${el.value || ''} ${el.id || ''} ${el.name || ''}`))
     || [...document.querySelectorAll('input[type="submit"], button[type="submit"], button')].find(visible)
 
-  const userField = () => document.querySelector('input[type="email"], input[name*="user" i], input[id*="user" i], input[name*="email" i], input[id*="email" i], input[type="text"]')
+  // The Company ID / account / subdomain field, if this login has one. Matched by
+  // its name/id/placeholder/label so we don't depend on exact markup.
+  const companyField = () => [...document.querySelectorAll('input')].find((el) => {
+    if (!visible(el) || el.type === 'password') return false
+    const hay = `${el.name || ''} ${el.id || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase()
+    return /company|account|subdomain|tenant|organization|\bcompanyid\b/.test(hay)
+  })
+
+  // The username/email field — skip the company field if we've already matched it.
+  const userField = (exclude) =>
+    [...document.querySelectorAll('input[type="email"], input[name*="user" i], input[id*="user" i], input[name*="email" i], input[id*="email" i], input[type="text"]')]
+      .find(el => el !== exclude && visible(el))
 
   // Set a field's value the way the browser would, so React/controlled inputs
   // (Castle Admin) actually register it — a bare `el.value = …` doesn't.
@@ -76,10 +89,12 @@
   }
 
   // We have saved credentials → type them in ourselves and submit.
-  async function loginWithCreds(pw, u, p) {
+  async function loginWithCreds(pw, u, p, comp) {
     sessionStorage.setItem(triedKey, '1')
     LOG(site.label, '— signing in with saved credentials')
-    const user = userField()
+    const company = site.company ? companyField() : null
+    if (company && comp) setValue(company, comp)
+    const user = userField(company)
     if (user && u) setValue(user, u)
     setValue(pw, p)
     const ok = await submitForm(pw)
@@ -100,9 +115,11 @@
     if (!ok) { LOG('autofill login did not take — flagging for manual login'); flag() }
   }
 
-  chrome.storage.local.get([site.user, site.pass], (creds) => {
+  const keys = [site.user, site.pass, ...(site.company ? [site.company] : [])]
+  chrome.storage.local.get(keys, (creds) => {
     const u = creds[site.user] || ''
     const p = creds[site.pass] || ''
+    const comp = site.company ? (creds[site.company] || '') : ''
     let tries = 0
     const timer = setInterval(() => {
       tries++
@@ -112,7 +129,7 @@
       if (!pw) { if (tries > 8) clearInterval(timer); return }
       clearInterval(timer)
       if (sessionStorage.getItem(triedKey)) { LOG(site.label, '— already tried this tab; flagging for manual login'); flag(); return }
-      if (u && p) loginWithCreds(pw, u, p)
+      if (u && p) loginWithCreds(pw, u, p, comp)
       else loginWithAutofill(pw)
     }, 500)
   })

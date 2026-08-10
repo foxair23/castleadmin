@@ -1,6 +1,6 @@
 import { getConfig, setConfig } from './store.js'
 
-const fields = ['baseUrl', 'token', 'receivedBy', 'pollMinutes', 'maxDetailPerRun', 'genieUser', 'sfUser', 'castleUser']
+const fields = ['baseUrl', 'token', 'receivedBy', 'pollMinutes', 'maxDetailPerRun', 'genieUser', 'sfCompany', 'sfUser', 'castleUser']
 const passwords = ['geniePass', 'sfPass', 'castlePass']
 const checks = ['enabled', 'dryRun', 'genieEnabled', 'genieAutoDetail', 'genieScheduleEnabled']
 

@@ -15,6 +15,7 @@ export const DEFAULTS = {
   // Chrome won't let a script submit ITS autofilled password (anti-phishing), so
   // the login content script types these in itself. Leave blank to skip.
   genieUser: '', geniePass: '',   // Genie / Home Depot portal
+  sfCompany: 'castlegaragedoors', // Service Fusion login also needs a Company ID
   sfUser: '', sfPass: '',         // Service Fusion (note/payment posting needs a live session)
   castleUser: '', castlePass: '', // Castle Admin (optional — the extension normally uses the token)
 }
