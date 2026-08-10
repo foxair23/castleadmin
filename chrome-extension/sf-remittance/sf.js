@@ -18,14 +18,19 @@ const form = (obj) => Object.entries(obj).map(([k, v]) => `${encodeURIComponent(
 async function sfFetch(path, { method = 'GET', body } = {}) {
   // These endpoints are form-POST navigations in the browser (no X-Requested-With);
   // send them the same way so SF returns the form instead of bouncing home.
+  // redirect:'manual' — a logged-out SF 302s to auth.servicefusion.com/oauth;
+  // following that credentialed cross-origin redirect trips CORS, so we detect it
+  // as an opaqueredirect (loginRedirect) instead.
   const res = await fetch(`${SF}${path}`, {
     method,
     credentials: 'include',
+    redirect: 'manual',
     headers: body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {},
     body,
   })
-  const text = await res.text()
-  return { status: res.status, url: res.url, redirected: res.redirected, text }
+  const loginRedirect = res.type === 'opaqueredirect' || res.status === 0 || (res.status >= 300 && res.status < 400)
+  const text = loginRedirect ? '' : await res.text()
+  return { status: res.status, url: res.url, redirected: res.redirected, loginRedirect, text }
 }
 
 /** Value of a hidden <input name="…"> regardless of attribute order/quoting. */
@@ -56,6 +61,7 @@ export async function resolveInvoiceId(invoiceNumber, trace) {
 export async function resolveCustomerId(invoiceId, trace) {
   const r = await sfFetch(`/viewInvoice?id=${encodeURIComponent(invoiceId)}`)
   trace.push({ step: 'viewInvoice', status: r.status, len: r.text.length })
+  if (r.loginRedirect) throw new Error('SF session expired (redirected to login) — sign in to admin.servicefusion.com')
   // Try a hidden field first, then a customer link / JSON, all hashed-id shaped.
   const id =
     inputValue(r.text, 'customerId') ||
@@ -75,6 +81,12 @@ export async function openPaymentForm(invoiceId, amount, trace) {
     body: form({ customerId, 'invoiceIds[]': invoiceId, 'invoice[paymentsSelected]': amount }),
   })
   trace.push({ step: 'openForm', status: r.status, len: r.text.length, url: r.url })
+  if (r.loginRedirect) {
+    // Logged-out SF 302s to auth.servicefusion.com/oauth — we caught it as an
+    // opaqueredirect (no CORS). Surface it as a session-expired error so the
+    // background alert fires instead of a confusing "no payment form".
+    throw new Error('SF session expired (redirected to login) — sign in to admin.servicefusion.com')
+  }
   if (!/id=["']?form-payment-transaction/.test(r.text)) {
     // Login is judged by WHERE it landed (redirect URL), not page text — the SF
     // app shell contains "login"/"password" strings and was giving false positives.

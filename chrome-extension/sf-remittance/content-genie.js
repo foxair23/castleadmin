@@ -442,6 +442,24 @@
     }
   })
 
+  // A "you're logged out" modal can appear on a stale/idle page. Click through it
+  // so the browser navigates to the login page, where content-genie-login.js
+  // re-auths with the saved password — keeping the crawl going unattended.
+  function dismissLogoutModal() {
+    const boxes = [...document.querySelectorAll('[role="dialog"], .modal, .ui-dialog, [class*="modal" i], [class*="dialog" i], [class*="popup" i]')]
+    for (const m of boxes) {
+      if (m.offsetParent === null) continue // not visible
+      const txt = norm(m.innerText).toLowerCase()
+      if (/log(ged)? ?out|session (has )?expired|please (log|sign) ?in|timed? ?out|no longer logged|been logged out/.test(txt)) {
+        const btn = m.querySelector('button, a.btn, .btn, input[type="button"], input[type="submit"], a')
+        if (btn) { LOG('logout modal detected → clicking through', norm(btn.innerText || btn.value || '')); realClick(btn); return true }
+      }
+    }
+    return false
+  }
+
   LOG('loaded on', location.href, '→', pageType())
+  dismissLogoutModal()
+  setInterval(() => { try { dismissLogoutModal() } catch { /* ignore */ } }, 8000)
   main()
 })()
