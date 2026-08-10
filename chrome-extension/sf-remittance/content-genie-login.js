@@ -30,11 +30,32 @@
       .find(el => visible(el) && /log ?in|sign ?in|submit|continue|next/i.test(`${el.innerText || ''} ${el.value || ''} ${el.id || ''} ${el.name || ''}`))
     || [...document.querySelectorAll('input[type="submit"], button[type="submit"], button')].find(visible)
 
+  // Fire the events that mark a field's value as "really there" so native
+  // constraint validation (and any JS handler) stops treating autofill as empty.
+  function commitAutofill(el) {
+    if (!el) return
+    try {
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+      el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
+    } catch { /* ignore */ }
+  }
+
   async function trySubmit() {
     const pw = document.querySelector('input[type="password"]')
     if (!pw) return
     sessionStorage.setItem('genieLoginTried', '1')
+    const user = document.querySelector('input[type="text"], input[type="email"], input[name*="user" i], input[id*="user" i]')
     LOG('credentials present — submitting')
+    // Chrome shows "Please fill out this field" on autofilled inputs the user
+    // never physically touched — native HTML5 validation counts them empty and
+    // BLOCKS the submit, even though the real values are sent in the POST. So:
+    //  - fire input/change to commit the autofilled values, and
+    //  - turn off the form's client-side validation before submitting.
+    commitAutofill(user)
+    commitAutofill(pw)
+    const form = pw.form
+    if (form) { try { form.noValidate = true } catch { /* ignore */ } }
     // 1) the button
     const btn = findSubmit()
     if (btn) realClick(btn)
@@ -42,9 +63,8 @@
     // 2) Enter on the password field (still here ⇒ button didn't navigate)
     pressEnter(pw)
     await sleep(1600)
-    // 3) submit the form directly
-    const form = pw.form
-    if (form) { try { form.requestSubmit ? form.requestSubmit() : form.submit() } catch { /* ignore */ } }
+    // 3) submit the form directly (validation already disabled above)
+    if (form) { try { form.requestSubmit ? form.requestSubmit() : form.submit() } catch { try { form.submit() } catch { /* ignore */ } } }
     await sleep(1600)
     // Still on the login page after all that → hand off to manual.
     LOG('submit did not navigate — flagging for manual login')

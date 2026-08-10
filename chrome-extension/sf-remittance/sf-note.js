@@ -29,20 +29,25 @@ export async function postNote(item, cfg) {
     const res = await fetch(`${SF}/jobs/addNewNoteAjax`, {
       method: 'POST',
       credentials: 'include',
+      // A logged-out SF 302s to auth.servicefusion.com/oauth. Don't FOLLOW it —
+      // a credentialed cross-origin redirect trips CORS. Instead we get an
+      // opaqueredirect we can detect as "session expired".
+      redirect: 'manual',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'X-Requested-With': 'XMLHttpRequest',
       },
       body,
     })
-    const text = await res.text()
-    trace.push({ step: 'post', status: res.status, url: res.url, redirected: res.redirected })
+    trace.push({ step: 'post', status: res.status, type: res.type })
 
-    // A dropped session redirects to the login page / returns the sign-in HTML
-    // instead of the note markup. Treat that as a failure rather than a success.
+    // A dropped session redirects to the OAuth login (opaqueredirect / status 0).
+    if (res.type === 'opaqueredirect' || res.status === 0 || (res.status >= 300 && res.status < 400)) {
+      throw new Error('SF session expired (redirected to login) — sign in to admin.servicefusion.com')
+    }
+    const text = await res.text()
     if (!res.ok) throw new Error(`addNewNoteAjax returned ${res.status}`)
-    if (res.redirected && /login|signin|sign-in/i.test(res.url)) throw new Error('redirected to login — SF session expired')
-    if (/name=["']?(password|_username)["']?/i.test(text)) throw new Error('got a login form — SF session expired')
+    if (/name=["']?(password|_username)["']?/i.test(text)) throw new Error('SF session expired (got a login form)')
 
     return { ok: true, trace, snippet: text.slice(0, 200) }
   } catch (e) {
