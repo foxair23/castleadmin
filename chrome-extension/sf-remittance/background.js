@@ -126,15 +126,25 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
     })()
     return
   }
-  if (msg?.type === 'genie-login-detected') {
+  // A login page couldn't be signed into automatically (no saved credentials, or
+  // they didn't take / MFA). Badge + email so someone signs in by hand.
+  const LOGIN_ALERTS = {
+    'genie-login-detected': 'genie',
+    'sf-login-detected': 'service_fusion',
+    'castle-login-detected': 'castle_admin',
+  }
+  if (msg?.type && LOGIN_ALERTS[msg.type]) {
+    const source = LOGIN_ALERTS[msg.type]
     ;(async () => {
-      await setStatus({ source: 'genie-schedule', state: 'login_required' })
+      await setStatus({ source: `${source}-login`, state: 'login_required' })
       setBadge('!')
-      await notifyAlert('genie', 'logged_out') // email chosen recipients (deduped server-side)
-      const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
-      if (genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) {
-        try { await chrome.tabs.update(genieCrawl.tabId, { active: true }) } catch { /* ignore */ } // surface for one-click login
-        await finishCrawl('login') // keep the tab open for re-auth
+      await notifyAlert(source, 'logged_out') // email chosen recipients (deduped server-side)
+      if (msg.type === 'genie-login-detected') {
+        const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
+        if (genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) {
+          try { await chrome.tabs.update(genieCrawl.tabId, { active: true }) } catch { /* ignore */ } // surface for one-click login
+          await finishCrawl('login') // keep the tab open for re-auth
+        }
       }
     })()
     return

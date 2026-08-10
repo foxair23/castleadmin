@@ -6,7 +6,7 @@
   <style>
     body { font-family: system-ui, sans-serif; max-width: 560px; margin: 24px auto; padding: 0 16px; color: #111; }
     h1 { font-size: 18px; } label { display: block; margin: 14px 0 4px; font-size: 13px; font-weight: 600; }
-    input[type=text], input[type=url], input[type=number] { width: 100%; padding: 7px 8px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+    input[type=text], input[type=url], input[type=number], input[type=password] { width: 100%; padding: 7px 8px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
     .row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
     .row label { margin: 0; font-weight: 600; }
     .hint { font-size: 12px; color: #666; margin-top: 3px; }
@@ -26,6 +26,12 @@
   <label>Apply token</label>
   <input id="token" type="text" placeholder="matches REMITTANCE_APPLY_TOKEN on the server" />
 
+  <label>Castle Admin username <span style="font-weight:400;color:#888;">(optional)</span></label>
+  <input id="castleUser" type="text" autocomplete="off" placeholder="you@castlegaragedoors.com" />
+  <label>Castle Admin password <span style="font-weight:400;color:#888;">(optional)</span></label>
+  <input id="castlePass" type="password" autocomplete="new-password" placeholder="•••••••••" />
+  <div class="hint">Usually not needed — the extension talks to Castle Admin with the apply token above, not a browser login. Fill these only if you also want the extension to sign you into the Castle Admin site when you land on its login page.</div>
+
   <label>Received by (initials in SF)</label>
   <input id="receivedBy" type="text" maxlength="8" />
 
@@ -34,6 +40,12 @@
 
   <div class="row"><input id="enabled" type="checkbox" /><label for="enabled">Enabled (poll & post in the background)</label></div>
   <div class="row"><input id="dryRun" type="checkbox" /><label for="dryRun">Dry run (don't actually submit)</label></div>
+
+  <label>Service Fusion username</label>
+  <input id="sfUser" type="text" autocomplete="off" placeholder="you@castlegaragedoors.com" />
+  <label>Service Fusion password</label>
+  <input id="sfPass" type="password" autocomplete="new-password" placeholder="•••••••••" />
+  <div class="hint">Used to sign back into admin.servicefusion.com when the session drops so note/payment posting keeps working. Leave blank to skip auto-login (you'll just get an alert).</div>
 
   <h1 style="font-size:15px;margin-top:26px;">Genie / Home Depot orders</h1>
   <div class="row"><input id="genieEnabled" type="checkbox" /><label for="genieEnabled">Log orders from the Genie portal</label></div>
@@ -45,7 +57,13 @@
   <input id="maxDetailPerRun" type="number" min="1" max="220" />
 
   <div class="row"><input id="genieScheduleEnabled" type="checkbox" /><label for="genieScheduleEnabled">Crawl automatically on a schedule</label></div>
-  <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, crawls, closes it. Needs Chrome running and logged into the Genie portal; if it finds you logged out, it tries your saved password, then badges the icon and emails whoever you pick in Notifications.</div>
+  <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, crawls, closes it. Needs Chrome running and logged into the Genie portal; if it finds you logged out, it signs back in with the credentials below, then badges the icon and emails whoever you pick in Notifications.</div>
+
+  <label>Genie username</label>
+  <input id="genieUser" type="text" autocomplete="off" placeholder="john@castlegaragedoors.com" />
+  <label>Genie password</label>
+  <input id="geniePass" type="password" autocomplete="new-password" placeholder="•••••••••" />
+  <div class="warn">Chrome blocks scripts from submitting its <em>own</em> autofilled password (anti-phishing), so unattended re-login needs the extension to hold these. They're stored only in this browser's local extension storage on this machine — never synced, never sent anywhere, never in the code. Leave blank to skip auto-login (badge + email only).</div>
 
   <div><button id="save">Save</button><span id="saved" class="saved" style="display:none">Saved ✓</span></div>
   <script type="module" src="options.js"></script>

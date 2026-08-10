@@ -17,6 +17,7 @@ function db(): SupabaseClient {
 const SOURCE_LABELS: Record<string, string> = {
   service_fusion: 'Service Fusion',
   genie: 'Genie / Home Depot portal',
+  castle_admin: 'Castle Admin',
 }
 const label = (source: string) => SOURCE_LABELS[source] || source
 

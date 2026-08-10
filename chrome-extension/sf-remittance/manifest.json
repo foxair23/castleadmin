@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Castle — Service Fusion Remittance Poster",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Automates Castle Admin ↔ Service Fusion (remittance posting, job notes) and logs vendor-portal orders (Genie/Home Depot), all in your logged-in sessions.",
   "permissions": [
     "storage",
@@ -9,6 +9,7 @@
   ],
   "host_permissions": [
     "https://admin.servicefusion.com/*",
+    "https://auth.servicefusion.com/*",
     "https://hq.castlegaragedoors.com/*",
     "https://install.openings.net/*"
   ],
@@ -28,10 +29,12 @@
     },
     {
       "matches": [
-        "https://install.openings.net/CustomLogin/*"
+        "https://install.openings.net/CustomLogin/*",
+        "https://auth.servicefusion.com/*",
+        "https://hq.castlegaragedoors.com/login*"
       ],
       "js": [
-        "content-genie-login.js"
+        "content-login.js"
       ],
       "run_at": "document_idle"
     }
