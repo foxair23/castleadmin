@@ -51,6 +51,19 @@
     flag()
   }
 
+  // Chrome sometimes won't autofill saved credentials until the page gets some
+  // interaction — which never happens when nobody's at the machine. Nudge it:
+  // focus the fields (and a body click) to coax the fill.
+  function nudge(user, pw) {
+    LOG('nudging autofill')
+    try {
+      document.body && document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+      if (user) { user.focus(); user.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); user.click && user.click() }
+      if (pw) { pw.focus() }
+      if (user) user.focus() // end on username so Chrome fills the pair
+    } catch { /* ignore */ }
+  }
+
   if (sessionStorage.getItem('genieLoginTried')) { LOG('already tried this tab session — flagging for manual login'); flag(); return }
 
   LOG('on login page', location.href)
@@ -61,6 +74,10 @@
     const user = document.querySelector('input[type="text"], input[type="email"], input[name*="user" i], input[id*="user" i]')
     // Submit once both fields are populated (Chrome autofill can lag a second or two).
     if (pw && pw.value && user && user.value) { clearInterval(timer); trySubmit() }
-    else if (tries > 20) { clearInterval(timer); LOG('no autofilled credentials after ~10s — flagging for manual login'); flag() }
+    else {
+      // Nudge autofill at ~2s and ~5s if the fields are still empty.
+      if ((tries === 4 || tries === 10) && (pw || user)) nudge(user, pw)
+      if (tries > 30) { clearInterval(timer); LOG('no autofilled credentials after ~15s — flagging for manual login'); flag() }
+    }
   }, 500)
 })()
