@@ -72,12 +72,16 @@
     tries++
     const pw = document.querySelector('input[type="password"]')
     const user = document.querySelector('input[type="text"], input[type="email"], input[name*="user" i], input[id*="user" i]')
-    // Submit once both fields are populated (Chrome autofill can lag a second or two).
-    if (pw && pw.value && user && user.value) { clearInterval(timer); trySubmit() }
-    else {
-      // Nudge autofill at ~2s and ~5s if the fields are still empty.
-      if ((tries === 4 || tries === 10) && (pw || user)) nudge(user, pw)
-      if (tries > 30) { clearInterval(timer); LOG('no autofilled credentials after ~15s — flagging for manual login'); flag() }
-    }
+    // NOTE: Chrome hides an autofilled PASSWORD's value from scripts until a real
+    // user gesture, so pw.value reads empty even when it's filled. The USERNAME is
+    // readable, and Chrome fills the pair together — so a filled username means the
+    // password is filled too. Submit on that (the browser sends the real password).
+    if (user && user.value) { clearInterval(timer); trySubmit(); return }
+    // Nudge autofill at ~2s and ~5s if nothing's readable yet.
+    if ((tries === 4 || tries === 10) && (pw || user)) nudge(user, pw)
+    // Last resort: fields may be autofilled but fully unreadable — submit anyway
+    // (~8s in). A wrong/empty submit just returns here and then flags for manual.
+    if (tries === 16 && pw) { clearInterval(timer); LOG('username not readable — submitting anyway (autofill may be masked)'); trySubmit(); return }
+    if (tries > 30) { clearInterval(timer); LOG('no login fields ready after ~15s — flagging for manual login'); flag() }
   }, 500)
 })()
