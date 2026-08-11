@@ -17,6 +17,12 @@ export interface GenieActionItem {
   status: string | null
   phone: string | null
   created_job_at: string
+  // Customer self-scheduling: set once the customer books via the Genie
+  // scheduler. Null ⇒ nobody has scheduled it yet, so a rep can book on their
+  // behalf.
+  appointment_date: string | null
+  appointment_window_start: string | null
+  appointment_window_end: string | null
 }
 export interface GenieActionItemsResult { items: GenieActionItem[] }
 
@@ -24,7 +30,7 @@ export interface GenieActionItemsResult { items: GenieActionItem[] }
 export async function getGenieActionItems(): Promise<GenieActionItemsResult> {
   const { data } = await db()
     .from('vendor_orders')
-    .select('id, external_id, customer_name, sf_created_job_number, street_address, city, state_prov, postal_code, order_date, status, phone, updated_at')
+    .select('id, external_id, customer_name, sf_created_job_number, street_address, city, state_prov, postal_code, order_date, status, phone, updated_at, appointment_date, appointment_window_start, appointment_window_end')
     .eq('vendor', 'genie_thd')
     .not('sf_created_job_number', 'is', null)
     .is('action_done_at', null)
@@ -40,6 +46,9 @@ export async function getGenieActionItems(): Promise<GenieActionItemsResult> {
     status: o.status,
     phone: o.phone,
     created_job_at: (o.updated_at as string) ?? '',
+    appointment_date: o.appointment_date,
+    appointment_window_start: o.appointment_window_start,
+    appointment_window_end: o.appointment_window_end,
   }))
   return { items }
 }
