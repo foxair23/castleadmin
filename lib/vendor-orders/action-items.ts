@@ -23,6 +23,9 @@ export interface GenieActionItem {
   appointment_date: string | null
   appointment_window_start: string | null
   appointment_window_end: string | null
+  // When the one-time "please schedule" nudge (email/SMS) went out. Null ⇒ not
+  // yet sent.
+  schedule_nudge_sent_at: string | null
 }
 export interface GenieActionItemsResult { items: GenieActionItem[] }
 
@@ -30,7 +33,7 @@ export interface GenieActionItemsResult { items: GenieActionItem[] }
 export async function getGenieActionItems(): Promise<GenieActionItemsResult> {
   const { data } = await db()
     .from('vendor_orders')
-    .select('id, external_id, customer_name, sf_created_job_number, street_address, city, state_prov, postal_code, order_date, status, phone, updated_at, appointment_date, appointment_window_start, appointment_window_end')
+    .select('id, external_id, customer_name, sf_created_job_number, street_address, city, state_prov, postal_code, order_date, status, phone, updated_at, appointment_date, appointment_window_start, appointment_window_end, schedule_nudge_sent_at')
     .eq('vendor', 'genie_thd')
     .not('sf_created_job_number', 'is', null)
     .is('action_done_at', null)
@@ -49,6 +52,7 @@ export async function getGenieActionItems(): Promise<GenieActionItemsResult> {
     appointment_date: o.appointment_date,
     appointment_window_start: o.appointment_window_start,
     appointment_window_end: o.appointment_window_end,
+    schedule_nudge_sent_at: o.schedule_nudge_sent_at,
   }))
   return { items }
 }
