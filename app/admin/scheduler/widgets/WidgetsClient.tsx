@@ -22,17 +22,28 @@ interface Props {
 function EmbedSnippet({ widget, appUrl }: { widget: Widget; appUrl: string }) {
   const [copied, setCopied] = useState(false)
 
+  // The Genie widget drives a different flow (find-your-order → confirm →
+  // qualification), served at /embed/genie-scheduler. Everything else is the
+  // standard consumer scheduler at /embed/scheduler.
+  const isGenie = widget.lead_source === 'genie'
+  const path = isGenie ? '/embed/genie-scheduler' : '/embed/scheduler'
+  const title = isGenie ? 'Schedule your Genie installation' : 'Book a Service Appointment'
+  // Selector must match the iframe's actual src (both embeds post the same
+  // 'castle-scheduler-height' message); the previous "castle-scheduler" matched
+  // neither path, so auto-resize never fired.
+  const srcMatch = isGenie ? '/embed/genie-scheduler' : '/embed/scheduler'
+
   const snippet = `<iframe
-  src="${appUrl}/embed/scheduler?key=${widget.api_key}"
+  src="${appUrl}${path}?key=${widget.api_key}"
   style="width:100%;border:none;min-height:600px"
   allow="payment"
   loading="lazy"
-  title="Book a Service Appointment"
+  title="${title}"
 ></iframe>
 <script>
   window.addEventListener('message', function(e) {
     if (e.data && e.data.type === 'castle-scheduler-height') {
-      var f = document.querySelector('iframe[src*="castle-scheduler"]');
+      var f = document.querySelector('iframe[src*="${srcMatch}"]');
       if (f) f.style.minHeight = e.data.height + 'px';
     }
   });
