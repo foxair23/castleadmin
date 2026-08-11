@@ -200,6 +200,13 @@ async function runNotes(cfg, log) {
       } catch (e) { log.push({ noteId: item.id, callbackError: String(e) }) }
     }
     res.ok ? posted++ : failed++
+    // If SF is logged out, every remaining note fails the same way. Stop now so
+    // we don't burn their retry budget or hammer SF — the app re-serves failed
+    // notes, so they'll post on a later run once SF is signed back in.
+    if (!res.ok && /session expired|redirected to login|failed to fetch|login form|got a login/i.test(res.error || '')) {
+      log.push({ notesStoppedEarly: 'SF session appears logged out — remaining notes will retry next run' })
+      break
+    }
     await sleep(1500) // be gentle on SF
   }
   return { queued: items.length, posted, failed }
