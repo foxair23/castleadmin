@@ -15,6 +15,7 @@ export interface GenieConfig {
   scheduling_enabled: boolean
   scheduling_disabled_message: string
   min_lead_days: number   // earliest bookable slot is this many days out (motor must ship first)
+  slot_mode: 'windows' | 'day'   // 'windows' = pick a date + time window; 'day' = date only
 }
 
 type Step = 'identify' | 'notfound' | 'confirm' | 'qualify' | 'schedule' | 'review'
@@ -183,21 +184,21 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
 
       {step === 'schedule' && (
         <Schedule
-          config={config} widgetKey={widgetKey}
+          config={config} widgetKey={widgetKey} slotMode={config.slot_mode}
           selectedDate={selectedDate} setSelectedDate={setSelectedDate}
           selectedWindow={selectedWindow} setSelectedWindow={setSelectedWindow}
           onNext={() => go('review')}
         />
       )}
 
-      {step === 'review' && order && selectedWindow && (
+      {step === 'review' && order && (selectedWindow || config.slot_mode === 'day') && (
         <div style={S.card}>
           <div style={{ marginBottom: '0.5rem' }}><BackButton onClick={back} /></div>
           <h2 style={S.h2}>Confirm your appointment</h2>
           <ReviewRow label="Order" value={`#${order.order_number}`} />
           <ReviewRow label="Address" value={[order.street_address, order.city, order.state_prov].filter(Boolean).join(', ')} />
           <ReviewRow label="Date" value={prettyDate(selectedDate)} />
-          <ReviewRow label="Arrival window" value={windowLabelOf(selectedWindow.start, selectedWindow.end, config.time_windows)} />
+          <ReviewRow label="Arrival window" value={selectedWindow ? windowLabelOf(selectedWindow.start, selectedWindow.end, config.time_windows) : 'Any time — our tech will call ahead'} />
           <div style={{ height: 1, background: 'var(--color-border)', margin: '0.75rem 0' }} />
           <ReviewRow label="Door type" value={answers.door_type === 'metal_sectional' ? 'Metal sectional' : answers.door_type === 'one_piece_wood' ? 'One-piece wood' : '—'} />
           <ReviewRow label="Door over 7 ft" value={answers.door_over_7ft ? 'Yes' : 'No'} />
@@ -209,14 +210,15 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
             setSubmitting(true); setError('')
             const res = await submitGenieBooking({
               order_id: order.order_id, appointment_date: selectedDate,
-              window_start: selectedWindow.start, window_end: selectedWindow.end,
+              window_start: selectedWindow?.start, window_end: selectedWindow?.end,
               contact_phone: method === 'phone' ? phone : undefined,
               contact_email: method === 'email' ? email : undefined,
               answers,
             }, widgetKey)
             setSubmitting(false)
             if (!res.ok) { setError(res.error ?? 'Could not schedule.'); return }
-            const q = new URLSearchParams({ order: res.order_number ?? order.order_number, date: selectedDate, ws: selectedWindow.start, we: selectedWindow.end, phone: config.office_phone })
+            const q = new URLSearchParams({ order: res.order_number ?? order.order_number, date: selectedDate, phone: config.office_phone })
+            if (selectedWindow) { q.set('ws', selectedWindow.start); q.set('we', selectedWindow.end) }
             window.location.href = `/embed/genie-scheduler/confirmation?${q.toString()}`
           }}>{submitting ? 'Scheduling…' : 'Confirm appointment'}</button>
         </div>
@@ -278,8 +280,8 @@ function Qualify({ answers, setAnswers, onNext }: { answers: GenieAnswers; setAn
 }
 
 // ── Schedule step ─────────────────────────────────────────────────────────────
-function Schedule({ config, widgetKey, selectedDate, setSelectedDate, selectedWindow, setSelectedWindow, onNext }: {
-  config: GenieConfig; widgetKey: string
+function Schedule({ config, widgetKey, slotMode, selectedDate, setSelectedDate, selectedWindow, setSelectedWindow, onNext }: {
+  config: GenieConfig; widgetKey: string; slotMode: 'windows' | 'day'
   selectedDate: string; setSelectedDate: (d: string) => void
   selectedWindow: { start: string; end: string } | null; setSelectedWindow: (w: { start: string; end: string } | null) => void
   onNext: () => void
@@ -317,8 +319,8 @@ function Schedule({ config, widgetKey, selectedDate, setSelectedDate, selectedWi
 
   return (
     <div style={S.card}>
-      <h2 style={S.h2}>Pick a date &amp; time</h2>
-      <p style={S.sub}>Choose an arrival window that works for you. Our tech will call ahead.</p>
+      <h2 style={S.h2}>{slotMode === 'day' ? 'Pick a date' : 'Pick a date & time'}</h2>
+      <p style={S.sub}>{slotMode === 'day' ? 'Choose the day that works for you — our tech will call ahead before arriving.' : 'Choose an arrival window that works for you. Our tech will call ahead.'}</p>
 
       {loading ? (
         <p style={S.sub}>Loading available dates…</p>
@@ -344,7 +346,7 @@ function Schedule({ config, widgetKey, selectedDate, setSelectedDate, selectedWi
             })}
           </div>
 
-          {selectedDate && (
+          {slotMode === 'windows' && selectedDate && (
             <div style={{ marginTop: '0.75rem' }}>
               {windowsForDate.map(w => {
                 const selected = selectedWindow?.start === w.start
@@ -361,7 +363,10 @@ function Schedule({ config, widgetKey, selectedDate, setSelectedDate, selectedWi
         </>
       )}
 
-      <button style={{ ...S.primary, ...(selectedDate && selectedWindow ? {} : S.primaryDisabled) }} disabled={!selectedDate || !selectedWindow} onClick={onNext}>Review appointment</button>
+      {(() => {
+        const ready = !!selectedDate && (slotMode === 'day' || !!selectedWindow)
+        return <button style={{ ...S.primary, ...(ready ? {} : S.primaryDisabled) }} disabled={!ready} onClick={onNext}>Review appointment</button>
+      })()}
     </div>
   )
 }
