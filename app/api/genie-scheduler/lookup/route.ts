@@ -66,42 +66,50 @@ export async function POST(req: NextRequest) {
     .eq('vendor', 'genie_thd')
     .neq('status', 'Cancelled')
 
-  const matched = (orders ?? []).filter((o) => {
+  type Order = NonNullable<typeof orders>[number]
+  const matched: Order[] = (orders ?? []).filter((o) => {
     const byPhone = phone10.length === 10 && digits(o.phone).slice(-10) === phone10
     const byEmail = !!email && (o.email ?? '').trim().toLowerCase() === email
     return byPhone || byEmail
   })
 
-  // Resolve each matched order to its SF job — the one WE created (sf_job_id) or,
-  // for orders that were matched to a pre-existing job (PO/name/email/phone), the
-  // job found by the shared matching service (same as the HD Orders "SF Job #").
-  // Only orders that resolve to a real job can be scheduled.
-  const jobMatches = await resolveSfJobMatches(db, matched.map((o) => ({
-    id: o.id, customer_po: o.customer_po, customer_name: o.customer_name, email: o.email, phone: o.phone, sf_job_id: o.sf_job_id,
-  })))
+  const toResult = (o: Order, sfJobNumber: string | null) => ({
+    order_id: o.id,
+    order_number: o.external_id,
+    sf_job_number: sfJobNumber,
+    customer_name: o.customer_name,
+    street_address: o.street_address,
+    city: o.city,
+    state_prov: o.state_prov,
+    postal_code: o.postal_code,
+    scope: o.scope,
+    already_scheduled: o.appointment_date
+      ? { date: o.appointment_date, window_start: o.appointment_window_start, window_end: o.appointment_window_end }
+      : null,
+  })
 
-  const results = matched
-    .map((o) => {
-      const m = jobMatches.get(o.id)
-      const sfJobNumber = o.sf_created_job_number ?? m?.sfJobNumber ?? null
-      const schedulable = !!(o.sf_job_id || m?.sfJobId)
-      if (!schedulable) return null
-      return {
-        order_id: o.id,
-        order_number: o.external_id,
-        sf_job_number: sfJobNumber,
-        customer_name: o.customer_name,
-        street_address: o.street_address,
-        city: o.city,
-        state_prov: o.state_prov,
-        postal_code: o.postal_code,
-        scope: o.scope,
-        already_scheduled: o.appointment_date
-          ? { date: o.appointment_date, window_start: o.appointment_window_start, window_end: o.appointment_window_end }
-          : null,
+  // Orders we already created a job for are schedulable immediately — no need to
+  // load the SF mirror. Only fall back to the matching service for matched orders
+  // that DON'T have a job, and never let that (heavy) call fail the whole lookup.
+  const results: ReturnType<typeof toResult>[] = []
+  const needMatch: Order[] = []
+  for (const o of matched) {
+    if (o.sf_job_id) results.push(toResult(o, o.sf_created_job_number ?? null))
+    else needMatch.push(o)
+  }
+  if (needMatch.length) {
+    try {
+      const jobMatches = await resolveSfJobMatches(db, needMatch.map((o) => ({
+        id: o.id, customer_po: o.customer_po, customer_name: o.customer_name, email: o.email, phone: o.phone, sf_job_id: o.sf_job_id,
+      })))
+      for (const o of needMatch) {
+        const m = jobMatches.get(o.id)
+        if (m?.sfJobId) results.push(toResult(o, o.sf_created_job_number ?? m.sfJobNumber ?? null))
       }
-    })
-    .filter(Boolean)
+    } catch (e) {
+      console.error('[genie-lookup] job matching failed (returning direct matches only):', e)
+    }
+  }
 
   return NextResponse.json({ matches: results }, { status: 200, headers: cors })
 }
