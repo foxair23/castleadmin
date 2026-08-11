@@ -43,6 +43,10 @@ next-env.d.ts
 # local reference docs
 *.pdf
 
+# Versioned extension build artifacts (generated per release; the canonical
+# unversioned sf-remittance.zip stays tracked).
+chrome-extension/sf-remittance-v*.zip
+
 # Claude Code internal (but keep committed skills)
 .claude/*
 !.claude/skills/

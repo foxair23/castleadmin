@@ -20,7 +20,7 @@ export interface GenieAnswers {
   door_over_7ft?: boolean
   clearance_10ft?: boolean
   adult_present?: boolean
-  outlet_within_3ft?: 'yes' | 'no' | 'unsure'
+  outlet_within_3ft?: 'yes' | 'no'
   notes?: string
 }
 
