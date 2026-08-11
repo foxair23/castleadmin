@@ -69,12 +69,23 @@ export interface NoteQueueItem {
 }
 
 /** Pending notes the browser extension should post to SF. */
+// A note fails only because the extension wasn't online / SF wasn't logged in at
+// that moment — a transient condition — so failed notes are RETRIED, not
+// abandoned. We keep retrying until it posts, up to a generous age + attempt
+// bound (a note that still won't post after that is almost certainly a bad job
+// id, not a timing issue).
+const RETRY_WINDOW_DAYS = 7
+const MAX_ATTEMPTS = 100
+
 export async function getNoteQueue(): Promise<{ items: NoteQueueItem[] }> {
   const supabase = db()
+  const since = new Date(Date.now() - RETRY_WINDOW_DAYS * 24 * 3600 * 1000).toISOString()
   const { data } = await supabase
     .from('sf_note_queue')
     .select('id, sf_job_id, note_text, event')
-    .eq('status', 'pending')
+    .in('status', ['pending', 'failed'])   // ← retry failed, don't strand them
+    .lt('attempts', MAX_ATTEMPTS)
+    .gte('created_at', since)
     .order('created_at', { ascending: true })
     .limit(200)
   const rows = (data ?? []) as Array<{ id: string; sf_job_id: string; note_text: string; event: string }>
