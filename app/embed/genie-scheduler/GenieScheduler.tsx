@@ -204,7 +204,7 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
           <ReviewRow label="Door over 7 ft" value={answers.door_over_7ft ? 'Yes' : 'No'} />
           <ReviewRow label="Cleared 10 ft" value={answers.clearance_10ft ? 'Yes' : 'No'} />
           <ReviewRow label="Adult present" value={answers.adult_present ? 'Yes' : 'No'} />
-          <ReviewRow label="Outlet within 3 ft" value={answers.outlet_within_3ft === 'yes' ? 'Yes' : answers.outlet_within_3ft === 'no' ? 'No' : answers.outlet_within_3ft === 'unsure' ? 'Not sure' : '—'} />
+          <ReviewRow label="Outlet within 3 ft" value={answers.outlet_within_3ft === 'yes' ? 'Yes' : answers.outlet_within_3ft === 'no' ? 'No' : '—'} />
           {error && <p style={S.err}>{error}</p>}
           <button style={{ ...S.primary, ...(submitting ? S.primaryDisabled : {}) }} disabled={submitting} onClick={async () => {
             setSubmitting(true); setError('')
@@ -240,10 +240,11 @@ function ReviewRow({ label, value }: { label: string; value: string }) {
 function Qualify({ answers, setAnswers, onNext }: { answers: GenieAnswers; setAnswers: (a: GenieAnswers) => void; onNext: () => void }) {
   const set = (patch: Partial<GenieAnswers>) => setAnswers({ ...answers, ...patch })
   const complete = answers.door_type != null && answers.door_over_7ft != null && answers.clearance_10ft != null && answers.adult_present != null && answers.outlet_within_3ft != null
+  const notice: React.CSSProperties = { ...S.sub, background: '#FEF9F0', border: '1px solid #FADFB0', borderRadius: 'var(--radius-input)', padding: '0.6rem 0.7rem', margin: '0.5rem 0 0' }
   return (
     <div style={S.card}>
       <h2 style={S.h2}>A few install details</h2>
-      <p style={S.sub}>This helps our tech arrive ready. Answer honestly — if something isn’t ready we’ll still come, we’ll just plan for it.</p>
+      <p style={S.sub}>This helps our tech arrive ready.</p>
 
       <p style={S.label}>What type of garage door is it?</p>
       <button type="button" style={optionStyle(answers.door_type === 'metal_sectional')} onClick={() => set({ door_type: 'metal_sectional' })}>Metal sectional (panels)</button>
@@ -253,23 +254,37 @@ function Qualify({ answers, setAnswers, onNext }: { answers: GenieAnswers; setAn
       <button type="button" style={optionStyle(answers.door_over_7ft === false)} onClick={() => set({ door_over_7ft: false })}>7 feet or under</button>
       <button type="button" style={optionStyle(answers.door_over_7ft === true)} onClick={() => set({ door_over_7ft: true })}>Over 7 feet</button>
       {answers.door_over_7ft === true && (
-        <p style={{ ...S.sub, background: '#FEF9F0', border: '1px solid #FADFB0', borderRadius: 'var(--radius-input)', padding: '0.6rem 0.7rem', margin: '0.5rem 0 0' }}>
-          Doors over 7 ft need an extension rail. If one isn’t already on site it’s sourced from Home Depot, and an additional charge may apply.
+        <p style={notice}>
+          Doors over 7 ft require an extension rail, which may involve an additional charge. If the required extension rail is not available at the installation site, it will need to be obtained from Home Depot and the associated cost will apply.
         </p>
       )}
 
       <p style={S.label}>Is the garage cleared back at least 10 feet from the door?</p>
       <button type="button" style={optionStyle(answers.clearance_10ft === true)} onClick={() => set({ clearance_10ft: true })}>Yes, it’s cleared</button>
       <button type="button" style={optionStyle(answers.clearance_10ft === false)} onClick={() => set({ clearance_10ft: false })}>Not yet</button>
+      {answers.clearance_10ft === false && (
+        <p style={notice}>
+          Please ensure the garage is cleared back at least 10 feet from the garage door to provide sufficient workspace for the installation. If the garage does not have at least 10 feet of clearance, the installation cannot proceed.
+        </p>
+      )}
 
       <p style={S.label}>Will an adult (18+) be present during the install?</p>
       <button type="button" style={optionStyle(answers.adult_present === true)} onClick={() => set({ adult_present: true })}>Yes</button>
       <button type="button" style={optionStyle(answers.adult_present === false)} onClick={() => set({ adult_present: false })}>No</button>
+      {answers.adult_present === false && (
+        <p style={notice}>
+          Someone 18 years of age or older must be present at the property during the installation.
+        </p>
+      )}
 
-      <p style={S.label}>Is there a working electrical outlet within 3 feet of where the opener installs?</p>
+      <p style={S.label}>Is there a working electrical outlet within 3 feet of where the opener will be installed?</p>
       <button type="button" style={optionStyle(answers.outlet_within_3ft === 'yes')} onClick={() => set({ outlet_within_3ft: 'yes' })}>Yes</button>
       <button type="button" style={optionStyle(answers.outlet_within_3ft === 'no')} onClick={() => set({ outlet_within_3ft: 'no' })}>No</button>
-      <button type="button" style={optionStyle(answers.outlet_within_3ft === 'unsure')} onClick={() => set({ outlet_within_3ft: 'unsure' })}>Not sure</button>
+      {answers.outlet_within_3ft === 'no' && (
+        <p style={notice}>
+          Please ensure there is a working electrical outlet within 3 feet of where the garage door opener will be installed. Our technicians are not electricians and cannot install outlets. It is the homeowner’s responsibility to hire an electrician before the motor is installed in order to have a working outlet for the garage door opener.
+        </p>
+      )}
 
       <label style={S.label} htmlFor="g-notes">Anything else we should know? (optional)</label>
       <textarea id="g-notes" style={{ ...S.input, minHeight: 70, resize: 'vertical' }} value={answers.notes ?? ''} onChange={e => set({ notes: e.target.value })} />
