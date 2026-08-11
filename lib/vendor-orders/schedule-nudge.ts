@@ -1,7 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sendEmail } from '@/lib/notifications/resend'
 import { sendSms, toE164, isDialpadConfigured } from '@/lib/dialpad/client'
-import { ensureShortLink } from '@/lib/short-links'
 import { greetingFirstName } from '@/lib/names'
 import { renderGenieScheduleEmail, renderGenieScheduleSms } from '@/lib/notifications/templates/genie-schedule-email'
 
@@ -19,6 +18,8 @@ import { renderGenieScheduleEmail, renderGenieScheduleSms } from '@/lib/notifica
 
 const VENDOR = 'genie_thd'
 const SEND_CAP = 25            // max customers nudged per cron run
+// Vanity short link used in the SMS (the email uses the full configured URL).
+const SMS_SCHEDULE_LINK = 'http://gdo.cstle.co/'
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 function db(): SupabaseClient {
@@ -69,7 +70,6 @@ export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
     .limit(SEND_CAP)
 
   const eligible = (rows ?? []).filter(o => isActive(o.status) && (o.email || o.phone))
-  const shortUrl = await ensureShortLink(/^https?:\/\//i.test(s.scheduleUrl) ? s.scheduleUrl : `https://${s.scheduleUrl}`)
 
   let sent = 0, failed = 0
   const errors: string[] = []
@@ -92,7 +92,7 @@ export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
         const { data: opt } = await supabase.from('invoice_reminder_optouts')
           .select('value').eq('channel', 'sms').eq('value', e164).maybeSingle()
         if (!opt) {
-          const res = await sendSms(e164, renderGenieScheduleSms(shortUrl))
+          const res = await sendSms(e164, renderGenieScheduleSms(SMS_SCHEDULE_LINK))
           if (res.ok) channels.push('sms')
           else errors.push(`order ${o.external_id} sms: ${res.error ?? 'failed'}`)
         }
