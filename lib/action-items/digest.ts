@@ -137,9 +137,12 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
   const sfiLines: Line[] = leadsToCall.items.map(l => ({
     text: `${l.customer_name ?? '—'} — ${l.phone ?? 'no phone'} — ${l.status === 'callback' ? 'callback requested' : (l.contacted ? 'contacted' : 'not contacted')} — ${Math.round(l.hours_waiting)}h`,
   }))
-  const genieLines: Line[] = genie.items.map(g => ({
-    text: `${g.customer_name ?? '—'} — HD #${g.external_id}${g.sf_job_number ? ` — SF Job ${g.sf_job_number}` : ''}${g.status ? ` — ${g.status}` : ''}`,
-  }))
+  const genieLines: Line[] = genie.items.map(g => {
+    const sched = g.appointment_date ? `scheduled ${g.appointment_date}` : 'NOT scheduled — rep can book'
+    return {
+      text: `${g.customer_name ?? '—'} — HD #${g.external_id}${g.sf_job_number ? ` — SF Job ${g.sf_job_number}` : ''} — ${sched}`,
+    }
+  })
 
   // Full open backlog keyed "tab:id" (post-cutoff, action state ignored). This
   // is what the daily snapshot diff compares — an item leaves the backlog only

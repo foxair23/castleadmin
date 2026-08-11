@@ -119,6 +119,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Bad appointment format.' }, { status: 400, headers: cors })
   }
 
+  // Enforce the minimum lead time (motor must ship first) server-side too, so a
+  // stale client or a direct POST can't book sooner than the configured window.
+  const { data: leadSetting } = await db.from('scheduler_settings').select('value').eq('key', 'genie_min_lead_days').maybeSingle()
+  const minLeadDays = Number(leadSetting?.value ?? 7) || 0
+  const todayLA = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const earliest = new Date(todayLA + 'T12:00:00Z'); earliest.setUTCDate(earliest.getUTCDate() + minLeadDays)
+  if (appointment_date < earliest.toISOString().slice(0, 10)) {
+    return NextResponse.json({ error: `The earliest available date is ${earliest.toISOString().slice(0, 10)}. Please pick a later date.` }, { status: 400, headers: cors })
+  }
+
   const { data: order } = await db
     .from('vendor_orders')
     .select('id, external_id, status, sf_job_id, sf_created_job_number')

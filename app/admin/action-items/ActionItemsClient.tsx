@@ -1656,6 +1656,19 @@ function ArHoldTable({ items, notes, actions }: { items: ArHoldRow[]; notes: Rec
   )
 }
 
+// 'HH:MM' window → compact label ('08:00'/'12:00' ⇒ '8a–12p'). '' if not set.
+function genieSlotLabel(start: string | null, end: string | null): string {
+  const fmt = (t: string | null) => {
+    if (!t || !/^\d{2}:\d{2}$/.test(t)) return ''
+    const [h] = t.split(':').map(Number)
+    const ap = h < 12 ? 'a' : 'p'
+    const h12 = h % 12 === 0 ? 12 : h % 12
+    return `${h12}${ap}`
+  }
+  const s = fmt(start), e = fmt(end)
+  return s && e ? `${s}–${e}` : ''
+}
+
 function GenieTable({ items }: { items: GenieActionItem[] }) {
   return (
     <div className="overflow-x-auto">
@@ -1666,6 +1679,7 @@ function GenieTable({ items }: { items: GenieActionItem[] }) {
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">HD Order #</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">SF Job #</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Scheduled</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order Date</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
@@ -1678,6 +1692,15 @@ function GenieTable({ items }: { items: GenieActionItem[] }) {
               <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{g.external_id}</td>
               <td className="px-4 py-2 text-gray-900">{g.customer_name ?? '—'}</td>
               <td className="px-4 py-2 font-mono text-xs text-gray-600 whitespace-nowrap">{g.sf_job_number ?? '—'}</td>
+              <td className="px-4 py-2 whitespace-nowrap">
+                {g.appointment_date ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="Customer self-scheduled">
+                    {fmtDate(g.appointment_date)}{genieSlotLabel(g.appointment_window_start, g.appointment_window_end) ? ` · ${genieSlotLabel(g.appointment_window_start, g.appointment_window_end)}` : ''}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800" title="Customer hasn't scheduled — a rep can book on their behalf">Not scheduled</span>
+                )}
+              </td>
               <td className="px-4 py-2 text-gray-500"><div className="max-w-[220px] truncate" title={g.address ?? undefined}>{g.address ?? '—'}</div></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(g.order_date)}</td>
               <td className="px-4 py-2 text-gray-600">{g.status ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{g.status}</span> : <span className="text-gray-400">—</span>}</td>

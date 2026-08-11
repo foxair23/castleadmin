@@ -14,6 +14,7 @@ export interface GenieConfig {
   scheduling_horizon_days: number
   scheduling_enabled: boolean
   scheduling_disabled_message: string
+  min_lead_days: number   // earliest bookable slot is this many days out (motor must ship first)
 }
 
 type Step = 'identify' | 'notfound' | 'confirm' | 'qualify' | 'schedule' | 'review'
@@ -154,13 +155,17 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
 
       {step === 'confirm' && (
         <div style={S.card}>
-          <h2 style={S.h2}>{matches.length > 1 ? 'Which order is yours?' : 'Is this your order?'}</h2>
+          <h2 style={S.h2}>{matches.length > 1 ? 'Which order is yours?' : 'Is this you?'}</h2>
+          <p style={S.sub}>Please confirm your name, address, and order number below.</p>
           {matches.map(m => {
             const selected = order?.order_id === m.order_id
             return (
               <button key={m.order_id} type="button" onClick={() => setOrder(m)} style={optionStyle(selected)}>
-                <div style={{ fontWeight: 700 }}>{[m.street_address, m.city].filter(Boolean).join(', ') || `Order ${m.order_number}`}</div>
-                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginTop: 2 }}>Order #{m.order_number}{m.scope ? ` · ${m.scope}` : ''}</div>
+                <div style={{ fontWeight: 700 }}>{m.customer_name ?? `Order ${m.order_number}`}</div>
+                {[m.street_address, m.city, m.state_prov].filter(Boolean).length > 0 && (
+                  <div style={{ fontSize: '0.9rem', marginTop: 2 }}>{[m.street_address, [m.city, m.state_prov].filter(Boolean).join(', '), m.postal_code].filter(Boolean).join(' · ')}</div>
+                )}
+                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem', marginTop: 3 }}>HD order #{m.order_number}{m.scope ? ` · ${m.scope}` : ''}</div>
                 {m.already_scheduled && (
                   <div style={{ color: 'var(--color-primary)', fontSize: '0.8rem', marginTop: 4 }}>Already scheduled for {prettyDate(m.already_scheduled.date)} — choosing again will update it.</div>
                 )}
@@ -282,27 +287,30 @@ function Schedule({ config, widgetKey, selectedDate, setSelectedDate, selectedWi
   const [avail, setAvail] = useState<Record<string, { available: boolean; windows: Array<{ start: string; end: string; label: string; available: boolean }> }>>({})
   const [loading, setLoading] = useState(true)
 
+  // Earliest bookable day is min_lead_days out — the motor has to ship first —
+  // so the first date the customer sees is (today + min_lead_days).
+  const leadDays = Math.max(0, config.min_lead_days ?? 0)
   const candidateDates = useMemo(() => {
     const today = laToday()
     const out: string[] = []
-    for (let i = 0; i <= config.scheduling_horizon_days; i++) {
+    for (let i = leadDays; i <= config.scheduling_horizon_days; i++) {
       const d = addDays(today, i)
       if (config.available_days.includes(dow(d))) out.push(d)
     }
     return out
-  }, [config.scheduling_horizon_days, config.available_days])
+  }, [leadDays, config.scheduling_horizon_days, config.available_days])
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       setLoading(true)
-      const from = laToday()
-      const to = addDays(from, config.scheduling_horizon_days)
+      const from = addDays(laToday(), leadDays)
+      const to = addDays(laToday(), config.scheduling_horizon_days)
       const data = await fetchAvailability(from, to, widgetKey)
       if (!cancelled) { setAvail(data as typeof avail); setLoading(false) }
     })()
     return () => { cancelled = true }
-  }, [config.scheduling_horizon_days, widgetKey])
+  }, [leadDays, config.scheduling_horizon_days, widgetKey])
 
   const bookableDates = candidateDates.filter(d => avail[d]?.available)
   const windowsForDate = selectedDate ? (avail[selectedDate]?.windows ?? []) : []
