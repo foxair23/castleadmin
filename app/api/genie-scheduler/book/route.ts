@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sfPut } from '@/lib/crm/service-fusion'
 import { enqueueNote } from '@/lib/sf-notes/queue'
+import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
 
 // Genie self-scheduler — final step: write the chosen appointment onto the SF
 // job we already created for this order, and queue a note summarizing the
@@ -145,11 +146,22 @@ export async function POST(req: NextRequest) {
 
   const { data: order } = await db
     .from('vendor_orders')
-    .select('id, external_id, status, sf_job_id, sf_created_job_number')
+    .select('id, external_id, status, sf_job_id, sf_created_job_number, customer_po, customer_name, email, phone')
     .eq('id', order_id)
     .single()
-  if (!order || !order.sf_job_id) return NextResponse.json({ error: 'Order not found.' }, { status: 404, headers: cors })
+  if (!order) return NextResponse.json({ error: 'Order not found.' }, { status: 404, headers: cors })
   if (order.status === 'Cancelled') return NextResponse.json({ error: 'This order has been cancelled.' }, { status: 409, headers: cors })
+
+  // Resolve the SF job to write to: the one we created (sf_job_id) or, for orders
+  // matched to a pre-existing job, the one the shared matching service finds.
+  let sfJobId: string | null = order.sf_job_id
+  let sfJobNumber: string | null = order.sf_created_job_number
+  if (!sfJobId) {
+    const m = (await resolveSfJobMatches(db, [{ id: order.id, customer_po: order.customer_po, customer_name: order.customer_name, email: order.email, phone: order.phone, sf_job_id: order.sf_job_id }])).get(order.id)
+    sfJobId = m?.sfJobId ?? null
+    sfJobNumber = sfJobNumber ?? m?.sfJobNumber ?? null
+  }
+  if (!sfJobId) return NextResponse.json({ error: 'We couldn’t find your job in our system. Please call the office.' }, { status: 409, headers: cors })
 
   const answers: GenieAnswers = body.answers ?? {}
 
@@ -158,7 +170,7 @@ export async function POST(req: NextRequest) {
   let sfSynced = false
   let sfError: string | null = null
   try {
-    await sfPut(`/jobs/${order.sf_job_id}`, {
+    await sfPut(`/jobs/${sfJobId}`, {
       start_date: appointment_date,
       // Only set a promised time window when we actually collected one.
       ...(useWindow ? { time_frame_promised_start: window_start, time_frame_promised_end: window_end } : {}),
@@ -171,7 +183,7 @@ export async function POST(req: NextRequest) {
   // 2) Queue the qualification note (posted to SF by the extension). Dedup per
   //    order + chosen slot so a genuine reschedule posts a fresh note.
   await enqueueNote({
-    sfJobId: order.sf_job_id,
+    sfJobId,
     noteText: buildNote(order.external_id, appointment_date, useWindow ? window_start! : null, useWindow ? window_end! : null, answers),
     event: 'genie_schedule',
     dedupKey: `genie_sched:${order.id}:${appointment_date}:${useWindow ? window_start : 'day'}`,
@@ -203,7 +215,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     sf_synced: sfSynced,
     order_number: order.external_id,
-    sf_job_number: order.sf_created_job_number,
+    sf_job_number: sfJobNumber,
     appointment_date,
     window_start,
     window_end,

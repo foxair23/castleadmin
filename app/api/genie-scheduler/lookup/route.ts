@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
 
 // Genie self-scheduler — step 1: a customer proves who they are with the phone
 // or email on their Home Depot / Genie order. We match it to a vendor_orders row
@@ -56,35 +57,51 @@ export async function POST(req: NextRequest) {
   }
   const phone10 = phone.slice(-10)
 
-  // Only Genie orders we've already turned into an SF job can be self-scheduled.
-  // ~hundreds of rows at most; match digit-normalized phone / lowercased email in
-  // JS so formatting differences ('(760) 555-1212' vs '7605551212') still hit.
+  // Match against ALL non-cancelled Genie orders (~hundreds), by digit-normalized
+  // phone / lowercased email so formatting differences ('(760) 555-1212' vs
+  // '7605551212') still hit.
   const { data: orders } = await db
     .from('vendor_orders')
-    .select('id, external_id, sf_created_job_number, status, customer_name, street_address, city, state_prov, postal_code, scope, phone, email, appointment_date, appointment_window_start, appointment_window_end')
-    .not('sf_job_id', 'is', null)
+    .select('id, external_id, sf_created_job_number, sf_job_id, status, customer_name, customer_po, street_address, city, state_prov, postal_code, scope, phone, email, appointment_date, appointment_window_start, appointment_window_end')
+    .eq('vendor', 'genie_thd')
     .neq('status', 'Cancelled')
 
-  const matches = (orders ?? []).filter((o) => {
+  const matched = (orders ?? []).filter((o) => {
     const byPhone = phone10.length === 10 && digits(o.phone).slice(-10) === phone10
     const byEmail = !!email && (o.email ?? '').trim().toLowerCase() === email
     return byPhone || byEmail
   })
 
-  const results = matches.map((o) => ({
-    order_id: o.id,
-    order_number: o.external_id,
-    sf_job_number: o.sf_created_job_number,
-    customer_name: o.customer_name,
-    street_address: o.street_address,
-    city: o.city,
-    state_prov: o.state_prov,
-    postal_code: o.postal_code,
-    scope: o.scope,
-    already_scheduled: o.appointment_date
-      ? { date: o.appointment_date, window_start: o.appointment_window_start, window_end: o.appointment_window_end }
-      : null,
-  }))
+  // Resolve each matched order to its SF job — the one WE created (sf_job_id) or,
+  // for orders that were matched to a pre-existing job (PO/name/email/phone), the
+  // job found by the shared matching service (same as the HD Orders "SF Job #").
+  // Only orders that resolve to a real job can be scheduled.
+  const jobMatches = await resolveSfJobMatches(db, matched.map((o) => ({
+    id: o.id, customer_po: o.customer_po, customer_name: o.customer_name, email: o.email, phone: o.phone, sf_job_id: o.sf_job_id,
+  })))
+
+  const results = matched
+    .map((o) => {
+      const m = jobMatches.get(o.id)
+      const sfJobNumber = o.sf_created_job_number ?? m?.sfJobNumber ?? null
+      const schedulable = !!(o.sf_job_id || m?.sfJobId)
+      if (!schedulable) return null
+      return {
+        order_id: o.id,
+        order_number: o.external_id,
+        sf_job_number: sfJobNumber,
+        customer_name: o.customer_name,
+        street_address: o.street_address,
+        city: o.city,
+        state_prov: o.state_prov,
+        postal_code: o.postal_code,
+        scope: o.scope,
+        already_scheduled: o.appointment_date
+          ? { date: o.appointment_date, window_start: o.appointment_window_start, window_end: o.appointment_window_end }
+          : null,
+      }
+    })
+    .filter(Boolean)
 
   return NextResponse.json({ matches: results }, { status: 200, headers: cors })
 }
