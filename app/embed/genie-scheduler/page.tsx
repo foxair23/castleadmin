@@ -17,7 +17,7 @@ const getCachedWidget = unstable_cache(
   { revalidate: 60 },
 )
 
-const CONFIG_KEYS = ['office_phone', 'time_windows', 'available_days', 'scheduling_horizon_days', 'scheduling_enabled', 'scheduling_disabled_message', 'genie_min_lead_days']
+const CONFIG_KEYS = ['office_phone', 'time_windows', 'available_days', 'scheduling_horizon_days', 'scheduling_enabled', 'scheduling_disabled_message', 'genie_min_lead_days', 'genie_slot_mode']
 
 const getCachedSettings = unstable_cache(
   async () => {
@@ -39,6 +39,7 @@ const DEFAULTS: GenieConfig = {
   scheduling_enabled: true,
   scheduling_disabled_message: 'Online scheduling is temporarily unavailable. Please call us to book.',
   min_lead_days: 7,
+  slot_mode: 'windows',
 }
 
 const invalid = (
@@ -63,6 +64,7 @@ export default async function GenieSchedulerPage({ searchParams }: { searchParam
     scheduling_enabled: (settingsMap.scheduling_enabled as boolean) ?? DEFAULTS.scheduling_enabled,
     scheduling_disabled_message: (settingsMap.scheduling_disabled_message as string) ?? DEFAULTS.scheduling_disabled_message,
     min_lead_days: (settingsMap.genie_min_lead_days as number) ?? DEFAULTS.min_lead_days,
+    slot_mode: (settingsMap.genie_slot_mode === 'day' ? 'day' : 'windows'),
   }
 
   return <GenieScheduler config={config} widgetKey={key} />

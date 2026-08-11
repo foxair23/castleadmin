@@ -45,8 +45,8 @@ export async function lookupOrder(
 export interface GenieBookingInput {
   order_id: string
   appointment_date: string
-  window_start: string
-  window_end: string
+  window_start?: string   // omitted in day-only mode
+  window_end?: string
   contact_phone?: string
   contact_email?: string
   answers: GenieAnswers

@@ -63,7 +63,7 @@ function windowLabel(start?: string, end?: string): string {
   return `${fmt(start)} – ${fmt(end)}`
 }
 
-function buildNote(orderNumber: string, date: string, start: string, end: string, a: GenieAnswers): string {
+function buildNote(orderNumber: string, date: string, start: string | null, end: string | null, a: GenieAnswers): string {
   const flags: string[] = []
   if (a.adult_present === false) flags.push('⚠ No adult (18+) confirmed present during install')
   if (a.clearance_10ft === false) flags.push('⚠ Garage NOT confirmed cleared back 10 ft')
@@ -73,7 +73,7 @@ function buildNote(orderNumber: string, date: string, start: string, end: string
 
   const lines = [
     `Customer self-scheduled via the Genie scheduler (HD order ${orderNumber}).`,
-    `Requested: ${date}, ${windowLabel(start, end)} PT.`,
+    start && end ? `Requested: ${date}, ${windowLabel(start, end)} PT.` : `Requested: ${date} (any time — tech to call ahead).`,
     '',
     'Pre-install qualification:',
     `• Door type: ${a.door_type ? (LABEL[a.door_type] ?? a.door_type) : '—'}`,
@@ -112,17 +112,31 @@ export async function POST(req: NextRequest) {
   try { body = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400, headers: cors }) }
 
   const { order_id, appointment_date, window_start, window_end } = body
-  if (!order_id || !appointment_date || !window_start || !window_end) {
+  if (!order_id || !appointment_date) {
     return NextResponse.json({ error: 'Missing appointment details.' }, { status: 400, headers: cors })
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(appointment_date) || !/^\d{2}:\d{2}$/.test(window_start) || !/^\d{2}:\d{2}$/.test(window_end)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(appointment_date)) {
     return NextResponse.json({ error: 'Bad appointment format.' }, { status: 400, headers: cors })
   }
 
+  // Read Genie scheduler config (min lead time + slot mode) up front.
+  const { data: settingRows } = await db.from('scheduler_settings').select('key, value').in('key', ['genie_min_lead_days', 'genie_slot_mode'])
+  const settings: Record<string, unknown> = {}
+  for (const r of settingRows ?? []) settings[r.key] = r.value
+  const slotMode = settings.genie_slot_mode === 'day' ? 'day' : 'windows'
+
+  // In 'windows' mode a valid time window is required; in 'day' mode it's ignored.
+  const hasWindow = !!window_start && !!window_end
+  if (slotMode === 'windows') {
+    if (!hasWindow || !/^\d{2}:\d{2}$/.test(window_start!) || !/^\d{2}:\d{2}$/.test(window_end!)) {
+      return NextResponse.json({ error: 'Please pick an arrival window.' }, { status: 400, headers: cors })
+    }
+  }
+  const useWindow = slotMode === 'windows' && hasWindow
+
   // Enforce the minimum lead time (motor must ship first) server-side too, so a
   // stale client or a direct POST can't book sooner than the configured window.
-  const { data: leadSetting } = await db.from('scheduler_settings').select('value').eq('key', 'genie_min_lead_days').maybeSingle()
-  const minLeadDays = Number(leadSetting?.value ?? 7) || 0
+  const minLeadDays = Number(settings.genie_min_lead_days ?? 7) || 0
   const todayLA = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const earliest = new Date(todayLA + 'T12:00:00Z'); earliest.setUTCDate(earliest.getUTCDate() + minLeadDays)
   if (appointment_date < earliest.toISOString().slice(0, 10)) {
@@ -146,8 +160,8 @@ export async function POST(req: NextRequest) {
   try {
     await sfPut(`/jobs/${order.sf_job_id}`, {
       start_date: appointment_date,
-      time_frame_promised_start: window_start,
-      time_frame_promised_end: window_end,
+      // Only set a promised time window when we actually collected one.
+      ...(useWindow ? { time_frame_promised_start: window_start, time_frame_promised_end: window_end } : {}),
     })
     sfSynced = true
   } catch (e) {
@@ -158,9 +172,9 @@ export async function POST(req: NextRequest) {
   //    order + chosen slot so a genuine reschedule posts a fresh note.
   await enqueueNote({
     sfJobId: order.sf_job_id,
-    noteText: buildNote(order.external_id, appointment_date, window_start, window_end, answers),
+    noteText: buildNote(order.external_id, appointment_date, useWindow ? window_start! : null, useWindow ? window_end! : null, answers),
     event: 'genie_schedule',
-    dedupKey: `genie_sched:${order.id}:${appointment_date}:${window_start}`,
+    dedupKey: `genie_sched:${order.id}:${appointment_date}:${useWindow ? window_start : 'day'}`,
     refTable: 'vendor_orders',
     refId: order.id,
   })
@@ -169,8 +183,8 @@ export async function POST(req: NextRequest) {
   const nowIso = new Date().toISOString()
   await db.from('vendor_orders').update({
     appointment_date,
-    appointment_window_start: window_start,
-    appointment_window_end: window_end,
+    appointment_window_start: useWindow ? window_start : null,
+    appointment_window_end: useWindow ? window_end : null,
     scheduled_at: nowIso,
     scheduled_contact_phone: body.contact_phone ?? null,
     scheduled_contact_email: body.contact_email ?? null,
@@ -181,8 +195,8 @@ export async function POST(req: NextRequest) {
   await db.from('vendor_order_events').insert({
     order_id: order.id,
     event_type: 'scheduled',
-    to_value: `${appointment_date} ${window_start}-${window_end}`,
-    detail: { sfSynced, sfError, answers },
+    to_value: useWindow ? `${appointment_date} ${window_start}-${window_end}` : appointment_date,
+    detail: { sfSynced, sfError, slotMode, answers },
   })
 
   return NextResponse.json({
