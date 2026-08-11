@@ -119,7 +119,7 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
 
       {step === 'identify' && (
         <div style={S.card}>
-          <h2 style={S.h2}>Schedule your Genie installation</h2>
+          <h2 style={S.h2}>Schedule your Garage Door Opener Installation</h2>
           <p style={S.sub}>Find your order using the phone number or email you gave Home Depot when you placed your order.</p>
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
             <button type="button" onClick={() => setMethod('phone')} style={{ ...optionStyle(method === 'phone'), marginTop: 0, textAlign: 'center' }}>Phone</button>
