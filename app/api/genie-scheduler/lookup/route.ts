@@ -111,15 +111,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Temporary diagnostics (non-sensitive counts) to pinpoint why a known order
-  // isn't found in production. Remove once resolved.
-  return NextResponse.json({
-    matches: results,
-    debug: {
-      scanned: (orders ?? []).length,   // genie orders the query returned
-      matched: matched.length,          // matched this phone/email
-      withJob: results.length,          // of matched, resolvable to an SF job
-      gotEmail: !!email,
-    },
-  }, { status: 200, headers: cors })
+  return NextResponse.json({ matches: results }, { status: 200, headers: cors })
 }
