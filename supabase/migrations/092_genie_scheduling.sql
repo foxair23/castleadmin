@@ -25,8 +25,8 @@ create index if not exists idx_vendor_orders_appointment on public.vendor_orders
 -- it in the widgets list; the Genie flow updates existing jobs rather than
 -- creating leads, so those values are only for identification. Grab the embed
 -- link (api_key) from Admin → Scheduler → Widgets.
-insert into public.scheduler_widget_instances (display_name, lead_source, sf_job_source, api_key, is_active)
-select 'Genie / Home Depot install scheduling', 'genie', 'Genie', 'genie_' || replace(gen_random_uuid()::text, '-', ''), true
+insert into public.scheduler_widget_instances (id, display_name, lead_source, sf_job_source, api_key, is_active)
+select 'genie', 'Genie / Home Depot install scheduling', 'genie', 'Genie', 'genie_' || replace(gen_random_uuid()::text, '-', ''), true
 where not exists (
-  select 1 from public.scheduler_widget_instances where lead_source = 'genie'
+  select 1 from public.scheduler_widget_instances where lead_source = 'genie' or id = 'genie'
 );
