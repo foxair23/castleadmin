@@ -139,8 +139,9 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
   }))
   const genieLines: Line[] = genie.items.map(g => {
     const sched = g.appointment_date ? `scheduled ${g.appointment_date}` : 'NOT scheduled — rep can book'
+    const reminded = g.schedule_nudge_sent_at ? 'reminder sent' : 'no reminder yet'
     return {
-      text: `${g.customer_name ?? '—'} — HD #${g.external_id}${g.sf_job_number ? ` — SF Job ${g.sf_job_number}` : ''} — ${sched}`,
+      text: `${g.customer_name ?? '—'} — HD #${g.external_id}${g.sf_job_number ? ` — SF Job ${g.sf_job_number}` : ''} — ${sched} · ${reminded}`,
     }
   })
 
