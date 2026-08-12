@@ -15,19 +15,30 @@
 const SF = 'https://admin.servicefusion.com'
 const form = (obj) => Object.entries(obj).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v ?? '')}`).join('&')
 
-async function sfFetch(path, { method = 'GET', body } = {}) {
+async function sfFetch(path, { method = 'GET', body, follow = false } = {}) {
   // These endpoints are form-POST navigations in the browser (no X-Requested-With);
   // send them the same way so SF returns the form instead of bouncing home.
-  // redirect:'manual' — a logged-out SF 302s to auth.servicefusion.com/oauth;
-  // following that credentialed cross-origin redirect trips CORS, so we detect it
-  // as an opaqueredirect (loginRedirect) instead.
+  //
+  // Redirect handling differs by call:
+  //  • Most calls return 200 on success and only 302 (to auth.servicefusion.com/
+  //    oauth) when logged out. redirect:'manual' keeps that credentialed
+  //    cross-origin redirect from tripping CORS — we detect the opaqueredirect as
+  //    loginRedirect instead.
+  //  • saveInvoicePayments REDIRECTS ON SUCCESS (302 → viewPayment). That call must
+  //    FOLLOW the redirect (follow:true) so we can read the final URL and confirm
+  //    the payment posted — with 'manual' the URL/body are hidden and a real
+  //    success looks like a failure (and risks a double-post on retry).
   const res = await fetch(`${SF}${path}`, {
     method,
     credentials: 'include',
-    redirect: 'manual',
+    redirect: follow ? 'follow' : 'manual',
     headers: body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {},
     body,
   })
+  if (follow) {
+    const text = await res.text()
+    return { status: res.status, url: res.url, redirected: res.redirected, loginRedirect: false, text }
+  }
   const loginRedirect = res.type === 'opaqueredirect' || res.status === 0 || (res.status >= 300 && res.status < 400)
   const text = loginRedirect ? '' : await res.text()
   return { status: res.status, url: res.url, redirected: res.redirected, loginRedirect, text }
@@ -151,10 +162,11 @@ export async function submitPayment(parsed, item, cfg, trace) {
     return { ok: true, dryRun: true, paymentId: null }
   }
 
-  const r = await sfFetch('/saveInvoicePayments', { method: 'POST', body })
+  // follow:true — SF 302-redirects to viewPayment on success; we need the final URL.
+  const r = await sfFetch('/saveInvoicePayments', { method: 'POST', body, follow: true })
   trace.push({ step: 'submit', status: r.status, url: r.url })
   const ok = /viewPayment/i.test(r.url) || /Transaction Successfull/i.test(r.text)
-  if (!ok) throw new Error('saveInvoicePayments did not confirm success')
+  if (!ok) throw new Error(`saveInvoicePayments did not confirm success (landed ${r.url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]})`)
   const paymentId = r.url.match(/viewPayment\?id=([^&]+)/)?.[1] ?? null
   return { ok: true, paymentId, url: r.url }
 }
