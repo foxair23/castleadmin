@@ -11,7 +11,21 @@ export async function GET(req: NextRequest) {
   if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const result = await matchConversions()
-  const customers = await ensureLeadCustomers()
+  // Isolate the two passes: a failure in conversion-matching must never block SF
+  // customer pre-creation (they're independent), and vice-versa.
+  const result: Record<string, unknown> = {}
+  try {
+    Object.assign(result, await matchConversions())
+  } catch (e) {
+    console.error('[leadgen-match] matchConversions failed:', e instanceof Error ? e.message : e)
+    result.matchError = e instanceof Error ? e.message : String(e)
+  }
+  const customers: Record<string, unknown> = {}
+  try {
+    Object.assign(customers, await ensureLeadCustomers())
+  } catch (e) {
+    console.error('[leadgen-match] ensureLeadCustomers failed:', e instanceof Error ? e.message : e)
+    customers.customerError = e instanceof Error ? e.message : String(e)
+  }
   return NextResponse.json({ ok: true, ...result, customers })
 }
