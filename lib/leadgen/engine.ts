@@ -315,12 +315,18 @@ export async function matchConversions(): Promise<MatchResult> {
   const leads = (data ?? []) as LeadRow[]
   let booked = 0
   for (const lead of leads) {
-    const jobId = await findConvertingJobId(lead)
-    if (jobId) {
-      await supabase.from('leads').update({
-        status: 'booked', matched_job_id: jobId, converted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      }).eq('id', lead.id)
-      booked++
+    try {
+      const jobId = await findConvertingJobId(lead)
+      if (jobId) {
+        await supabase.from('leads').update({
+          status: 'booked', matched_job_id: jobId, converted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq('id', lead.id)
+        booked++
+      }
+    } catch (e) {
+      // One malformed lead must not abort the whole batch (and, before isolation,
+      // the entire cron — which blocked SF customer pre-creation).
+      console.error('[leadgen] matchConversions failed for lead', lead.id, e instanceof Error ? e.message : e)
     }
   }
   return { checked: leads.length, booked }
