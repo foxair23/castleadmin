@@ -1,8 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sfPut } from '@/lib/crm/service-fusion'
 import { enqueueNote } from '@/lib/sf-notes/queue'
 import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
+import { sendEmail } from '@/lib/notifications/resend'
+import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
+import { greetingFirstName } from '@/lib/names'
+import { renderGenieBookingConfirmation, renderGenieBookingAlert } from '@/lib/notifications/templates/genie-booking'
 
 // Genie self-scheduler — final step: write the chosen appointment onto the SF
 // job we already created for this order, and queue a note summarizing the
@@ -146,7 +150,7 @@ export async function POST(req: NextRequest) {
 
   const { data: order } = await db
     .from('vendor_orders')
-    .select('id, external_id, status, sf_job_id, sf_created_job_number, customer_po, customer_name, email, phone')
+    .select('id, external_id, status, sf_job_id, sf_created_job_number, customer_po, customer_name, email, phone, street_address, city, state_prov, postal_code')
     .eq('id', order_id)
     .single()
   if (!order) return NextResponse.json({ error: 'Order not found.' }, { status: 404, headers: cors })
@@ -209,6 +213,31 @@ export async function POST(req: NextRequest) {
     event_type: 'scheduled',
     to_value: useWindow ? `${appointment_date} ${window_start}-${window_end}` : appointment_date,
     detail: { sfSynced, sfError, slotMode, answers },
+  })
+
+  // 4) Notify (non-blocking, best-effort): a confirmation email to the customer
+  //    and a team alert on the same subscriber path as the main scheduler.
+  const dateLabel = new Date(appointment_date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  const windowText = useWindow ? windowLabel(window_start!, window_end!) : 'Any time — our tech will call ahead'
+  const addressText = [order.street_address, order.city, order.state_prov, order.postal_code].filter(Boolean).join(', ') || null
+  const customerEmail = order.email || body.contact_email || null
+  const greetingName = greetingFirstName({ customerName: order.customer_name })
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/admin/vendor-orders`
+
+  after(async () => {
+    if (customerEmail) {
+      const { subject, html, text } = renderGenieBookingConfirmation({ greetingName, dateLabel, windowLabel: windowText, address: addressText })
+      await sendEmail({ to: customerEmail, subject, html, text, replyTo: 'info@castlegaragedoors.com' }).catch(() => { /* non-critical */ })
+    }
+    const alert = renderGenieBookingAlert({
+      customerName: order.customer_name, phone: order.phone, email: customerEmail,
+      hdOrder: order.external_id, sfJobNumber, dateLabel, windowLabel: windowText, address: addressText, adminUrl,
+    })
+    await enqueueForSubscribers({
+      notificationTypeKey: 'scheduler_lead_synced',
+      subject: alert.subject, bodyHtml: alert.bodyHtml, bodyText: alert.bodyText,
+      relatedEntityType: 'vendor_orders', relatedEntityId: order.id,
+    }).catch(() => { /* non-critical */ })
   })
 
   return NextResponse.json({
