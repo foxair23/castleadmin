@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
-import { createSfJobAction } from './actions'
+import { createSfJobAction, sendNudgeNowAction } from './actions'
 
 export interface VendorOrder {
   id: string
@@ -28,6 +28,7 @@ export interface VendorOrder {
   detail_scraped_at: string | null
   first_seen_at: string
   last_seen_at: string
+  schedule_nudge_sent_at: string | null
 }
 
 const fmtDate = (s: string | null) =>
@@ -86,6 +87,30 @@ function CreateJobButton({ orderId }: { orderId: string }) {
         {pending ? 'creating…' : '+ Create SF Job'}
       </button>
       {err && <span className="text-[10px] text-red-600 max-w-[180px] whitespace-normal">{err}</span>}
+    </span>
+  )
+}
+
+// Manually send the schedule reminder (email + SMS) for orders that have an SF
+// job — e.g. ones that landed before the nudge cutoff, or a customer who lost
+// the link. Shows "Resend" once one has already gone out.
+function NudgeButton({ orderId, sentAt }: { orderId: string; sentAt: string | null }) {
+  const [pending, start] = useTransition()
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  return (
+    <span className="inline-flex flex-col gap-0.5">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => { setMsg(null); start(async () => {
+          const r = await sendNudgeNowAction(orderId)
+          setMsg(r.ok ? { ok: true, text: `sent ${r.channels?.join(' + ') ?? ''}`.trim() } : { ok: false, text: r.error ?? 'failed' })
+        }) }}
+        className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50 disabled:cursor-progress"
+      >
+        {pending ? 'sending…' : (sentAt ? 'Resend reminder' : 'Send reminder')}
+      </button>
+      {msg && <span className={`text-[10px] max-w-[180px] whitespace-normal ${msg.ok ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</span>}
     </span>
   )
 }
@@ -203,15 +228,20 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
                 <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusStyle(o.status)}`}>{o.status || '—'}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">
-                  {o.sf_job_number ? (
-                    <span className="inline-flex items-center gap-1.5" title={o.sf_match_method === 'pending' ? 'created — awaiting mirror sync' : (o.sf_match_method ? `matched by ${o.sf_match_method}` : undefined)}>
-                      <span className={`font-medium ${o.sf_match_method === 'po' || o.sf_match_method === 'linked' ? 'text-green-700' : o.sf_match_method === 'pending' ? 'text-blue-600' : 'text-amber-700'}`}>{o.sf_job_number}</span>
-                      {o.sf_match_method === 'pending' && <span className="text-[10px] uppercase tracking-wide text-blue-600 bg-blue-50 rounded px-1">pending sync</span>}
-                      {o.sf_match_method && !['po', 'linked', 'pending'].includes(o.sf_match_method) && (
-                        <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
-                      )}
-                    </span>
-                  ) : <CreateJobButton orderId={o.id} />}
+                  <div className="flex flex-col gap-1">
+                    {o.sf_job_number ? (
+                      <span className="inline-flex items-center gap-1.5" title={o.sf_match_method === 'pending' ? 'created — awaiting mirror sync' : (o.sf_match_method ? `matched by ${o.sf_match_method}` : undefined)}>
+                        <span className={`font-medium ${o.sf_match_method === 'po' || o.sf_match_method === 'linked' ? 'text-green-700' : o.sf_match_method === 'pending' ? 'text-blue-600' : 'text-amber-700'}`}>{o.sf_job_number}</span>
+                        {o.sf_match_method === 'pending' && <span className="text-[10px] uppercase tracking-wide text-blue-600 bg-blue-50 rounded px-1">pending sync</span>}
+                        {o.sf_match_method && !['po', 'linked', 'pending'].includes(o.sf_match_method) && (
+                          <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
+                        )}
+                      </span>
+                    ) : <CreateJobButton orderId={o.id} />}
+                    {(o.sf_created_job_number || o.sf_job_id) && (o.email || o.phone) && (
+                      <NudgeButton orderId={o.id} sentAt={o.schedule_nudge_sent_at} />
+                    )}
+                  </div>
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.next_step || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.customer_name || '—'}</td>

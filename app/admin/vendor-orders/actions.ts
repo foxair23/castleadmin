@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { createSfJobForOrder } from '@/lib/vendor-orders/create-sf-job'
 import { setAutopilot } from '@/lib/vendor-orders/autopilot'
-import { setNudgeSettings } from '@/lib/vendor-orders/schedule-nudge'
+import { setNudgeSettings, sendNudgeForOrder } from '@/lib/vendor-orders/schedule-nudge'
 
 async function isAllowed(): Promise<boolean> {
   const supabase = await createClient()
@@ -20,6 +20,15 @@ export async function createSfJobAction(orderId: string): Promise<{ ok: boolean;
   const res = await createSfJobForOrder(orderId)
   if (res.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
   return { ok: res.ok, error: res.error, warning: res.warning }
+}
+
+/** Manually send the schedule reminder (email + SMS) for one order — HD Orders
+ *  "Send reminder" button. Admin + sales (same as Create SF Job). */
+export async function sendNudgeNowAction(orderId: string): Promise<{ ok: boolean; error?: string; warning?: string; channels?: string[] }> {
+  if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
+  const res = await sendNudgeForOrder(orderId)
+  if (res.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
+  return res
 }
 
 /** Toggle Genie autopilot (admin only). */

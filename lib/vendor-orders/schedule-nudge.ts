@@ -75,42 +75,10 @@ export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
   const errors: string[] = []
 
   for (const o of eligible) {
-    const channels: string[] = []
     try {
-      const greetingName = greetingFirstName({ customerName: o.customer_name })
-
-      // Email
-      if (o.email) {
-        const { subject, html, text } = renderGenieScheduleEmail({ greetingName, scheduleUrl: s.scheduleUrl! })
-        await sendEmail({ to: o.email, subject, html, text })
-        channels.push('email')
-      }
-
-      // SMS (skip if not configured or the number is opted out)
-      const e164 = toE164(o.phone)
-      if (e164 && isDialpadConfigured()) {
-        const { data: opt } = await supabase.from('invoice_reminder_optouts')
-          .select('value').eq('channel', 'sms').eq('value', e164).maybeSingle()
-        if (!opt) {
-          const res = await sendSms(e164, renderGenieScheduleSms(SMS_SCHEDULE_LINK))
-          if (res.ok) channels.push('sms')
-          else errors.push(`order ${o.external_id} sms: ${res.error ?? 'failed'}`)
-        }
-      }
-
-      if (channels.length) {
-        await supabase.from('vendor_orders').update({
-          schedule_nudge_sent_at: new Date().toISOString(),
-          schedule_nudge_channels: channels.join(','),
-          updated_at: new Date().toISOString(),
-        }).eq('id', o.id)
-        await supabase.from('vendor_order_events').insert({
-          order_id: o.id, event_type: 'schedule_nudge_sent', to_value: channels.join(','),
-        })
-        sent++
-      } else {
-        failed++
-      }
+      const { channels, error } = await deliverNudge(supabase, o, s.scheduleUrl!)
+      if (channels.length) sent++; else failed++
+      if (error) errors.push(`order ${o.external_id}: ${error}`)
     } catch (e) {
       failed++
       errors.push(`order ${o.external_id}: ${e instanceof Error ? e.message : String(e)}`)
@@ -119,4 +87,68 @@ export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
   }
 
   return { enabled: true, sent, failed, remaining: Math.max(0, eligible.length - sent - failed), errors }
+}
+
+interface NudgeOrder { id: string; external_id: string; customer_name: string | null; phone: string | null; email: string | null }
+
+// Send the email + SMS for one order and stamp it. Shared by the cron sweep and
+// the manual "Send reminder" button. A failed email doesn't block the SMS.
+async function deliverNudge(supabase: SupabaseClient, o: NudgeOrder, scheduleUrl: string): Promise<{ channels: string[]; error?: string }> {
+  const channels: string[] = []
+  let error: string | undefined
+  const greetingName = greetingFirstName({ customerName: o.customer_name })
+
+  if (o.email) {
+    try {
+      const { subject, html, text } = renderGenieScheduleEmail({ greetingName, scheduleUrl })
+      await sendEmail({ to: o.email, subject, html, text })
+      channels.push('email')
+    } catch (e) { error = `email: ${e instanceof Error ? e.message : String(e)}` }
+  }
+
+  const e164 = toE164(o.phone)
+  if (e164 && isDialpadConfigured()) {
+    const { data: opt } = await supabase.from('invoice_reminder_optouts').select('value').eq('channel', 'sms').eq('value', e164).maybeSingle()
+    if (!opt) {
+      const res = await sendSms(e164, renderGenieScheduleSms(SMS_SCHEDULE_LINK))
+      if (res.ok) channels.push('sms')
+      else error = `${error ? error + '; ' : ''}sms: ${res.error ?? 'failed'}`
+    }
+  }
+
+  if (channels.length) {
+    const now = new Date().toISOString()
+    await supabase.from('vendor_orders').update({ schedule_nudge_sent_at: now, schedule_nudge_channels: channels.join(','), updated_at: now }).eq('id', o.id)
+    await supabase.from('vendor_order_events').insert({ order_id: o.id, event_type: 'schedule_nudge_sent', to_value: channels.join(',') })
+  }
+  return { channels, error }
+}
+
+// Manual "Send reminder now" for one order (HD Orders button). Bypasses the
+// new-only cutoff and the send-once gate (an explicit resend is allowed), but
+// still requires an SF job (so the scheduler can find them) + contact info, and
+// honors the SMS opt-out list. Only needs the scheduler URL configured — works
+// even when the automatic nudge toggle is off.
+export async function sendNudgeForOrder(orderId: string): Promise<{ ok: boolean; channels?: string[]; error?: string; warning?: string }> {
+  const s = await getNudgeSettings()
+  if (!s.scheduleUrl) return { ok: false, error: 'Set the scheduler page URL in HD Orders first.' }
+  const supabase = db()
+  const { data: o } = await supabase
+    .from('vendor_orders')
+    .select('id, external_id, customer_name, phone, email, status, sf_created_job_number, sf_job_id, appointment_date')
+    .eq('id', orderId)
+    .single()
+  if (!o) return { ok: false, error: 'Order not found.' }
+  if (!o.sf_created_job_number && !o.sf_job_id) return { ok: false, error: 'No SF job yet — create it first so the scheduler can find the customer.' }
+  if (!o.email && !o.phone) return { ok: false, error: 'No phone or email on this order.' }
+  try {
+    const { channels, error } = await deliverNudge(supabase, o, s.scheduleUrl)
+    if (!channels.length) return { ok: false, error: error ?? 'Nothing sent (opted out / no reachable channel).' }
+    const parts: string[] = []
+    if (o.appointment_date) parts.push('note: customer already has an appointment')
+    if (error) parts.push(error)
+    return { ok: true, channels, warning: parts.length ? parts.join('; ') : undefined }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
 }
