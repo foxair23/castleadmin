@@ -61,15 +61,34 @@ async function maybeScheduledCrawl() {
   await startCrawl(mode)
 }
 
-async function startCrawl(mode) {
+async function tabExists(tabId) {
+  if (tabId == null) return false
+  try { await chrome.tabs.get(tabId); return true } catch { return false }
+}
+
+// mode: 'full' | 'incremental'. force:true (the manual button) always starts a
+// fresh crawl. Returns { started, reason }.
+async function startCrawl(mode, { force = false } = {}) {
   const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
-  if (genieCrawl && Date.now() - genieCrawl.startedAt < CRAWL_TIMEOUT_MS) { console.log('[genie] crawl already running'); return }
+  // Only treat an existing crawl as "already running" if it's recent AND its tab
+  // is actually still open. Stale state (tab closed / worker died / a missed
+  // 'done' message) must not block a new crawl — especially the manual button.
+  if (genieCrawl && !force && Date.now() - genieCrawl.startedAt < CRAWL_TIMEOUT_MS && await tabExists(genieCrawl.tabId)) {
+    console.log('[genie] crawl already running')
+    return { started: false, reason: 'already running' }
+  }
+  // Force, or leftover state — tear down anything stale before starting fresh.
+  if (genieCrawl) {
+    chrome.alarms.clear(GENIE_TIMEOUT_ALARM)
+    if (genieCrawl.tabId != null) { try { await chrome.tabs.remove(genieCrawl.tabId) } catch { /* already closed */ } }
+  }
   await chrome.storage.local.set({ genieCrawlMode: mode })
   const tab = await chrome.tabs.create({ url: GENIE_LIST_URL, active: false })
   await chrome.storage.local.set({ genieCrawl: { tabId: tab.id, mode, startedAt: Date.now() } })
   await setStatus({ source: 'genie-schedule', mode, state: 'running' })
   chrome.alarms.create(GENIE_TIMEOUT_ALARM, { when: Date.now() + CRAWL_TIMEOUT_MS })
-  console.log('[genie] scheduled crawl started:', mode)
+  console.log('[genie] crawl started:', mode, force ? '(forced)' : '')
+  return { started: true }
 }
 
 async function finishCrawl(reason) {
@@ -110,8 +129,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const cfg = await getConfig()
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'set Castle Admin URL + token in Options' }); return }
     setBadge('')
-    await startCrawl('full')
-    sendResponse({ ok: true })
+    // force:true — a manual click always opens a fresh crawl tab, even if stale
+    // crawl state is lingering from a previous run.
+    const r = await startCrawl('full', { force: true })
+    sendResponse({ ok: !!r.started, error: r.started ? undefined : (r.reason || 'could not start') })
   })()
   return true
 })
