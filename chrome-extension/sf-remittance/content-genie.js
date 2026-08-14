@@ -219,10 +219,24 @@
   }
 
   // ── Drive it ───────────────────────────────────────────────────────────────
+  // The order list grid is present (a header row naming "Order Number" + ≥1 data row).
+  function looksLikeList() {
+    return rowsWithCells().some(r => r.cells.some(c => key(c).includes('order number'))) && scrapeListPage().length > 0
+  }
+  // A single order's detail page (labelled fields the list grid never has).
+  function looksLikeDetail() {
+    return valueForLabel('street address') != null || valueForLabel('store number') != null
+  }
+
   function pageType() {
     const u = location.href
     if (/orderdetails/i.test(u)) return 'detail'
     if (/orderlist/i.test(u)) return 'list'
+    // Oracle WebCenter also serves these pages under opaque internal .jspx URLs
+    // (…/oracle/webcenter/page/…Page….jspx) with no 'orderlist'/'orderdetails'
+    // hint — so fall back to classifying by page content.
+    if (looksLikeList()) return 'list'
+    if (looksLikeDetail()) return 'detail'
     return null
   }
 
@@ -403,7 +417,11 @@
   }
 
   async function main() {
-    const type = pageType()
+    // On the clean URLs pageType() is known immediately; on opaque .jspx URLs it
+    // depends on the ADF grid, which renders asynchronously — so poll briefly for
+    // the content to appear before deciding the page is unclassifiable.
+    let type = pageType()
+    for (let i = 0; !type && i < 20; i++) { await sleep(500); type = pageType() }
     const sweep = await getSweep()
     const sweeping = !!(sweep && sweep.queue.length)
 
