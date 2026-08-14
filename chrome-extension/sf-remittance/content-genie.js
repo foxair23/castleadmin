@@ -298,6 +298,39 @@
     }
   }
 
+  // A visible, clickable element whose text matches `re`. Prefers real links/
+  // buttons; falls back to small text containers (not big wrappers).
+  function findClickable(re) {
+    const strong = [...document.querySelectorAll('a, button, [role="tab"], [role="link"], [onclick]')]
+      .find(el => el.offsetParent !== null && re.test(key(el.innerText || el.value || '')))
+    if (strong) return strong
+    return [...document.querySelectorAll('span, li, div')]
+      .find(el => el.offsetParent !== null && el.children.length <= 3 && re.test(key(el.innerText || '')))
+  }
+
+  // Opening the orders URL "cold" lands on the "All Program Home" interim page;
+  // the list is reached by clicking Home Depot Opener → All Orders. Click the next
+  // step toward the list (prefer the final "All Orders"). Returns true if clicked.
+  function clickTowardOrders() {
+    const all = findClickable(/all orders?/)
+    if (all) { LOG('nav → All Orders'); realClick(all); return true }
+    const opener = findClickable(/home ?depot.*opener|opener program/)
+    if (opener) { LOG('nav → Home Depot Opener'); realClick(opener); return true }
+    return false
+  }
+
+  // Is this the extension's crawl tab? Only then may we auto-navigate the portal
+  // (so we never hijack the user's own browsing).
+  function isCrawlTab() {
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: 'genie-crawl-tab?' }, (resp) => {
+          resolve(!chrome.runtime.lastError && !!(resp && resp.isCrawlTab))
+        })
+      } catch { resolve(false) }
+    })
+  }
+
   // Drop the head of the queue (and its attempt count) and move on.
   async function dropHead(sweep) {
     const [head, ...rest] = sweep.queue
@@ -422,6 +455,18 @@
     // the content to appear before deciding the page is unclassifiable.
     let type = pageType()
     for (let i = 0; !type && i < 20; i++) { await sleep(500); type = pageType() }
+
+    // Landed on a non-order portal page (e.g. the "All Program Home" interim page
+    // the orders URL bounces to when "cold"). If this is the crawl's own tab,
+    // click through to the orders list: Home Depot Opener → All Orders. Handles
+    // ADF partial refreshes AND full navigations (the fresh page re-runs main()).
+    if (!type && await isCrawlTab()) {
+      for (let step = 0; step < 6 && !type; step++) {
+        if (!clickTowardOrders()) { await sleep(1000); continue }
+        for (let i = 0; !type && i < 16; i++) { await sleep(500); type = pageType() } // ~8s for nav/PPR
+      }
+    }
+
     const sweep = await getSweep()
     const sweeping = !!(sweep && sweep.queue.length)
 

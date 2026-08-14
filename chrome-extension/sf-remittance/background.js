@@ -137,6 +137,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true
 })
 
+// content-genie.js asks whether it's running in the extension's crawl tab, so it
+// only auto-navigates the portal there (never in the user's own browsing).
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'genie-crawl-tab?') return
+  ;(async () => {
+    const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
+    sendResponse({ isCrawlTab: !!(genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) })
+  })()
+  return true
+})
+
 // Content scripts signal a scheduled crawl's outcome.
 chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
   if (msg?.type === 'genie-crawl-done') {
