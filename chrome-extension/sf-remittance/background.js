@@ -11,13 +11,14 @@ async function scheduleAlarm() {
   chrome.alarms.create(ALARM, { periodInMinutes: Math.max(1, Number(pollMinutes) || 10) })
 }
 
-chrome.runtime.onInstalled.addListener(() => { scheduleAlarm(); scheduleGenieCrawl() })
-chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleGenieCrawl() })
+chrome.runtime.onInstalled.addListener(() => { scheduleAlarm(); scheduleGenieCrawl(); scheduleSfKeepalive() })
+chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleGenieCrawl(); scheduleSfKeepalive() })
 chrome.alarms.onAlarm.addListener(a => {
   if (a.name === ALARM) run('alarm')
   else if (a.name === GENIE_ALARM) maybeScheduledCrawl()
   else if (a.name === GENIE_TIMEOUT_ALARM) onCrawlTimeout()
   else if (a.name === SF_RECOVER_ALARM) finishSfRecover()
+  else if (a.name === SF_KEEPALIVE_ALARM) maybeSfKeepalive()
 })
 
 // A scheduled crawl that never signalled done → it stalled. Close its tab and
@@ -38,6 +39,7 @@ async function onCrawlTimeout() {
 const GENIE_ALARM = 'genie-crawl'
 const GENIE_TIMEOUT_ALARM = 'genie-crawl-timeout'
 const SF_RECOVER_ALARM = 'sf-session-recover'
+const SF_KEEPALIVE_ALARM = 'sf-session-keepalive'
 const GENIE_LIST_URL = 'https://install.openings.net/webcenter/portal/installerconnect/orderlist'
 const CRAWL_TZ = 'America/Los_Angeles'
 const CRAWL_TIMEOUT_MS = 20 * 60 * 1000
@@ -46,6 +48,7 @@ const CRAWL_TIMEOUT_MS = 20 * 60 * 1000
 // extension reload — otherwise each reload restarts a full 60-min countdown and a
 // machine that's reloaded/restarted often could go a long time without a crawl.
 function scheduleGenieCrawl() { chrome.alarms.create(GENIE_ALARM, { delayInMinutes: 1, periodInMinutes: 60 }) }
+function scheduleSfKeepalive() { chrome.alarms.create(SF_KEEPALIVE_ALARM, { delayInMinutes: 2, periodInMinutes: 60 }) }
 
 function ptNow() {
   const parts = Object.fromEntries(
@@ -120,30 +123,36 @@ async function notifyAlert(source, kind, detail) {
   try { await postAlert(cfg.baseUrl, cfg.token, { source, kind, detail }) } catch (e) { console.warn('[alert] failed', e) }
 }
 
-// ── Self-heal a logged-out Service Fusion session ────────────────────────────
-// When posting fails because SF logged us out, open admin.servicefusion.com in a
-// background tab. Logged-out SF 302s to its login page, where content-login.js
-// signs in with the saved SF credentials — then we close the tab and retry the
-// queued work. Fully unattended, provided SF credentials are saved in Options.
+// ── Keep the Service Fusion session warm ─────────────────────────────────────
+// SF's session goes stale when nothing touches it in the browser — background
+// fetches from the worker then come back non-JSON / bounced even though you're
+// still "logged in". A quick navigation refreshes it. So we open
+// admin.servicefusion.com in a background tab (which refreshes the session — and,
+// if it HAS actually logged out, content-login.js signs back in with saved creds),
+// then close it. Runs proactively every hour and reactively on a failed post.
 const SF_RECOVER_MS = 45000
-async function recoverSfSession() {
-  const cfg = await getConfig()
-  if (!cfg.sfUser || !cfg.sfPass) return false // no saved creds → can't self-heal (alert already sent)
+async function warmSfSession({ retry = false } = {}) {
   const { sfRecovering } = await chrome.storage.local.get('sfRecovering')
-  if (sfRecovering && Date.now() - sfRecovering.at < 3 * 60 * 1000) return true // already recovering
+  if (sfRecovering && Date.now() - sfRecovering.at < 3 * 60 * 1000) return // one at a time
   const tab = await chrome.tabs.create({ url: 'https://admin.servicefusion.com/', active: false })
-  await chrome.storage.local.set({ sfRecovering: { tabId: tab.id, at: Date.now() } })
+  await chrome.storage.local.set({ sfRecovering: { tabId: tab.id, at: Date.now(), retry } })
   chrome.alarms.create(SF_RECOVER_ALARM, { when: Date.now() + SF_RECOVER_MS })
-  console.log('[sf] session expired → opened login tab for unattended sign-in')
-  return true
+  console.log('[sf] warming session via admin.servicefusion.com', retry ? '→ will retry queue' : '(keep-alive)')
 }
 
 async function finishSfRecover() {
   const { sfRecovering } = await chrome.storage.local.get('sfRecovering')
   await chrome.storage.local.remove('sfRecovering')
   if (sfRecovering && sfRecovering.tabId != null) { try { await chrome.tabs.remove(sfRecovering.tabId) } catch { /* already closed */ } }
-  console.log('[sf] recovery window elapsed → retrying queued work')
-  run('sf-recover') // re-post now that we should be signed back in
+  if (sfRecovering && sfRecovering.retry) { console.log('[sf] session refreshed → retrying queued work'); run('sf-recover') }
+}
+
+// Hourly proactive keep-alive (only when the background poll is on — i.e. SF
+// automation is actually in use).
+async function maybeSfKeepalive() {
+  const cfg = await getConfig()
+  if (!cfg.enabled) return
+  await warmSfSession({ retry: false })
 }
 
 // Manual "Run now" from the popup.
@@ -330,13 +339,17 @@ export async function run(source) {
     // failure → error. Deduped server-side so it's one email, not one per line.
     if (!cfg.dryRun) {
       const failures = log.filter(l => l.ok === false)
-      const loggedOut = failures.some(l => /login\?true|session expired|redirected to login|got (?:a )?login|global search did not return json/i.test(l.error || ''))
-      if (loggedOut) {
+      const staleSf = failures.some(l => isSfLogout(l.error))
+      if (staleSf) {
         setBadge('!')
-        // Try to sign back in automatically; still alert so a human is looped in
-        // if the auto-login can't take (no saved creds / MFA / changed form).
-        const recovering = await recoverSfSession()
-        await notifyAlert('service_fusion', 'logged_out', recovering ? 'auto sign-in attempted' : undefined)
+        if (source === 'sf-recover') {
+          // Already refreshed once and it still failed → genuinely needs a human.
+          await notifyAlert('service_fusion', 'logged_out')
+        } else {
+          // Most often the SF session just needs a refresh — warm it and retry
+          // silently. No email unless the retry also fails (above).
+          await warmSfSession({ retry: true })
+        }
       }
       else if (failures.length) { setBadge('!'); await notifyAlert('service_fusion', 'error', `${failures.length} remittance line(s) failed to post`) }
     }
