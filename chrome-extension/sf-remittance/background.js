@@ -17,6 +17,7 @@ chrome.alarms.onAlarm.addListener(a => {
   if (a.name === ALARM) run('alarm')
   else if (a.name === GENIE_ALARM) maybeScheduledCrawl()
   else if (a.name === GENIE_TIMEOUT_ALARM) onCrawlTimeout()
+  else if (a.name === SF_RECOVER_ALARM) finishSfRecover()
 })
 
 // A scheduled crawl that never signalled done → it stalled. Close its tab and
@@ -36,11 +37,15 @@ async function onCrawlTimeout() {
 // that never finishes. State lives in chrome.storage (the MV3 worker is ephemeral).
 const GENIE_ALARM = 'genie-crawl'
 const GENIE_TIMEOUT_ALARM = 'genie-crawl-timeout'
+const SF_RECOVER_ALARM = 'sf-session-recover'
 const GENIE_LIST_URL = 'https://install.openings.net/webcenter/portal/installerconnect/orderlist'
 const CRAWL_TZ = 'America/Los_Angeles'
 const CRAWL_TIMEOUT_MS = 20 * 60 * 1000
 
-function scheduleGenieCrawl() { chrome.alarms.create(GENIE_ALARM, { periodInMinutes: 60 }) }
+// delayInMinutes:1 so the schedule also fires ~1 min after Chrome start / an
+// extension reload — otherwise each reload restarts a full 60-min countdown and a
+// machine that's reloaded/restarted often could go a long time without a crawl.
+function scheduleGenieCrawl() { chrome.alarms.create(GENIE_ALARM, { delayInMinutes: 1, periodInMinutes: 60 }) }
 
 function ptNow() {
   const parts = Object.fromEntries(
@@ -113,6 +118,32 @@ async function notifyAlert(source, kind, detail) {
   const cfg = await getConfig()
   if (!cfg.baseUrl || !cfg.token) return
   try { await postAlert(cfg.baseUrl, cfg.token, { source, kind, detail }) } catch (e) { console.warn('[alert] failed', e) }
+}
+
+// ── Self-heal a logged-out Service Fusion session ────────────────────────────
+// When posting fails because SF logged us out, open admin.servicefusion.com in a
+// background tab. Logged-out SF 302s to its login page, where content-login.js
+// signs in with the saved SF credentials — then we close the tab and retry the
+// queued work. Fully unattended, provided SF credentials are saved in Options.
+const SF_RECOVER_MS = 45000
+async function recoverSfSession() {
+  const cfg = await getConfig()
+  if (!cfg.sfUser || !cfg.sfPass) return false // no saved creds → can't self-heal (alert already sent)
+  const { sfRecovering } = await chrome.storage.local.get('sfRecovering')
+  if (sfRecovering && Date.now() - sfRecovering.at < 3 * 60 * 1000) return true // already recovering
+  const tab = await chrome.tabs.create({ url: 'https://admin.servicefusion.com/', active: false })
+  await chrome.storage.local.set({ sfRecovering: { tabId: tab.id, at: Date.now() } })
+  chrome.alarms.create(SF_RECOVER_ALARM, { when: Date.now() + SF_RECOVER_MS })
+  console.log('[sf] session expired → opened login tab for unattended sign-in')
+  return true
+}
+
+async function finishSfRecover() {
+  const { sfRecovering } = await chrome.storage.local.get('sfRecovering')
+  await chrome.storage.local.remove('sfRecovering')
+  if (sfRecovering && sfRecovering.tabId != null) { try { await chrome.tabs.remove(sfRecovering.tabId) } catch { /* already closed */ } }
+  console.log('[sf] recovery window elapsed → retrying queued work')
+  run('sf-recover') // re-post now that we should be signed back in
 }
 
 // Manual "Run now" from the popup.
@@ -266,9 +297,18 @@ export async function run(source) {
     }
     const { items, skipped } = queue
     console.log('[sf-remittance] queue', { items: items.length, skipped })
+    const isSfLogout = (err) => /session expired|redirected to login|got (?:a )?login|global search did not return json|login\?true/i.test(err || '')
     for (const item of items) {
       const res = await applyOne(item, cfg)
       log.push({ lineId: item.lineId, invoiceNumber: item.invoiceNumber, amount: item.amount, ...res })
+      // SF logged us out — this isn't a problem with the line, and nothing posted
+      // (we fail before the payment). Leave the line 'approved' (don't record a
+      // failure) so it retries after we sign back in, and stop the pass since the
+      // rest would fail identically.
+      if (!res.ok && isSfLogout(res.error)) {
+        log.push({ stoppedEarly: 'SF session expired — lines left queued for retry after re-login' })
+        break
+      }
       // In dry-run we never write back (nothing is really posted). In live mode,
       // record both successes and failures so the app's audit log is accurate.
       if (!cfg.dryRun) {
@@ -290,8 +330,14 @@ export async function run(source) {
     // failure → error. Deduped server-side so it's one email, not one per line.
     if (!cfg.dryRun) {
       const failures = log.filter(l => l.ok === false)
-      const loggedOut = failures.some(l => /login\?true|session expired|got login page/i.test(l.error || ''))
-      if (loggedOut) { setBadge('!'); await notifyAlert('service_fusion', 'logged_out') }
+      const loggedOut = failures.some(l => /login\?true|session expired|redirected to login|got (?:a )?login|global search did not return json/i.test(l.error || ''))
+      if (loggedOut) {
+        setBadge('!')
+        // Try to sign back in automatically; still alert so a human is looped in
+        // if the auto-login can't take (no saved creds / MFA / changed form).
+        const recovering = await recoverSfSession()
+        await notifyAlert('service_fusion', 'logged_out', recovering ? 'auto sign-in attempted' : undefined)
+      }
       else if (failures.length) { setBadge('!'); await notifyAlert('service_fusion', 'error', `${failures.length} remittance line(s) failed to post`) }
     }
 
