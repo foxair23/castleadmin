@@ -3,8 +3,18 @@ import { parseLead, emailToText, type RawInboundEmail } from '@/lib/leadgen/pars
 import { ingestLead, logInboundEvent } from '@/lib/leadgen/engine'
 import { aiExtractLead, isAiExtractConfigured } from '@/lib/leadgen/ai-extract'
 import { ingestRemittance } from '@/lib/remittance/engine'
+import { ingestStsEmail, ingestDcReply } from '@/lib/clopay-sts/engine'
 
 export const maxDuration = 60
+
+// Does the webhook metadata list a PDF attachment? (The DC's acknowledgement reply
+// carries one; a forwarded order email doesn't.)
+function hasPdfAttachment(data: Record<string, unknown>): boolean {
+  const atts = (data.attachments as Array<Record<string, unknown>> | undefined) ?? []
+  return atts.some(a =>
+    /pdf/i.test(String(a.content_type ?? a.contentType ?? a.type ?? '')) ||
+    /\.pdf$/i.test(String(a.filename ?? a.name ?? '')))
+}
 
 // Inbound provider-lead email (via Resend Inbound). Forwarded HD "new lead"
 // emails land here; we parse and ingest them. Guarded by a shared secret passed
@@ -124,10 +134,27 @@ export async function POST(req: NextRequest) {
   }
 
   // One inbound webhook serves every address on this receiving domain, so route
+  // by recipient.
+  const recipient = recipientToString(data.to)
+
+  // Clopay STS orders (and the DC's acknowledgement replies) come to a dedicated
+  // address — route by that recipient FIRST, before the vendor-sender remittance
+  // net below (Clopay is also a remittance sender). A PDF attachment ⇒ the DC's
+  // reply (attach it); otherwise a forwarded order email (parse STS lines).
+  if (/clopay-sts@|istore@/i.test(recipient)) {
+    try {
+      const isDcReply = hasPdfAttachment(data)
+      const result = isDcReply ? await ingestDcReply(email, emailId) : await ingestStsEmail(email, emailId)
+      return NextResponse.json({ route: isDcReply ? 'clopay_sts_dc_reply' : 'clopay_sts', ...result })
+    } catch (e) {
+      return NextResponse.json({ ok: true, route: 'clopay_sts', error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  // One inbound webhook serves every address on this receiving domain, so route
   // by recipient: vendor payment remittances (remittances@…) — or anything from a
   // known vendor sender, as a safety net — go to the remittance pipeline; every-
   // thing else is treated as a lead.
-  const recipient = recipientToString(data.to)
   const fromVendor = /(clopay|overheaddoor)\.com/i.test(email.from ?? metaFrom ?? '')
   if (/remittances@/i.test(recipient) || fromVendor) {
     try {

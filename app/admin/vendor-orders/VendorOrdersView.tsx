@@ -6,6 +6,7 @@ import { getNudgeSettings } from '@/lib/vendor-orders/schedule-nudge'
 import VendorOrdersTable, { type VendorOrder } from './VendorOrdersTable'
 import { AutopilotToggle } from './AutopilotToggle'
 import { NudgeControls } from './NudgeControls'
+import HdOrdersNav from './HdOrdersNav'
 
 const statusStyle = (s: string | null) => {
   const k = (s || '').toLowerCase()
@@ -17,13 +18,14 @@ const statusStyle = (s: string | null) => {
 
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales). Data is service-role; each page guards its own role.
-export default async function VendorOrdersView({ canManage = false }: { canManage?: boolean }) {
+export default async function VendorOrdersView({ canManage = false, basePath = '/admin/vendor-orders' }: { canManage?: boolean; basePath?: string }) {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
   const autopilot = await getAutopilot()
   const nudge = await getNudgeSettings()
   const { data } = await db
     .from('vendor_orders')
     .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at')
+    .eq('vendor', 'genie_thd')
     .order('first_seen_at', { ascending: false })
     .limit(1000)
   const base = (data ?? []) as VendorOrder[]
@@ -65,8 +67,9 @@ export default async function VendorOrdersView({ canManage = false }: { canManag
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
+      <HdOrdersNav base={basePath} />
       <div className="flex items-baseline justify-between mb-1">
-        <h1 className="text-2xl font-bold text-gray-900">HD Orders</h1>
+        <h1 className="text-2xl font-bold text-gray-900">HD Orders — Genie</h1>
         <div className="flex items-center gap-4">
           <NudgeControls on={nudge.enabled} scheduleUrl={nudge.scheduleUrl} canManage={canManage} />
           <AutopilotToggle on={autopilot.enabled} canManage={canManage} />

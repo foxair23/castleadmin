@@ -19,7 +19,7 @@ import {
   getArHold,
   getUncontactedLeads,
 } from '@/lib/analytics/alerts'
-import { getGenieActionItems } from '@/lib/vendor-orders/action-items'
+import { getGenieActionItems, getStsActionItems } from '@/lib/vendor-orders/action-items'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT } from './config'
 
 export interface Line { text: string; sub?: string; links?: { label: string; href: string }[] }
@@ -31,6 +31,8 @@ export interface TodoDigest {
   /** SFI Leads + Genie tabs — Done-cleared lists, sit between Online Scheduling and the buckets. */
   sfiLines: Line[]
   genieLines: Line[]
+  /** Clopay STS tab — open delivery orders (status ≠ Closed). */
+  stsLines: Line[]
   totalNew: number
   totalDue: number
   /** Action-button presses whose actioned_at falls on today (PT). */
@@ -62,7 +64,7 @@ export function adminDb(): SupabaseClient {
 }
 
 export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest> {
-  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, arHold, leadsToCall, genie, { data: actionRows }, { data: acksToday }] =
+  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, arHold, leadsToCall, genie, sts, { data: actionRows }, { data: acksToday }] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -74,6 +76,7 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       getArHold(),
       getUncontactedLeads(),
       getGenieActionItems(),
+      getStsActionItems(),
       db.from('action_item_actions').select('entity_type, entity_id, action_label, actioned_at, follow_up_on'),
       db.from('scheduler_leads').select('id, acknowledged_at').not('acknowledged_at', 'is', null)
         .gte('acknowledged_at', new Date(Date.now() - 36 * 3_600_000).toISOString()),
@@ -144,6 +147,10 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       text: `${g.customer_name ?? '—'} — HD #${g.external_id}${g.sf_job_number ? ` — SF Job ${g.sf_job_number}` : ''} — ${sched} · ${reminded}`,
     }
   })
+  const stsLines: Line[] = sts.items.map(o => {
+    const dc = o.details_received_at ? 'DC replied' : (o.details_requested_at ? 'DC requested' : 'DC not requested')
+    return { text: `Order ${o.external_id}${o.customer_po ? ` — ${o.customer_po}` : ''} — ${o.status} · ${dc}` }
+  })
 
   // Full open backlog keyed "tab:id" (post-cutoff, action state ignored). This
   // is what the daily snapshot diff compares — an item leaves the backlog only
@@ -181,7 +188,8 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
     schedulingLines,
     sfiLines,
     genieLines,
-    totalNew: buckets.reduce((s, b) => s + b.newLines.length, 0) + schedulingLines.length + sfiLines.length + genieLines.length,
+    stsLines,
+    totalNew: buckets.reduce((s, b) => s + b.newLines.length, 0) + schedulingLines.length + sfiLines.length + genieLines.length + stsLines.length,
     totalDue: buckets.reduce((s, b) => s + b.dueLines.length, 0),
     actionedTodayByLabel,
     actionedToday,
@@ -401,6 +409,7 @@ export function renderTodoEmail(d: TodoDigest, opts: {
     { label: 'Online Scheduling (press Done after handling)', lines: d.schedulingLines, tab: 'online-scheduling' },
     { label: 'SFI Leads', lines: d.sfiLines, tab: 'leads-to-call' },
     { label: 'Genie (press Done after handling)', lines: d.genieLines, tab: 'genie' },
+    { label: 'Clopay STS (delivery orders)', lines: d.stsLines, tab: 'sts' },
     ...d.buckets.map(b => ({ label: b.label, lines: b.newLines, tab: b.tab })),
   ]
   const dueGroups: Group[] = d.buckets.map(b => ({ label: b.label, lines: b.dueLines, tab: b.tab }))

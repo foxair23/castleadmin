@@ -11,12 +11,14 @@ async function scheduleAlarm() {
   chrome.alarms.create(ALARM, { periodInMinutes: Math.max(1, Number(pollMinutes) || 10) })
 }
 
-chrome.runtime.onInstalled.addListener(() => { scheduleAlarm(); scheduleGenieCrawl() })
-chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleGenieCrawl() })
+chrome.runtime.onInstalled.addListener(() => { scheduleAlarm(); scheduleGenieCrawl(); scheduleSfKeepalive() })
+chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleGenieCrawl(); scheduleSfKeepalive() })
 chrome.alarms.onAlarm.addListener(a => {
   if (a.name === ALARM) run('alarm')
   else if (a.name === GENIE_ALARM) maybeScheduledCrawl()
   else if (a.name === GENIE_TIMEOUT_ALARM) onCrawlTimeout()
+  else if (a.name === SF_RECOVER_ALARM) finishSfRecover()
+  else if (a.name === SF_KEEPALIVE_ALARM) maybeSfKeepalive()
 })
 
 // A scheduled crawl that never signalled done → it stalled. Close its tab and
@@ -36,11 +38,17 @@ async function onCrawlTimeout() {
 // that never finishes. State lives in chrome.storage (the MV3 worker is ephemeral).
 const GENIE_ALARM = 'genie-crawl'
 const GENIE_TIMEOUT_ALARM = 'genie-crawl-timeout'
+const SF_RECOVER_ALARM = 'sf-session-recover'
+const SF_KEEPALIVE_ALARM = 'sf-session-keepalive'
 const GENIE_LIST_URL = 'https://install.openings.net/webcenter/portal/installerconnect/orderlist'
 const CRAWL_TZ = 'America/Los_Angeles'
 const CRAWL_TIMEOUT_MS = 20 * 60 * 1000
 
-function scheduleGenieCrawl() { chrome.alarms.create(GENIE_ALARM, { periodInMinutes: 60 }) }
+// delayInMinutes:1 so the schedule also fires ~1 min after Chrome start / an
+// extension reload — otherwise each reload restarts a full 60-min countdown and a
+// machine that's reloaded/restarted often could go a long time without a crawl.
+function scheduleGenieCrawl() { chrome.alarms.create(GENIE_ALARM, { delayInMinutes: 1, periodInMinutes: 60 }) }
+function scheduleSfKeepalive() { chrome.alarms.create(SF_KEEPALIVE_ALARM, { delayInMinutes: 2, periodInMinutes: 60 }) }
 
 function ptNow() {
   const parts = Object.fromEntries(
@@ -61,15 +69,34 @@ async function maybeScheduledCrawl() {
   await startCrawl(mode)
 }
 
-async function startCrawl(mode) {
+async function tabExists(tabId) {
+  if (tabId == null) return false
+  try { await chrome.tabs.get(tabId); return true } catch { return false }
+}
+
+// mode: 'full' | 'incremental'. force:true (the manual button) always starts a
+// fresh crawl. Returns { started, reason }.
+async function startCrawl(mode, { force = false } = {}) {
   const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
-  if (genieCrawl && Date.now() - genieCrawl.startedAt < CRAWL_TIMEOUT_MS) { console.log('[genie] crawl already running'); return }
+  // Only treat an existing crawl as "already running" if it's recent AND its tab
+  // is actually still open. Stale state (tab closed / worker died / a missed
+  // 'done' message) must not block a new crawl — especially the manual button.
+  if (genieCrawl && !force && Date.now() - genieCrawl.startedAt < CRAWL_TIMEOUT_MS && await tabExists(genieCrawl.tabId)) {
+    console.log('[genie] crawl already running')
+    return { started: false, reason: 'already running' }
+  }
+  // Force, or leftover state — tear down anything stale before starting fresh.
+  if (genieCrawl) {
+    chrome.alarms.clear(GENIE_TIMEOUT_ALARM)
+    if (genieCrawl.tabId != null) { try { await chrome.tabs.remove(genieCrawl.tabId) } catch { /* already closed */ } }
+  }
   await chrome.storage.local.set({ genieCrawlMode: mode })
   const tab = await chrome.tabs.create({ url: GENIE_LIST_URL, active: false })
   await chrome.storage.local.set({ genieCrawl: { tabId: tab.id, mode, startedAt: Date.now() } })
   await setStatus({ source: 'genie-schedule', mode, state: 'running' })
   chrome.alarms.create(GENIE_TIMEOUT_ALARM, { when: Date.now() + CRAWL_TIMEOUT_MS })
-  console.log('[genie] scheduled crawl started:', mode)
+  console.log('[genie] crawl started:', mode, force ? '(forced)' : '')
+  return { started: true }
 }
 
 async function finishCrawl(reason) {
@@ -96,6 +123,38 @@ async function notifyAlert(source, kind, detail) {
   try { await postAlert(cfg.baseUrl, cfg.token, { source, kind, detail }) } catch (e) { console.warn('[alert] failed', e) }
 }
 
+// ── Keep the Service Fusion session warm ─────────────────────────────────────
+// SF's session goes stale when nothing touches it in the browser — background
+// fetches from the worker then come back non-JSON / bounced even though you're
+// still "logged in". A quick navigation refreshes it. So we open
+// admin.servicefusion.com in a background tab (which refreshes the session — and,
+// if it HAS actually logged out, content-login.js signs back in with saved creds),
+// then close it. Runs proactively every hour and reactively on a failed post.
+const SF_RECOVER_MS = 45000
+async function warmSfSession({ retry = false } = {}) {
+  const { sfRecovering } = await chrome.storage.local.get('sfRecovering')
+  if (sfRecovering && Date.now() - sfRecovering.at < 3 * 60 * 1000) return // one at a time
+  const tab = await chrome.tabs.create({ url: 'https://admin.servicefusion.com/', active: false })
+  await chrome.storage.local.set({ sfRecovering: { tabId: tab.id, at: Date.now(), retry } })
+  chrome.alarms.create(SF_RECOVER_ALARM, { when: Date.now() + SF_RECOVER_MS })
+  console.log('[sf] warming session via admin.servicefusion.com', retry ? '→ will retry queue' : '(keep-alive)')
+}
+
+async function finishSfRecover() {
+  const { sfRecovering } = await chrome.storage.local.get('sfRecovering')
+  await chrome.storage.local.remove('sfRecovering')
+  if (sfRecovering && sfRecovering.tabId != null) { try { await chrome.tabs.remove(sfRecovering.tabId) } catch { /* already closed */ } }
+  if (sfRecovering && sfRecovering.retry) { console.log('[sf] session refreshed → retrying queued work'); run('sf-recover') }
+}
+
+// Hourly proactive keep-alive (only when the background poll is on — i.e. SF
+// automation is actually in use).
+async function maybeSfKeepalive() {
+  const cfg = await getConfig()
+  if (!cfg.enabled) return
+  await warmSfSession({ retry: false })
+}
+
 // Manual "Run now" from the popup.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'run-now') { run('manual').then(r => sendResponse(r)); return true }
@@ -110,8 +169,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const cfg = await getConfig()
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'set Castle Admin URL + token in Options' }); return }
     setBadge('')
-    await startCrawl('full')
-    sendResponse({ ok: true })
+    // force:true — a manual click always opens a fresh crawl tab, even if stale
+    // crawl state is lingering from a previous run.
+    const r = await startCrawl('full', { force: true })
+    sendResponse({ ok: !!r.started, error: r.started ? undefined : (r.reason || 'could not start') })
+  })()
+  return true
+})
+
+// content-genie.js asks whether it's running in the extension's crawl tab, so it
+// only auto-navigates the portal there (never in the user's own browsing).
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'genie-crawl-tab?') return
+  ;(async () => {
+    const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
+    sendResponse({ isCrawlTab: !!(genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) })
   })()
   return true
 })
@@ -234,9 +306,18 @@ export async function run(source) {
     }
     const { items, skipped } = queue
     console.log('[sf-remittance] queue', { items: items.length, skipped })
+    const isSfLogout = (err) => /session expired|redirected to login|got (?:a )?login|global search did not return json|login\?true/i.test(err || '')
     for (const item of items) {
       const res = await applyOne(item, cfg)
       log.push({ lineId: item.lineId, invoiceNumber: item.invoiceNumber, amount: item.amount, ...res })
+      // SF logged us out — this isn't a problem with the line, and nothing posted
+      // (we fail before the payment). Leave the line 'approved' (don't record a
+      // failure) so it retries after we sign back in, and stop the pass since the
+      // rest would fail identically.
+      if (!res.ok && isSfLogout(res.error)) {
+        log.push({ stoppedEarly: 'SF session expired — lines left queued for retry after re-login' })
+        break
+      }
       // In dry-run we never write back (nothing is really posted). In live mode,
       // record both successes and failures so the app's audit log is accurate.
       if (!cfg.dryRun) {
@@ -258,8 +339,18 @@ export async function run(source) {
     // failure → error. Deduped server-side so it's one email, not one per line.
     if (!cfg.dryRun) {
       const failures = log.filter(l => l.ok === false)
-      const loggedOut = failures.some(l => /login\?true|session expired|got login page/i.test(l.error || ''))
-      if (loggedOut) { setBadge('!'); await notifyAlert('service_fusion', 'logged_out') }
+      const staleSf = failures.some(l => isSfLogout(l.error))
+      if (staleSf) {
+        setBadge('!')
+        if (source === 'sf-recover') {
+          // Already refreshed once and it still failed → genuinely needs a human.
+          await notifyAlert('service_fusion', 'logged_out')
+        } else {
+          // Most often the SF session just needs a refresh — warm it and retry
+          // silently. No email unless the retry also fails (above).
+          await warmSfSession({ retry: true })
+        }
+      }
       else if (failures.length) { setBadge('!'); await notifyAlert('service_fusion', 'error', `${failures.length} remittance line(s) failed to post`) }
     }
 

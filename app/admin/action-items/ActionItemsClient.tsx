@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type {
@@ -26,7 +26,9 @@ import type {
   ArHoldResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
-import type { GenieActionItem, GenieActionItemsResult } from '@/lib/vendor-orders/action-items'
+import type { GenieActionItem, GenieActionItemsResult, StsActionItem, StsActionItemsResult } from '@/lib/vendor-orders/action-items'
+import { CLOPAY_STS_STAGES } from '@/lib/clopay-sts/stages'
+import { setStsStatusAction } from '@/app/admin/vendor-orders/actions'
 import PhotoLightbox from '@/components/PhotoLightbox'
 import ResendReminderModal from './ResendReminderModal'
 
@@ -1010,6 +1012,8 @@ interface Props {
   arHold?: ArHoldResult
   /** Genie SF jobs our service created, awaiting handling — Genie tab. */
   genie?: GenieActionItemsResult
+  /** Open Clopay STS orders (status pipeline) — STS tab. */
+  sts?: StsActionItemsResult
   notes: Record<string, string>
   /** Admin-only A/R email trigger (the sales page omits both). */
   showArReport?: boolean
@@ -1124,7 +1128,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold' | 'genie'
+type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold' | 'genie' | 'sts'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -1142,6 +1146,7 @@ export default function ActionItemsClient({
   leadsToCall,
   arHold,
   genie,
+  sts,
   actions,
   notes,
   showArReport = false,
@@ -1149,6 +1154,7 @@ export default function ActionItemsClient({
 }: Props) {
   const leadsToCallItems = leadsToCall?.items ?? []
   const genieItems = genie?.items ?? []
+  const stsItems = sts?.items ?? []
   const router = useRouter()
   const [arModalOpen, setArModalOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -1163,7 +1169,7 @@ export default function ActionItemsClient({
   // useSearchParams Suspense boundary needed).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold', 'genie']
+    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold', 'genie', 'sts']
     if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
   }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
@@ -1308,6 +1314,7 @@ export default function ActionItemsClient({
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
     ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'SFI Leads', count: leadsToCallItems.length }] : []),
     ...(genie ? [{ key: 'genie' as TabKey, label: 'Genie', count: genieItems.length }] : []),
+    ...(sts ? [{ key: 'sts' as TabKey, label: 'STS', count: stsItems.length }] : []),
     ...(arHold ? [{ key: 'ar-hold' as TabKey, label: 'AR Hold', count: filteredArHold.length }] : []),
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
     ...(zeroRevenueJobs ? [{ key: 'awaiting-revenue' as TabKey, label: 'Awaiting Revenue', count: filteredZeroRevenue.length }] : []),
@@ -1590,6 +1597,16 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
+      {activeTab === 'sts' && (
+        <AlertSection
+          title="Clopay STS — Delivery Orders"
+          count={stsItems.length}
+        >
+          <p className="text-xs text-gray-400 mb-2">Ship-to-store delivery orders from Clopay. Work each through the status pipeline; setting it to Closed clears it from this list. Full detail (DC request, attachments) is on the HD Orders → Clopay STS tab.</p>
+          {stsItems.length === 0 ? <AllClear /> : <StsTable items={stsItems} />}
+        </AlertSection>
+      )}
+
       {activeTab === 'ar-hold' && (
         <AlertSection
           title="AR Hold"
@@ -1712,6 +1729,73 @@ function GenieTable({ items }: { items: GenieActionItem[] }) {
               <td className="px-4 py-2 text-gray-500"><div className="max-w-[220px] truncate" title={g.address ?? undefined}>{g.address ?? '—'}</div></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(g.order_date)}</td>
               <td className="px-4 py-2 text-gray-600">{g.status ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{g.status}</span> : <span className="text-gray-400">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// Status dropdown for an STS action-item row. Setting it to Closed clears the row
+// from this tab on the next load; other stages update in place.
+function StsStatusSelect({ orderId, status }: { orderId: string; status: string }) {
+  const [pending, start] = useTransition()
+  const [val, setVal] = useState(status)
+  const router = useRouter()
+  return (
+    <select
+      value={val}
+      disabled={pending}
+      onChange={e => {
+        const next = e.target.value
+        setVal(next)
+        start(async () => { const r = await setStsStatusAction(orderId, next); if (r.ok) router.refresh(); else setVal(status) })
+      }}
+      className="text-gray-900 border border-gray-300 rounded-md px-2 py-1 text-xs bg-white"
+    >
+      {CLOPAY_STS_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+    </select>
+  )
+}
+
+function StsTable({ items }: { items: StsActionItem[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order #</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">PO</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide">Status</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">DC requested</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">DC replied</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Received</th>
+            <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Detail</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {items.map(o => (
+            <tr key={o.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{o.external_id}</td>
+              <td className="px-4 py-2 text-gray-600"><div className="max-w-[220px] truncate" title={o.customer_po ?? undefined}>{o.customer_po ?? '—'}</div></td>
+              <td className="px-4 py-2"><StsStatusSelect orderId={o.id} status={o.status} /></td>
+              <td className="px-4 py-2 whitespace-nowrap">
+                {o.details_requested_at
+                  ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Sent {fmtDate(o.details_requested_at)}</span>
+                  : <span className="text-gray-400 text-xs">Not requested</span>}
+              </td>
+              <td className="px-4 py-2 whitespace-nowrap">
+                {o.details_received_at
+                  ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Received {fmtDate(o.details_received_at)}</span>
+                  : <span className="text-gray-400 text-xs">—</span>}
+              </td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(o.first_seen_at)}</td>
+              <td className="px-4 py-2 text-right">
+                <Link href={`/admin/vendor-orders/clopay-sts?order=${o.id}`} className="text-xs text-red-600 hover:text-red-800 font-medium whitespace-nowrap">
+                  View in HD Orders →
+                </Link>
+              </td>
             </tr>
           ))}
         </tbody>

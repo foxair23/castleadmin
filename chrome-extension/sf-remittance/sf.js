@@ -57,6 +57,7 @@ function inputValue(html, name) {
 export async function resolveInvoiceId(invoiceNumber, trace) {
   const r = await sfFetch('/serviceSpot/loadGlobalSearchResults', { method: 'POST', body: form({ string: invoiceNumber }) })
   trace.push({ step: 'search', status: r.status })
+  if (r.loginRedirect) throw new Error('SF session expired (redirected to login) — sign in to admin.servicefusion.com')
   let data
   try { data = JSON.parse(r.text) } catch { throw new Error('global search did not return JSON (session expired?)') }
   const results = data.results || data || []
