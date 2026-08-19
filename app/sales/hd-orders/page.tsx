@@ -6,5 +6,5 @@ export const metadata = { title: 'HD Orders' }
 // Sales-facing HD Orders — same view as admin, rendered inside the /sales layout
 // (which already guards admin+sales).
 export default function SalesHdOrdersPage() {
-  return <VendorOrdersView />
+  return <VendorOrdersView basePath="/sales/hd-orders" />
 }

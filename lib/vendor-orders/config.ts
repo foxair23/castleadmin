@@ -55,6 +55,14 @@ export const VENDORS: Record<string, VendorConfig> = {
     // Every Genie job gets this service line added.
     sfServiceLines: [{ name: 'Overhead Door Motor Install', quantity: 1 }],
   },
+  // Clopay ship-to-store delivery orders, received by email (no portal, no SF job
+  // creation in this phase). Present here for the label + vendor-agnostic reuse.
+  clopay_sts: {
+    key: 'clopay_sts',
+    label: 'Clopay STS',
+    sfJobSource: 'Clopay',
+    sfCustomFields: [],
+  },
 }
 
 export function getVendor(key: string): VendorConfig | null {

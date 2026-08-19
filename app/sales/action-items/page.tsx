@@ -13,7 +13,7 @@ import {
   getUncontactedLeads,
   getArHold,
 } from '@/lib/analytics/alerts'
-import { getGenieActionItems } from '@/lib/vendor-orders/action-items'
+import { getGenieActionItems, getStsActionItems } from '@/lib/vendor-orders/action-items'
 import ActionItemsClient from '@/app/admin/action-items/ActionItemsClient'
 
 export default async function SalesActionItemsPage() {
@@ -34,7 +34,7 @@ export default async function SalesActionItemsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, genie, notesResult] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, genie, sts, notesResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -47,6 +47,7 @@ export default async function SalesActionItemsPage() {
       getUncontactedLeads(),
       getArHold(),
       getGenieActionItems(),
+      getStsActionItems(),
       db.from('action_item_notes').select('entity_type, entity_id, note'),
     ])
 
@@ -88,6 +89,7 @@ export default async function SalesActionItemsPage() {
       leadsToCall={leadsToCall}
       arHold={arHold}
       genie={genie}
+      sts={sts}
       actions={actions}
       notes={notes}
     />

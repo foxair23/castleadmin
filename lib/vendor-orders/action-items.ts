@@ -61,3 +61,39 @@ export async function getGenieActionItems(): Promise<GenieActionItemsResult> {
 export async function markGenieActionDone(id: string, byName: string | null): Promise<void> {
   await db().from('vendor_orders').update({ action_done_at: new Date().toISOString(), action_done_by: byName }).eq('id', id)
 }
+
+// ── Clopay STS ──────────────────────────────────────────────────────────────
+
+export interface StsActionItem {
+  id: string
+  external_id: string           // Clopay order #
+  customer_po: string | null
+  status: string
+  details_requested_at: string | null
+  details_received_at: string | null
+  first_seen_at: string
+}
+export interface StsActionItemsResult { items: StsActionItem[] }
+
+const STS_CLOSED_STAGE = 'Closed (invoiced/billed)'
+
+/** Open STS orders (status ≠ Closed) — the office works these through the pipeline. */
+export async function getStsActionItems(): Promise<StsActionItemsResult> {
+  const { data } = await db()
+    .from('vendor_orders')
+    .select('id, external_id, customer_po, status, details_requested_at, details_received_at, first_seen_at')
+    .eq('vendor', 'clopay_sts')
+    .neq('status', STS_CLOSED_STAGE)
+    .order('first_seen_at', { ascending: false })
+    .limit(500)
+  const items = ((data ?? []) as Array<Record<string, string | null>>).map(o => ({
+    id: o.id as string,
+    external_id: o.external_id as string,
+    customer_po: o.customer_po,
+    status: (o.status as string) ?? 'Received',
+    details_requested_at: o.details_requested_at,
+    details_received_at: o.details_received_at,
+    first_seen_at: (o.first_seen_at as string) ?? '',
+  }))
+  return { items }
+}
