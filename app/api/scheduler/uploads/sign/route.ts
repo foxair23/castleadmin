@@ -17,11 +17,16 @@ const ALLOWED_ORIGINS = [
 const ALLOWED_MIME_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
   'application/pdf',
+  // Video for the Free Online Estimate path (iPhone records .mov = quicktime).
+  'video/mp4', 'video/quicktime', 'video/webm',
 ]
+
+const VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime', 'video/webm']
 
 const EXT_MIME: Record<string, string> = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
   heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf',
+  mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
 }
 
 const STORAGE_BUCKET = 'scheduler-uploads'
@@ -96,8 +101,8 @@ export async function POST(req: NextRequest) {
   const { data: limitRows } = await db
     .from('scheduler_settings')
     .select('key, value')
-    .in('key', ['max_upload_files', 'max_upload_size_mb'])
-  const limits: Record<string, number> = { max_upload_files: 5, max_upload_size_mb: 25 }
+    .in('key', ['max_upload_files', 'max_upload_size_mb', 'online_estimate_max_video_mb'])
+  const limits: Record<string, number> = { max_upload_files: 5, max_upload_size_mb: 25, online_estimate_max_video_mb: 100 }
   for (const row of limitRows ?? []) {
     if (typeof row.value === 'number') limits[row.key] = row.value
   }
@@ -114,7 +119,6 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const maxBytes = limits.max_upload_size_mb * 1024 * 1024
   const out: { name: string; path: string; uploadUrl: string; mime: string }[] = []
 
   for (const f of body.files) {
@@ -122,13 +126,16 @@ export async function POST(req: NextRequest) {
     const mime = f.type || EXT_MIME[ext] || ''
     if (!ALLOWED_MIME_TYPES.includes(mime)) {
       return NextResponse.json(
-        { error: `File type not supported${mime ? ` (${mime})` : ''} — please use JPG, PNG, WebP, or HEIC photos.` },
+        { error: `File type not supported${mime ? ` (${mime})` : ''} — please use JPG, PNG, WebP, or HEIC photos, or an MP4/MOV video.` },
         { status: 400, headers: cors }
       )
     }
-    if (f.size > maxBytes) {
+    // Video gets a larger per-file cap than photos/PDF.
+    const isVideo = VIDEO_MIME_TYPES.includes(mime)
+    const capMb = isVideo ? limits.online_estimate_max_video_mb : limits.max_upload_size_mb
+    if (f.size > capMb * 1024 * 1024) {
       return NextResponse.json(
-        { error: `File exceeds ${limits.max_upload_size_mb} MB limit: ${f.name}` },
+        { error: `File exceeds ${capMb} MB limit: ${f.name}` },
         { status: 400, headers: cors }
       )
     }

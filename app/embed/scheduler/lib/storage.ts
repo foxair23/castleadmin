@@ -31,6 +31,10 @@ export const INITIAL_FLOW_STATE: FlowState = {
   optional_note: '',
   uploaded_photo_urls: [],
 
+  // Free Online Estimate branch
+  estimate_channel: null,
+  estimate_media: [],
+
   // Step 5 — schedule
   appointment_date: null,
   appointment_window_start: null,

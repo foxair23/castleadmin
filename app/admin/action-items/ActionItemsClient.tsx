@@ -27,6 +27,7 @@ import type {
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
 import type { GenieActionItem, GenieActionItemsResult, StsActionItem, StsActionItemsResult } from '@/lib/vendor-orders/action-items'
+import type { OnlineEstimateItem, OnlineEstimateItemsResult } from '@/lib/scheduler/online-estimate-items'
 import { CLOPAY_STS_STAGES } from '@/lib/clopay-sts/stages'
 import { setStsStatusAction } from '@/app/admin/vendor-orders/actions'
 import PhotoLightbox from '@/components/PhotoLightbox'
@@ -1014,6 +1015,8 @@ interface Props {
   genie?: GenieActionItemsResult
   /** Open Clopay STS orders (status pipeline) — STS tab. */
   sts?: StsActionItemsResult
+  /** Open Free Online Estimate requests — Online Estimates tab. */
+  onlineEstimates?: OnlineEstimateItemsResult
   notes: Record<string, string>
   /** Admin-only A/R email trigger (the sales page omits both). */
   showArReport?: boolean
@@ -1128,7 +1131,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold' | 'genie' | 'sts'
+type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold' | 'genie' | 'sts' | 'online-estimates'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -1147,6 +1150,7 @@ export default function ActionItemsClient({
   arHold,
   genie,
   sts,
+  onlineEstimates,
   actions,
   notes,
   showArReport = false,
@@ -1155,6 +1159,7 @@ export default function ActionItemsClient({
   const leadsToCallItems = leadsToCall?.items ?? []
   const genieItems = genie?.items ?? []
   const stsItems = sts?.items ?? []
+  const onlineEstimateItems = onlineEstimates?.items ?? []
   const router = useRouter()
   const [arModalOpen, setArModalOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -1169,7 +1174,7 @@ export default function ActionItemsClient({
   // useSearchParams Suspense boundary needed).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold', 'genie', 'sts']
+    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold', 'genie', 'sts', 'online-estimates']
     if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
   }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
@@ -1312,6 +1317,7 @@ export default function ActionItemsClient({
   const TABS: { key: TabKey; label: string; count: number }[] = [
     // Ordered by business importance (owner-specified).
     { key: 'online-scheduling', label: 'Online Scheduling', count: filteredOnlineScheduling.length },
+    ...(onlineEstimates ? [{ key: 'online-estimates' as TabKey, label: 'Online Estimates', count: onlineEstimateItems.length }] : []),
     ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'SFI Leads', count: leadsToCallItems.length }] : []),
     ...(genie ? [{ key: 'genie' as TabKey, label: 'Genie', count: genieItems.length }] : []),
     ...(sts ? [{ key: 'sts' as TabKey, label: 'STS', count: stsItems.length }] : []),
@@ -1577,6 +1583,16 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
+      {activeTab === 'online-estimates' && (
+        <AlertSection
+          title="Online Estimates — Review & Price"
+          count={onlineEstimateItems.length}
+        >
+          <p className="text-xs text-gray-400 mb-2">A customer sent photos for a free online estimate. Review the photos, add pricing to the Service Fusion estimate, email the customer, then press Done. Setting it Done clears the row.</p>
+          {onlineEstimateItems.length === 0 ? <AllClear /> : <OnlineEstimatesTable items={onlineEstimateItems} />}
+        </AlertSection>
+      )}
+
       {activeTab === 'leads-to-call' && (
         <AlertSection
           title="SFI Leads"
@@ -1796,6 +1812,77 @@ function StsTable({ items }: { items: StsActionItem[] }) {
                   View in HD Orders →
                 </Link>
               </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function onlineEstimateServiceLabel(item: OnlineEstimateItem): string {
+  if (item.service_category === 'door_panel_replacement') return 'New Door / Panel'
+  if (item.service_category === 'opener_service') {
+    return `Opener — ${item.opener_need === 'add_opener' ? 'Add' : 'Replace'}`
+  }
+  return item.service_category ?? '—'
+}
+
+function OnlineEstimatesTable({ items }: { items: OnlineEstimateItem[] }) {
+  const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null)
+  return (
+    <div className="overflow-x-auto">
+      {lightboxPhotos && <PhotoLightbox photos={lightboxPhotos} onClose={() => setLightboxPhotos(null)} />}
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Done</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Service</th>
+            <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Photos/Video</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">SF Estimate</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-20">Waiting</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {items.map(item => (
+            <tr key={item.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 whitespace-nowrap"><DoneButton leadId={item.id} endpoint="/api/leads/ack" /></td>
+              <td className="px-4 py-2 font-medium text-gray-900">{item.customer_name}</td>
+              <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                {item.phone ? <a href={`tel:${item.phone}`} className="text-blue-600 hover:underline">{item.phone}</a> : '—'}
+              </td>
+              <td className="px-4 py-2 text-gray-600"><div className="max-w-[180px] truncate">{item.email ? <a href={`mailto:${item.email}`} className="text-blue-600 hover:underline break-all">{item.email}</a> : '—'}</div></td>
+              <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{onlineEstimateServiceLabel(item)}</td>
+              <td className="px-3 py-2 whitespace-nowrap">
+                {item.photos.length === 0
+                  ? <span className="text-gray-300">—</span>
+                  : (
+                    <button
+                      onClick={() => setLightboxPhotos(item.photos)}
+                      className="text-xs px-2 py-1 rounded border border-blue-300 text-blue-600 hover:bg-blue-50 whitespace-nowrap"
+                      title="View photos/video"
+                    >
+                      📷 {item.photos.length}
+                    </button>
+                  )}
+              </td>
+              <td className="px-4 py-2 whitespace-nowrap">
+                {item.sf_estimate_number ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="Open this estimate in Service Fusion to add pricing">
+                    #{item.sf_estimate_number}
+                  </span>
+                ) : item.sync_status === 'synced' ? (
+                  <span className="text-xs text-green-700">in SF</span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800" title="Not created in Service Fusion — create the estimate manually">
+                    not in SF — create manually
+                  </span>
+                )}
+              </td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{item.days_waiting < 1 ? '<1d' : `${item.days_waiting}d`}</td>
             </tr>
           ))}
         </tbody>

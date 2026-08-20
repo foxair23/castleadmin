@@ -39,6 +39,8 @@ function ConfirmationContent() {
   const we = params.get('we');
   const widgetKey = params.get('key') ?? '';
   const firstName = params.get('name') ?? '';
+  const isEstimate = params.get('estimate') === '1';
+  const email = params.get('email') ?? '';
 
   useEffect(() => {
     clearFlowState();
@@ -103,7 +105,7 @@ function ConfirmationContent() {
             margin: '0 0 0.5rem',
           }}
         >
-          {firstName ? `You're all set, ${firstName}!` : "You're all set!"}
+          {firstName ? `Thank you, ${firstName}!` : 'Thank you!'}
         </h1>
         <p
           style={{
@@ -112,7 +114,14 @@ function ConfirmationContent() {
             fontSize: '1rem',
           }}
         >
-          Your appointment is confirmed. We&apos;ll see you soon.
+          {isEstimate ? (
+            <>
+              We&apos;ve got your photos. Our team will review them and email your estimate
+              {email ? <> to <strong>{email}</strong></> : null} within 1–2 business days.
+            </>
+          ) : (
+            <>Your appointment is confirmed. We&apos;ll see you soon.</>
+          )}
         </p>
 
         {id && (
@@ -135,7 +144,7 @@ function ConfirmationContent() {
                 margin: '0 0 0.25rem',
               }}
             >
-              Booking ID
+              {isEstimate ? 'Request ID' : 'Booking ID'}
             </p>
             <p
               style={{
@@ -232,6 +241,13 @@ function ConfirmationContent() {
             {OFFICE_PHONE}
           </a>
         </div>
+
+        {isEstimate && (
+          <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', margin: '-1rem 0 2rem', lineHeight: 1.5, textAlign: 'left' }}>
+            This is a preliminary estimate, subject to onsite verification — especially where measurements,
+            hidden damage, structural conditions, or additional required parts can&apos;t be confirmed from photos.
+          </p>
+        )}
 
         <Link
           href={`/embed/scheduler${widgetKey ? `?key=${widgetKey}` : ''}`}

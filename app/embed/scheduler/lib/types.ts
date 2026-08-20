@@ -33,6 +33,19 @@ export interface SchedulerConfig {
   scheduling_disabled_message: string
   service_call_fee: number
   gate_service_call_fee: number
+  // "Free Online Estimate" path (garage door new-door / new-opener). When false,
+  // the choice screen never appears and every customer books as before.
+  online_estimate_enabled: boolean
+}
+
+// One captured photo/video in the online-estimate path, tagged with the guided
+// "slot" it satisfies (for the quality meter).
+export interface EstimateMedia {
+  slot: string
+  kind: 'photo' | 'video'
+  path: string
+  url: string
+  filename: string
 }
 
 export interface FlowState {
@@ -63,6 +76,11 @@ export interface FlowState {
   // Step 4 — optional details
   optional_note: string
   uploaded_photo_urls: string[]
+
+  // Free Online Estimate branch (garage door only). null = not chosen (standard
+  // booking flow); 'online' = photo/video estimate; 'in_person' = book a visit.
+  estimate_channel: 'online' | 'in_person' | null
+  estimate_media: EstimateMedia[]
 
   // Step 5 — schedule
   appointment_date: string | null
@@ -117,6 +135,36 @@ export interface BookingPayload {
   customer_last_name?: string
   additional_notes?: string
   // widget
+  widget_key: string
+}
+
+// Free Online Estimate submission — like a booking but with no appointment.
+export interface OnlineEstimatePayload {
+  partial_lead_id?: string
+  session_id?: string
+  first_name: string
+  last_name?: string
+  mobile_phone: string
+  sms_consent?: boolean
+  primary_category: PrimaryCategory
+  service_type: string
+  answers: {
+    can_open_close?: string
+    estimated_age?: string
+    replacement_type?: string
+    multiple_doors?: string
+    opener_need?: string
+    gate_type?: string
+  }
+  optional_note?: string
+  address_line1: string
+  address_city: string
+  address_state: string
+  address_zip: string
+  address_is_owner: boolean
+  customer_email: string
+  customer_last_name?: string
+  additional_notes?: string
   widget_key: string
 }
 
