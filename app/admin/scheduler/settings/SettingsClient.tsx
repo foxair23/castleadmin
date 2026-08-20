@@ -94,6 +94,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
 
   // Service Fusion
   const autoSyncToSf = useField(bool(s.auto_sync_to_sf, false))
+  const onlineEstimateEnabled = useField(bool(s.online_estimate_enabled, false))
 
   // Legal copy
   const tcpaCopy = useField(str(s.tcpa_copy))
@@ -566,6 +567,29 @@ export default function SettingsClient({ initialSettings: s }: Props) {
           </label>
           <p className="text-xs text-gray-400 mt-1 ml-6">
             When enabled, completed bookings are automatically synced to SF without requiring admin approval first.
+          </p>
+        </div>
+      </Section>
+
+      <Section title="Free Online Estimate">
+        <div className="mb-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={onlineEstimateEnabled.value}
+              onChange={e => {
+                onlineEstimateEnabled.setValue(e.target.checked)
+                save('online_estimate_enabled', e.target.checked, onlineEstimateEnabled.markSaved)
+              }}
+              className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+            />
+            Offer a Free Online Estimate for new garage doors &amp; openers
+            {onlineEstimateEnabled.saved && <span className="text-green-600 text-xs">Saved ✓</span>}
+          </label>
+          <p className="text-xs text-gray-400 mt-1 ml-6">
+            When on, customers requesting a new garage door or a new/replacement opener can choose to send photos for an
+            online estimate instead of booking a visit. Repairs and all other services are unaffected. Turn off to instantly
+            revert every customer to the standard booking flow — no other changes needed.
           </p>
         </div>
       </Section>

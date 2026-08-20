@@ -53,6 +53,7 @@ const PUBLIC_KEYS = [
   'incentive_banner_text',
   'service_call_fee',
   'gate_service_call_fee',
+  'online_estimate_enabled',
 ]
 
 export async function GET(req: NextRequest) {

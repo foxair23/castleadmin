@@ -1,4 +1,4 @@
-import { BookingPayload, BookingResponse, DateAvailability, PartialLeadPayload, SchedulerConfig, SubmitResult } from './types';
+import { BookingPayload, BookingResponse, DateAvailability, OnlineEstimatePayload, PartialLeadPayload, SchedulerConfig, SubmitResult } from './types';
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
   office_phone: '(800) 576-1397',
@@ -19,6 +19,7 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
     'Online scheduling is temporarily unavailable. Please call us to book.',
   service_call_fee: 99,
   gate_service_call_fee: 99,
+  online_estimate_enabled: false,
 };
 
 export async function fetchAvailability(
@@ -69,6 +70,34 @@ export async function submitBooking(
   if (res.ok) {
     const data: BookingResponse = await res.json();
     return { ok: true, data };
+  }
+
+  let errorMessage = ''
+  try {
+    const body = await res.json()
+    errorMessage = (body as { error?: string }).error ?? ''
+  } catch { /* ignore */ }
+
+  return { ok: false, status: res.status, error: errorMessage };
+}
+
+// Free Online Estimate submission (no appointment). Returns the new lead id.
+export async function submitOnlineEstimate(
+  payload: OnlineEstimatePayload,
+  widgetKey: string
+): Promise<{ ok: true; id: string } | { ok: false; status: number; error: string }> {
+  const res = await fetch('/api/scheduler/online-estimate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Castle-Widget-Key': widgetKey,
+    },
+    body: JSON.stringify({ ...payload, widget_key: widgetKey }),
+  });
+
+  if (res.ok) {
+    const data = await res.json() as { id: string }
+    return { ok: true, id: data.id };
   }
 
   let errorMessage = ''

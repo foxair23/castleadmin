@@ -20,6 +20,7 @@ import {
   getUncontactedLeads,
 } from '@/lib/analytics/alerts'
 import { getGenieActionItems, getStsActionItems } from '@/lib/vendor-orders/action-items'
+import { getOnlineEstimateItems } from '@/lib/scheduler/online-estimate-items'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT } from './config'
 
 export interface Line { text: string; sub?: string; links?: { label: string; href: string }[] }
@@ -33,6 +34,8 @@ export interface TodoDigest {
   genieLines: Line[]
   /** Clopay STS tab — open delivery orders (status ≠ Closed). */
   stsLines: Line[]
+  /** Online Estimates tab — open free-online-estimate requests. */
+  onlineEstimateLines: Line[]
   totalNew: number
   totalDue: number
   /** Action-button presses whose actioned_at falls on today (PT). */
@@ -64,7 +67,7 @@ export function adminDb(): SupabaseClient {
 }
 
 export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest> {
-  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, arHold, leadsToCall, genie, sts, { data: actionRows }, { data: acksToday }] =
+  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, arHold, leadsToCall, genie, sts, onlineEstimates, { data: actionRows }, { data: acksToday }] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -77,6 +80,7 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       getUncontactedLeads(),
       getGenieActionItems(),
       getStsActionItems(),
+      getOnlineEstimateItems(),
       db.from('action_item_actions').select('entity_type, entity_id, action_label, actioned_at, follow_up_on'),
       db.from('scheduler_leads').select('id, acknowledged_at').not('acknowledged_at', 'is', null)
         .gte('acknowledged_at', new Date(Date.now() - 36 * 3_600_000).toISOString()),
@@ -151,6 +155,11 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
     const dc = o.details_received_at ? 'DC replied' : (o.details_requested_at ? 'DC requested' : 'DC not requested')
     return { text: `Order ${o.external_id}${o.customer_po ? ` — ${o.customer_po}` : ''} — ${o.status} · ${dc}` }
   })
+  const onlineEstimateLines: Line[] = onlineEstimates.items.map(o => {
+    const svc = o.service_category === 'door_panel_replacement' ? 'New Door / Panel' : o.service_category === 'opener_service' ? `Opener — ${o.opener_need === 'add_opener' ? 'Add' : 'Replace'}` : (o.service_category ?? '')
+    const sf = o.sf_estimate_number ? `SF Estimate #${o.sf_estimate_number}` : 'not in SF'
+    return { text: `${o.customer_name} — ${svc} — ${sf} · ${o.days_waiting}d` }
+  })
 
   // Full open backlog keyed "tab:id" (post-cutoff, action state ignored). This
   // is what the daily snapshot diff compares — an item leaves the backlog only
@@ -189,7 +198,8 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
     sfiLines,
     genieLines,
     stsLines,
-    totalNew: buckets.reduce((s, b) => s + b.newLines.length, 0) + schedulingLines.length + sfiLines.length + genieLines.length + stsLines.length,
+    onlineEstimateLines,
+    totalNew: buckets.reduce((s, b) => s + b.newLines.length, 0) + schedulingLines.length + sfiLines.length + genieLines.length + stsLines.length + onlineEstimateLines.length,
     totalDue: buckets.reduce((s, b) => s + b.dueLines.length, 0),
     actionedTodayByLabel,
     actionedToday,
@@ -407,6 +417,7 @@ export function renderTodoEmail(d: TodoDigest, opts: {
   // admin→tech→admin redirect loop ("this page isn't working").
   const newGroups: Group[] = [
     { label: 'Online Scheduling (press Done after handling)', lines: d.schedulingLines, tab: 'online-scheduling' },
+    { label: 'Online Estimates (review photos, send price)', lines: d.onlineEstimateLines, tab: 'online-estimates' },
     { label: 'SFI Leads', lines: d.sfiLines, tab: 'leads-to-call' },
     { label: 'Genie (press Done after handling)', lines: d.genieLines, tab: 'genie' },
     { label: 'Clopay STS (delivery orders)', lines: d.stsLines, tab: 'sts' },

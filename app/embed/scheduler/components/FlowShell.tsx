@@ -15,6 +15,16 @@ import StepOptionalDetails from './steps/StepOptionalDetails';
 import StepSchedule from './steps/StepSchedule';
 import StepPropertyDetails from './steps/StepPropertyDetails';
 import StepReview from './steps/StepReview';
+import StepEstimateChoice from './steps/StepEstimateChoice';
+import StepGuidedCapture from './steps/StepGuidedCapture';
+import StepOnlineEstimateReview from './steps/StepOnlineEstimateReview';
+import { isOnlineEstimateEligible } from '../lib/online-estimate';
+
+// Free Online Estimate branch step numbers — kept in the 20s so steps 1–11 and
+// the entire standard booking flow stay untouched.
+const FORK_STEP = 20;          // choose online vs in-person
+const CAPTURE_STEP = 21;       // guided photo/video capture
+const ONLINE_REVIEW_STEP = 22; // review + submit (no appointment)
 
 interface Props {
   config: SchedulerConfig;
@@ -29,8 +39,11 @@ function stepToSection(step: number): number {
   if (step === 1) return 1;
   if (step === 2) return 2;
   if (step >= 3 && step <= 7) return 3;
+  if (step === FORK_STEP) return 3;      // estimate choice, alongside Service
+  if (step === CAPTURE_STEP) return 4;   // photos → Details
   if (step === 8) return 4;
   if (step === 9) return 5;
+  if (step === ONLINE_REVIEW_STEP) return 6;
   if (step >= 10) return 6;
   return 1;
 }
@@ -55,21 +68,58 @@ function hasThirdQuestion(state: FlowState): boolean {
   );
 }
 
-function getNextStep(current: number, next: Partial<FlowState>, prevState: FlowState): number {
+// The last diagnostic step actually shown for the current branch.
+function lastDiagnosticStep(state: FlowState): number {
+  if (hasThirdQuestion(state)) return 7;
+  if (hasAnyQuestions(state)) return 6;
+  return 4;
+}
+
+// Where the flow goes after diagnostics finish. Normally step 8 (Optional
+// Details); for eligible garage-door install work that hasn't yet chosen, the
+// Free Online Estimate fork.
+function landingAfterDiagnostics(state: FlowState, config: SchedulerConfig): number {
+  if (isOnlineEstimateEligible(state, config) && !state.estimate_channel) return FORK_STEP;
+  return 8;
+}
+
+function getNextStep(current: number, next: Partial<FlowState>, prevState: FlowState, config: SchedulerConfig): number {
   const merged: FlowState = { ...prevState, ...next };
+
+  // ---- Free Online Estimate branch routing ----
+  if (current === FORK_STEP) {
+    return merged.estimate_channel === 'online' ? CAPTURE_STEP : 8; // in_person → standard flow
+  }
+  if (current === CAPTURE_STEP) return 10;                          // → Property Details (address + email)
+  if (current === 10 && merged.estimate_channel === 'online' && isOnlineEstimateEligible(merged, config)) return ONLINE_REVIEW_STEP;
+
+  // ---- Standard flow ----
   const after = current + 1;
   // Skip all question steps for service types with no diagnostic questions
   if (after === 5 && !hasAnyQuestions(merged)) {
-    return 8;
+    return landingAfterDiagnostics(merged, config);
   }
   // Skip step 7 if the branch only has 2 questions
   if (after === 7 && !hasThirdQuestion(merged)) {
-    return 8;
+    return landingAfterDiagnostics(merged, config);
+  }
+  // Leaving the last diagnostic (step 7 present) into details.
+  if (after === 8) {
+    return landingAfterDiagnostics(merged, config);
   }
   return after;
 }
 
-function getPrevStep(current: number, state: FlowState): number {
+function getPrevStep(current: number, state: FlowState, config: SchedulerConfig): number {
+  // ---- Free Online Estimate branch ----
+  if (current === FORK_STEP) return lastDiagnosticStep(state);
+  if (current === CAPTURE_STEP) return FORK_STEP;
+  if (current === 10 && state.estimate_channel === 'online') return CAPTURE_STEP;
+  if (current === ONLINE_REVIEW_STEP) return 10;
+  // Eligible customers reach step 8 via the fork's "in-person" choice — go back to it.
+  if (current === 8 && isOnlineEstimateEligible(state, config)) return FORK_STEP;
+
+  // ---- Standard flow ----
   const before = current - 1;
   // Skip all question steps going backwards for service types with no questions
   if (before >= 5 && before <= 7 && !hasAnyQuestions(state)) {
@@ -332,17 +382,23 @@ export default function FlowShell({ config, widgetKey }: Props) {
   const handleNext = useCallback(
     function handleNext(partial: Partial<FlowState>) {
       setState((prev) => {
-        const next = { ...prev, ...partial };
-        const nextStep = getNextStep(prev.currentStep, partial, prev);
+        // Changing the service selection invalidates any earlier estimate choice
+        // (a repair must never inherit an 'online' channel from a prior new-door pick).
+        const serviceChanged =
+          (partial.primary_category !== undefined && partial.primary_category !== prev.primary_category) ||
+          (partial.service_type !== undefined && partial.service_type !== prev.service_type);
+        const reset: Partial<FlowState> = serviceChanged ? { estimate_channel: null, estimate_media: [] } : {};
+        const next = { ...prev, ...partial, ...reset };
+        const nextStep = getNextStep(prev.currentStep, { ...partial, ...reset }, prev, config);
         return { ...next, currentStep: nextStep };
       });
     },
-    []
+    [config]
   );
 
   function handleBack() {
     setState((prev) => {
-      const prevStep = getPrevStep(prev.currentStep, prev);
+      const prevStep = getPrevStep(prev.currentStep, prev, config);
       return { ...prev, currentStep: prevStep };
     });
   }
@@ -520,6 +576,30 @@ export default function FlowShell({ config, widgetKey }: Props) {
     if (step === 11) {
       return (
         <StepReview
+          state={state}
+          config={config}
+          widgetKey={widgetKey}
+          sessionId={sessionIdRef.current}
+          onNext={handleNext}
+        />
+      );
+    }
+
+    // ---- Free Online Estimate branch ----
+    // Step 20 — choose online vs in-person
+    if (step === FORK_STEP) {
+      return <StepEstimateChoice state={state} onNext={handleNext} />;
+    }
+
+    // Step 21 — guided photo/video capture
+    if (step === CAPTURE_STEP) {
+      return <StepGuidedCapture state={state} widgetKey={widgetKey} onNext={handleNext} />;
+    }
+
+    // Step 22 — online estimate review + submit
+    if (step === ONLINE_REVIEW_STEP) {
+      return (
+        <StepOnlineEstimateReview
           state={state}
           config={config}
           widgetKey={widgetKey}
