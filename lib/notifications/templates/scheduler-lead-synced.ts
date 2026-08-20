@@ -23,8 +23,8 @@ export interface SchedulerLeadSyncedData {
   sfJobId: string
   sfCustomerId: string
   notes: string        // full description/notes sent to SF
-  /** Customer-uploaded photos (signed URLs, long-lived). */
-  photos?: { filename: string; url: string }[]
+  /** Short, login-gated link to the customer's photos/video (null = none). */
+  mediaUrl?: string | null
   adminUrl: string
   ackUrl?: string      // "Done" acknowledgement link (requires Castle Admin login)
 }
@@ -63,8 +63,8 @@ export function renderSchedulerLeadSynced(data: SchedulerLeadSyncedData): {
   <p style="${LABEL}">Notes sent to SF</p>
   <pre style="${NOTES_BOX}">${data.notes}</pre>
 
-  ${data.photos && data.photos.length > 0 ? `<p style="${LABEL}">Customer Photos (${data.photos.length})</p>
-  <p style="${VALUE}">${data.photos.map((p, i) => `<a href="${p.url}" style="color: #dc2626;">Photo ${i + 1}</a>`).join(' &middot; ')}</p>` : ''}
+  ${data.mediaUrl ? `<p style="${LABEL}">Customer Photos &amp; Video</p>
+  <p style="${VALUE}"><a href="${data.mediaUrl}" style="color: #dc2626;">View customer photos &amp; video →</a> <span style="color:#9ca3af;">(requires Castle Admin login)</span></p>` : ''}
 
   ${data.ackUrl ? `<p style="margin: 24px 0 4px;"><a href="${data.ackUrl}" style="${DONE_BTN}">✓ Done</a></p>
   <p style="font-size: 12px; color: #9ca3af; margin: 0 0 8px;">Marks this lead acknowledged (requires Castle Admin login).</p>` : ''}
@@ -86,9 +86,7 @@ export function renderSchedulerLeadSynced(data: SchedulerLeadSyncedData): {
     ``,
     `Notes sent to SF:`,
     data.notes,
-    ...(data.photos && data.photos.length > 0
-      ? ['', 'Customer photos:', ...data.photos.map((p, i) => `  Photo ${i + 1}: ${p.url}`)]
-      : []),
+    ...(data.mediaUrl ? ['', `Customer photos & video (requires login): ${data.mediaUrl}`] : []),
     ...(data.ackUrl ? ['', `Done (acknowledge, requires login): ${data.ackUrl}`] : []),
   ].join('\n')
 

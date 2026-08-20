@@ -1,7 +1,7 @@
 import { createClient as createServiceClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sfPost } from '@/lib/crm/service-fusion'
 import { findExistingSfCustomer, updateExistingCustomerContactInfo } from '@/lib/scheduler/sf-customer-match'
-import { getLeadPhotoUrls } from '@/lib/scheduler/photos'
+import { getMediaShortLink, leadAttachmentCount } from '@/lib/scheduler/media-link'
 
 // Free Online Estimate → Service Fusion. On submit we create a $0 SF ESTIMATE
 // (SF derives total from line items, so an estimate with none is $0) that the
@@ -100,9 +100,13 @@ export async function createOnlineEstimateInSf(leadId: string): Promise<{ ok: bo
     if (l.additional_notes) lines.push(`Additional notes: ${l.additional_notes}`)
     if (l.address_is_owner === false) lines.push('Property owner: No (renter/tenant)')
 
-    // Long-lived signed links to the customer's photos/video (private bucket).
-    const media = await getLeadPhotoUrls(supabase, l.id, 60 * 60 * 24 * 365).catch(() => [])
-    media.forEach((m, i) => lines.push(`Customer photo/video ${i + 1}: ${m.url}`))
+    // One short, login-gated link to the customer's photos/video (private
+    // bucket) instead of a wall of long signed URLs.
+    const mediaCount = await leadAttachmentCount(supabase, l.id).catch(() => 0)
+    if (mediaCount > 0) {
+      const mediaUrl = await getMediaShortLink(l.id).catch(() => null)
+      if (mediaUrl) lines.push(`Customer photos & video (${mediaCount}): ${mediaUrl}`)
+    }
     lines.push(`Lead ID: ${l.id}`)
 
     // 3. Create the $0 estimate (no line items ⇒ $0). Ask for id + number back.
