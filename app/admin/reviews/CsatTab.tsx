@@ -1,11 +1,11 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { summarizeRatings } from '@/lib/csat/summary'
 import type { CsatRow } from '@/lib/csat/metrics'
 import type { CsatSettings } from '@/lib/csat/config'
-import { setCsatEnabled, saveCsatSettings, updateFollowUp, type CsatSettingsInput } from './csat-actions'
+import { setCsatEnabled, saveCsatSettings, updateFollowUp, setCsatScore, sendReviewRequestAction, type CsatSettingsInput } from './csat-actions'
 
 interface Tech { id: string; full_name: string }
 interface Props { settings: CsatSettings; rows: CsatRow[]; techs: Tech[] }
@@ -208,7 +208,7 @@ export default function CsatTab({ settings, rows, techs }: Props) {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-y border-gray-200">
               <tr>
-                {['Customer', 'Job', 'Sent', 'Rating', 'Feedback', 'Tech', 'Job type', 'Status'].map(h => (
+                {['Customer', 'Job', 'Sent', 'Rating', 'Conversation', 'Feedback', 'Tech', 'Job type', 'Status'].map(h => (
                   <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -219,7 +219,8 @@ export default function CsatTab({ settings, rows, techs }: Props) {
                   <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">{r.customer_name ?? '—'}</td>
                   <td className="px-3 py-2 font-mono text-xs text-gray-600">{r.sf_job_id}</td>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtDate(r.sent_at)}</td>
-                  <td className="px-3 py-2">{r.rating == null ? <span className="text-gray-300">—</span> : <RatingPill rating={r.rating} />}</td>
+                  <td className="px-3 py-2"><RatingCell row={r} onDone={() => router.refresh()} /></td>
+                  <td className="px-3 py-2"><ConversationCell row={r} /></td>
                   <td className="px-3 py-2 text-gray-600"><div className="max-w-[220px] truncate" title={r.feedback_text ?? undefined}>{r.feedback_text ?? '—'}</div></td>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r.primary_tech_name ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r.job_category ?? '—'}</td>
@@ -246,6 +247,83 @@ export default function CsatTab({ settings, rows, techs }: Props) {
 function RatingPill({ rating }: { rating: number }) {
   const tone = rating === 5 ? 'bg-green-100 text-green-800' : rating === 4 ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'
   return <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${tone}`}>{rating}★</span>
+}
+
+// Editable rating with provenance badge + (for 5s) the "send Google review" action.
+function RatingCell({ row, onDone }: { row: CsatRow; onDone: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [val, setVal] = useState(String(row.rating ?? '5'))
+  const [pending, start] = useTransition()
+  const [err, setErr] = useState<string | null>(null)
+
+  const badge = row.rating_source === 'ai_correction'
+    ? <span title="Score set from an AI-detected correction" className="text-[9px] uppercase tracking-wide text-purple-700 bg-purple-50 rounded px-1">AI</span>
+    : row.rating_source === 'admin_edit'
+    ? <span title="Score edited by an admin" className="text-[9px] uppercase tracking-wide text-amber-700 bg-amber-50 rounded px-1">edited</span>
+    : null
+
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <select value={val} onChange={e => setVal(e.target.value)} disabled={pending} className="text-gray-900 border border-gray-300 rounded px-1 py-0.5 text-xs bg-white">
+          {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}★</option>)}
+        </select>
+        <button disabled={pending} onClick={() => { setErr(null); start(async () => { const res = await setCsatScore(row.survey_id, Number(val)); if (res.ok) { setEditing(false); onDone() } else setErr(res.error ?? 'failed') }) }} className="text-xs text-blue-600 underline disabled:opacity-50">save</button>
+        <button disabled={pending} onClick={() => { setEditing(false); setVal(String(row.rating ?? '5')) }} className="text-xs text-gray-400 underline">cancel</button>
+        {err && <span className="text-[10px] text-red-600">{err}</span>}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      {row.rating == null ? <span className="text-gray-300">—</span> : <RatingPill rating={row.rating} />}
+      {badge}
+      <button onClick={() => { setVal(String(row.rating ?? '5')); setEditing(true) }} title="Edit score" className="text-xs text-gray-400 hover:text-gray-700">✎</button>
+      {row.rating === 5 && !row.review_requested_at && <ReviewRequestButton row={row} onDone={onDone} />}
+    </span>
+  )
+}
+
+function ReviewRequestButton({ row, onDone }: { row: CsatRow; onDone: () => void }) {
+  const [pending, start] = useTransition()
+  const [msg, setMsg] = useState<string | null>(null)
+  const held = row.review_pending_confirm
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button
+        disabled={pending}
+        onClick={() => { setMsg(null); start(async () => { const res = await sendReviewRequestAction(row.survey_id); setMsg(res.ok ? 'sent ✓' : (res.error ?? 'failed')); if (res.ok) onDone() }) }}
+        title={held ? 'A 5 was set without auto-sending the Google-review text — send it now' : 'Send the Google-review request text'}
+        className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap disabled:opacity-50 ${held ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+      >
+        {pending ? 'sending…' : (held ? 'Send review (held)' : 'Send review')}
+      </button>
+      {msg && <span className="text-[10px] text-gray-500">{msg}</span>}
+    </span>
+  )
+}
+
+// Inline view of the customer's scored replies (shows corrections at a glance).
+function ConversationCell({ row }: { row: CsatRow }) {
+  const [open, setOpen] = useState(false)
+  if (row.messages.length === 0) return <span className="text-gray-300 text-xs">—</span>
+  return (
+    <div className="text-xs">
+      <button onClick={() => setOpen(o => !o)} className="text-blue-600 hover:text-blue-800 underline">{open ? 'hide' : `${row.messages.length} msg`}</button>
+      {open && (
+        <div className="mt-1 max-w-[260px] space-y-0.5">
+          {row.messages.map((m, i) => (
+            <div key={i} className="text-gray-700">
+              {m.rating != null && <span className="font-semibold">{m.rating}★ </span>}
+              <span className="text-gray-500">“{m.text ?? ''}”</span>
+              {m.source === 'ai_correction' && <span className="ml-1 text-purple-600">(AI)</span>}
+              {m.source === 'admin_edit' && <span className="ml-1 text-amber-600">(edit)</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function LowScoreQueue({ rows, onRefresh }: { rows: CsatRow[]; onRefresh: () => void }) {

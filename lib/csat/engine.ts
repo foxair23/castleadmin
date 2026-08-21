@@ -7,6 +7,17 @@ import { renderLowCsatAlert } from '@/lib/notifications/templates/low-csat-alert
 import { syncSingleJob } from '@/lib/sf-mirror/sync-engine'
 import { csatDb, loadCsatSettings, renderCsatTemplate, type CsatSettings } from './config'
 import { parseRating, classify, isLow } from './parse'
+import { aiExtractCsatCorrection } from './ai-extract'
+
+// Resolve an open low-score follow-up (e.g. the customer corrected upward), and
+// suppress its deferred alert so the detractor email never fires. alerted_at is
+// stamped so dispatchLowScoreAlerts (which filters alerted_at is null) skips it.
+async function resolveOpenFollowUp(db: SupabaseClient, surveyId: string, note: string): Promise<void> {
+  const now = new Date().toISOString()
+  await db.from('csat_follow_ups')
+    .update({ status: 'resolved', resolved_at: now, alerted_at: now, notes: note })
+    .eq('survey_id', surveyId).eq('status', 'open')
+}
 
 // CSAT survey engine — schedule → send → handle reply. Reuses the Dialpad send
 // path, the shared opt-out list, and the notification queue. Job completion is
@@ -279,6 +290,39 @@ export async function handleCsatReply(from: string, text: string, providerMsgId:
   const awaitingFeedback = survey.feedback_pending
   const isRatingChange = survey.status === 'responded' && rating != null
 
+  // AI fallback (runs BEFORE the "not ours" guard so a correction after any
+  // prior rating is caught, including after a 5 where nothing is pending): an
+  // ambiguous natural-language reply ("I meant 5 not 1") that parseRating
+  // rejects. Only a HIGH-confidence new 1–5 rating is applied. To stay safe on
+  // the reputation path, an AI-inferred correction updates the SCORE but sends
+  // NO customer SMS — the Google-review request in particular is held for office
+  // confirmation (review_pending_confirm) when it lands on a 5.
+  if (rating == null && survey.status === 'responded') {
+    const { data: cur } = await db.from('csat_responses')
+      .select('rating').eq('survey_id', survey.id).eq('is_current', true).maybeSingle()
+    const priorRating = (cur?.rating as number | null) ?? null
+    const ai = await aiExtractCsatCorrection(text, priorRating)
+    if (ai && ai.confidence === 'high' && ai.correctedRating !== priorRating) {
+      const nr = ai.correctedRating
+      const dk = providerMsgId ? `pid:${providerMsgId}` : `ai:${survey.id}:${new Date().toISOString().slice(0, 16)}`
+      const { error: aiErr } = await db.from('csat_responses').insert({
+        survey_id: survey.id, sf_job_id: survey.sf_job_id, rating: nr, classification: classify(nr),
+        raw_message: text.slice(0, 1000), is_current: false, provider_message_id: providerMsgId,
+        dedup_key: dk, source: 'ai_correction',
+      })
+      if (aiErr) return 'csat_duplicate'
+      await db.from('csat_responses').update({ is_current: false }).eq('survey_id', survey.id)
+      await db.from('csat_responses').update({ is_current: true }).eq('survey_id', survey.id).eq('dedup_key', dk)
+      const patch: Record<string, unknown> = { status: 'responded', feedback_pending: false, updated_at: new Date().toISOString() }
+      // Upgraded out of the low range → cancel the pending detractor alert.
+      if (!isLow(nr)) await resolveOpenFollowUp(db, survey.id, `auto-resolved: AI-detected correction to ${nr}`)
+      // A 5 would normally trigger the Google-review text — hold it for the office.
+      if (nr === 5) patch.review_pending_confirm = true
+      await db.from('csat_surveys').update(patch).eq('id', survey.id)
+      return 'csat_ai_correction'
+    }
+  }
+
   // Not our message: a finished survey that isn't awaiting anything and this
   // isn't a new rating → let leadgen handle it.
   if (!awaitingRating && !awaitingFeedback && !isRatingChange) return null
@@ -321,6 +365,11 @@ export async function handleCsatReply(from: string, text: string, providerMsgId:
   await db.from('csat_responses').update({ is_current: true }).eq('survey_id', survey.id).eq('dedup_key', dedupKey)
   await db.from('csat_surveys').update({ status: 'responded', feedback_pending: false, updated_at: new Date().toISOString() }).eq('id', survey.id)
 
+  // Corrected up out of the low range → cancel any pending detractor alert so a
+  // now-happy customer doesn't trigger a "low score" email (the screenshot case:
+  // a "1" then "5" a minute later).
+  if (!isLow(rating)) await resolveOpenFollowUp(db, survey.id, `auto-resolved: customer corrected to ${rating}`)
+
   const settings = await loadCsatSettings()
   if (rating === 5) {
     const reviewUrl = await ensureShortLink(settings.google_review_url).catch(() => settings.google_review_url)
@@ -349,6 +398,64 @@ export async function handleCsatReply(from: string, text: string, providerMsgId:
     return 'csat_rating_low'
   }
   return 'csat_rating'
+}
+
+/**
+ * Admin manually sets/corrects a survey's rating from the CSAT tab. Records a new
+ * `csat_responses` row (source 'admin_edit', with edited_by) and repoints the
+ * current pointer — same append-only "latest valid wins" model as inbound replies,
+ * so the change is fully auditable. Never texts the customer. Cancels a pending
+ * detractor alert when the score is corrected up out of the low range.
+ */
+export async function applyAdminRatingEdit(surveyId: string, newRating: number, editedBy: string): Promise<{ ok: boolean; error?: string }> {
+  if (!Number.isInteger(newRating) || newRating < 1 || newRating > 5) return { ok: false, error: 'Rating must be 1–5.' }
+  const db = csatDb()
+  const { data: survey } = await db.from('csat_surveys').select('id, sf_job_id').eq('id', surveyId).maybeSingle()
+  if (!survey) return { ok: false, error: 'Survey not found.' }
+
+  const dk = `admin:${surveyId}:${new Date().toISOString()}`
+  const { error: insErr } = await db.from('csat_responses').insert({
+    survey_id: surveyId, sf_job_id: survey.sf_job_id, rating: newRating, classification: classify(newRating),
+    raw_message: '(admin edit)', is_current: false, provider_message_id: null, dedup_key: dk,
+    source: 'admin_edit', edited_by: editedBy,
+  })
+  if (insErr) return { ok: false, error: insErr.message }
+  await db.from('csat_responses').update({ is_current: false }).eq('survey_id', surveyId)
+  await db.from('csat_responses').update({ is_current: true }).eq('survey_id', surveyId).eq('dedup_key', dk)
+
+  const patch: Record<string, unknown> = { status: 'responded', feedback_pending: false, updated_at: new Date().toISOString() }
+  if (!isLow(newRating)) await resolveOpenFollowUp(db, surveyId, `auto-resolved: admin set rating to ${newRating}`)
+  // A 5 makes the Google-review request available (office sends it explicitly).
+  if (newRating === 5) patch.review_pending_confirm = true
+  await db.from('csat_surveys').update(patch).eq('id', surveyId)
+  return { ok: true }
+}
+
+/**
+ * Send the (previously held) Google-review request for a 5-star survey — used by
+ * the CSAT tab after the office confirms an AI-inferred or manually-set 5. Idempotent-ish:
+ * only sends when the current rating is 5 and it hasn't been requested yet.
+ */
+export async function sendHeldReviewRequest(surveyId: string): Promise<{ ok: boolean; error?: string }> {
+  const db = csatDb()
+  const { data: survey } = await db.from('csat_surveys')
+    .select('id, phone_e164, review_requested_at').eq('id', surveyId).maybeSingle()
+  if (!survey) return { ok: false, error: 'Survey not found.' }
+  if (survey.review_requested_at) return { ok: false, error: 'A review request was already sent.' }
+
+  const { data: cur } = await db.from('csat_responses').select('rating').eq('survey_id', surveyId).eq('is_current', true).maybeSingle()
+  if ((cur?.rating as number | null) !== 5) return { ok: false, error: 'Current rating is not 5.' }
+
+  const settings = await loadCsatSettings()
+  const reviewUrl = await ensureShortLink(settings.google_review_url).catch(() => settings.google_review_url)
+  const res = await sendSms(survey.phone_e164, renderCsatTemplate(settings.thanks_5_sms, { review_url: reviewUrl })).catch(() => null)
+  await db.from('csat_surveys').update({
+    review_requested_at: new Date().toISOString(),
+    review_msg_status: res?.ok ? 'sent' : 'failed',
+    review_pending_confirm: false,
+    updated_at: new Date().toISOString(),
+  }).eq('id', surveyId)
+  return res?.ok ? { ok: true } : { ok: false, error: 'SMS send failed.' }
 }
 
 // ── deferred low-score alert dispatch (cron) ──────────────────────────────────
