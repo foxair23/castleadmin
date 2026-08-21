@@ -171,6 +171,25 @@ export interface CsatRow {
   responded_at: string | null
   review_requested_at: string | null
   follow_up_status: string | null
+  /** Provenance of the CURRENT rating: 'ai_correction' | 'admin_edit' | null (sms). */
+  rating_source: string | null
+  /** Current rating is 5 but the Google-review text was held for office confirmation. */
+  review_pending_confirm: boolean
+  /** The customer's scored replies in order (shows corrections inline). */
+  messages: { rating: number | null; text: string | null; source: string | null; received_at: string }[]
+  /** Best-effort deep link to the Dialpad conversation (null unless a URL template is configured). */
+  dialpad_url: string | null
+}
+
+// Optional deep link to the Dialpad conversation. Dialpad has no documented
+// public deep-link scheme, so this is driven by a configurable template — set
+// DIALPAD_MESSAGE_URL_TEMPLATE with {e164} / {phone} / {digits} placeholders once
+// the working format is known, and links appear in the CSAT tab.
+function dialpadUrl(phoneE164: string | null): string | null {
+  const tpl = process.env.DIALPAD_MESSAGE_URL_TEMPLATE
+  if (!tpl || !phoneE164) return null
+  const digits = phoneE164.replace(/\D/g, '')
+  return tpl.replace(/\{e164\}/g, encodeURIComponent(phoneE164)).replace(/\{phone\}/g, encodeURIComponent(phoneE164)).replace(/\{digits\}/g, digits)
 }
 
 /** Every non-test survey (most recent first) with its current rating + follow-up. */
@@ -178,24 +197,31 @@ export async function getCsatRows(limit = 2000): Promise<CsatRow[]> {
   const db = csatDb()
   const { data: surveyData } = await db
     .from('csat_surveys')
-    .select('id, sf_job_id, customer_name, phone_e164, status, sent_at, work_completed_at, primary_tech_user_id, primary_tech_name, job_category, job_source, city, postal_code, review_requested_at')
+    .select('id, sf_job_id, customer_name, phone_e164, status, sent_at, work_completed_at, primary_tech_user_id, primary_tech_name, job_category, job_source, city, postal_code, review_requested_at, review_pending_confirm')
     .eq('is_test', false)
     .order('sent_at', { ascending: false, nullsFirst: false })
     .limit(limit)
   const surveys = (surveyData ?? []) as Array<Record<string, unknown>>
   const ids = surveys.map(s => s.id as string)
 
-  const curr = new Map<string, { rating: number | null; feedback_text: string | null; received_at: string }>()
+  const curr = new Map<string, { rating: number | null; feedback_text: string | null; received_at: string; source: string | null }>()
   const followUp = new Map<string, string>()
+  const messages = new Map<string, CsatRow['messages']>()
   if (ids.length) {
-    const [{ data: resp }, { data: fu }] = await Promise.all([
-      db.from('csat_responses').select('survey_id, rating, feedback_text, received_at').eq('is_current', true).in('survey_id', ids),
+    const [{ data: resp }, { data: fu }, { data: allResp }] = await Promise.all([
+      db.from('csat_responses').select('survey_id, rating, feedback_text, received_at, source').eq('is_current', true).in('survey_id', ids),
       db.from('csat_follow_ups').select('survey_id, status').in('survey_id', ids),
+      db.from('csat_responses').select('survey_id, rating, raw_message, source, received_at').in('survey_id', ids).order('received_at', { ascending: true }),
     ])
-    for (const r of (resp ?? []) as Array<{ survey_id: string; rating: number | null; feedback_text: string | null; received_at: string }>) {
-      curr.set(r.survey_id, { rating: r.rating, feedback_text: r.feedback_text, received_at: r.received_at })
+    for (const r of (resp ?? []) as Array<{ survey_id: string; rating: number | null; feedback_text: string | null; received_at: string; source: string | null }>) {
+      curr.set(r.survey_id, { rating: r.rating, feedback_text: r.feedback_text, received_at: r.received_at, source: r.source })
     }
     for (const f of (fu ?? []) as Array<{ survey_id: string; status: string }>) followUp.set(f.survey_id, f.status)
+    for (const m of (allResp ?? []) as Array<{ survey_id: string; rating: number | null; raw_message: string | null; source: string | null; received_at: string }>) {
+      const list = messages.get(m.survey_id) ?? []
+      list.push({ rating: m.rating, text: m.raw_message, source: m.source, received_at: m.received_at })
+      messages.set(m.survey_id, list)
+    }
   }
 
   return surveys.map(s => {
@@ -219,6 +245,10 @@ export async function getCsatRows(limit = 2000): Promise<CsatRow[]> {
       responded_at: c?.received_at ?? null,
       review_requested_at: (s.review_requested_at as string) ?? null,
       follow_up_status: followUp.get(s.id as string) ?? null,
+      rating_source: c?.source ?? null,
+      review_pending_confirm: (s.review_pending_confirm as boolean) ?? false,
+      messages: messages.get(s.id as string) ?? [],
+      dialpad_url: dialpadUrl((s.phone_e164 as string) ?? null),
     }
   })
 }

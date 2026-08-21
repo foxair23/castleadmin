@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { applyAdminRatingEdit, sendHeldReviewRequest } from '@/lib/csat/engine'
 
 // Admin server actions for the CSAT sub-tab (Reviews → CSAT). Mirrors the
 // invoice-reminders actions: assertAdmin → service-role write → revalidate.
@@ -87,6 +88,22 @@ export async function updateFollowUp(surveyId: string, status: 'acknowledged' | 
   const { error } = await svc().from('csat_follow_ups').update(patch).eq('survey_id', surveyId)
   if (error) throw new Error(error.message)
   revalidatePath('/admin/reviews')
+}
+
+/** Manually set/correct a survey's satisfaction score (audit-tracked). */
+export async function setCsatScore(surveyId: string, rating: number): Promise<{ ok: boolean; error?: string }> {
+  const userId = await assertAdmin()
+  const res = await applyAdminRatingEdit(surveyId, rating, userId)
+  if (res.ok) revalidatePath('/admin/reviews')
+  return res
+}
+
+/** Send the (held) Google-review request for a 5-star survey after office confirms. */
+export async function sendReviewRequestAction(surveyId: string): Promise<{ ok: boolean; error?: string }> {
+  await assertAdmin()
+  const res = await sendHeldReviewRequest(surveyId)
+  if (res.ok) revalidatePath('/admin/reviews')
+  return res
 }
 
 /** Correct the attributed tech for a survey (audit-friendly override). */
