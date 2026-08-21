@@ -5,6 +5,7 @@ import { sendSms, toE164, isDialpadConfigured } from '@/lib/dialpad/client'
 import { greetingFirstName } from '@/lib/names'
 import { renderLeadOutreachEmail } from '@/lib/notifications/templates/lead-outreach-email'
 import { renderLeadSms, REPLY_CALLBACK_ACK, REPLY_NOT_INTERESTED_ACK } from './templates'
+import { ensureShortLink, shortCode } from '@/lib/short-links'
 import type { ParsedLead } from './parse'
 
 function db() {
@@ -43,6 +44,7 @@ export interface LeadRow {
   replied_at: string | null
   matched_job_id: string | null
   converted_at: string | null
+  outreach_link_code: string | null
 }
 
 export interface LeadGenSettings { enabled: boolean; self_schedule_url: string; reply_to_email: string | null }
@@ -227,10 +229,20 @@ export async function sendLeadOutreach(lead: LeadRow, settings?: LeadGenSettings
   const sent: ('email' | 'sms')[] = []
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
+  // Per-lead trackable scheduler link (Phase 1 attribution). Wrap the configured
+  // self-schedule destination in a short link whose target carries this lead's id
+  // — that makes each code unique per lead, so a click maps back to the lead via
+  // short_links.click_count (and sets up exact booking attribution later via the
+  // ?sfi= param). Falls back to the plain URL if the shortener is unavailable.
+  const baseUrl = /^https?:\/\//i.test(cfg.self_schedule_url) ? cfg.self_schedule_url : `https://${cfg.self_schedule_url.replace(/^\/+/, '')}`
+  const target = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}sfi=${encodeURIComponent(lead.id)}`
+  const scheduleLink = await ensureShortLink(target).catch(() => baseUrl)
+  if (!lead.outreach_link_code) patch.outreach_link_code = shortCode(target)
+
   // Email
   if (lead.email && !lead.email_sent_at) {
     try {
-      const { html, text } = renderLeadOutreachEmail({ greetingName: lead.greeting_name, scheduleUrl: cfg.self_schedule_url })
+      const { html, text } = renderLeadOutreachEmail({ greetingName: lead.greeting_name, scheduleUrl: scheduleLink })
       await sendEmail({ to: lead.email, subject: 'Castle Garage Doors & Gates — your Home Depot service request', html, text, replyTo: cfg.reply_to_email || undefined })
       patch.email_sent_at = new Date().toISOString()
       sent.push('email')
@@ -244,7 +256,7 @@ export async function sendLeadOutreach(lead: LeadRow, settings?: LeadGenSettings
     const { data: opt } = await supabase.from('invoice_reminder_optouts')
       .select('value').eq('channel', 'sms').eq('value', lead.phone_e164).maybeSingle()
     if (!opt) {
-      const res = await sendSms(lead.phone_e164, renderLeadSms(cfg.self_schedule_url))
+      const res = await sendSms(lead.phone_e164, renderLeadSms(scheduleLink))
       patch.sms_sent_at = new Date().toISOString()
       patch.sms_status = res.ok ? 'sent' : 'failed'
       patch.sms_message_id = res.messageId
