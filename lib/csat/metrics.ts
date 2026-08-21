@@ -177,19 +177,6 @@ export interface CsatRow {
   review_pending_confirm: boolean
   /** The customer's scored replies in order (shows corrections inline). */
   messages: { rating: number | null; text: string | null; source: string | null; received_at: string }[]
-  /** Best-effort deep link to the Dialpad conversation (null unless a URL template is configured). */
-  dialpad_url: string | null
-}
-
-// Optional deep link to the Dialpad conversation. Dialpad has no documented
-// public deep-link scheme, so this is driven by a configurable template — set
-// DIALPAD_MESSAGE_URL_TEMPLATE with {e164} / {phone} / {digits} placeholders once
-// the working format is known, and links appear in the CSAT tab.
-function dialpadUrl(phoneE164: string | null): string | null {
-  const tpl = process.env.DIALPAD_MESSAGE_URL_TEMPLATE
-  if (!tpl || !phoneE164) return null
-  const digits = phoneE164.replace(/\D/g, '')
-  return tpl.replace(/\{e164\}/g, encodeURIComponent(phoneE164)).replace(/\{phone\}/g, encodeURIComponent(phoneE164)).replace(/\{digits\}/g, digits)
 }
 
 /** Every non-test survey (most recent first) with its current rating + follow-up. */
@@ -248,7 +235,6 @@ export async function getCsatRows(limit = 2000): Promise<CsatRow[]> {
       rating_source: c?.source ?? null,
       review_pending_confirm: (s.review_pending_confirm as boolean) ?? false,
       messages: messages.get(s.id as string) ?? [],
-      dialpad_url: dialpadUrl((s.phone_e164 as string) ?? null),
     }
   })
 }

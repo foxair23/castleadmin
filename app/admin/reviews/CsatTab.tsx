@@ -303,30 +303,25 @@ function ReviewRequestButton({ row, onDone }: { row: CsatRow; onDone: () => void
   )
 }
 
-// Inline view of the customer's scored replies (shows corrections) + optional Dialpad link.
+// Inline view of the customer's scored replies (shows corrections at a glance).
 function ConversationCell({ row }: { row: CsatRow }) {
   const [open, setOpen] = useState(false)
-  if (row.messages.length === 0 && !row.dialpad_url) return <span className="text-gray-300 text-xs">—</span>
+  if (row.messages.length === 0) return <span className="text-gray-300 text-xs">—</span>
   return (
     <div className="text-xs">
-      {row.messages.length > 0 && (
-        <>
-          <button onClick={() => setOpen(o => !o)} className="text-blue-600 hover:text-blue-800 underline">{open ? 'hide' : `${row.messages.length} msg`}</button>
-          {open && (
-            <div className="mt-1 max-w-[260px] space-y-0.5">
-              {row.messages.map((m, i) => (
-                <div key={i} className="text-gray-700">
-                  {m.rating != null && <span className="font-semibold">{m.rating}★ </span>}
-                  <span className="text-gray-500">“{m.text ?? ''}”</span>
-                  {m.source === 'ai_correction' && <span className="ml-1 text-purple-600">(AI)</span>}
-                  {m.source === 'admin_edit' && <span className="ml-1 text-amber-600">(edit)</span>}
-                </div>
-              ))}
+      <button onClick={() => setOpen(o => !o)} className="text-blue-600 hover:text-blue-800 underline">{open ? 'hide' : `${row.messages.length} msg`}</button>
+      {open && (
+        <div className="mt-1 max-w-[260px] space-y-0.5">
+          {row.messages.map((m, i) => (
+            <div key={i} className="text-gray-700">
+              {m.rating != null && <span className="font-semibold">{m.rating}★ </span>}
+              <span className="text-gray-500">“{m.text ?? ''}”</span>
+              {m.source === 'ai_correction' && <span className="ml-1 text-purple-600">(AI)</span>}
+              {m.source === 'admin_edit' && <span className="ml-1 text-amber-600">(edit)</span>}
             </div>
-          )}
-        </>
+          ))}
+        </div>
       )}
-      {row.dialpad_url && <div><a href={row.dialpad_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Dialpad ↗</a></div>}
     </div>
   )
 }
