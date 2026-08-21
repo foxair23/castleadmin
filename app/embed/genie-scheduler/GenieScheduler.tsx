@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ProgressBar from '@/app/embed/scheduler/components/ui/ProgressBar'
 import BackButton from '@/app/embed/scheduler/components/ui/BackButton'
 import { formatPhoneDisplay, extractDigits, validatePhone, validateEmail } from '@/app/embed/scheduler/lib/validation'
 import { fetchAvailability, lookupOrder, submitGenieBooking, GenieMatch, GenieAnswers } from './lib/api'
+import { newGenieSessionId, trackGenieStep } from './lib/track'
 
 export interface TimeWindow { start: string; end: string; label: string }
 export interface GenieConfig {
@@ -63,6 +64,14 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
   const [step, setStep] = useState<Step>('identify')
   const [history, setHistory] = useState<Step[]>([])
 
+  // Anonymous funnel tracking — one session id per visit, fired best-effort.
+  const [sessionId] = useState(() => newGenieSessionId())
+  const track = useMemo(
+    () => (s: string, detail?: Record<string, unknown>, orderNumber?: string | null) => trackGenieStep(widgetKey, sessionId, s, detail, orderNumber),
+    [widgetKey, sessionId],
+  )
+  useEffect(() => { track('start') }, [track])
+
   // identify
   const [method, setMethod] = useState<'phone' | 'email'>('phone')
   const [phone, setPhone] = useState('')
@@ -101,10 +110,12 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
     if (method === 'phone' && !validatePhone(phone)) { setError('Enter a 10-digit phone number.'); return }
     if (method === 'email' && !validateEmail(email)) { setError('Enter a valid email address.'); return }
     setLooking(true)
+    track('lookup_attempt', { method })
     const res = await lookupOrder(method === 'phone' ? { phone } : { email }, widgetKey)
     setLooking(false)
     if (!res.ok) { setError(res.error ?? 'Lookup failed.'); return }
-    if (res.matches.length === 0) { go('notfound'); return }
+    if (res.matches.length === 0) { track('lookup_not_found', { method }); go('notfound'); return }
+    track('lookup_found', { count: res.matches.length })
     setMatches(res.matches)
     if (res.matches.length === 1) { setOrder(res.matches[0]); go('confirm') }
     else go('confirm') // confirm step shows the picker when >1
@@ -174,12 +185,12 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
             )
           })}
           {error && <p style={S.err}>{error}</p>}
-          <button style={{ ...S.primary, ...(order ? {} : S.primaryDisabled) }} disabled={!order} onClick={() => go('qualify')}>Yes, that’s me</button>
+          <button style={{ ...S.primary, ...(order ? {} : S.primaryDisabled) }} disabled={!order} onClick={() => { track('reached_qualification', {}, order?.order_number); go('qualify') }}>Yes, that’s me</button>
         </div>
       )}
 
       {step === 'qualify' && (
-        <Qualify answers={answers} setAnswers={setAnswers} onNext={() => go('schedule')} />
+        <Qualify answers={answers} setAnswers={setAnswers} onNext={() => { track('qualification_done', {}, order?.order_number); go('schedule') }} />
       )}
 
       {step === 'schedule' && (
@@ -187,7 +198,8 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
           config={config} widgetKey={widgetKey} slotMode={config.slot_mode}
           selectedDate={selectedDate} setSelectedDate={setSelectedDate}
           selectedWindow={selectedWindow} setSelectedWindow={setSelectedWindow}
-          onNext={() => go('review')}
+          track={track} orderNumber={order?.order_number ?? null}
+          onNext={() => { track('selected_slot', { date: selectedDate, window: selectedWindow ? `${selectedWindow.start}-${selectedWindow.end}` : 'day' }, order?.order_number); go('review') }}
         />
       )}
 
@@ -217,6 +229,7 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
             }, widgetKey)
             setSubmitting(false)
             if (!res.ok) { setError(res.error ?? 'Could not schedule.'); return }
+            track('booked', { date: selectedDate }, res.order_number ?? order.order_number)
             const q = new URLSearchParams({ order: res.order_number ?? order.order_number, date: selectedDate, phone: config.office_phone })
             if (selectedWindow) { q.set('ws', selectedWindow.start); q.set('we', selectedWindow.end) }
             window.location.href = `/embed/genie-scheduler/confirmation?${q.toString()}`
@@ -295,11 +308,13 @@ function Qualify({ answers, setAnswers, onNext }: { answers: GenieAnswers; setAn
 }
 
 // ── Schedule step ─────────────────────────────────────────────────────────────
-function Schedule({ config, widgetKey, slotMode, selectedDate, setSelectedDate, selectedWindow, setSelectedWindow, onNext }: {
+function Schedule({ config, widgetKey, slotMode, selectedDate, setSelectedDate, selectedWindow, setSelectedWindow, onNext, track, orderNumber }: {
   config: GenieConfig; widgetKey: string; slotMode: 'windows' | 'day'
   selectedDate: string; setSelectedDate: (d: string) => void
   selectedWindow: { start: string; end: string } | null; setSelectedWindow: (w: { start: string; end: string } | null) => void
   onNext: () => void
+  track: (s: string, detail?: Record<string, unknown>, orderNumber?: string | null) => void
+  orderNumber: string | null
 }) {
   const [avail, setAvail] = useState<Record<string, { available: boolean; windows: Array<{ start: string; end: string; label: string; available: boolean }> }>>({})
   const [loading, setLoading] = useState(true)
@@ -331,6 +346,24 @@ function Schedule({ config, widgetKey, slotMode, selectedDate, setSelectedDate, 
 
   const bookableDates = candidateDates.filter(d => avail[d]?.available)
   const windowsForDate = selectedDate ? (avail[selectedDate]?.windows ?? []) : []
+
+  // Once availability resolves, record what the customer actually saw: how many
+  // dates were bookable and the earliest one offered. This is what separates
+  // "no slots at all" from "slots exist but the soonest is too far out (so they
+  // called for sooner)". Fired once per visit to this screen.
+  const reportedRef = useRef(false)
+  useEffect(() => {
+    if (loading || reportedRef.current) return
+    reportedRef.current = true
+    const detail = {
+      bookable_count: bookableDates.length,
+      earliest_date: bookableDates[0] ?? null,
+      lead_days: leadDays,
+      horizon: config.scheduling_horizon_days,
+    }
+    track('reached_scheduling', detail, orderNumber)
+    if (bookableDates.length === 0) track('saw_zero_slots', detail, orderNumber)
+  }, [loading, bookableDates, leadDays, config.scheduling_horizon_days, track, orderNumber])
 
   return (
     <div style={S.card}>
