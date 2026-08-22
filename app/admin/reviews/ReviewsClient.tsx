@@ -891,7 +891,7 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Avg Rating</p>
           <p className="mt-1 text-2xl font-bold text-gray-900">
-            {kpi.avgRating != null ? kpi.avgRating.toFixed(1) : '—'}
+            {kpi.avgRating != null ? kpi.avgRating.toFixed(2) : '—'}
           </p>
         </div>
         <div className="bg-white border border-gray-200 rounded-lg p-4">
