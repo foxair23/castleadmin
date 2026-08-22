@@ -73,9 +73,12 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
   useEffect(() => { track('start') }, [track])
 
   // identify
-  const [method, setMethod] = useState<'phone' | 'email'>('phone')
+  const [method, setMethod] = useState<'phone' | 'email' | 'order' | 'name'>('phone')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
+  const [orderNumber, setOrderNumber] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [zip, setZip] = useState('')
   const [looking, setLooking] = useState(false)
   const [error, setError] = useState('')
 
@@ -107,11 +110,23 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
 
   async function runLookup() {
     setError('')
-    if (method === 'phone' && !validatePhone(phone)) { setError('Enter a 10-digit phone number.'); return }
-    if (method === 'email' && !validateEmail(email)) { setError('Enter a valid email address.'); return }
+    let input: { phone?: string; email?: string; order_number?: string; last_name?: string; postal_code?: string }
+    if (method === 'phone') {
+      if (!validatePhone(phone)) { setError('Enter a 10-digit phone number.'); return }
+      input = { phone }
+    } else if (method === 'email') {
+      if (!validateEmail(email)) { setError('Enter a valid email address.'); return }
+      input = { email }
+    } else if (method === 'order') {
+      if (extractDigits(orderNumber).length < 6) { setError('Enter your Home Depot order number.'); return }
+      input = { order_number: orderNumber }
+    } else {
+      if (lastName.trim().length < 2 || extractDigits(zip).length !== 5) { setError('Enter your last name and 5-digit ZIP code.'); return }
+      input = { last_name: lastName, postal_code: zip }
+    }
     setLooking(true)
     track('lookup_attempt', { method })
-    const res = await lookupOrder(method === 'phone' ? { phone } : { email }, widgetKey)
+    const res = await lookupOrder(input, widgetKey)
     setLooking(false)
     if (!res.ok) { setError(res.error ?? 'Lookup failed.'); return }
     if (res.matches.length === 0) { track('lookup_not_found', { method }); go('notfound'); return }
@@ -131,22 +146,43 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
       {step === 'identify' && (
         <div style={S.card}>
           <h2 style={S.h2}>Schedule your Garage Door Opener Installation</h2>
-          <p style={S.sub}>Find your order using the phone number or email you gave Home Depot when you placed your order.</p>
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <button type="button" onClick={() => setMethod('phone')} style={{ ...optionStyle(method === 'phone'), marginTop: 0, textAlign: 'center' }}>Phone</button>
-            <button type="button" onClick={() => setMethod('email')} style={{ ...optionStyle(method === 'email'), marginTop: 0, textAlign: 'center' }}>Email</button>
+          <p style={S.sub}>Find your order using any of the details you gave Home Depot when you placed your order.</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem' }}>
+            {([['phone', 'Phone'], ['email', 'Email'], ['order', 'Order #'], ['name', 'Name + ZIP']] as const).map(([m, label]) => (
+              <button key={m} type="button" onClick={() => { setMethod(m); setError('') }}
+                style={{ ...optionStyle(method === m), marginTop: 0, textAlign: 'center', flex: '1 0 auto', padding: '0.6rem 0.5rem', fontSize: '0.9rem' }}>{label}</button>
+            ))}
           </div>
-          {method === 'phone' ? (
+          {method === 'phone' && (
             <>
               <label style={S.label} htmlFor="g-phone">Phone number</label>
               <input id="g-phone" style={S.input} inputMode="tel" placeholder="(760) 555-1212" value={formatPhoneDisplay(phone)}
                 onChange={e => setPhone(extractDigits(e.target.value).slice(0, 10))} onKeyDown={e => e.key === 'Enter' && runLookup()} />
             </>
-          ) : (
+          )}
+          {method === 'email' && (
             <>
               <label style={S.label} htmlFor="g-email">Email address</label>
               <input id="g-email" style={S.input} type="email" placeholder="you@example.com" value={email}
                 onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && runLookup()} />
+            </>
+          )}
+          {method === 'order' && (
+            <>
+              <label style={S.label} htmlFor="g-order">Home Depot order number</label>
+              <input id="g-order" style={S.input} inputMode="numeric" placeholder="e.g. 3841579" value={orderNumber}
+                onChange={e => setOrderNumber(extractDigits(e.target.value).slice(0, 12))} onKeyDown={e => e.key === 'Enter' && runLookup()} />
+              <p style={{ ...S.sub, fontSize: '0.8rem', margin: '0.35rem 0 0' }}>On your Home Depot receipt and order emails.</p>
+            </>
+          )}
+          {method === 'name' && (
+            <>
+              <label style={S.label} htmlFor="g-lname">Last name</label>
+              <input id="g-lname" style={S.input} placeholder="Smith" value={lastName}
+                onChange={e => setLastName(e.target.value)} onKeyDown={e => e.key === 'Enter' && runLookup()} />
+              <label style={S.label} htmlFor="g-zip">ZIP code</label>
+              <input id="g-zip" style={S.input} inputMode="numeric" placeholder="92101" value={zip}
+                onChange={e => setZip(extractDigits(e.target.value).slice(0, 5))} onKeyDown={e => e.key === 'Enter' && runLookup()} />
             </>
           )}
           {error && <p style={S.err}>{error}</p>}
@@ -159,7 +195,7 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
       {step === 'notfound' && (
         <div style={{ ...S.card, textAlign: 'center' }}>
           <h2 style={S.h2}>We couldn’t find your order</h2>
-          <p style={S.sub}>We couldn’t match that {method === 'phone' ? 'phone number' : 'email'} to an order yet. Please give our office a call and we’ll get you scheduled.</p>
+          <p style={S.sub}>We couldn’t match that to an order yet. Try another detail above (phone, email, Home Depot order number, or last name + ZIP), or give our office a call and we’ll get you scheduled.</p>
           <a href={`tel:${config.office_phone}`} style={{ display: 'inline-block', fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: '1.15rem', color: 'var(--color-primary)', padding: '0.5rem 0' }}>{config.office_phone}</a>
           <button style={{ ...S.primary, background: 'var(--color-white)', color: 'var(--color-primary)', border: '1.5px solid var(--color-primary)' }} onClick={back}>Try again</button>
         </div>

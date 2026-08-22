@@ -55,14 +55,23 @@ export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
   }
   const supabase = db()
 
-  // Eligible: new (post-enable), active, has an SF job, has contact info, not yet
-  // scheduled, not yet nudged. Fetch a small batch; final active check in JS.
+  // Eligible: new (post-enable), active, has an SF job, not yet scheduled, not yet
+  // nudged, AND fully findable in the self-scheduler. "Findable" means the order
+  // detail is scraped and it has enough identity to look up more than one way:
+  //   • a contact channel to deliver on (phone or email), AND
+  //   • customer_name + postal_code so Name + ZIP works too (the order # /
+  //     external_id is always present).
+  // This avoids nudging a customer whose crawled phone/email is stale/mismatched
+  // and who would otherwise hit "not recognized" with no fallback. Fetch a small
+  // batch; final active/contact checks in JS.
   const { data: rows } = await supabase
     .from('vendor_orders')
     .select('id, external_id, customer_name, phone, email, status, first_seen_at')
     .eq('vendor', VENDOR)
     .not('sf_created_job_number', 'is', null)
     .not('detail_scraped_at', 'is', null)
+    .not('customer_name', 'is', null)
+    .not('postal_code', 'is', null)
     .is('appointment_date', null)
     .is('schedule_nudge_sent_at', null)
     .gte('first_seen_at', s.enabledAt)

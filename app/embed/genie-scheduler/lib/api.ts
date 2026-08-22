@@ -25,7 +25,7 @@ export interface GenieAnswers {
 }
 
 export async function lookupOrder(
-  input: { phone?: string; email?: string },
+  input: { phone?: string; email?: string; order_number?: string; last_name?: string; postal_code?: string },
   widgetKey: string,
 ): Promise<{ ok: boolean; matches: GenieMatch[]; error?: string }> {
   try {
