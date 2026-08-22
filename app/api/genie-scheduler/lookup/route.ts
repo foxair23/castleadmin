@@ -128,5 +128,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Observability: log each attempt (masked identifier, match counts) so a
+  // "not recognized" complaint is diagnosable — raw_matched=0 means nothing
+  // matched the identifier; raw_matched>0 with returned=0 means it matched but
+  // was dropped for lacking a resolvable SF job. Best-effort; never blocks.
+  try {
+    let method = 'unknown', identifierMasked = ''
+    if (hasPhone) { method = 'phone'; identifierMasked = `***${phone10.slice(-4)}` }
+    else if (hasEmail) { method = 'email'; identifierMasked = `${email.slice(0, 1)}***@${email.split('@')[1] ?? ''}` }
+    else if (hasOrder) { method = 'order'; identifierMasked = orderNumber }
+    else if (hasNameZip) { method = 'name'; identifierMasked = `${lastName} ${zip5}` }
+    await db.from('genie_lookup_events').insert({
+      method, identifier_masked: identifierMasked.slice(0, 80),
+      raw_matched: matched.length, returned: results.length,
+    })
+  } catch { /* non-critical */ }
+
   return NextResponse.json({ matches: results }, { status: 200, headers: cors })
 }
