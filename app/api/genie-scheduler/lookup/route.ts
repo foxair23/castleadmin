@@ -46,20 +46,33 @@ export async function POST(req: NextRequest) {
   const { data: widget } = await db.from('scheduler_widget_instances').select('id, is_active').eq('api_key', widgetKey).single()
   if (!widget || !widget.is_active) return NextResponse.json({ error: 'Invalid or inactive widget key' }, { status: 401, headers: cors })
 
-  let body: { phone?: string; email?: string }
+  let body: { phone?: string; email?: string; order_number?: string; last_name?: string; postal_code?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400, headers: cors }) }
 
   const phone = digits(body.phone)
   const email = (body.email ?? '').trim().toLowerCase()
-  // Require one usable identifier: a 10-digit phone or a plausible email.
-  if (phone.length < 10 && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    return NextResponse.json({ error: 'Enter the phone number or email from your order.' }, { status: 400, headers: cors })
-  }
-  const phone10 = phone.slice(-10)
+  // HD order number (numeric). Home Depot order #s are the vendor_orders external_id.
+  const orderNumber = digits(body.order_number)
+  // Name + ZIP fallback — two factors so it isn't a privacy leak like name alone.
+  const lastName = (body.last_name ?? '').trim().toLowerCase()
+  const zip5 = digits(body.postal_code).slice(0, 5)
 
-  // Match against ALL non-cancelled Genie orders (~hundreds), by digit-normalized
-  // phone / lowercased email so formatting differences ('(760) 555-1212' vs
-  // '7605551212') still hit.
+  const phone10 = phone.slice(-10)
+  const hasPhone = phone10.length === 10
+  const hasEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
+  const hasOrder = orderNumber.length >= 6
+  const hasNameZip = lastName.length >= 2 && zip5.length === 5
+
+  // Require at least one usable identifier.
+  if (!hasPhone && !hasEmail && !hasOrder && !hasNameZip) {
+    return NextResponse.json({ error: 'Enter your phone, email, Home Depot order number, or last name + ZIP code.' }, { status: 400, headers: cors })
+  }
+
+  // Match against ALL non-cancelled Genie orders (~hundreds). Phone/email are
+  // digit-/case-normalized; order number matches external_id; name+ZIP matches
+  // a customer whose name contains the last name AND whose order ZIP matches
+  // (both required). The crawled phone/email are often missing, so order # and
+  // name+ZIP are the reliable fallbacks.
   const { data: orders } = await db
     .from('vendor_orders')
     .select('id, external_id, sf_created_job_number, sf_job_id, status, customer_name, customer_po, street_address, city, state_prov, postal_code, scope, phone, email, appointment_date, appointment_window_start, appointment_window_end')
@@ -68,9 +81,13 @@ export async function POST(req: NextRequest) {
 
   type Order = NonNullable<typeof orders>[number]
   const matched: Order[] = (orders ?? []).filter((o) => {
-    const byPhone = phone10.length === 10 && digits(o.phone).slice(-10) === phone10
-    const byEmail = !!email && (o.email ?? '').trim().toLowerCase() === email
-    return byPhone || byEmail
+    const byPhone = hasPhone && digits(o.phone).slice(-10) === phone10
+    const byEmail = hasEmail && (o.email ?? '').trim().toLowerCase() === email
+    const byOrder = hasOrder && digits(o.external_id) === orderNumber
+    const byNameZip = hasNameZip
+      && (o.customer_name ?? '').toLowerCase().includes(lastName)
+      && digits(o.postal_code).slice(0, 5) === zip5
+    return byPhone || byEmail || byOrder || byNameZip
   })
 
   const toResult = (o: Order, sfJobNumber: string | null) => ({
