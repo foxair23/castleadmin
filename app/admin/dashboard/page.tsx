@@ -38,6 +38,7 @@ export default async function DashboardPage() {
     capacityJobs,
     jobVolumeRows,
     zeroDollarRows,
+    avgPerJobRows,
     { data: zeroConfirmedRows },
     { data: lastSyncLog },
     closedJobsRevenue,
@@ -76,6 +77,19 @@ export default async function DashboardPage() {
         .gte('work_completed_at', '2025-01-01')
         .lt('work_completed_at', '2027-01-01')
         .or('total.is.null,total.eq.0')
+        .order('id', { ascending: true })
+        .range(f, t)),
+    // Avg $/job by source, by work-completed month. Revenue jobs only (total > 0)
+    // so pending-$0 jobs don't drag the average; same basis as monthly revenue.
+    fetchAllRows<{ work_completed_at: string | null; source: string | null; total: number | null }>((f, t) =>
+      db.from('sf_jobs')
+        .select('work_completed_at, source, total')
+        .eq('is_deleted', false)
+        .not('status', 'in', '("Cancelled","Void","Voided")')
+        .not('work_completed_at', 'is', null)
+        .gt('total', 0)
+        .gte('work_completed_at', '2025-01-01')
+        .lt('work_completed_at', '2027-01-01')
         .order('id', { ascending: true })
         .range(f, t)),
     // Which of those $0 jobs are confirmed legitimate true-$0.
@@ -171,6 +185,34 @@ export default async function DashboardPage() {
       pendingTotal: Object.values(bySrc).reduce((s, c) => s + c.pending, 0),
       confirmedTotal: Object.values(bySrc).reduce((s, c) => s + c.confirmed, 0),
     }))
+
+  // Avg $/job by source, by work-completed month. Group revenue jobs into
+  // month × source, summing total + counting, then avg = sum/count. Sources are
+  // ordered by lifetime revenue so the client can show the biggest first.
+  const avgAgg: Record<string, Record<string, { sum: number; count: number }>> = {}
+  const avgSrcTotals: Record<string, number> = {}
+  for (const r of avgPerJobRows) {
+    const ym = r.work_completed_at?.slice(0, 7)
+    if (!ym) continue
+    const src = (r.source ?? '').trim() || '(no source)'
+    const cell = ((avgAgg[ym] ??= {})[src] ??= { sum: 0, count: 0 })
+    cell.sum += r.total ?? 0
+    cell.count += 1
+    avgSrcTotals[src] = (avgSrcTotals[src] ?? 0) + (r.total ?? 0)
+  }
+  const avgMonths = Object.keys(avgAgg).sort() // 'YYYY-MM' ascending
+  const avgSourcesRanked = Object.keys(avgSrcTotals).sort((a, b) => avgSrcTotals[b] - avgSrcTotals[a])
+  const avgPerJobBySource = {
+    months: avgMonths.map(ym => ({ ym, label: `${MONTH_LABELS_SHORT[Number(ym.slice(5, 7)) - 1]} ${ym.slice(2, 4)}` })),
+    sources: avgSourcesRanked.map(source => ({
+      source,
+      total: avgSrcTotals[source],
+      points: avgMonths.map(ym => {
+        const c = avgAgg[ym]?.[source]
+        return { ym, avg: c && c.count ? Math.round(c.sum / c.count) : null, count: c?.count ?? 0 }
+      }),
+    })),
+  }
 
   // Online scheduling — acknowledged ("Done") submissions only. The bar chart
   // aggregates these by month (synced to SF vs partial), and the table lists the
@@ -422,6 +464,7 @@ export default async function DashboardPage() {
       monthlyRevenue={monthlyRevenue}
       revenueOutlook={revenueOutlook ? { methods: revenueOutlook.methods } : null}
       zeroDollarByMonth={zeroDollarByMonth}
+      avgPerJobBySource={avgPerJobBySource}
       techMonthlyRevenue={techMonthlyRevenue}
     />
   )
