@@ -64,6 +64,10 @@ interface Props {
     confirmedTotal: number
   }[]
   techMonthlyRevenue: { techId: string; techName: string; data: { yearMonth: string; revenue: number }[] }[]
+  avgPerJobBySource: {
+    months: { ym: string; label: string }[]
+    sources: { source: string; total: number; points: { ym: string; avg: number | null; count: number }[] }[]
+  }
 }
 
 const fmt$ = (n: number) =>
@@ -419,6 +423,7 @@ export default function DashboardClient({
   monthlyRevenue,
   revenueOutlook,
   zeroDollarByMonth,
+  avgPerJobBySource,
   techMonthlyRevenue,
 }: Props) {
   const router = useRouter()
@@ -437,6 +442,11 @@ export default function DashboardClient({
   const [techChartYear, setTechChartYear] = useState<2025 | 2026>(new Date().getFullYear() >= 2026 ? 2026 : 2025)
   const [hiddenRevLines, setHiddenRevLines] = useState<Set<string>>(new Set())
   const [hiddenVolLines, setHiddenVolLines] = useState<Set<string>>(new Set())
+  // Avg $/job chart: default to the top 6 sources; the rest start hidden but
+  // stay toggleable in the legend so the chart isn't a tangle of lines.
+  const [hiddenAvgLines, setHiddenAvgLines] = useState<Set<string>>(
+    () => new Set(avgPerJobBySource.sources.slice(6).map(s => s.source)),
+  )
 
   const fetchTechWeek = useCallback(async (wk: string) => {
     setTechWeekLoading(true)
@@ -717,6 +727,94 @@ export default function DashboardClient({
               </p>
             </div>
           )}
+
+          {/* Section 3d — Avg $/job by source */}
+          {avgPerJobBySource.months.length > 0 && (() => {
+            const { months, sources } = avgPerJobBySource
+            const chartData = months.map((m, i) => {
+              const row: Record<string, number | string | null> = { month: m.label }
+              for (const s of sources) row[s.source] = s.points[i]?.avg ?? null
+              return row
+            })
+            const tableMonths = months.slice(-8)
+            return (
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700 mb-2">Avg $ / Job by Source</h2>
+                <p className="text-xs text-gray-400 mb-2 -mt-1">
+                  Average value of revenue jobs (<span className="font-medium">total &gt; $0</span>), by the month the
+                  work was completed. Click a source in the legend to show/hide it. Low-volume months swing a lot — the
+                  job count <span className="font-medium">(n)</span> is in the table.
+                </p>
+                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `$${(v / 1000).toFixed(1)}k`} width={48} />
+                        <Tooltip formatter={(v) => typeof v === 'number' ? fmt$(v) : v} />
+                        <Legend
+                          wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                          onClick={(e) => {
+                            const key = e.dataKey as string
+                            setHiddenAvgLines(prev => {
+                              const next = new Set(prev)
+                              next.has(key) ? next.delete(key) : next.add(key)
+                              return next
+                            })
+                          }}
+                          formatter={(value, entry) => (
+                            <span style={{ color: hiddenAvgLines.has((entry as { dataKey?: string }).dataKey ?? '') ? '#d1d5db' : '#374151' }}>{value}</span>
+                          )}
+                        />
+                        {sources.map((s, i) => (
+                          <Line key={s.source} type="monotone" dataKey={s.source} name={s.source}
+                            stroke={TECH_COLORS[i % TECH_COLORS.length]} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }}
+                            connectNulls hide={hiddenAvgLines.has(s.source)} />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto mt-3">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="text-left px-4 py-2 font-medium text-gray-600 whitespace-nowrap">Source</th>
+                        {tableMonths.map(m => (
+                          <th key={m.ym} className="text-right px-3 py-2 font-medium text-gray-600 whitespace-nowrap">{m.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {sources.map(s => {
+                        const byYm: Record<string, { avg: number | null; count: number }> = Object.fromEntries(s.points.map(p => [p.ym, p]))
+                        return (
+                          <tr key={s.source}>
+                            <td className="px-4 py-2 text-gray-800 whitespace-nowrap">{s.source}</td>
+                            {tableMonths.map(m => {
+                              const p = byYm[m.ym]
+                              return (
+                                <td key={m.ym} className="px-3 py-2 text-right text-gray-900 whitespace-nowrap">
+                                  {p && p.avg != null
+                                    ? <>{fmt$(p.avg)} <span className="text-gray-400 text-xs">({p.count})</span></>
+                                    : <span className="text-gray-300">—</span>}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-gray-400">
+                  Each cell: average job value that month · <span className="font-medium">(n)</span> = number of revenue
+                  jobs. Cancelled/void and $0 jobs are excluded.
+                </p>
+              </div>
+            )
+          })()}
 
           {/* Section 4 — Revenue by Tech */}
           {techMonthlyRevenue.length > 0 && (() => {
