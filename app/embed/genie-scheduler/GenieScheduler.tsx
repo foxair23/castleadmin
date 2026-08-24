@@ -73,10 +73,9 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
   useEffect(() => { track('start') }, [track])
 
   // identify
-  const [method, setMethod] = useState<'phone' | 'email' | 'order' | 'name'>('phone')
+  const [method, setMethod] = useState<'phone' | 'email' | 'name'>('phone')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
-  const [orderNumber, setOrderNumber] = useState('')
   const [lastName, setLastName] = useState('')
   const [zip, setZip] = useState('')
   const [looking, setLooking] = useState(false)
@@ -110,16 +109,13 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
 
   async function runLookup() {
     setError('')
-    let input: { phone?: string; email?: string; order_number?: string; last_name?: string; postal_code?: string }
+    let input: { phone?: string; email?: string; last_name?: string; postal_code?: string }
     if (method === 'phone') {
       if (!validatePhone(phone)) { setError('Enter a 10-digit phone number.'); return }
       input = { phone }
     } else if (method === 'email') {
       if (!validateEmail(email)) { setError('Enter a valid email address.'); return }
       input = { email }
-    } else if (method === 'order') {
-      if (extractDigits(orderNumber).length < 6) { setError('Enter your Home Depot order number.'); return }
-      input = { order_number: orderNumber }
     } else {
       if (lastName.trim().length < 2 || extractDigits(zip).length !== 5) { setError('Enter your last name and 5-digit ZIP code.'); return }
       input = { last_name: lastName, postal_code: zip }
@@ -148,7 +144,7 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
           <h2 style={S.h2}>Schedule your Garage Door Opener Installation</h2>
           <p style={S.sub}>Find your order using any of the details you gave Home Depot when you placed your order.</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem' }}>
-            {([['phone', 'Phone'], ['email', 'Email'], ['order', 'Order #'], ['name', 'Name + ZIP']] as const).map(([m, label]) => (
+            {([['phone', 'Phone'], ['email', 'Email'], ['name', 'Name + ZIP']] as const).map(([m, label]) => (
               <button key={m} type="button" onClick={() => { setMethod(m); setError('') }}
                 style={{ ...optionStyle(method === m), marginTop: 0, textAlign: 'center', flex: '1 0 auto', padding: '0.6rem 0.5rem', fontSize: '0.9rem' }}>{label}</button>
             ))}
@@ -165,14 +161,6 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
               <label style={S.label} htmlFor="g-email">Email address</label>
               <input id="g-email" style={S.input} type="email" placeholder="you@example.com" value={email}
                 onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && runLookup()} />
-            </>
-          )}
-          {method === 'order' && (
-            <>
-              <label style={S.label} htmlFor="g-order">Home Depot order number</label>
-              <input id="g-order" style={S.input} inputMode="numeric" placeholder="e.g. 3841579" value={orderNumber}
-                onChange={e => setOrderNumber(extractDigits(e.target.value).slice(0, 12))} onKeyDown={e => e.key === 'Enter' && runLookup()} />
-              <p style={{ ...S.sub, fontSize: '0.8rem', margin: '0.35rem 0 0' }}>On your Home Depot receipt and order emails.</p>
             </>
           )}
           {method === 'name' && (
@@ -195,7 +183,7 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
       {step === 'notfound' && (
         <div style={{ ...S.card, textAlign: 'center' }}>
           <h2 style={S.h2}>We couldn’t find your order</h2>
-          <p style={S.sub}>We couldn’t match that to an order yet. Try another detail above (phone, email, Home Depot order number, or last name + ZIP), or give our office a call and we’ll get you scheduled.</p>
+          <p style={S.sub}>We couldn’t match that to an order yet. Try another detail above (phone, email, or last name + ZIP), or give our office a call and we’ll get you scheduled.</p>
           <a href={`tel:${config.office_phone}`} style={{ display: 'inline-block', fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: '1.15rem', color: 'var(--color-primary)', padding: '0.5rem 0' }}>{config.office_phone}</a>
           <button style={{ ...S.primary, background: 'var(--color-white)', color: 'var(--color-primary)', border: '1.5px solid var(--color-primary)' }} onClick={back}>Try again</button>
         </div>
