@@ -194,14 +194,19 @@
         arr.sort((a, b) => a.y - b.y || a.left - b.left)
         const text = norm(arr.map(a => a.t).join(' '))
         if (field === '__customer') {
-          // The CUSTOMER DETAILS cell holds the name and the street address —
-          // sometimes as separate lines, sometimes in one text node ("SMITH JOHN
-          // 402 8TH ST"). Split the joined text at the first street-number token:
-          // everything before it is the name, from it on is the address.
-          const m = text.match(/^(.+?)\s+(\d.*)$/)
-          if (m) { o.customer_name = norm(m[1]); o.street_address = norm(m[2]) }
-          else { o.customer_name = text || null }
+          // Clopay's list "CUSTOMER DETAILS" cell is unreliable — it's rendered
+          // address-first ("<street> <NAME>") and the NAME frequently belongs to a
+          // different row (observed: order A's cell carrying order B's name). So we
+          // do NOT trust the list name. Keep the whole cell in raw for reference,
+          // capture just the street address (which IS row-aligned) when it's the
+          // clear leading part, and leave customer_name for the DETAIL scrape to
+          // fill authoritatively.
           raw.customer_details = text
+          // Trailing "Last, First" (comma) is the one unambiguous case — split it.
+          const comma = text.match(/^(\d.+?)\s+([A-Z][A-Za-z'’\-]+,\s*[A-Z][A-Za-z'’\-]+)$/)
+          if (comma) { o.street_address = norm(comma[1]); o.customer_name = norm(comma[2]) }
+          else if (/^\d/.test(text)) { o.street_address = text } // address-led: keep as address, name via detail
+          else { o.customer_name = text } // name-led fallback (older layout)
         } else if (field === '__statusDate') {
           raw.status_date = text || null
         } else if (field === 'order_date') {
@@ -375,90 +380,110 @@
   }
   try { window.__clopayDetailDiag = detailDiagnostics } catch { /* ignore */ }
 
+  // Text of the active tab's content. Angular renders only the active tab, so the
+  // body is header + customer card + this tab; each parser filters the noise.
+  function panelInnerText() {
+    const p = detailPanel()
+    return (p && p.innerText) || document.body.innerText || ''
+  }
+  // Lines that are the customer card / header, not tab content.
+  const isCardLine = (l) => /@|\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|,\s*[A-Z]{2}\s+\d{5}|PO\s*#/.test(l) || /^(call|email|directions)$/i.test(l)
+  const isTabLine = (l) => /^(summary|documents?\/?\s?photos?|notes?)$/i.test(l)
+  const MILESTONE_RE = /^(order received|site\s?check|order changes?|new po|on order|shipment tracker|shipment|install|delivery|payment status|payment)\b/i
+
   function scrapeSummary() {
-    const panel = detailPanel()
-    const summary = { _text: norm(panel.innerText).slice(0, 4000) }
-    // Best-effort milestone timeline: rows/items that carry a label + a date and a
-    // completed/pending marker (green check vs gray). Captured leniently.
-    const items = [...panel.querySelectorAll('li, [class*="step" i], [class*="milestone" i], [class*="timeline" i], [class*="status" i], tr')]
+    const text = panelInnerText()
+    const lines = text.split('\n').map(s => norm(s)).filter(Boolean)
     const milestones = []
-    for (const el of items) {
-      const text = norm(el.innerText)
-      if (!text || text.length > 200) continue
-      const date = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
-      const cls = `${el.className || ''} ${[...el.querySelectorAll('[class]')].map(x => x.className).join(' ')}`.toLowerCase()
-      const done = /complete|done|success|green|check|active/.test(cls) || /✓|✔/.test(el.innerHTML)
-      const label = norm(text.replace(/\d{1,2}\/\d{1,2}\/\d{2,4}.*$/, '')) || text
-      if (label) milestones.push({ label, date, done })
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i]
+      // A milestone heading matches a known label, has no date of its own, is short.
+      if (!MILESTONE_RE.test(l) || /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l) || l.length > 40) continue
+      const detailParts = []
+      for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+        if (MILESTONE_RE.test(lines[j]) && lines[j].length <= 40) break
+        if (isTabLine(lines[j]) || isCardLine(lines[j])) continue
+        detailParts.push(lines[j])
+      }
+      const detail = norm(detailParts.join(' '))
+      const date = (detail.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
+      milestones.push({ label: l, detail: detail || null, date })
     }
-    if (milestones.length) summary.milestones = milestones
-    // Payment: a PAID marker + doc #/date/amount if present.
-    const payMatch = norm(panel.innerText).match(/payment[^$]*?(paid|pending|unpaid)?[^$]*?(?:\$?\s*([\d,]+\.\d{2}))?/i)
-    if (payMatch && (payMatch[1] || payMatch[2])) summary.payment = { status: payMatch[1] || null, amount: payMatch[2] || null }
-    return summary
+    return { text: norm(text).slice(0, 3000), milestones }
   }
 
   function scrapeDocuments() {
-    const panel = detailPanel()
     const out = []
     const seen = new Set()
-    for (const a of panel.querySelectorAll('a[href]')) {
+    for (const a of deepQueryAll('a[href]')) {
+      if (!visible(a)) continue
       const href = a.href
       if (!href || /^javascript:/i.test(href) || seen.has(href)) continue
       const name = norm(a.innerText) || norm(a.getAttribute('title') || a.getAttribute('aria-label') || '') || href.split('/').pop()
-      const row = a.closest('li, tr, [class*="row" i], div')
-      const date = (norm(row?.innerText || '').match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
+      if (!name || /^(call|email|directions)$/i.test(name)) continue
       seen.add(href)
-      out.push({ name, date, href })
+      out.push({ name, date: null, href })
     }
-    // Rows that name a document/photo but have no link yet (metadata only).
-    for (const el of panel.querySelectorAll('li, tr, [class*="document" i], [class*="photo" i]')) {
-      const text = norm(el.innerText)
-      if (!text || text.length > 160 || el.querySelector('a[href]')) continue
-      if (/\.(pdf|jpe?g|png|docx?|xlsx?|tiff?)\b/i.test(text) || /document|photo|acknowledg|invoice/i.test(text)) {
-        const date = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
-        out.push({ name: norm(text.replace(/\d{1,2}\/\d{1,2}\/\d{2,4}.*$/, '')) || text, date, href: null })
+    // Text rows: a name line immediately followed by a date line (e.g. "New IPO" /
+    // "08/25/26").
+    const lines = panelInnerText().split('\n').map(s => norm(s)).filter(Boolean)
+    for (let i = 0; i < lines.length - 1; i++) {
+      const name = lines[i], next = lines[i + 1]
+      if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(next) && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(name)
+        && name.length <= 60 && !isTabLine(name) && !isCardLine(name) && !/^\d+\s+\S/.test(name)) {
+        if (!out.some(d => d.name === name && d.date === next)) out.push({ name, date: next, href: null })
       }
     }
     return out
   }
 
   function scrapeNotes() {
-    const panel = detailPanel()
+    const raw = panelInnerText()
+    if (/no notes to display/i.test(raw)) return []
     const out = []
-    for (const el of panel.querySelectorAll('li, tr, [class*="note" i], [class*="comment" i], [class*="message" i]')) {
-      const text = norm(el.innerText)
-      if (!text || text.length > 800) continue
-      const ts = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
-      const body = ts ? norm(text.replace(ts, '')) : text
-      if (body) out.push({ text: body, timestamp: ts })
+    for (const l of raw.split('\n').map(s => norm(s)).filter(Boolean)) {
+      if (l.length < 3 || isTabLine(l) || isCardLine(l) || /^\d+\s+\S/.test(l) || MILESTONE_RE.test(l)) continue
+      const ts = (l.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
+      out.push({ text: ts ? norm(l.replace(ts, '')) : l, timestamp: ts })
     }
     return out
   }
 
-  // Customer card at the top of the detail view → name/address/phone/email + the
-  // PO# + order type from the header ("DOOR DELIVERY · PO# 87932834").
+  // Customer card at the top of the detail view. This is the AUTHORITATIVE source
+  // for name + address (the list cell is mangled). The card is the smallest
+  // visible element containing the "DIRECTIONS" button and a phone number; we read
+  // its lines directly:  NAME / street / City, ST ZIP / phone / email / CALL EMAIL
+  // DIRECTIONS.
   function scrapeCustomerCard(o) {
-    const txt = norm(document.body.innerText)
-    const po = (txt.match(/PO\s*#?\s*[:]?\s*([A-Z0-9][A-Z0-9-]{4,})/i) || [])[1]
+    const bodyTxt = norm(document.body.innerText)
+    const po = (bodyTxt.match(/PO\s*#?\s*[:]?\s*([A-Z0-9][A-Z0-9-]{4,})/i) || [])[1]
     if (po) o.external_id = po
-    const email = (txt.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0]
-    if (email) o.email = email
-    const phone = (txt.match(/\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/) || [])[0]
-    if (phone) o.phone = phone
-    const csz = txt.match(/([A-Za-z .'-]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/)
-    if (csz) { o.city = o.city || norm(csz[1]); o.state_prov = csz[2]; o.postal_code = csz[3] }
-    // Name is shown as "LAST, FIRST" immediately before the street address (a
-    // number). Only set it when it matches that strict shape, so we never clobber
-    // the list's name with header noise. Some orders have the name ONLY here.
-    const nm = txt.match(/([A-Z][A-Za-z'’.\-]+,\s+[A-Z][A-Za-z'’.\- ]{1,40}?)\s+\d{1,6}\s+[A-Za-z]/)
-    if (nm) o.customer_name = norm(nm[1])
-    // Street address: the number + street that precedes "City, ST 00000".
-    const addr = txt.match(/(\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9 .'#\-]+?)\s*,?\s*[A-Za-z][A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5}/)
-    if (addr) o.street_address = norm(addr[1].replace(/[\s,]+$/, ''))
-    // Order type from the header, e.g. "DOOR DELIVERY · PO# …".
-    const ot = txt.match(/([A-Z][A-Z /]{2,30}?)\s*[·|]\s*PO\s*#/i)
+    const ot = bodyTxt.match(/([A-Z][A-Z /]{2,30}?)\s*[·|]\s*PO\s*#/i)
     if (ot) o.order_type = norm(ot[1])
+
+    const phoneRe = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/
+    const card = deepQueryAll('*')
+      .filter(el => visible(el) && /directions/i.test(el.innerText || '') && phoneRe.test(el.innerText || ''))
+      .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+    const cardTxt = card ? card.innerText : document.body.innerText
+
+    const email = (cardTxt.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0]
+    if (email) o.email = email
+    const phone = (cardTxt.match(phoneRe) || [])[0]
+    if (phone) o.phone = phone
+    const csz = cardTxt.match(/([A-Za-z][A-Za-z .'-]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/)
+    if (csz) { o.city = norm(csz[1]); o.state_prov = csz[2]; o.postal_code = csz[3] }
+
+    const lines = cardTxt.split('\n').map(s => norm(s)).filter(Boolean)
+      .filter(l => !/^(call|email|directions)$/i.test(l)) // drop the action buttons
+    // Name: first line that isn't the address (no leading number), a phone, an
+    // email, or the city/state/zip line.
+    const nameLine = lines.find(l =>
+      !/^\d/.test(l) && !/@/.test(l) && !phoneRe.test(l) && !(csz && l.includes(csz[0])) && /[A-Za-z]{2}/.test(l) && l.length < 60)
+    if (nameLine) o.customer_name = nameLine
+    // Street address: first line that starts with a number and isn't the city line.
+    const addrLine = lines.find(l => /^\d+\s+\S/.test(l) && !(csz && l.includes(csz[0])))
+    if (addrLine) o.street_address = norm(addrLine.replace(/[\s,]+$/, ''))
   }
 
   async function scrapeDetail() {
@@ -470,7 +495,7 @@
       if (ctl) { realClick(ctl); await sleep(1200) }
       try {
         const data = tab.scrape()
-        if (tab.label === 'summary') raw.summary = data
+        if (tab.label === 'summary') { raw.summary = data.milestones; raw.summary_text = data.text }
         else if (tab.label === 'documents') raw.documents = data
         else if (tab.label === 'notes') raw.notes = data
       } catch (e) { LOG(`detail: ${tab.label} scrape error`, e?.message || e) }
