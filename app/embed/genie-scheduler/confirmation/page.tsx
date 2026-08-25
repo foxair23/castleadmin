@@ -15,14 +15,18 @@ function windowLabel(start?: string, end?: string): string {
   return `${fmt(start)} – ${fmt(end)}`
 }
 
-export default async function GenieConfirmation({ searchParams }: { searchParams: Promise<{ order?: string; date?: string; ws?: string; we?: string; phone?: string }> }) {
-  const { order, date, ws, we, phone } = await searchParams
+export default async function GenieConfirmation({ searchParams }: { searchParams: Promise<{ order?: string; date?: string; ws?: string; we?: string; phone?: string; pending?: string }> }) {
+  const { order, date, ws, we, phone, pending } = await searchParams
+  // pending=1 means the date couldn't be written to Service Fusion — the request
+  // was received and the office was alerted, but it isn't confirmed yet. Don't
+  // tell the customer they're locked in.
+  const isPending = pending === '1'
   return (
     <div style={{ fontFamily: 'var(--font-body)', background: 'var(--color-bg)', minHeight: '100%', padding: '2rem 0.75rem' }}>
       <div style={{ background: 'var(--color-white)', borderRadius: 'var(--radius-large)', boxShadow: 'var(--shadow-card)', padding: '1.5rem', margin: '0 auto', maxWidth: 480, textAlign: 'center' }}>
-        <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#F0FDF4', border: '2px solid #86EFAC', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem', color: '#16A34A', fontSize: 28 }}>✓</div>
-        <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.35rem', fontWeight: 700, color: 'var(--color-text)', margin: '0 0 0.35rem' }}>You’re scheduled!</h2>
-        <p style={{ color: 'var(--color-text-muted)', margin: '0 0 1rem' }}>We’ve got your Genie installation on the calendar. Our tech will call ahead before arriving.</p>
+        <div style={{ width: 56, height: 56, borderRadius: '50%', background: isPending ? '#FFFBEB' : '#F0FDF4', border: `2px solid ${isPending ? '#FCD34D' : '#86EFAC'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem', color: isPending ? '#D97706' : '#16A34A', fontSize: 28 }}>{isPending ? '⏳' : '✓'}</div>
+        <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.35rem', fontWeight: 700, color: 'var(--color-text)', margin: '0 0 0.35rem' }}>{isPending ? 'Request received!' : 'You’re scheduled!'}</h2>
+        <p style={{ color: 'var(--color-text-muted)', margin: '0 0 1rem' }}>{isPending ? 'We’ve received your preferred time and our office will confirm your Genie installation shortly. If you don’t hear from us soon, give us a call.' : 'We’ve got your Genie installation on the calendar. Our tech will call ahead before arriving.'}</p>
         <div style={{ textAlign: 'left', background: 'var(--color-bg)', borderRadius: 'var(--radius-input)', padding: '0.9rem 1rem', margin: '0 0 1rem' }}>
           {order && <Row label="Order" value={`#${order}`} />}
           {date && <Row label="Date" value={prettyDate(date)} />}
