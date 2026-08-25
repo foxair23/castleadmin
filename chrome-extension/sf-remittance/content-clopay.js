@@ -213,29 +213,29 @@
     const all = allElements(document)
     const count = (sel) => { try { return document.querySelectorAll(sel).length } catch { return -1 } }
     const shadowHosts = all.filter(el => el.shadowRoot).length
-    // Deep text length (pierces shadow DOM) vs the plain innerText — a big gap
-    // means the content is inside shadow roots.
-    let deepTextLen = 0
-    for (const el of all) deepTextLen += ownText(el).length
-    // A sample element whose text looks like a PO, to reveal how an order cell is
-    // marked up (searched deeply so shadow content is included).
-    let poSample = null
-    let cols = null
+    const NOTEXT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|LINK|META|HEAD)$/
+    // What's actually RENDERED: visible leaf texts (excludes hidden modals, script/
+    // style). If the grid is on screen we'll see PO/customer text here; if only the
+    // shell is up we'll see header/nav text. This is the signal that tells apart
+    // "not rendered yet" from "rendered but not recognized".
+    const visibleTexts = []
+    let renderedTextLen = 0
     for (const el of all) {
+      if (NOTEXT.test(el.tagName) || !visible(el)) continue
       const t = ownText(el)
-      if (isPo(t) && el.children.length === 0) {
-        const r = el.getBoundingClientRect()
-        poSample = { text: t, tag: el.tagName, cls: String(el.className || ''), path: cssPath(el), x: Math.round(r.left), y: Math.round(r.top), inShadow: !!el.getRootNode().host }
-        break
-      }
+      if (t) { renderedTextLen += t.length; if (visibleTexts.length < 60) visibleTexts.push(t) }
     }
+    const appRoot = document.querySelector('app-root')
+    let cols = null
     try { const d = detectColumns(); if (d) cols = d.cols.map(c => ({ field: c.field, x: Math.round(c.x) })) } catch { /* ignore */ }
     const snap = {
       url: location.href,
-      totalEls: all.length, shadowHosts, deepTextLen,
+      totalEls: all.length, shadowHosts,
+      appRootDescendants: appRoot ? appRoot.querySelectorAll('*').length : -1,
       tables: count('table'), roleRows: count('[role="row"]'), iframes: count('iframe'),
-      headersDetected: cols, poSample,
-      bodyTextLen: (document.body?.innerText || '').length,
+      headersDetected: cols,
+      renderedTextLen, bodyTextLen: (document.body?.innerText || '').length,
+      visibleTextSample: visibleTexts.join(' | ').slice(0, 800),
     }
     LOG('DIAGNOSTIC', JSON.stringify(snap))
     return snap
@@ -729,8 +729,7 @@
         interimLogged = true; LOG('still not classified after ~8s — interim diagnostic:'); diagnostics()
       } else if (ticks >= maxTicks) {
         clearInterval(iv)
-        if (!fired && !interimLogged) diagnostics()
-        if (!fired) LOG(`gave up waiting for the page to render after ${Math.round(maxTicks / 2)}s`)
+        if (!fired) { LOG(`gave up after ${Math.round(maxTicks / 2)}s — final diagnostic (compare totals to the interim to see if the grid ever rendered):`); diagnostics() }
       }
     }, 500)
   }
