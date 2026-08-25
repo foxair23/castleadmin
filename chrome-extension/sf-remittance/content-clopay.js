@@ -127,31 +127,39 @@
       if (!h || found.some(c => c.field === h.field)) continue
       const r = el.getBoundingClientRect()
       if (!r.width) continue
-      found.push({ field: h.field, x: absCenterX(r), headerBottom: absTop(r) + r.height })
+      // Store the header's LEFT edge — the grid's data is left-aligned under its
+      // header, so the left edge (not the center) is what lines up with the cells.
+      found.push({ field: h.field, left: r.left })
     }
     if (found.length < 5) return COLS_CACHE // keep whatever we had
-    found.sort((a, b) => a.x - b.x)
-    // Column x-boundaries = midpoints between adjacent header centers.
-    const cols = found.map((c, i) => {
-      const left = i === 0 ? c.x - (found[1].x - c.x) : (found[i - 1].x + c.x) / 2
-      const right = i === found.length - 1 ? c.x + (c.x - found[i - 1].x) : (found[i + 1].x + c.x) / 2
-      return { ...c, left, right }
-    })
-    COLS_CACHE = { cols, headerBottom: Math.max(...found.map(c => c.headerBottom)) }
+    found.sort((a, b) => a.left - b.left)
+    COLS_CACHE = { cols: found }
     return COLS_CACHE
+  }
+
+  // The column a left-aligned cell belongs to: the last header whose left edge is
+  // at or before the cell's left edge (TOL absorbs padding/sub-pixel drift).
+  // Cells left of the first column (sidebar) or well right of the last (chat
+  // widget) return null.
+  function columnForLeft(cols, leftX) {
+    const TOL = 24
+    if (leftX < cols[0].left - TOL) return null
+    if (leftX > cols[cols.length - 1].left + 260) return null
+    let col = null
+    for (const c of cols) { if (leftX + TOL >= c.left) col = c; else break }
+    return col
   }
 
   function scrapeListPage() {
     const detected = detectColumns()
     if (!detected) return []
-    const { cols, headerBottom } = detected
+    const { cols } = detected
     const anchorCol = cols.find(c => c.field === 'order_date') || cols.find(c => c.field === 'external_id')
     if (!anchorCol) return []
 
-    // All visible leaf cells inside the grid's x-range, with absolute positions.
-    // Header cells are dropped by content (not by y) so a sticky header — whose
+    // All visible leaf cells, assigned to a column by their LEFT edge. Header
+    // cells are dropped by content (not by y) so a sticky header — whose
     // document-y grows as you scroll — never masks real rows.
-    void headerBottom
     const isHeaderText = (t) => HEADERS.some(h => h.re.test(t))
     const leaves = []
     for (const el of allElements(document)) {
@@ -160,10 +168,9 @@
       if (!t || isHeaderText(t)) continue
       const r = el.getBoundingClientRect()
       if (!r.width || !r.height) continue
-      const x = absCenterX(r)
-      const col = cols.find(c => x >= c.left && x < c.right)
+      const col = columnForLeft(cols, r.left)
       if (!col) continue // outside the grid (sidebar, chat widget, etc.)
-      leaves.push({ t, x, y: absTop(r), field: col.field })
+      leaves.push({ t, left: r.left, y: absTop(r), field: col.field })
     }
 
     // Row anchors: PO-DATE cells (a date in the anchor column). Each anchor's y
@@ -184,7 +191,7 @@
       for (const l of rowLeaves) (byField[l.field] ||= []).push(l)
       const o = {}, raw = {}
       for (const [field, arr] of Object.entries(byField)) {
-        arr.sort((a, b) => a.y - b.y || a.x - b.x)
+        arr.sort((a, b) => a.y - b.y || a.left - b.left)
         const text = norm(arr.map(a => a.t).join(' '))
         if (field === '__customer') {
           o.customer_name = arr[0] ? norm(arr[0].t) : null
@@ -227,7 +234,7 @@
     }
     const appRoot = document.querySelector('app-root')
     let cols = null
-    try { const d = detectColumns(); if (d) cols = d.cols.map(c => ({ field: c.field, x: Math.round(c.x) })) } catch { /* ignore */ }
+    try { const d = detectColumns(); if (d) cols = d.cols.map(c => ({ field: c.field, left: Math.round(c.left) })) } catch { /* ignore */ }
     const snap = {
       url: location.href,
       totalEls: all.length, shadowHosts,
@@ -518,7 +525,7 @@
     // the grid width), or we hit a real link/button/row element.
     let el = leaf
     const gridWidth = (COLS_CACHE && COLS_CACHE.cols.length)
-      ? (COLS_CACHE.cols[COLS_CACHE.cols.length - 1].right - COLS_CACHE.cols[0].left) : 600
+      ? (COLS_CACHE.cols[COLS_CACHE.cols.length - 1].left - COLS_CACHE.cols[0].left + 200) : 600
     for (let hops = 0; el && hops < 8; hops++) {
       if (/^(a|button)$/i.test(el.tagName) || el.getAttribute('role') === 'row' || /(^|[-_ ])row([-_ ]|$)/i.test(el.className || '')) return el
       const w = el.getBoundingClientRect().width
