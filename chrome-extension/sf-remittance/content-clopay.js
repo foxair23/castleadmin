@@ -51,7 +51,36 @@
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
     }
   }
-  const visible = (el) => !!(el && el.offsetParent !== null)
+  // Rect-based visibility — robust inside shadow DOM, where offsetParent is often
+  // null even for on-screen elements.
+  const visible = (el) => {
+    if (!el || typeof el.getBoundingClientRect !== 'function') return false
+    const r = el.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
+
+  // Every element in the document INCLUDING open shadow roots. Angular can render
+  // components into shadow trees (ViewEncapsulation.ShadowDom), which a plain
+  // querySelectorAll('*') — and innerText — can't see; that shows up as a visible
+  // grid but bodyTextLen ~0. Traversing shadow roots makes the scraper see it.
+  function allElements(root) {
+    const out = []
+    const stack = [root || document]
+    while (stack.length) {
+      const node = stack.pop()
+      let els
+      try { els = node.querySelectorAll('*') } catch { continue }
+      for (const el of els) {
+        out.push(el)
+        if (el.shadowRoot) stack.push(el.shadowRoot)
+      }
+    }
+    return out
+  }
+  // Like querySelectorAll, but pierces shadow roots (via allElements).
+  function deepQueryAll(selector) {
+    return allElements(document).filter(el => { try { return el.matches(selector) } catch { return false } })
+  }
 
   // ── Order List ────────────────────────────────────────────────────────────
   // The portal is an Angular app — the grid is NOT a <table> / role="row"
@@ -90,7 +119,7 @@
   let COLS_CACHE = null
   function detectColumns() {
     const found = []
-    for (const el of document.querySelectorAll('body *')) {
+    for (const el of allElements(document)) {
       if (!visible(el)) continue
       const t = ownText(el)
       if (!t) continue
@@ -125,7 +154,7 @@
     void headerBottom
     const isHeaderText = (t) => HEADERS.some(h => h.re.test(t))
     const leaves = []
-    for (const el of document.querySelectorAll('body *')) {
+    for (const el of allElements(document)) {
       if (!visible(el)) continue
       const t = ownText(el) // direct text only → wrappers contribute nothing, mixed nodes contribute their own text
       if (!t || isHeaderText(t)) continue
@@ -181,23 +210,31 @@
   // tells us what the page actually looks like (paste it back to refine
   // selectors). Also exposed as window.__clopayDiag() to run by hand.
   function diagnostics() {
+    const all = allElements(document)
     const count = (sel) => { try { return document.querySelectorAll(sel).length } catch { return -1 } }
-    const classHits = {}
-    for (const w of ['row', 'order', 'grid', 'table', 'list', 'cell', 'card']) {
-      classHits[w] = document.querySelectorAll(`[class*="${w}" i]`).length
-    }
-    // A sample element whose text looks like a PO (alphanumeric ≥5), to reveal how
-    // a real order cell is marked up.
+    const shadowHosts = all.filter(el => el.shadowRoot).length
+    // Deep text length (pierces shadow DOM) vs the plain innerText — a big gap
+    // means the content is inside shadow roots.
+    let deepTextLen = 0
+    for (const el of all) deepTextLen += ownText(el).length
+    // A sample element whose text looks like a PO, to reveal how an order cell is
+    // marked up (searched deeply so shadow content is included).
     let poSample = null
-    for (const el of document.querySelectorAll('a, td, span, div, [role="gridcell"], [role="cell"]')) {
-      const t = norm(el.textContent)
-      if (el.children.length === 0 && isPo(t)) { poSample = { text: t, tag: el.tagName, cls: el.className, path: cssPath(el) }; break }
+    let cols = null
+    for (const el of all) {
+      const t = ownText(el)
+      if (isPo(t) && el.children.length === 0) {
+        const r = el.getBoundingClientRect()
+        poSample = { text: t, tag: el.tagName, cls: String(el.className || ''), path: cssPath(el), x: Math.round(r.left), y: Math.round(r.top), inShadow: !!el.getRootNode().host }
+        break
+      }
     }
+    try { const d = detectColumns(); if (d) cols = d.cols.map(c => ({ field: c.field, x: Math.round(c.x) })) } catch { /* ignore */ }
     const snap = {
       url: location.href,
-      tables: count('table'), trs: count('tr'), roleRows: count('[role="row"]'),
-      roleGrid: count('[role="grid"]'), roleGridcells: count('[role="gridcell"]'),
-      iframes: count('iframe'), classHits, poSample,
+      totalEls: all.length, shadowHosts, deepTextLen,
+      tables: count('table'), roleRows: count('[role="row"]'), iframes: count('iframe'),
+      headersDetected: cols, poSample,
       bodyTextLen: (document.body?.innerText || '').length,
     }
     LOG('DIAGNOSTIC', JSON.stringify(snap))
@@ -220,7 +257,7 @@
   // page via a "next" control when present, else scroll the window/containers to
   // pull in more rows, until nothing new loads. Dedup by PO.
   function findNextPager() {
-    const cands = [...document.querySelectorAll('.pagination a, .pagination li, ul.pagination *, nav a, [aria-label], a, button, li')]
+    const cands = deepQueryAll('.pagination a, .pagination li, ul.pagination *, nav a, [aria-label], a, button, li')
     return cands.find(el => {
       const t = norm(el.innerText)
       const meta = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.className || ''}`
@@ -298,13 +335,13 @@
   ]
 
   function findTabControl(re) {
-    return [...document.querySelectorAll('[role="tab"], button, a, li, .tab, .nav-link, [class*="tab" i]')]
+    return deepQueryAll('[role="tab"], button, a, li, .tab, .nav-link, [class*="tab" i]')
       .find(el => visible(el) && re.test(norm(el.innerText)) && norm(el.innerText).length < 40)
   }
 
   // The main detail/content region (excluding the tab strip), for raw-text capture.
   function detailPanel() {
-    return document.querySelector('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i]') || document.body
+    return (deepQueryAll('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i]')[0] || document.body)
   }
 
   function scrapeSummary() {
@@ -457,7 +494,7 @@
   // Return to the list. Prefer an in-app "back to orders" control (keeps the SPA
   // session warm); fall back to a hard navigation.
   function goToList() {
-    const back = [...document.querySelectorAll('a, button')].find(el =>
+    const back = deepQueryAll('a, button').find(el =>
       visible(el) && /(my\s*)?hd\s*orders|back to orders|all orders|my orders/i.test(norm(el.innerText)))
     if (back) { LOG('returning to list via in-app control'); realClick(back); return }
     if (LIST_URL_RE.test(location.href)) location.reload()
@@ -471,7 +508,7 @@
   // sequence on the row container is what fires it.
   function findPoLeaf(id) {
     const target = String(id)
-    return [...document.querySelectorAll('body *')]
+    return [...allElements(document)]
       .find(el => visible(el) && el.children.length === 0 && ownText(el) === target)
   }
   function findOrderOpener(id) {
@@ -651,7 +688,7 @@
   // so the browser navigates to the login page, where content-login.js re-auths
   // with the saved Clopay password — keeping the crawl going unattended.
   function dismissLogoutModal() {
-    const boxes = [...document.querySelectorAll('[role="dialog"], .modal, .ui-dialog, [class*="modal" i], [class*="dialog" i], [class*="popup" i]')]
+    const boxes = deepQueryAll('[role="dialog"], .modal, .ui-dialog, [class*="modal" i], [class*="dialog" i], [class*="popup" i]')
     for (const m of boxes) {
       if (!visible(m)) continue
       const txt = norm(m.innerText).toLowerCase()
@@ -663,8 +700,50 @@
     return false
   }
 
-  LOG('loaded on', location.href, '→', pageType())
+  // ── Bootstrap ────────────────────────────────────────────────────────────
+  // The orders app is an Angular SPA that paints AFTER this script is injected
+  // (a fresh load showed bodyTextLen ~372 for many seconds) and route-changes
+  // without reloading. So don't run once at document_idle — wait until the page
+  // actually classifies (grid/detail rendered), run, and re-run on SPA URL change.
+  let mainRunning = false
+  async function runMainOnce(reason) {
+    if (mainRunning) return
+    mainRunning = true
+    try { LOG('run:', reason, '→', pageType()); await main() }
+    catch (e) { LOG('main error', e?.message || e) }
+    finally { mainRunning = false }
+  }
+
+  // Poll (cheap-ish) for up to ~90s for the page to become classifiable, then run.
+  // A MutationObserver would fire on every Angular tick (storms), so a 500ms poll
+  // is simpler and plenty fast for a human-visible render.
+  function waitThenRun(reason, maxTicks = 120) {
+    let ticks = 0, fired = false, interimLogged = false
+    const iv = setInterval(() => {
+      ticks++
+      if (!fired && pageType()) {
+        fired = true; clearInterval(iv); runMainOnce(reason)
+      } else if (!fired && ticks === 16) {
+        // ~8s in and still not classified — emit a diagnostic now for fast
+        // feedback, but keep waiting in case the app is just slow to paint.
+        interimLogged = true; LOG('still not classified after ~8s — interim diagnostic:'); diagnostics()
+      } else if (ticks >= maxTicks) {
+        clearInterval(iv)
+        if (!fired && !interimLogged) diagnostics()
+        if (!fired) LOG(`gave up waiting for the page to render after ${Math.round(maxTicks / 2)}s`)
+      }
+    }, 500)
+  }
+
+  // SPA route changes (orders ↔ installer-details) don't reload the script; watch
+  // the URL so a manual navigation still scrapes.
+  let lastHref = location.href
+  setInterval(() => {
+    if (location.href !== lastHref) { lastHref = location.href; LOG('URL changed →', location.href); COLS_CACHE = null; waitThenRun('url-change') }
+  }, 1000)
+
+  LOG('loaded on', location.href)
   dismissLogoutModal()
   setInterval(() => { try { dismissLogoutModal() } catch { /* ignore */ } }, 8000)
-  main()
+  waitThenRun('initial-load')
 })()
