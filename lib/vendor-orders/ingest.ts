@@ -23,8 +23,15 @@ export interface ScrapedOrder extends Partial<VendorOrderFields> {
   raw?: Record<string, unknown>
 }
 
-const LIST_FIELDS = ['status', 'next_step', 'order_type', 'customer_name', 'customer_po', 'store_number', 'order_date', 'schedule_date'] as const
-const DETAIL_FIELDS = ['street_address', 'city', 'state_prov', 'postal_code', 'phone', 'email', 'scope'] as const
+// Fields refreshed on every scrape (list or detail) when present in the payload.
+// Address/city/state/zip live here — some portals (Clopay HD) surface them in the
+// order LIST, so they should store without waiting for a detail sweep. Portals
+// whose list lacks them (Genie) simply don't include those keys in a list
+// payload, so nothing changes for them; their detail scrape still fills them.
+const LIST_FIELDS = ['status', 'next_step', 'order_type', 'customer_name', 'customer_po', 'store_number', 'order_date', 'schedule_date', 'street_address', 'city', 'state_prov', 'postal_code'] as const
+// Fields only a detail page provides — written only when the payload is a detail
+// scrape (hasDetail), which is also what stamps detail_scraped_at.
+const DETAIL_FIELDS = ['phone', 'email', 'scope'] as const
 
 /** Empty strings from a scrape become null; trims whitespace. */
 function clean(v: unknown): string | null {
