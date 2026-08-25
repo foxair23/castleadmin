@@ -63,6 +63,17 @@ export const VENDORS: Record<string, VendorConfig> = {
     sfJobSource: 'Clopay',
     sfCustomFields: [],
   },
+  // Clopay HD Program portal orders, crawled by the browser extension (like
+  // Genie). Capture-only in this phase — no SF job creation yet, so the SF fields
+  // are empty. Portal-specific detail (Summary timeline, documents[], notes[])
+  // lives in vendor_orders.raw. Populate the SF fields when the create-job phase
+  // arrives.
+  clopay_hd: {
+    key: 'clopay_hd',
+    label: 'Clopay — Home Depot',
+    sfJobSource: 'Clopay',
+    sfCustomFields: [],
+  },
 }
 
 export function getVendor(key: string): VendorConfig | null {

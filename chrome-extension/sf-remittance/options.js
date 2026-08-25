@@ -1,8 +1,8 @@
 import { getConfig, setConfig } from './store.js'
 
-const fields = ['baseUrl', 'token', 'receivedBy', 'pollMinutes', 'maxDetailPerRun', 'genieUser', 'sfCompany', 'sfUser', 'castleUser']
-const passwords = ['geniePass', 'sfPass', 'castlePass']
-const checks = ['enabled', 'dryRun', 'genieEnabled', 'genieAutoDetail', 'genieScheduleEnabled']
+const fields = ['baseUrl', 'token', 'receivedBy', 'pollMinutes', 'maxDetailPerRun', 'clopayMaxDetailPerRun', 'genieUser', 'clopayUser', 'sfCompany', 'sfUser', 'castleUser']
+const passwords = ['geniePass', 'clopayPass', 'sfPass', 'castlePass']
+const checks = ['enabled', 'dryRun', 'genieEnabled', 'genieAutoDetail', 'genieScheduleEnabled', 'clopayEnabled', 'clopayAutoDetail', 'clopayScheduleEnabled']
 
 async function load() {
   const c = await getConfig()
@@ -18,6 +18,7 @@ document.getElementById('save').addEventListener('click', async () => {
   for (const f of passwords) patch[f] = document.getElementById(f).value
   patch.pollMinutes = Math.max(1, Number(patch.pollMinutes) || 10)
   patch.maxDetailPerRun = Math.min(220, Math.max(1, Number(patch.maxDetailPerRun) || 12))
+  patch.clopayMaxDetailPerRun = Math.min(220, Math.max(1, Number(patch.clopayMaxDetailPerRun) || 12))
   for (const f of checks) patch[f] = document.getElementById(f).checked
   await setConfig(patch)
   // Re-arm the alarm with the new interval.

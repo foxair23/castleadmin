@@ -41,6 +41,14 @@ document.getElementById('crawl').addEventListener('click', () => {
       : `Could not start crawl: ${r?.error || 'unknown'}`
   })
 })
+document.getElementById('crawlClopay').addEventListener('click', () => {
+  const el = document.getElementById('status')
+  chrome.runtime.sendMessage({ type: 'clopay-crawl-now' }, (r) => {
+    el.textContent = r?.ok
+      ? 'Full Clopay crawl started in a background tab — it pages the whole list and details every order, then closes itself. Watch the [clopay] console for progress.'
+      : `Could not start crawl: ${r?.error || 'unknown'}`
+  })
+})
 document.getElementById('options').addEventListener('click', () => chrome.runtime.openOptionsPage())
 
 render()

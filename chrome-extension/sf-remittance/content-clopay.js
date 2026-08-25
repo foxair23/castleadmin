@@ -1,0 +1,568 @@
+// Content script — Clopay HD Program installer portal at hdprogram.clopay.com.
+// Runs inside the logged-in portal tab and reads the rendered DOM, sending
+// scraped orders to the extension background, which forwards them to Castle
+// Admin's /api/vendor-orders/ingest under vendor 'clopay_hd'.
+//
+// Mirrors content-genie.js end-to-end (list scrape + pagination, a storage-backed
+// detail sweep with attempt caps + a watchdog, logout-modal dismissal → the
+// shared content-login.js re-auth). Two surfaces:
+//   • Order List   (/orders)            — a grid of all orders.
+//   • Order Detail (/installer-details) — one order's Summary / Documents / Notes.
+//
+// The portal is a single-page app: clicking a row swaps in the detail view at the
+// generic /installer-details URL (there is no per-order URL). We drive the sweep
+// off the URL/content changing rather than off a full page reload, so it works
+// whether the detail view is a real navigation or an in-place route change — and
+// the sweep queue lives in chrome.storage so an accidental reload resumes.
+//
+// NOTE: this portal's exact markup is tuned against the live DOM. Selectors are
+// anchored on visible label/header TEXT wherever possible, and every step logs
+// under "[clopay]" — when the DOM differs, adjust the COLUMN/LABEL/selector maps
+// below (nothing here depends on generated element ids).
+
+(() => {
+  const VENDOR = 'clopay_hd'
+  const NAME = 'clopay'            // message-type prefix ('clopay-crawl-done', …) + log tag
+  const MAX_PAGES = 40            // safety cap for list pagination
+  const MAX_ATTEMPTS = 3          // per-order tries in a sweep before giving up (retried next crawl)
+  const WATCHDOG_MS = 60000       // if a page doesn't progress in this long mid-sweep, recover to the list
+  const SWEEP_STALE_MS = 15 * 60 * 1000 // a sweep older than this is abandoned, not resumed
+  const LIST_URL = 'https://hdprogram.clopay.com/orders'
+  const LIST_URL_RE = /\/orders(?:$|[/?#])/i
+  const DETAIL_URL_RE = /installer-details/i
+  const LOG = (...a) => console.log(`[${NAME}]`, ...a)
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
+  const key = (s) => norm(s).toLowerCase().replace(/[:*]/g, '').trim()
+
+  // 'MM/DD/YYYY' → 'YYYY-MM-DD' (ISO), else null.
+  function toISO(s) {
+    const m = norm(s).match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+    if (!m) return null
+    let [, mo, d, y] = m
+    if (y.length === 2) y = `20${y}`
+    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  }
+
+  /** Full mouse-event sequence — SPA row/tab handlers are delegated JS listeners
+   *  that a bare .click() sometimes doesn't trigger. */
+  function realClick(el) {
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
+    }
+  }
+  const visible = (el) => !!(el && el.offsetParent !== null)
+
+  // ── Order List ────────────────────────────────────────────────────────────
+  // Header text → our field. The Clopay grid columns (from the portal):
+  //   PO DATE · PO · STORE · ORDER TYPE · CUSTOMER DETAILS · CITY · STATUS · STATUS DATE
+  // Matched by longest header substring so "PO DATE" beats "PO" and "STATUS DATE"
+  // beats "STATUS".
+  const LIST_COLUMNS = [
+    { match: 'po date', field: 'order_date', iso: true },
+    { match: 'po', field: 'external_id' },
+    { match: 'store', field: 'store_number' },
+    { match: 'order type', field: 'order_type' },
+    { match: 'customer', field: '__customer' }, // "CUSTOMER DETAILS" → name + address (split below)
+    { match: 'city', field: 'city' },
+    { match: 'status date', field: '__statusDate' },
+    { match: 'status', field: 'status' },
+  ]
+
+  // Rows of the grid. Prefers real <tr>; falls back to ARIA grid rows for a
+  // div-based table.
+  function gridRows() {
+    let trs = [...document.querySelectorAll('table tr')]
+    if (trs.length < 2) trs = [...document.querySelectorAll('[role="row"]')]
+    return trs
+      .map(tr => {
+        const cellEls = [...tr.querySelectorAll('td, th, [role="cell"], [role="gridcell"], [role="columnheader"]')]
+        const els = cellEls.length ? cellEls : [...tr.children]
+        return { tr, els, cells: els.map(c => norm(c.innerText)) }
+      })
+      .filter(r => r.cells.length >= 5)
+  }
+
+  // Best (longest) column match for a header cell, so overlapping names resolve.
+  function columnFor(headerText) {
+    const k = key(headerText)
+    let best = null
+    for (const c of LIST_COLUMNS) if (k.includes(c.match) && (!best || c.match.length > best.match.length)) best = c
+    return best
+  }
+
+  // A PO is alphanumeric on this portal (e.g. 60425672, RPP88431947, RP30448613),
+  // so — unlike Genie's digits-only check — accept letters too.
+  const isPo = (s) => /^[A-Z0-9][A-Z0-9-]{4,}$/i.test(norm(s))
+
+  function scrapeListPage() {
+    const rows = gridRows()
+    if (!rows.length) return []
+    const header = rows.find(r => r.cells.some(c => key(c) === 'po' || key(c).startsWith('po ') || key(c).includes('order type')))
+    let colMap // index → column
+    if (header) colMap = header.cells.map(columnFor)
+    else { colMap = LIST_COLUMNS; LOG('header row not found — using positional fallback') }
+
+    const out = []
+    for (const row of rows) {
+      if (header && row === header) continue
+      const { els, cells } = row
+      const o = {}, raw = {}
+      cells.forEach((val, i) => {
+        const c = colMap[i]
+        if (!c) return
+        if (c.field === '__customer') {
+          // Name on the first line, street address on the rest.
+          const lines = (els[i]?.innerText || val).split('\n').map(x => norm(x)).filter(Boolean)
+          if (lines[0]) o.customer_name = lines[0]
+          if (lines.length > 1) o.street_address = lines.slice(1).join(', ')
+          raw.customer_details = norm(val)
+        } else if (c.field === '__statusDate') {
+          raw.status_date = norm(val) || null
+        } else if (c.field) {
+          o[c.field] = c.iso ? (toISO(val) ?? null) : (norm(val) || null)
+        }
+      })
+      if (Object.keys(raw).length) o.raw = raw
+      // A real data row has a valid PO in the external_id column.
+      if (o.external_id && isPo(o.external_id)) out.push(o)
+    }
+    return out
+  }
+
+  function rowCount() { return scrapeListPage().length }
+
+  // ── Pagination / lazy-load ──────────────────────────────────────────────
+  // The list shows ~19 of ~169 → either a pager or scroll-to-load. Handle both:
+  // page via a "next" control when present, else scroll the window/containers to
+  // pull in more rows, until nothing new loads. Dedup by PO.
+  function findNextPager() {
+    const cands = [...document.querySelectorAll('.pagination a, .pagination li, ul.pagination *, nav a, [aria-label], a, button, li')]
+    return cands.find(el => {
+      const t = norm(el.innerText)
+      const meta = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.className || ''}`
+      const isNext = t === '>' || t === '›' || t === '»' || /(?:^|[^a-z])next(?:[^a-z]|$)/i.test(meta)
+      if (!isNext) return false
+      const disabled = /disabl/i.test(el.className) || el.getAttribute('aria-disabled') === 'true' || el.disabled || el.closest('.disabled')
+      return !disabled && visible(el)
+    })
+  }
+
+  function pageSig() {
+    const r = scrapeListPage()
+    return r.length ? `${r[0].external_id}#${r.length}` : ''
+  }
+
+  async function waitForPageChange(prevSig, ms = 6000) {
+    const start = Date.now()
+    while (Date.now() - start < ms) { await sleep(200); if (pageSig() !== prevSig) return true }
+    return false
+  }
+
+  // Scroll every plausibly-scrollable container (and the window) to the bottom, to
+  // trigger lazy-load of the next batch.
+  function scrollAllToBottom() {
+    window.scrollTo(0, document.body.scrollHeight)
+    for (const el of document.querySelectorAll('*')) {
+      if (el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 120) { try { el.scrollTop = el.scrollHeight } catch { /* ignore */ } }
+    }
+  }
+
+  async function scrapeAllListPages() {
+    const byId = new Map()
+    await sleep(1000) // let the grid bind
+    const add = () => { for (const o of scrapeListPage()) if (o.external_id) byId.set(o.external_id, o) }
+
+    if (findNextPager()) {
+      // Classic pager.
+      for (let page = 0; page < MAX_PAGES; page++) {
+        add()
+        let next = findNextPager()
+        if (!next) { await sleep(500); next = findNextPager() }
+        if (!next) break
+        const prev = pageSig()
+        let advanced = false
+        for (let a = 0; a < 3 && !advanced; a++) { realClick(next); advanced = await waitForPageChange(prev) }
+        if (!advanced) break
+        if (page > 0 && page % 5 === 0) LOG(`paged ${page + 1}…`)
+      }
+    } else {
+      // Scroll-to-load: keep scrolling until the row count stops growing.
+      let stagnant = 0
+      for (let i = 0; i < MAX_PAGES && stagnant < 2; i++) {
+        const before = byId.size
+        add()
+        scrollAllToBottom()
+        await sleep(1200)
+        add()
+        if (byId.size <= before) stagnant++; else stagnant = 0
+      }
+    }
+    add()
+    LOG(`collected ${byId.size} order(s)`)
+    return [...byId.values()]
+  }
+
+  // ── Order Detail (/installer-details) ───────────────────────────────────
+  // The customer card + three client-side tabs (Summary / Documents+Photos /
+  // Notes). We click each tab, wait, and capture both a best-effort structured
+  // form AND the panel's raw text (so anything the structured pass misses is still
+  // captured in `raw` and easy to refine against).
+  const TABS = [
+    { label: 'summary', re: /summary/i, scrape: scrapeSummary },
+    { label: 'documents', re: /documents?|photos?/i, scrape: scrapeDocuments },
+    { label: 'notes', re: /notes?/i, scrape: scrapeNotes },
+  ]
+
+  function findTabControl(re) {
+    return [...document.querySelectorAll('[role="tab"], button, a, li, .tab, .nav-link, [class*="tab" i]')]
+      .find(el => visible(el) && re.test(norm(el.innerText)) && norm(el.innerText).length < 40)
+  }
+
+  // The main detail/content region (excluding the tab strip), for raw-text capture.
+  function detailPanel() {
+    return document.querySelector('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i]') || document.body
+  }
+
+  function scrapeSummary() {
+    const panel = detailPanel()
+    const summary = { _text: norm(panel.innerText).slice(0, 4000) }
+    // Best-effort milestone timeline: rows/items that carry a label + a date and a
+    // completed/pending marker (green check vs gray). Captured leniently.
+    const items = [...panel.querySelectorAll('li, [class*="step" i], [class*="milestone" i], [class*="timeline" i], [class*="status" i], tr')]
+    const milestones = []
+    for (const el of items) {
+      const text = norm(el.innerText)
+      if (!text || text.length > 200) continue
+      const date = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
+      const cls = `${el.className || ''} ${[...el.querySelectorAll('[class]')].map(x => x.className).join(' ')}`.toLowerCase()
+      const done = /complete|done|success|green|check|active/.test(cls) || /✓|✔/.test(el.innerHTML)
+      const label = norm(text.replace(/\d{1,2}\/\d{1,2}\/\d{2,4}.*$/, '')) || text
+      if (label) milestones.push({ label, date, done })
+    }
+    if (milestones.length) summary.milestones = milestones
+    // Payment: a PAID marker + doc #/date/amount if present.
+    const payMatch = norm(panel.innerText).match(/payment[^$]*?(paid|pending|unpaid)?[^$]*?(?:\$?\s*([\d,]+\.\d{2}))?/i)
+    if (payMatch && (payMatch[1] || payMatch[2])) summary.payment = { status: payMatch[1] || null, amount: payMatch[2] || null }
+    return summary
+  }
+
+  function scrapeDocuments() {
+    const panel = detailPanel()
+    const out = []
+    const seen = new Set()
+    for (const a of panel.querySelectorAll('a[href]')) {
+      const href = a.href
+      if (!href || /^javascript:/i.test(href) || seen.has(href)) continue
+      const name = norm(a.innerText) || norm(a.getAttribute('title') || a.getAttribute('aria-label') || '') || href.split('/').pop()
+      const row = a.closest('li, tr, [class*="row" i], div')
+      const date = (norm(row?.innerText || '').match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
+      seen.add(href)
+      out.push({ name, date, href })
+    }
+    // Rows that name a document/photo but have no link yet (metadata only).
+    for (const el of panel.querySelectorAll('li, tr, [class*="document" i], [class*="photo" i]')) {
+      const text = norm(el.innerText)
+      if (!text || text.length > 160 || el.querySelector('a[href]')) continue
+      if (/\.(pdf|jpe?g|png|docx?|xlsx?|tiff?)\b/i.test(text) || /document|photo|acknowledg|invoice/i.test(text)) {
+        const date = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
+        out.push({ name: norm(text.replace(/\d{1,2}\/\d{1,2}\/\d{2,4}.*$/, '')) || text, date, href: null })
+      }
+    }
+    return out
+  }
+
+  function scrapeNotes() {
+    const panel = detailPanel()
+    const out = []
+    for (const el of panel.querySelectorAll('li, tr, [class*="note" i], [class*="comment" i], [class*="message" i]')) {
+      const text = norm(el.innerText)
+      if (!text || text.length > 800) continue
+      const ts = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
+      const body = ts ? norm(text.replace(ts, '')) : text
+      if (body) out.push({ text: body, timestamp: ts })
+    }
+    return out
+  }
+
+  // Customer card at the top of the detail view → address/phone/email + PO header.
+  function scrapeCustomerCard(o) {
+    const txt = norm(document.body.innerText)
+    const po = (txt.match(/PO\s*#?\s*[:]?\s*([A-Z0-9][A-Z0-9-]{4,})/i) || [])[1]
+    if (po) o.external_id = po
+    const email = (txt.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0]
+    if (email) o.email = email
+    const phone = (txt.match(/\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/) || [])[0]
+    if (phone) o.phone = phone
+    const csz = txt.match(/([A-Za-z .'-]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/)
+    if (csz) { o.city = o.city || norm(csz[1]); o.state_prov = csz[2]; o.postal_code = csz[3] }
+  }
+
+  async function scrapeDetail() {
+    const o = { hasDetail: true }
+    const raw = {}
+    scrapeCustomerCard(o)
+    for (const tab of TABS) {
+      const ctl = findTabControl(tab.re)
+      if (ctl) { realClick(ctl); await sleep(1200) }
+      try {
+        const data = tab.scrape()
+        if (tab.label === 'summary') raw.summary = data
+        else if (tab.label === 'documents') raw.documents = data
+        else if (tab.label === 'notes') raw.notes = data
+      } catch (e) { LOG(`detail: ${tab.label} scrape error`, e?.message || e) }
+    }
+    o.raw = raw
+    if (!o.external_id) { LOG('detail: no PO found — DOM may differ'); return null }
+    return o
+  }
+
+  // ── Page classification ──────────────────────────────────────────────────
+  function looksLikeList() { return scrapeListPage().length > 0 }
+  function looksLikeDetail() {
+    return DETAIL_URL_RE.test(location.href) || TABS.some(t => !!findTabControl(t.re)) && !!scrapeCustomerCardMarker()
+  }
+  function scrapeCustomerCardMarker() { return /PO\s*#/i.test(document.body.innerText) }
+
+  function pageType() {
+    if (DETAIL_URL_RE.test(location.href)) return 'detail'
+    if (LIST_URL_RE.test(location.href) && looksLikeList()) return 'list'
+    if (looksLikeDetail()) return 'detail'
+    if (looksLikeList()) return 'list'
+    return null
+  }
+
+  // ── Crawl coordination (background) ──────────────────────────────────────
+  const getCrawlMode = () => new Promise(r => chrome.storage.local.get({ clopayCrawlMode: null }, d => r(d.clopayCrawlMode)))
+  function endCrawl() {
+    chrome.storage.local.remove('clopayCrawlMode')
+    try { chrome.runtime.sendMessage({ type: `${NAME}-crawl-done` }) } catch { /* SW asleep — timeout alarm covers it */ }
+  }
+  function isCrawlTab() {
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: `${NAME}-crawl-tab?` }, (resp) => resolve(!chrome.runtime.lastError && !!(resp && resp.isCrawlTab)))
+      } catch { resolve(false) }
+    })
+  }
+
+  /** Post scraped orders to the background → Castle Admin ingest. Resolves with
+   *  the ingest result (incl. needDetail), or null on error. */
+  async function ingest(kind, payload) {
+    const mode = (await getCrawlMode()) || 'manual'
+    return new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: NAME, kind, mode, vendor: VENDOR, payload }, (res) => {
+        if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); resolve(null); return }
+        resolve(res)
+      })
+    })
+  }
+
+  // ── Detail sweep (storage-backed, reload-resilient + SPA-friendly) ───────
+  const SWEEP_KEY = 'clopaySweep'
+  const getCfg = () => new Promise(r => chrome.storage.local.get({ clopayAutoDetail: false, clopayMaxDetailPerRun: 12 }, r))
+  const getSweep = () => new Promise(r => chrome.storage.local.get({ [SWEEP_KEY]: null }, d => r(d[SWEEP_KEY])))
+  const setSweep = (s) => new Promise(r => chrome.storage.local.set({ [SWEEP_KEY]: s }, r))
+  const clearSweep = () => new Promise(r => chrome.storage.local.remove(SWEEP_KEY, r))
+
+  async function waitForRows(ms = 20000) {
+    const start = Date.now()
+    while (Date.now() - start < ms) { if (rowCount()) return true; await sleep(500) }
+    return false
+  }
+
+  // Return to the list. Prefer an in-app "back to orders" control (keeps the SPA
+  // session warm); fall back to a hard navigation.
+  function goToList() {
+    const back = [...document.querySelectorAll('a, button')].find(el =>
+      visible(el) && /(my\s*)?hd\s*orders|back to orders|all orders|my orders/i.test(norm(el.innerText)))
+    if (back) { LOG('returning to list via in-app control'); realClick(back); return }
+    if (LIST_URL_RE.test(location.href)) location.reload()
+    else location.href = LIST_URL
+  }
+
+  // Find the clickable element that opens order `id`'s detail — an anchor/cell
+  // whose text is the PO, else the row containing it.
+  function findOrderOpener(id) {
+    const target = String(id)
+    const direct = [...document.querySelectorAll('a, [role="link"], button, td, [role="cell"], [role="gridcell"]')]
+      .find(el => visible(el) && norm(el.textContent) === target)
+    if (direct) return direct.closest('a, [role="link"], button') || direct
+    const row = gridRows().find(r => r.cells.some(c => norm(c) === target))
+    if (row) return row.els.find(e => visible(e)) || row.tr
+    return null
+  }
+
+  async function dropHead(sweep) {
+    const [head, ...rest] = sweep.queue
+    const attempts = { ...(sweep.attempts || {}) }; delete attempts[head]
+    await setSweep({ ...sweep, queue: rest, attempts })
+    return resumeSweepOnList()
+  }
+
+  /** On the list mid-sweep: locate the next queued order, click into its detail,
+   *  then (for an in-place SPA route change) drive the detail scrape directly. A
+   *  real navigation instead reloads the script, which resumes on the detail page
+   *  via main(). Drops an order it can't open, or that has failed too many times. */
+  async function resumeSweepOnList() {
+    const sweep = await getSweep()
+    if (!sweep || !sweep.queue.length) { await clearSweep(); endCrawl(); return }
+    const id = sweep.queue[0]
+    const attempts = { ...(sweep.attempts || {}) }
+    attempts[id] = (attempts[id] || 0) + 1
+    if (attempts[id] > MAX_ATTEMPTS) {
+      LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} tries — skipping`)
+      return dropHead({ ...sweep, attempts })
+    }
+    await setSweep({ ...sweep, attempts })
+    LOG(`detail sweep: locating #${id} (${sweep.queue.length} left, try ${attempts[id]})`)
+    await waitForRows()
+    await sleep(800)
+
+    // Locate the order, paging/scrolling toward it if needed.
+    let opener = findOrderOpener(id), tries = 0
+    while (!opener && tries < MAX_PAGES) {
+      const next = findNextPager()
+      if (next) { const prev = pageSig(); realClick(next); await waitForPageChange(prev) }
+      else { const before = rowCount(); scrollAllToBottom(); await sleep(1000); if (rowCount() <= before) break }
+      tries++
+      opener = findOrderOpener(id)
+    }
+    if (!opener) { LOG(`detail sweep: could not find #${id} — skipping`); return dropHead(sweep) }
+
+    // Click to open. If it's an in-place route change we stay in this context, so
+    // poll for the detail view then scrape it directly; if it's a real nav the
+    // page unloads mid-wait and the fresh load handles it.
+    realClick(opener)
+    for (let i = 0; i < 24; i++) {
+      await sleep(500)
+      if (pageType() === 'detail') { LOG(`detail sweep: #${id} opened in place`); return runDetail() }
+    }
+    LOG(`detail sweep: #${id} wouldn't open — skipping`)
+    return dropHead(sweep)
+  }
+
+  async function runList() {
+    // Mid-sweep: advance it instead of re-scraping — unless it's stale (crash
+    // leftover), in which case drop it and start fresh.
+    const active = await getSweep()
+    if (active && active.queue.length) {
+      const stale = !active.startedAt || (Date.now() - active.startedAt > SWEEP_STALE_MS)
+      if (!stale) { await resumeSweepOnList(); return }
+      LOG('detail sweep: discarding stale queue'); await clearSweep()
+    }
+
+    if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); return }
+    const orders = await scrapeAllListPages()
+    LOG(`list: scraped ${orders.length} order(s)`)
+    const res = await ingest('list', orders)
+    LOG('ingest result', res)
+
+    const cfg = await getCfg()
+    const mode = await getCrawlMode()
+    const autoDetail = !!mode || cfg.clopayAutoDetail
+    const cap = mode === 'full' ? 250 : mode === 'incremental' ? 25 : cfg.clopayMaxDetailPerRun
+    if (autoDetail && res && res.needDetail && res.needDetail.length) {
+      const queue = res.needDetail.slice(0, cap)
+      LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail${mode ? ` (${mode})` : ''}`)
+      await setSweep({ queue, startedAt: Date.now() })
+      await resumeSweepOnList()
+    } else {
+      endCrawl()
+    }
+  }
+
+  async function runDetail() {
+    let tries = 0, o = null
+    while (tries++ < 40 && !(o = await safeScrapeDetail())) await sleep(500)
+    if (o) { LOG('detail: scraped', o.external_id); await ingest('detail', o) }
+    else LOG('detail: nothing scraped — DOM likely differs')
+
+    const sweep = await getSweep()
+    if (!sweep || !sweep.queue.length) return
+    if (o) {
+      const attempts = { ...(sweep.attempts || {}) }; delete attempts[o.external_id]
+      const remaining = sweep.queue.filter(x => x !== o.external_id)
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
+      else { await clearSweep(); LOG('detail sweep: complete'); endCrawl(); goToList() }
+    } else {
+      LOG('detail sweep: scrape missed, returning to list to retry/skip'); goToList(); await afterBackResume()
+    }
+  }
+
+  // After clicking "back to list" in an SPA (no reload), wait for the list to
+  // reappear and continue the sweep in-place. If a real reload happened this never
+  // runs (the fresh load's main() resumes instead).
+  async function afterBackResume() {
+    for (let i = 0; i < 30; i++) {
+      await sleep(500)
+      if (pageType() === 'list') { LOG('back on list in place — continuing sweep'); return resumeSweepOnList() }
+    }
+  }
+
+  async function safeScrapeDetail() {
+    try { return await scrapeDetail() } catch (e) { LOG('detail: scrape error', e?.message || e); return null }
+  }
+
+  // ── Drive it ───────────────────────────────────────────────────────────────
+  async function main() {
+    let type = pageType()
+    for (let i = 0; !type && i < 20; i++) { await sleep(500); type = pageType() }
+
+    const sweep = await getSweep()
+    const sweeping = !!(sweep && sweep.queue.length)
+
+    if (!type) { if (sweeping) { LOG('unexpected page during sweep — recovering to list'); goToList() } return }
+
+    // Watchdog: if a page stalls mid-sweep, recover to the list so one stuck page
+    // can't wedge the whole crawl. A normal in-place advance clears nothing here,
+    // so guard on still being on the SAME url + sweep after the timeout.
+    if (sweeping) {
+      const startedUrl = location.href
+      setTimeout(async () => {
+        const s = await getSweep()
+        if (s && s.queue.length && location.href === startedUrl && pageType() !== 'list') { LOG('watchdog: page stalled, recovering to list'); goToList() }
+      }, WATCHDOG_MS)
+    }
+
+    try {
+      if (type === 'list') await runList()
+      else if (type === 'detail') await runDetail()
+    } catch (e) {
+      LOG('run error — recovering', e?.message || e)
+      if (sweeping) goToList()
+    }
+  }
+
+  // Manual re-scrape from the console (single page, no sweep).
+  chrome.runtime.onMessage.addListener((msg, _s, reply) => {
+    if (msg?.type === `${NAME}-rescrape`) {
+      const type = pageType()
+      if (type === 'list') { scrapeAllListPages().then(o => ingest('list', o)).then(() => reply({ ok: true, type })) }
+      else if (type === 'detail') { scrapeDetail().then(o => { if (o) ingest('detail', o); reply({ ok: !!o, type }) }) }
+      else reply({ ok: false, error: 'not a Clopay order page' })
+      return true
+    }
+  })
+
+  // A "you're logged out" modal can appear on a stale/idle page. Click through it
+  // so the browser navigates to the login page, where content-login.js re-auths
+  // with the saved Clopay password — keeping the crawl going unattended.
+  function dismissLogoutModal() {
+    const boxes = [...document.querySelectorAll('[role="dialog"], .modal, .ui-dialog, [class*="modal" i], [class*="dialog" i], [class*="popup" i]')]
+    for (const m of boxes) {
+      if (!visible(m)) continue
+      const txt = norm(m.innerText).toLowerCase()
+      if (/log(ged)? ?out|session (has )?expired|please (log|sign) ?in|timed? ?out|no longer logged|been logged out/.test(txt)) {
+        const btn = m.querySelector('button, a.btn, .btn, input[type="button"], input[type="submit"], a')
+        if (btn) { LOG('logout modal detected → clicking through', norm(btn.innerText || btn.value || '')); realClick(btn); return true }
+      }
+    }
+    return false
+  }
+
+  LOG('loaded on', location.href, '→', pageType())
+  dismissLogoutModal()
+  setInterval(() => { try { dismissLogoutModal() } catch { /* ignore */ } }, 8000)
+  main()
+})()

@@ -3,14 +3,16 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-// Sub-nav for HD Orders: Genie (the scraped Home Depot / Genie orders) and
-// Clopay STS (ship-to-store delivery orders emailed by Clopay). Rendered inside
-// both the admin (/admin/vendor-orders) and sales (/sales/hd-orders) areas — the
-// base path is passed in so each set of links stays within its own area.
+// Sub-nav for HD Orders: Genie (scraped Home Depot / Genie orders), Clopay (the
+// crawled Clopay HD Program portal orders), and Clopay STS (ship-to-store
+// delivery orders emailed by Clopay). Rendered inside both the admin
+// (/admin/vendor-orders) and sales (/sales/hd-orders) areas — the base path is
+// passed in so each set of links stays within its own area.
 export default function HdOrdersNav({ base }: { base: string }) {
   const pathname = usePathname()
   const tabs = [
     { href: base, label: 'Genie', active: pathname === base },
+    { href: `${base}/clopay`, label: 'Clopay', active: pathname.startsWith(`${base}/clopay`) && !pathname.startsWith(`${base}/clopay-sts`) },
     { href: `${base}/clopay-sts`, label: 'Clopay STS', active: pathname.startsWith(`${base}/clopay-sts`) },
   ]
   return (

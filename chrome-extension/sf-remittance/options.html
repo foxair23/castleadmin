@@ -67,6 +67,24 @@
   <input id="geniePass" type="password" autocomplete="new-password" placeholder="•••••••••" />
   <div class="warn">Chrome blocks scripts from submitting its <em>own</em> autofilled password (anti-phishing), so unattended re-login needs the extension to hold these. They're stored only in this browser's local extension storage on this machine — never synced, never sent anywhere, never in the code. Leave blank to skip auto-login (badge + email only).</div>
 
+  <h1 style="font-size:15px;margin-top:26px;">Clopay HD Program orders</h1>
+  <div class="row"><input id="clopayEnabled" type="checkbox" /><label for="clopayEnabled">Log orders from the Clopay portal</label></div>
+  <div class="hint">Scrapes the Clopay HD Program order list (hdprogram.clopay.com) into Castle Admin whenever you open the portal.</div>
+  <div class="row"><input id="clopayAutoDetail" type="checkbox" /><label for="clopayAutoDetail">Auto-open orders to capture full detail</label></div>
+  <div class="hint">Opens each order needing detail (Summary, Documents, Notes) and returns to the list. Leave off while you're actively using the portal — it navigates for you. Backfills a few per visit.</div>
+
+  <label>Max orders to detail per visit</label>
+  <input id="clopayMaxDetailPerRun" type="number" min="1" max="220" />
+
+  <div class="row"><input id="clopayScheduleEnabled" type="checkbox" /><label for="clopayScheduleEnabled">Crawl automatically on a schedule</label></div>
+  <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, crawls, closes it. Needs Chrome running and logged into the Clopay portal; if it finds you logged out, it signs back in with the credentials below, then badges the icon and emails whoever you pick in Notifications.</div>
+
+  <label>Clopay username</label>
+  <input id="clopayUser" type="text" autocomplete="off" placeholder="you@castlegaragedoors.com" />
+  <label>Clopay password</label>
+  <input id="clopayPass" type="password" autocomplete="new-password" placeholder="•••••••••" />
+  <div class="warn">Same as Genie: Chrome won't submit its <em>own</em> autofilled password, so unattended re-login needs the extension to hold these. Stored only in this browser's local extension storage on this machine — never synced, never sent anywhere, never in the code. Leave blank to skip auto-login (badge + email only).</div>
+
   <div><button id="save">Save</button><span id="saved" class="saved" style="display:none">Saved ✓</span></div>
   <script type="module" src="options.js"></script>
 </body>
