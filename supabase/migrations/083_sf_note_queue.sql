@@ -41,4 +41,8 @@ create index if not exists idx_sf_note_queue_status on public.sf_note_queue (sta
 create index if not exists idx_sf_note_queue_job on public.sf_note_queue (sf_job_id);
 
 alter table public.sf_note_queue enable row level security;
+-- Idempotent: replaying this migration where the policy already exists must not
+-- error out (create policy has no IF NOT EXISTS), which would halt every later
+-- migration.
+drop policy if exists "admin_all_sf_note_queue" on public.sf_note_queue;
 create policy "admin_all_sf_note_queue" on public.sf_note_queue for all using (public.is_admin());

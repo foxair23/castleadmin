@@ -65,5 +65,7 @@ create index if not exists idx_vendor_order_events_order on public.vendor_order_
 
 alter table public.vendor_orders       enable row level security;
 alter table public.vendor_order_events enable row level security;
+drop policy if exists "admin_all_vendor_orders"       on public.vendor_orders;
 create policy "admin_all_vendor_orders"       on public.vendor_orders       for all using (public.is_admin());
+drop policy if exists "admin_all_vendor_order_events" on public.vendor_order_events;
 create policy "admin_all_vendor_order_events" on public.vendor_order_events for all using (public.is_admin());

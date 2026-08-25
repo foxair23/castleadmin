@@ -20,4 +20,5 @@ create index if not exists idx_genie_funnel_step_at on public.genie_funnel_event
 
 -- Admin-readable; writes happen via the service role in the track route.
 alter table public.genie_funnel_events enable row level security;
+drop policy if exists "admin_all_genie_funnel_events" on public.genie_funnel_events;
 create policy "admin_all_genie_funnel_events" on public.genie_funnel_events for all using (public.is_admin());

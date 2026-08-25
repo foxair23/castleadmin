@@ -10,6 +10,7 @@ create table if not exists public.action_item_notes (
 
 alter table public.action_item_notes enable row level security;
 
+drop policy if exists "Admin full access to action_item_notes" on public.action_item_notes;
 create policy "Admin full access to action_item_notes"
   on public.action_item_notes
   for all
