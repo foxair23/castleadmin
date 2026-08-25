@@ -20,4 +20,5 @@ create table if not exists public.vendor_schedule_nudge (
 );
 
 alter table public.vendor_schedule_nudge enable row level security;
+drop policy if exists "admin_all_vendor_schedule_nudge" on public.vendor_schedule_nudge;
 create policy "admin_all_vendor_schedule_nudge" on public.vendor_schedule_nudge for all using (public.is_admin());

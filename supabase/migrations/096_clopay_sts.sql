@@ -51,8 +51,11 @@ insert into public.clopay_sts_settings (id) values (true) on conflict (id) do no
 alter table public.vendor_order_attachments    enable row level security;
 alter table public.clopay_sts_inbound_events    enable row level security;
 alter table public.clopay_sts_settings          enable row level security;
+drop policy if exists "admin_all_vendor_order_attachments" on public.vendor_order_attachments;
 create policy "admin_all_vendor_order_attachments" on public.vendor_order_attachments for all using (public.is_admin());
+drop policy if exists "admin_all_clopay_sts_inbound"        on public.clopay_sts_inbound_events;
 create policy "admin_all_clopay_sts_inbound"        on public.clopay_sts_inbound_events for all using (public.is_admin());
+drop policy if exists "admin_all_clopay_sts_settings"       on public.clopay_sts_settings;
 create policy "admin_all_clopay_sts_settings"       on public.clopay_sts_settings       for all using (public.is_admin());
 
 -- Private storage bucket for the acknowledgement PDFs (accessed via service role;

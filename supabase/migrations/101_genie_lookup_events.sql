@@ -15,4 +15,5 @@ create table if not exists public.genie_lookup_events (
 create index if not exists idx_genie_lookup_events_at on public.genie_lookup_events (at desc);
 
 alter table public.genie_lookup_events enable row level security;
+drop policy if exists "admin_all_genie_lookup_events" on public.genie_lookup_events;
 create policy "admin_all_genie_lookup_events" on public.genie_lookup_events for all using (public.is_admin());

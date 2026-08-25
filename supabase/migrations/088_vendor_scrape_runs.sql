@@ -17,4 +17,5 @@ create table if not exists public.vendor_scrape_runs (
 create index if not exists idx_vendor_scrape_runs_vendor_at on public.vendor_scrape_runs (vendor, created_at desc);
 
 alter table public.vendor_scrape_runs enable row level security;
+drop policy if exists "admin_all_vendor_scrape_runs" on public.vendor_scrape_runs;
 create policy "admin_all_vendor_scrape_runs" on public.vendor_scrape_runs for all using (public.is_admin());
