@@ -132,6 +132,44 @@
 
   function rowCount() { return scrapeListPage().length }
 
+  // Structural snapshot for live tuning — when the grid isn't recognized, this
+  // tells us what the page actually looks like (paste it back to refine
+  // selectors). Also exposed as window.__clopayDiag() to run by hand.
+  function diagnostics() {
+    const count = (sel) => { try { return document.querySelectorAll(sel).length } catch { return -1 } }
+    const classHits = {}
+    for (const w of ['row', 'order', 'grid', 'table', 'list', 'cell', 'card']) {
+      classHits[w] = document.querySelectorAll(`[class*="${w}" i]`).length
+    }
+    // A sample element whose text looks like a PO (alphanumeric ≥5), to reveal how
+    // a real order cell is marked up.
+    let poSample = null
+    for (const el of document.querySelectorAll('a, td, span, div, [role="gridcell"], [role="cell"]')) {
+      const t = norm(el.textContent)
+      if (el.children.length === 0 && isPo(t)) { poSample = { text: t, tag: el.tagName, cls: el.className, path: cssPath(el) }; break }
+    }
+    const snap = {
+      url: location.href,
+      tables: count('table'), trs: count('tr'), roleRows: count('[role="row"]'),
+      roleGrid: count('[role="grid"]'), roleGridcells: count('[role="gridcell"]'),
+      iframes: count('iframe'), classHits, poSample,
+      bodyTextLen: (document.body?.innerText || '').length,
+    }
+    LOG('DIAGNOSTIC', JSON.stringify(snap))
+    return snap
+  }
+  function cssPath(el) {
+    const parts = []
+    for (let e = el; e && e.nodeType === 1 && parts.length < 6; e = e.parentElement) {
+      let s = e.tagName.toLowerCase()
+      if (e.id) { s += `#${e.id}`; parts.unshift(s); break }
+      if (e.className && typeof e.className === 'string') s += '.' + e.className.trim().split(/\s+/).slice(0, 2).join('.')
+      parts.unshift(s)
+    }
+    return parts.join(' > ')
+  }
+  try { window.__clopayDiag = diagnostics } catch { /* ignore */ }
+
   // ── Pagination / lazy-load ──────────────────────────────────────────────
   // The list shows ~19 of ~169 → either a pager or scroll-to-load. Handle both:
   // page via a "next" control when present, else scroll the window/containers to
@@ -452,7 +490,7 @@
       LOG('detail sweep: discarding stale queue'); await clearSweep()
     }
 
-    if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); return }
+    if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); diagnostics(); return }
     const orders = await scrapeAllListPages()
     LOG(`list: scraped ${orders.length} order(s)`)
     const res = await ingest('list', orders)
@@ -512,7 +550,11 @@
     const sweep = await getSweep()
     const sweeping = !!(sweep && sweep.queue.length)
 
-    if (!type) { if (sweeping) { LOG('unexpected page during sweep — recovering to list'); goToList() } return }
+    if (!type) {
+      LOG('page not classified as list or detail'); diagnostics()
+      if (sweeping) { LOG('unexpected page during sweep — recovering to list'); goToList() }
+      return
+    }
 
     // Watchdog: if a page stalls mid-sweep, recover to the list so one stuck page
     // can't wedge the whole crawl. A normal in-place advance clears nothing here,

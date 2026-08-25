@@ -21,7 +21,11 @@
   // (Service Fusion) — filled into a field matched by name/placeholder.
   const SITES = [
     { host: /(^|\.)install\.openings\.net$/, user: 'genieUser', pass: 'geniePass', label: 'Genie', flag: 'genie-login-detected' },
-    { host: /(^|\.)hdprogram\.clopay\.com$/, user: 'clopayUser', pass: 'clopayPass', label: 'Clopay', flag: 'clopay-login-detected' },
+    // Clopay's login lives on the identity provider prod-iam.clopay.com (the
+    // portal at hdprogram.clopay.com bounces there via cca.clopay.com), so match
+    // the whole clopay.com domain — the driver only acts when a password field is
+    // actually present, so it's a no-op on the dashboard/order pages.
+    { host: /(^|\.)clopay\.com$/, user: 'clopayUser', pass: 'clopayPass', label: 'Clopay', flag: 'clopay-login-detected' },
     { host: /(^|\.)servicefusion\.com$/, user: 'sfUser', pass: 'sfPass', company: 'sfCompany', label: 'Service Fusion', flag: 'sf-login-detected' },
     { host: /(^|\.)castlegaragedoors\.com$/, user: 'castleUser', pass: 'castlePass', label: 'Castle Admin', flag: 'castle-login-detected' },
   ]
@@ -43,6 +47,37 @@
     }
   }
   const visible = (el) => el && el.offsetParent !== null
+
+  // Clopay signs in through an OIDC handoff: prod-iam.clopay.com (the actual
+  // login) → cca.clopay.com/signin-oidc → the app. Two things stall it
+  // unattended: (1) an intermediate page whose self-submitting form didn't fire,
+  // and (2) a briefly-blank callback page that just needs the request re-issued
+  // ("re-hit enter"). These nudge it along on any clopay host with no password
+  // field. Scoped to clopay so other sites' logins are untouched.
+  const isClopayHost = /(^|\.)clopay\.com$/.test(location.hostname)
+  function oidcContinue() {
+    const form = [...document.forms].find(f =>
+      /signin-oidc|connect\/authorize|callback|oidc/i.test(f.getAttribute('action') || '') ||
+      f.querySelector('input[name="code" i], input[name="id_token" i], input[name="state" i], input[name="session_state" i], input[name="scope" i]'))
+    if (form) { LOG('Clopay OIDC form found — submitting'); try { form.requestSubmit ? form.requestSubmit() : form.submit() } catch { try { form.submit() } catch { /* ignore */ } } return true }
+    const btn = [...document.querySelectorAll('button, input[type="submit"], a.btn, .btn, a')]
+      .find(el => visible(el) && /continue|proceed|submit|next|sign ?in|authorize|allow/i.test(`${el.innerText || ''} ${el.value || ''}`))
+    if (btn) { LOG('Clopay OIDC continue button — clicking'); realClick(btn); return true }
+    return false
+  }
+  // A truly blank callback hop → one reload re-issues the request. Guarded so it
+  // never loops (sessionStorage survives the reload on the same origin).
+  function recoverBlankOidc() {
+    const text = (document.body?.innerText || '').trim()
+    if (text.length < 20 && document.forms.length === 0 && !document.querySelector('input')) {
+      if (!sessionStorage.getItem('clopay-oidc-reloaded')) {
+        sessionStorage.setItem('clopay-oidc-reloaded', '1')
+        LOG('blank Clopay OIDC page — reloading once to continue the handoff')
+        setTimeout(() => location.reload(), 1200)
+      }
+    }
+  }
+
   const findSubmit = () =>
     [...document.querySelectorAll('input[type="submit"], button[type="submit"], button, input[type="button"], a.btn, .btn')]
       .find(el => visible(el) && /log ?in|sign ?in|submit|continue|next/i.test(`${el.innerText || ''} ${el.value || ''} ${el.id || ''} ${el.name || ''}`))
@@ -127,7 +162,13 @@
       const pw = document.querySelector('input[type="password"]')
       // No password field ⇒ this isn't a login page (normal app page). Give it a
       // few ticks in case the form renders late, then stop quietly — never badge.
-      if (!pw) { if (tries > 8) clearInterval(timer); return }
+      // On a clopay host, first nudge the OIDC handoff along (stalled form / blank
+      // callback) so unattended re-login can complete.
+      if (!pw) {
+        if (isClopayHost) { try { oidcContinue(); if (tries === 6) recoverBlankOidc() } catch { /* ignore */ } }
+        if (tries > 8) clearInterval(timer)
+        return
+      }
       clearInterval(timer)
       if (sessionStorage.getItem(triedKey)) { LOG(site.label, '— already tried this tab; flagging for manual login'); flag(); return }
       if (u && p) loginWithCreds(pw, u, p, comp)
