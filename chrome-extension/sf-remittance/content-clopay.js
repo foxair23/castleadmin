@@ -436,7 +436,8 @@
     return out
   }
 
-  // Customer card at the top of the detail view → address/phone/email + PO header.
+  // Customer card at the top of the detail view → name/address/phone/email + the
+  // PO# + order type from the header ("DOOR DELIVERY · PO# 87932834").
   function scrapeCustomerCard(o) {
     const txt = norm(document.body.innerText)
     const po = (txt.match(/PO\s*#?\s*[:]?\s*([A-Z0-9][A-Z0-9-]{4,})/i) || [])[1]
@@ -447,6 +448,17 @@
     if (phone) o.phone = phone
     const csz = txt.match(/([A-Za-z .'-]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/)
     if (csz) { o.city = o.city || norm(csz[1]); o.state_prov = csz[2]; o.postal_code = csz[3] }
+    // Name is shown as "LAST, FIRST" immediately before the street address (a
+    // number). Only set it when it matches that strict shape, so we never clobber
+    // the list's name with header noise. Some orders have the name ONLY here.
+    const nm = txt.match(/([A-Z][A-Za-z'’.\-]+,\s+[A-Z][A-Za-z'’.\- ]{1,40}?)\s+\d{1,6}\s+[A-Za-z]/)
+    if (nm) o.customer_name = norm(nm[1])
+    // Street address: the number + street that precedes "City, ST 00000".
+    const addr = txt.match(/(\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9 .'#\-]+?)\s*,?\s*[A-Za-z][A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5}/)
+    if (addr) o.street_address = norm(addr[1].replace(/[\s,]+$/, ''))
+    // Order type from the header, e.g. "DOOR DELIVERY · PO# …".
+    const ot = txt.match(/([A-Z][A-Z /]{2,30}?)\s*[·|]\s*PO\s*#/i)
+    if (ot) o.order_type = norm(ot[1])
   }
 
   async function scrapeDetail() {
@@ -484,13 +496,29 @@
   }
 
   // ── Crawl coordination (background) ──────────────────────────────────────
-  const getCrawlMode = () => new Promise(r => chrome.storage.local.get({ clopayCrawlMode: null }, d => r(d.clopayCrawlMode)))
+  // True only while this content script still has a live link to the extension.
+  // After the extension is reloaded/updated, an already-injected script is
+  // orphaned and every chrome.* call throws "Extension context invalidated" — so
+  // we check this before touching chrome APIs and bail cleanly (the user just
+  // needs to reload the tab to get a fresh script).
+  function ctxAlive() { try { return !!(chrome.runtime && chrome.runtime.id) } catch { return false } }
+  // Promise-returning chrome.storage.local.get that never throws on a dead context.
+  function storageGet(defaults) {
+    return new Promise(resolve => {
+      if (!ctxAlive()) { resolve(defaults); return }
+      try { chrome.storage.local.get(defaults, d => resolve(chrome.runtime.lastError ? defaults : d)) }
+      catch { resolve(defaults) }
+    })
+  }
+  const getCrawlMode = () => storageGet({ clopayCrawlMode: null }).then(d => d.clopayCrawlMode)
   function endCrawl() {
-    chrome.storage.local.remove('clopayCrawlMode')
+    if (!ctxAlive()) return
+    try { chrome.storage.local.remove('clopayCrawlMode') } catch { /* ignore */ }
     try { chrome.runtime.sendMessage({ type: `${NAME}-crawl-done` }) } catch { /* SW asleep — timeout alarm covers it */ }
   }
   function isCrawlTab() {
     return new Promise(resolve => {
+      if (!ctxAlive()) { resolve(false); return }
       try {
         chrome.runtime.sendMessage({ type: `${NAME}-crawl-tab?` }, (resp) => resolve(!chrome.runtime.lastError && !!(resp && resp.isCrawlTab)))
       } catch { resolve(false) }
@@ -500,21 +528,24 @@
   /** Post scraped orders to the background → Castle Admin ingest. Resolves with
    *  the ingest result (incl. needDetail), or null on error. */
   async function ingest(kind, payload) {
+    if (!ctxAlive()) { LOG('extension link is gone — reload this tab (F5) to re-enable scraping'); return null }
     const mode = (await getCrawlMode()) || 'manual'
     return new Promise(resolve => {
-      chrome.runtime.sendMessage({ type: NAME, kind, mode, vendor: VENDOR, payload }, (res) => {
-        if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); resolve(null); return }
-        resolve(res)
-      })
+      try {
+        chrome.runtime.sendMessage({ type: NAME, kind, mode, vendor: VENDOR, payload }, (res) => {
+          if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); resolve(null); return }
+          resolve(res)
+        })
+      } catch (e) { LOG('ingest send failed', e?.message || e); resolve(null) }
     })
   }
 
   // ── Detail sweep (storage-backed, reload-resilient + SPA-friendly) ───────
   const SWEEP_KEY = 'clopaySweep'
-  const getCfg = () => new Promise(r => chrome.storage.local.get({ clopayAutoDetail: false, clopayMaxDetailPerRun: 12 }, r))
-  const getSweep = () => new Promise(r => chrome.storage.local.get({ [SWEEP_KEY]: null }, d => r(d[SWEEP_KEY])))
-  const setSweep = (s) => new Promise(r => chrome.storage.local.set({ [SWEEP_KEY]: s }, r))
-  const clearSweep = () => new Promise(r => chrome.storage.local.remove(SWEEP_KEY, r))
+  const getCfg = () => storageGet({ clopayAutoDetail: false, clopayMaxDetailPerRun: 12 })
+  const getSweep = () => storageGet({ [SWEEP_KEY]: null }).then(d => d[SWEEP_KEY])
+  const setSweep = (s) => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.set({ [SWEEP_KEY]: s }, r) } catch { r() } })
+  const clearSweep = () => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.remove(SWEEP_KEY, r) } catch { r() } })
 
   async function waitForRows(ms = 20000) {
     const start = Date.now()
@@ -739,6 +770,7 @@
   let mainRunning = false
   async function runMainOnce(reason) {
     if (mainRunning) return
+    if (!ctxAlive()) { LOG('extension was reloaded — reload this tab (F5) to re-enable Clopay scraping'); return }
     mainRunning = true
     try { LOG('run:', reason, '→', pageType()); await main() }
     catch (e) { LOG('main error', e?.message || e) }
