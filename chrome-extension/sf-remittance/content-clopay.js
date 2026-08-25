@@ -194,8 +194,13 @@
         arr.sort((a, b) => a.y - b.y || a.left - b.left)
         const text = norm(arr.map(a => a.t).join(' '))
         if (field === '__customer') {
-          o.customer_name = arr[0] ? norm(arr[0].t) : null
-          if (arr.length > 1) o.street_address = arr.slice(1).map(a => norm(a.t)).join(', ')
+          // The CUSTOMER DETAILS cell holds the name and the street address —
+          // sometimes as separate lines, sometimes in one text node ("SMITH JOHN
+          // 402 8TH ST"). Split the joined text at the first street-number token:
+          // everything before it is the name, from it on is the address.
+          const m = text.match(/^(.+?)\s+(\d.*)$/)
+          if (m) { o.customer_name = norm(m[1]); o.street_address = norm(m[2]) }
+          else { o.customer_name = text || null }
           raw.customer_details = text
         } else if (field === '__statusDate') {
           raw.status_date = text || null
@@ -350,6 +355,25 @@
   function detailPanel() {
     return (deepQueryAll('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i]')[0] || document.body)
   }
+
+  // Structural snapshot for tuning the DETAIL page — what tabs/controls we can see
+  // and a sample of the rendered text. Also on window.__clopayDetailDiag().
+  function detailDiagnostics() {
+    const tabs = TABS.map(t => { const el = findTabControl(t.re); return { label: t.label, found: !!el, text: el ? norm(el.innerText).slice(0, 40) : null } })
+    const clickable = deepQueryAll('[role="tab"], button, a, li').filter(visible)
+      .map(el => norm(el.innerText)).filter(t => t && t.length < 30).slice(0, 40)
+    const snap = {
+      url: location.href,
+      hasCustomerMarker: /PO\s*#/i.test(document.body.innerText),
+      tabsFound: tabs,
+      clickableLabels: clickable,
+      links: deepQueryAll('a[href]').filter(visible).length,
+      bodyTextSample: norm(document.body.innerText).slice(0, 900),
+    }
+    LOG('DETAIL DIAGNOSTIC', JSON.stringify(snap))
+    return snap
+  }
+  try { window.__clopayDetailDiag = detailDiagnostics } catch { /* ignore */ }
 
   function scrapeSummary() {
     const panel = detailPanel()
@@ -617,8 +641,8 @@
   async function runDetail() {
     let tries = 0, o = null
     while (tries++ < 40 && !(o = await safeScrapeDetail())) await sleep(500)
-    if (o) { LOG('detail: scraped', o.external_id); await ingest('detail', o) }
-    else LOG('detail: nothing scraped — DOM likely differs')
+    if (o) { LOG('detail: scraped', o.external_id); detailDiagnostics(); await ingest('detail', o) }
+    else { LOG('detail: nothing scraped — DOM likely differs'); detailDiagnostics() }
 
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) return
