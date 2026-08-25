@@ -54,77 +54,122 @@
   const visible = (el) => !!(el && el.offsetParent !== null)
 
   // ── Order List ────────────────────────────────────────────────────────────
-  // Header text → our field. The Clopay grid columns (from the portal):
+  // The portal is an Angular app — the grid is NOT a <table> / role="row"
+  // structure, so we can't map by DOM rows. Instead we read the grid GEOMETRICALLY:
+  // locate the column headers (PO DATE / PO / STORE / …), read their x-positions,
+  // then bucket every visible text cell into a column by x and into a row by the
+  // PO-DATE anchor's y. This is markup-agnostic (works for div/mat-row/custom
+  // tags) and survives the lazy-scroll list.
   //   PO DATE · PO · STORE · ORDER TYPE · CUSTOMER DETAILS · CITY · STATUS · STATUS DATE
-  // Matched by longest header substring so "PO DATE" beats "PO" and "STATUS DATE"
-  // beats "STATUS".
-  const LIST_COLUMNS = [
-    { match: 'po date', field: 'order_date', iso: true },
-    { match: 'po', field: 'external_id' },
-    { match: 'store', field: 'store_number' },
-    { match: 'order type', field: 'order_type' },
-    { match: 'customer', field: '__customer' }, // "CUSTOMER DETAILS" → name + address (split below)
-    { match: 'city', field: 'city' },
-    { match: 'status date', field: '__statusDate' },
-    { match: 'status', field: 'status' },
+  const HEADERS = [
+    { re: /^po\s*date$/i, field: 'order_date' },
+    { re: /^po$/i, field: 'external_id' },
+    { re: /^store$/i, field: 'store_number' },
+    { re: /^order\s*type$/i, field: 'order_type' },
+    { re: /^customer\s*details$/i, field: '__customer' },
+    { re: /^city$/i, field: 'city' },
+    { re: /^status\s*date$/i, field: '__statusDate' },
+    { re: /^status$/i, field: 'status' },
   ]
-
-  // Rows of the grid. Prefers real <tr>; falls back to ARIA grid rows for a
-  // div-based table.
-  function gridRows() {
-    let trs = [...document.querySelectorAll('table tr')]
-    if (trs.length < 2) trs = [...document.querySelectorAll('[role="row"]')]
-    return trs
-      .map(tr => {
-        const cellEls = [...tr.querySelectorAll('td, th, [role="cell"], [role="gridcell"], [role="columnheader"]')]
-        const els = cellEls.length ? cellEls : [...tr.children]
-        return { tr, els, cells: els.map(c => norm(c.innerText)) }
-      })
-      .filter(r => r.cells.length >= 5)
-  }
-
-  // Best (longest) column match for a header cell, so overlapping names resolve.
-  function columnFor(headerText) {
-    const k = key(headerText)
-    let best = null
-    for (const c of LIST_COLUMNS) if (k.includes(c.match) && (!best || c.match.length > best.match.length)) best = c
-    return best
-  }
 
   // A PO is alphanumeric on this portal (e.g. 60425672, RPP88431947, RP30448613),
   // so — unlike Genie's digits-only check — accept letters too.
   const isPo = (s) => /^[A-Z0-9][A-Z0-9-]{4,}$/i.test(norm(s))
+  // An element's OWN text (direct text-node children only), so a wrapper div whose
+  // text lives in descendants isn't mistaken for a leaf cell.
+  function ownText(el) {
+    let s = ''
+    for (const n of el.childNodes) if (n.nodeType === 3) s += n.textContent + ' '
+    return norm(s)
+  }
+  const absCenterX = (r) => r.left + r.width / 2
+  const absTop = (r) => r.top + window.scrollY
+
+  // Header columns, cached — the header can scroll out of view in the lazy list,
+  // and x-positions don't change with vertical scroll, so once found we reuse them.
+  let COLS_CACHE = null
+  function detectColumns() {
+    const found = []
+    for (const el of document.querySelectorAll('body *')) {
+      if (!visible(el)) continue
+      const t = ownText(el)
+      if (!t) continue
+      const h = HEADERS.find(h => h.re.test(t))
+      if (!h || found.some(c => c.field === h.field)) continue
+      const r = el.getBoundingClientRect()
+      if (!r.width) continue
+      found.push({ field: h.field, x: absCenterX(r), headerBottom: absTop(r) + r.height })
+    }
+    if (found.length < 5) return COLS_CACHE // keep whatever we had
+    found.sort((a, b) => a.x - b.x)
+    // Column x-boundaries = midpoints between adjacent header centers.
+    const cols = found.map((c, i) => {
+      const left = i === 0 ? c.x - (found[1].x - c.x) : (found[i - 1].x + c.x) / 2
+      const right = i === found.length - 1 ? c.x + (c.x - found[i - 1].x) : (found[i + 1].x + c.x) / 2
+      return { ...c, left, right }
+    })
+    COLS_CACHE = { cols, headerBottom: Math.max(...found.map(c => c.headerBottom)) }
+    return COLS_CACHE
+  }
 
   function scrapeListPage() {
-    const rows = gridRows()
-    if (!rows.length) return []
-    const header = rows.find(r => r.cells.some(c => key(c) === 'po' || key(c).startsWith('po ') || key(c).includes('order type')))
-    let colMap // index → column
-    if (header) colMap = header.cells.map(columnFor)
-    else { colMap = LIST_COLUMNS; LOG('header row not found — using positional fallback') }
+    const detected = detectColumns()
+    if (!detected) return []
+    const { cols, headerBottom } = detected
+    const anchorCol = cols.find(c => c.field === 'order_date') || cols.find(c => c.field === 'external_id')
+    if (!anchorCol) return []
+
+    // All visible leaf cells inside the grid's x-range, with absolute positions.
+    // Header cells are dropped by content (not by y) so a sticky header — whose
+    // document-y grows as you scroll — never masks real rows.
+    void headerBottom
+    const isHeaderText = (t) => HEADERS.some(h => h.re.test(t))
+    const leaves = []
+    for (const el of document.querySelectorAll('body *')) {
+      if (!visible(el)) continue
+      const t = ownText(el) // direct text only → wrappers contribute nothing, mixed nodes contribute their own text
+      if (!t || isHeaderText(t)) continue
+      const r = el.getBoundingClientRect()
+      if (!r.width || !r.height) continue
+      const x = absCenterX(r)
+      const col = cols.find(c => x >= c.left && x < c.right)
+      if (!col) continue // outside the grid (sidebar, chat widget, etc.)
+      leaves.push({ t, x, y: absTop(r), field: col.field })
+    }
+
+    // Row anchors: PO-DATE cells (a date in the anchor column). Each anchor's y
+    // starts a row; the row spans to the next anchor (the last is height-capped so
+    // it can't absorb anything rendered below the grid).
+    const anchorIsDate = anchorCol.field === 'order_date'
+    const anchors = leaves
+      .filter(l => l.field === anchorCol.field && (anchorIsDate ? /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l.t) : isPo(l.t)))
+      .sort((a, b) => a.y - b.y)
+    if (!anchors.length) return []
 
     const out = []
-    for (const row of rows) {
-      if (header && row === header) continue
-      const { els, cells } = row
+    for (let i = 0; i < anchors.length; i++) {
+      const yTop = anchors[i].y - 6
+      const yBot = i + 1 < anchors.length ? anchors[i + 1].y - 6 : anchors[i].y + 200
+      const rowLeaves = leaves.filter(l => l.y >= yTop && l.y < yBot)
+      const byField = {}
+      for (const l of rowLeaves) (byField[l.field] ||= []).push(l)
       const o = {}, raw = {}
-      cells.forEach((val, i) => {
-        const c = colMap[i]
-        if (!c) return
-        if (c.field === '__customer') {
-          // Name on the first line, street address on the rest.
-          const lines = (els[i]?.innerText || val).split('\n').map(x => norm(x)).filter(Boolean)
-          if (lines[0]) o.customer_name = lines[0]
-          if (lines.length > 1) o.street_address = lines.slice(1).join(', ')
-          raw.customer_details = norm(val)
-        } else if (c.field === '__statusDate') {
-          raw.status_date = norm(val) || null
-        } else if (c.field) {
-          o[c.field] = c.iso ? (toISO(val) ?? null) : (norm(val) || null)
+      for (const [field, arr] of Object.entries(byField)) {
+        arr.sort((a, b) => a.y - b.y || a.x - b.x)
+        const text = norm(arr.map(a => a.t).join(' '))
+        if (field === '__customer') {
+          o.customer_name = arr[0] ? norm(arr[0].t) : null
+          if (arr.length > 1) o.street_address = arr.slice(1).map(a => norm(a.t)).join(', ')
+          raw.customer_details = text
+        } else if (field === '__statusDate') {
+          raw.status_date = text || null
+        } else if (field === 'order_date') {
+          o.order_date = toISO(text)
+        } else {
+          o[field] = text || null
         }
-      })
+      }
       if (Object.keys(raw).length) o.raw = raw
-      // A real data row has a valid PO in the external_id column.
       if (o.external_id && isPo(o.external_id)) out.push(o)
     }
     return out
@@ -419,16 +464,31 @@
     else location.href = LIST_URL
   }
 
-  // Find the clickable element that opens order `id`'s detail — an anchor/cell
-  // whose text is the PO, else the row containing it.
-  function findOrderOpener(id) {
+  // Find the clickable element that opens order `id`'s detail. The PO shows as a
+  // leaf cell; clicking the row opens it. We locate the leaf whose text is the PO,
+  // then climb to the row-level ancestor (the one that also spans the other
+  // columns) and click that — Angular's row handler is delegated, so a full mouse
+  // sequence on the row container is what fires it.
+  function findPoLeaf(id) {
     const target = String(id)
-    const direct = [...document.querySelectorAll('a, [role="link"], button, td, [role="cell"], [role="gridcell"]')]
-      .find(el => visible(el) && norm(el.textContent) === target)
-    if (direct) return direct.closest('a, [role="link"], button') || direct
-    const row = gridRows().find(r => r.cells.some(c => norm(c) === target))
-    if (row) return row.els.find(e => visible(e)) || row.tr
-    return null
+    return [...document.querySelectorAll('body *')]
+      .find(el => visible(el) && el.children.length === 0 && ownText(el) === target)
+  }
+  function findOrderOpener(id) {
+    const leaf = findPoLeaf(id)
+    if (!leaf) return null
+    // Climb until the ancestor is wide enough to be the whole row (spans most of
+    // the grid width), or we hit a real link/button/row element.
+    let el = leaf
+    const gridWidth = (COLS_CACHE && COLS_CACHE.cols.length)
+      ? (COLS_CACHE.cols[COLS_CACHE.cols.length - 1].right - COLS_CACHE.cols[0].left) : 600
+    for (let hops = 0; el && hops < 8; hops++) {
+      if (/^(a|button)$/i.test(el.tagName) || el.getAttribute('role') === 'row' || /(^|[-_ ])row([-_ ]|$)/i.test(el.className || '')) return el
+      const w = el.getBoundingClientRect().width
+      if (w >= gridWidth * 0.7) return el
+      el = el.parentElement
+    }
+    return leaf.closest('a, button, [role="row"]') || leaf.parentElement || leaf
   }
 
   async function dropHead(sweep) {

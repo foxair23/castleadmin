@@ -52,9 +52,10 @@
   // login) → cca.clopay.com/signin-oidc → the app. Two things stall it
   // unattended: (1) an intermediate page whose self-submitting form didn't fire,
   // and (2) a briefly-blank callback page that just needs the request re-issued
-  // ("re-hit enter"). These nudge it along on any clopay host with no password
-  // field. Scoped to clopay so other sites' logins are untouched.
-  const isClopayHost = /(^|\.)clopay\.com$/.test(location.hostname)
+  // ("re-hit enter"). These nudge it along — but ONLY on the auth hosts
+  // (prod-iam / cca), never on the app (hdprogram) where clicking a stray button
+  // or submitting the search form would interfere with the orders grid.
+  const isClopayAuthHost = /(^|\.)(prod-iam|cca)\.clopay\.com$/.test(location.hostname)
   function oidcContinue() {
     const form = [...document.forms].find(f =>
       /signin-oidc|connect\/authorize|callback|oidc/i.test(f.getAttribute('action') || '') ||
@@ -165,7 +166,7 @@
       // On a clopay host, first nudge the OIDC handoff along (stalled form / blank
       // callback) so unattended re-login can complete.
       if (!pw) {
-        if (isClopayHost) { try { oidcContinue(); if (tries === 6) recoverBlankOidc() } catch { /* ignore */ } }
+        if (isClopayAuthHost) { try { oidcContinue(); if (tries === 6) recoverBlankOidc() } catch { /* ignore */ } }
         if (tries > 8) clearInterval(timer)
         return
       }
