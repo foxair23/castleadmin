@@ -253,9 +253,12 @@ export default function GenieScheduler({ config, widgetKey }: { config: GenieCon
             }, widgetKey)
             setSubmitting(false)
             if (!res.ok) { setError(res.error ?? 'Could not schedule.'); return }
-            track('booked', { date: selectedDate }, res.order_number ?? order.order_number)
+            track('booked', { date: selectedDate, sf_synced: res.sf_synced !== false }, res.order_number ?? order.order_number)
             const q = new URLSearchParams({ order: res.order_number ?? order.order_number, date: selectedDate, phone: config.office_phone })
             if (selectedWindow) { q.set('ws', selectedWindow.start); q.set('we', selectedWindow.end) }
+            // The SF date-write failed after retries — tell the customer it's a
+            // request pending confirmation (the office was alerted to finish it).
+            if (res.sf_synced === false) q.set('pending', '1')
             window.location.href = `/embed/genie-scheduler/confirmation?${q.toString()}`
           }}>{submitting ? 'Scheduling…' : 'Confirm appointment'}</button>
         </div>

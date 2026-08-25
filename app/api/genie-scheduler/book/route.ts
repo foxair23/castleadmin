@@ -169,19 +169,30 @@ export async function POST(req: NextRequest) {
 
   const answers: GenieAnswers = body.answers ?? {}
 
-  // 1) Write the schedule onto the existing SF job (best-effort — we still record
-  //    the request below if this fails, and the queued note carries the date).
+  // 1) Write the schedule onto the existing SF job. Retry transient failures
+  //    (5xx/429/timeout/network) with backoff — SF intermittently 500s/429s.
+  //    We still record the request below either way, and if this ultimately
+  //    fails the customer is told it's not yet confirmed and the office alert is
+  //    flagged so a human sets the date manually (rather than a silent success).
   let sfSynced = false
   let sfError: string | null = null
-  try {
-    await sfPut(`/jobs/${sfJobId}`, {
-      start_date: appointment_date,
-      // Only set a promised time window when we actually collected one.
-      ...(useWindow ? { time_frame_promised_start: window_start, time_frame_promised_end: window_end } : {}),
-    })
-    sfSynced = true
-  } catch (e) {
-    sfError = e instanceof Error ? e.message : String(e)
+  const putBody = {
+    start_date: appointment_date,
+    ...(useWindow ? { time_frame_promised_start: window_start, time_frame_promised_end: window_end } : {}),
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await sfPut(`/jobs/${sfJobId}`, putBody)
+      sfSynced = true
+      sfError = null
+      break
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      sfError = msg
+      const transient = /\(5\d\d\)|\(429\)|busy|abort|network|fetch failed|timeout/i.test(msg)
+      if (!transient || attempt === 2) break
+      await new Promise(r => setTimeout(r, 500 * 2 ** attempt)) // 0.5s, 1s
+    }
   }
 
   // 2) Queue the qualification note (posted to SF by the extension). Dedup per
@@ -232,6 +243,7 @@ export async function POST(req: NextRequest) {
     const alert = renderGenieBookingAlert({
       customerName: order.customer_name, phone: order.phone, email: customerEmail,
       hdOrder: order.external_id, sfJobNumber, dateLabel, windowLabel: windowText, address: addressText, adminUrl,
+      synced: sfSynced, syncError: sfError,
     })
     await enqueueForSubscribers({
       notificationTypeKey: 'scheduler_lead_synced',
