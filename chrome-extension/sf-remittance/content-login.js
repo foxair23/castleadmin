@@ -21,6 +21,7 @@
   // (Service Fusion) — filled into a field matched by name/placeholder.
   const SITES = [
     { host: /(^|\.)install\.openings\.net$/, user: 'genieUser', pass: 'geniePass', label: 'Genie', flag: 'genie-login-detected' },
+    { host: /(^|\.)hdprogram\.clopay\.com$/, user: 'clopayUser', pass: 'clopayPass', label: 'Clopay', flag: 'clopay-login-detected' },
     { host: /(^|\.)servicefusion\.com$/, user: 'sfUser', pass: 'sfPass', company: 'sfCompany', label: 'Service Fusion', flag: 'sf-login-detected' },
     { host: /(^|\.)castlegaragedoors\.com$/, user: 'castleUser', pass: 'castlePass', label: 'Castle Admin', flag: 'castle-login-detected' },
   ]

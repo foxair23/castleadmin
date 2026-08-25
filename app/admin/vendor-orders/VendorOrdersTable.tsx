@@ -1,7 +1,17 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { Fragment, useMemo, useState, useTransition } from 'react'
 import { createSfJobAction, sendNudgeNowAction } from './actions'
+
+// Portal-specific detail captured verbatim by the crawler (Clopay's Summary
+// timeline, documents, and notes). Loosely typed — the crawler's exact shape is
+// tuned live, so the drawer renders whatever fields are present.
+export interface VendorOrderRaw {
+  summary?: unknown
+  documents?: Array<Record<string, unknown>>
+  notes?: Array<Record<string, unknown>>
+  [k: string]: unknown
+}
 
 export interface VendorOrder {
   id: string
@@ -29,6 +39,18 @@ export interface VendorOrder {
   first_seen_at: string
   last_seen_at: string
   schedule_nudge_sent_at: string | null
+  raw?: VendorOrderRaw | null
+}
+
+// A row has a detail drawer when its raw carries any portal-specific detail
+// (Genie's raw is a flat label→value map with none of these, so Genie rows never
+// show the expander).
+function hasDrawer(o: VendorOrder): boolean {
+  const r = o.raw
+  if (!r || typeof r !== 'object') return false
+  const summary = r.summary
+  const hasSummary = Array.isArray(summary) ? summary.length > 0 : (!!summary && typeof summary === 'object' && Object.keys(summary).length > 0)
+  return hasSummary || (Array.isArray(r.documents) && r.documents.length > 0) || (Array.isArray(r.notes) && r.notes.length > 0)
 }
 
 const fmtDate = (s: string | null) =>
@@ -115,13 +137,125 @@ function NudgeButton({ orderId, sentAt }: { orderId: string; sentAt: string | nu
   )
 }
 
-export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] }) {
+// ── Detail drawer (Clopay: Summary timeline / Documents / Notes) ────────────
+const str = (v: unknown): string => v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+// Keys used for the done/date badges — everything else in a milestone object is
+// shown as a plain key: value line so nothing captured is hidden.
+const DONE_KEYS = ['done', 'completed', 'complete', 'isDone']
+const DATE_KEYS = ['date', 'timestamp', 'time', 'when']
+
+function SummaryList({ summary }: { summary: unknown }) {
+  if (!summary || typeof summary !== 'object') {
+    const s = str(summary)
+    return <p className="text-gray-500 text-sm whitespace-pre-wrap">{s || '—'}</p>
+  }
+  const entries: Array<[string, unknown]> = Array.isArray(summary)
+    ? summary.map((m, i) => {
+        const o = (m && typeof m === 'object') ? m as Record<string, unknown> : {}
+        return [str(o.label ?? o.name ?? o.step ?? `Step ${i + 1}`), m]
+      })
+    : Object.entries(summary as Record<string, unknown>)
+  if (!entries.length) return <p className="text-gray-400 text-sm">—</p>
+  return (
+    <ul className="space-y-1.5">
+      {entries.map(([label, val], i) => {
+        const obj = (val && typeof val === 'object' && !Array.isArray(val)) ? val as Record<string, unknown> : null
+        const doneKey = obj && DONE_KEYS.find(k => k in obj)
+        const done = doneKey ? Boolean(obj![doneKey]) : undefined
+        const dateKey = obj && DATE_KEYS.find(k => k in obj)
+        const date = dateKey ? str(obj![dateKey]) : undefined
+        const rest = obj ? Object.entries(obj).filter(([k]) => k !== doneKey && k !== dateKey && !['label', 'name', 'step'].includes(k)) : []
+        const plain = !obj ? str(val) : ''
+        return (
+          <li key={i} className="text-sm">
+            <div className="flex items-center gap-1.5">
+              {done !== undefined && <span className={done ? 'text-green-600' : 'text-gray-300'}>{done ? '✓' : '○'}</span>}
+              <span className="font-medium text-gray-800">{label}</span>
+              {date && <span className="text-gray-500 text-xs">· {date}</span>}
+            </div>
+            {plain && <div className="text-gray-600 text-xs ml-5 whitespace-pre-wrap">{plain}</div>}
+            {rest.map(([k, v]) => (
+              <div key={k} className="text-gray-600 text-xs ml-5"><span className="text-gray-400">{k}:</span> {str(v)}</div>
+            ))}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number }) {
+  const r = order.raw ?? {}
+  const documents = Array.isArray(r.documents) ? r.documents : []
+  const notes = Array.isArray(r.notes) ? r.notes : []
+  return (
+    <tr className="bg-gray-50">
+      <td colSpan={colSpan} className="px-4 py-4">
+        <div className="grid gap-6 md:grid-cols-3">
+          <section>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Summary</h4>
+            <SummaryList summary={r.summary} />
+          </section>
+          <section>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Documents</h4>
+            {documents.length ? (
+              <ul className="space-y-1.5">
+                {documents.map((d, i) => {
+                  const href = str(d.href || d.url || d.link)
+                  const name = str(d.name || d.filename || d.title) || `Document ${i + 1}`
+                  const date = str(d.date || d.timestamp)
+                  return (
+                    <li key={i} className="text-sm">
+                      {href ? (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline">{name}</a>
+                      ) : <span className="text-gray-800">{name}</span>}
+                      {date && <span className="text-gray-500 text-xs"> · {date}</span>}
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : <p className="text-gray-400 text-sm">—</p>}
+          </section>
+          <section>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Notes</h4>
+            {notes.length ? (
+              <ul className="space-y-2">
+                {notes.map((n, i) => {
+                  const text = str(n.text || n.note || n.body || n.message)
+                  const ts = str(n.timestamp || n.date || n.time)
+                  return (
+                    <li key={i} className="text-sm">
+                      <div className="text-gray-800 whitespace-pre-wrap">{text || '—'}</div>
+                      {ts && <div className="text-gray-400 text-xs mt-0.5">{ts}</div>}
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : <p className="text-gray-400 text-sm">—</p>}
+          </section>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+export default function VendorOrdersTable({ orders, enableSf = true }: { orders: VendorOrder[]; enableSf?: boolean }) {
   const [sortKey, setSortKey] = useState<SortKey>('first_seen_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [nextStep, setNextStep] = useState('')
   const [orderType, setOrderType] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+
+  // Whether any row has a detail drawer — if so we render a leading expander
+  // column. Genie rows never do, so its table is visually unchanged.
+  const anyDrawer = useMemo(() => orders.some(hasDrawer), [orders])
+  const toggleRow = (id: string) => setExpanded(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
 
   const statuses = useMemo(() => uniq(orders.map(o => o.status)), [orders])
   const nextSteps = useMemo(() => uniq(orders.map(o => o.next_step)), [orders])
@@ -207,6 +341,7 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 text-gray-600">
             <tr>
+              {anyDrawer && <th className="px-2 py-2 w-8"></th>}
               {COLUMNS.map(col => (
                 <th
                   key={col.key}
@@ -220,28 +355,50 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white text-gray-900">
-            {rows.map(o => (
-              <tr key={o.id} className="hover:bg-gray-50">
+            {rows.map(o => {
+              const drawer = hasDrawer(o)
+              const isOpen = expanded.has(o.id)
+              return (
+              <Fragment key={o.id}>
+              <tr className="hover:bg-gray-50">
+                {anyDrawer && (
+                  <td className="px-2 py-2 align-top">
+                    {drawer && (
+                      <button
+                        type="button"
+                        onClick={() => toggleRow(o.id)}
+                        aria-label={isOpen ? 'Collapse details' : 'Expand details'}
+                        className="text-gray-400 hover:text-gray-700 text-xs w-5 h-5 flex items-center justify-center"
+                      >
+                        {isOpen ? '▼' : '▶'}
+                      </button>
+                    )}
+                  </td>
+                )}
                 <td className="px-3 py-2 whitespace-nowrap text-gray-700">{fmtSeen(o.first_seen_at)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.order_date)}</td>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{o.external_id}</td>
                 <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusStyle(o.status)}`}>{o.status || '—'}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">
-                  <div className="flex flex-col gap-1">
-                    {o.sf_job_number ? (
-                      <span className="inline-flex items-center gap-1.5" title={o.sf_match_method === 'pending' ? 'created — awaiting mirror sync' : (o.sf_match_method ? `matched by ${o.sf_match_method}` : undefined)}>
-                        <span className={`font-medium ${o.sf_match_method === 'po' || o.sf_match_method === 'linked' ? 'text-green-700' : o.sf_match_method === 'pending' ? 'text-blue-600' : 'text-amber-700'}`}>{o.sf_job_number}</span>
-                        {o.sf_match_method === 'pending' && <span className="text-[10px] uppercase tracking-wide text-blue-600 bg-blue-50 rounded px-1">pending sync</span>}
-                        {o.sf_match_method && !['po', 'linked', 'pending'].includes(o.sf_match_method) && (
-                          <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
-                        )}
-                      </span>
-                    ) : <CreateJobButton orderId={o.id} />}
-                    {(o.sf_created_job_number || o.sf_job_id) && (o.email || o.phone) && (
-                      <NudgeButton orderId={o.id} sentAt={o.schedule_nudge_sent_at} />
-                    )}
-                  </div>
+                  {enableSf ? (
+                    <div className="flex flex-col gap-1">
+                      {o.sf_job_number ? (
+                        <span className="inline-flex items-center gap-1.5" title={o.sf_match_method === 'pending' ? 'created — awaiting mirror sync' : (o.sf_match_method ? `matched by ${o.sf_match_method}` : undefined)}>
+                          <span className={`font-medium ${o.sf_match_method === 'po' || o.sf_match_method === 'linked' ? 'text-green-700' : o.sf_match_method === 'pending' ? 'text-blue-600' : 'text-amber-700'}`}>{o.sf_job_number}</span>
+                          {o.sf_match_method === 'pending' && <span className="text-[10px] uppercase tracking-wide text-blue-600 bg-blue-50 rounded px-1">pending sync</span>}
+                          {o.sf_match_method && !['po', 'linked', 'pending'].includes(o.sf_match_method) && (
+                            <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
+                          )}
+                        </span>
+                      ) : <CreateJobButton orderId={o.id} />}
+                      {(o.sf_created_job_number || o.sf_job_id) && (o.email || o.phone) && (
+                        <NudgeButton orderId={o.id} sentAt={o.schedule_nudge_sent_at} />
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-gray-600">{o.sf_job_number || '—'}</span>
+                  )}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.next_step || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.customer_name || '—'}</td>
@@ -253,9 +410,12 @@ export default function VendorOrdersTable({ orders }: { orders: VendorOrder[] })
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.store_number || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-400 text-xs">{fmtSeen(o.last_seen_at)}</td>
               </tr>
-            ))}
+              {drawer && isOpen && <DetailDrawer order={o} colSpan={COLUMNS.length + (anyDrawer ? 1 : 0)} />}
+              </Fragment>
+              )
+            })}
             {rows.length === 0 && (
-              <tr><td colSpan={COLUMNS.length} className="px-3 py-8 text-center text-gray-500">No orders match these filters.</td></tr>
+              <tr><td colSpan={COLUMNS.length + (anyDrawer ? 1 : 0)} className="px-3 py-8 text-center text-gray-500">No orders match these filters.</td></tr>
             )}
           </tbody>
         </table>

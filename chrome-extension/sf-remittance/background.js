@@ -11,43 +11,70 @@ async function scheduleAlarm() {
   chrome.alarms.create(ALARM, { periodInMinutes: Math.max(1, Number(pollMinutes) || 10) })
 }
 
-chrome.runtime.onInstalled.addListener(() => { scheduleAlarm(); scheduleGenieCrawl(); scheduleSfKeepalive() })
-chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleGenieCrawl(); scheduleSfKeepalive() })
-chrome.alarms.onAlarm.addListener(a => {
-  if (a.name === ALARM) run('alarm')
-  else if (a.name === GENIE_ALARM) maybeScheduledCrawl()
-  else if (a.name === GENIE_TIMEOUT_ALARM) onCrawlTimeout()
-  else if (a.name === SF_RECOVER_ALARM) finishSfRecover()
-  else if (a.name === SF_KEEPALIVE_ALARM) maybeSfKeepalive()
-})
+const SF_RECOVER_ALARM = 'sf-session-recover'
+const SF_KEEPALIVE_ALARM = 'sf-session-keepalive'
+const CRAWL_TZ = 'America/Los_Angeles'
+const CRAWL_TIMEOUT_MS = 20 * 60 * 1000
 
-// A scheduled crawl that never signalled done → it stalled. Close its tab and
-// alert, so a silently-broken crawl doesn't go unnoticed.
-async function onCrawlTimeout() {
-  const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
-  await finishCrawl('timeout')
-  if (genieCrawl) { setBadge('!'); await notifyAlert('genie', 'error', 'scheduled crawl did not finish (timed out)') }
-}
-
-// ── Scheduled Genie crawl ───────────────────────────────────────────────────
-// An always-on office PC runs this: hourly during work hours (incremental — just
+// ── Scheduled vendor-portal crawls (Genie + Clopay share one engine) ────────
+// An always-on office PC runs these: hourly during work hours (incremental — just
 // new/changed orders) plus a nightly full backfill. The alarm fires hourly and
 // the handler decides what (if anything) to run based on the PT clock. Each crawl
 // opens a background tab to the order list; the content script does the work and
 // signals completion, then we close the tab. A timeout alarm force-closes a tab
 // that never finishes. State lives in chrome.storage (the MV3 worker is ephemeral).
-const GENIE_ALARM = 'genie-crawl'
-const GENIE_TIMEOUT_ALARM = 'genie-crawl-timeout'
-const SF_RECOVER_ALARM = 'sf-session-recover'
-const SF_KEEPALIVE_ALARM = 'sf-session-keepalive'
-const GENIE_LIST_URL = 'https://install.openings.net/webcenter/portal/installerconnect/orderlist'
-const CRAWL_TZ = 'America/Los_Angeles'
-const CRAWL_TIMEOUT_MS = 20 * 60 * 1000
+//
+// Every crawler is one descriptor here — its portal URL, its own storage keys /
+// alarm names (so Genie and Clopay never step on each other), the option flags
+// that gate it, and the login/alert source names. All the machinery below is
+// parameterized by the descriptor, so adding a portal is one entry + its content
+// script.
+const CRAWLERS = {
+  genie: {
+    name: 'genie', vendor: 'genie_thd',
+    listUrl: 'https://install.openings.net/webcenter/portal/installerconnect/orderlist',
+    stateKey: 'genieCrawl', modeKey: 'genieCrawlMode',
+    alarm: 'genie-crawl', timeoutAlarm: 'genie-crawl-timeout',
+    scheduleFlag: 'genieScheduleEnabled', enabledFlag: 'genieEnabled',
+    loginFlag: 'genie-login-detected', alertSource: 'genie',
+  },
+  clopay: {
+    name: 'clopay', vendor: 'clopay_hd',
+    listUrl: 'https://hdprogram.clopay.com/orders',
+    stateKey: 'clopayCrawl', modeKey: 'clopayCrawlMode',
+    alarm: 'clopay-crawl', timeoutAlarm: 'clopay-crawl-timeout',
+    scheduleFlag: 'clopayScheduleEnabled', enabledFlag: 'clopayEnabled',
+    loginFlag: 'clopay-login-detected', alertSource: 'clopay',
+  },
+}
+const crawlerByName = (name) => CRAWLERS[name] || null
+const crawlerByLoginFlag = (flag) => Object.values(CRAWLERS).find(c => c.loginFlag === flag) || null
+const crawlerByIngestType = (type) => CRAWLERS[type] || null // content scripts send type === crawler name
+
+chrome.runtime.onInstalled.addListener(() => { scheduleAlarm(); scheduleAllCrawls(); scheduleSfKeepalive() })
+chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleAllCrawls(); scheduleSfKeepalive() })
+chrome.alarms.onAlarm.addListener(a => {
+  if (a.name === ALARM) return run('alarm')
+  if (a.name === SF_RECOVER_ALARM) return finishSfRecover()
+  if (a.name === SF_KEEPALIVE_ALARM) return maybeSfKeepalive()
+  for (const c of Object.values(CRAWLERS)) {
+    if (a.name === c.alarm) return maybeScheduledCrawl(c)
+    if (a.name === c.timeoutAlarm) return onCrawlTimeout(c)
+  }
+})
+
+// A scheduled crawl that never signalled done → it stalled. Close its tab and
+// alert, so a silently-broken crawl doesn't go unnoticed.
+async function onCrawlTimeout(c) {
+  const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
+  await finishCrawl(c, 'timeout')
+  if (state) { setBadge('!'); await notifyAlert(c.alertSource, 'error', 'scheduled crawl did not finish (timed out)') }
+}
 
 // delayInMinutes:1 so the schedule also fires ~1 min after Chrome start / an
 // extension reload — otherwise each reload restarts a full 60-min countdown and a
 // machine that's reloaded/restarted often could go a long time without a crawl.
-function scheduleGenieCrawl() { chrome.alarms.create(GENIE_ALARM, { delayInMinutes: 1, periodInMinutes: 60 }) }
+function scheduleAllCrawls() { for (const c of Object.values(CRAWLERS)) chrome.alarms.create(c.alarm, { delayInMinutes: 1, periodInMinutes: 60 }) }
 function scheduleSfKeepalive() { chrome.alarms.create(SF_KEEPALIVE_ALARM, { delayInMinutes: 2, periodInMinutes: 60 }) }
 
 function ptNow() {
@@ -57,16 +84,16 @@ function ptNow() {
   return { hour: Number(parts.hour) % 24, weekday: parts.weekday }
 }
 
-async function maybeScheduledCrawl() {
+async function maybeScheduledCrawl(c) {
   const cfg = await getConfig()
-  if (!cfg.genieScheduleEnabled) return
+  if (!cfg[c.scheduleFlag]) return
   const { hour, weekday } = ptNow()
   const workday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(weekday)
   let mode = null
   if (hour === 3) mode = 'full'                                   // nightly full backfill ~3am PT
   else if (workday && hour >= 7 && hour <= 18) mode = 'incremental' // 7am–6pm Mon–Sat
   if (!mode) return
-  await startCrawl(mode)
+  await startCrawl(c, mode)
 }
 
 async function tabExists(tabId) {
@@ -76,37 +103,37 @@ async function tabExists(tabId) {
 
 // mode: 'full' | 'incremental'. force:true (the manual button) always starts a
 // fresh crawl. Returns { started, reason }.
-async function startCrawl(mode, { force = false } = {}) {
-  const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
+async function startCrawl(c, mode, { force = false } = {}) {
+  const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
   // Only treat an existing crawl as "already running" if it's recent AND its tab
   // is actually still open. Stale state (tab closed / worker died / a missed
   // 'done' message) must not block a new crawl — especially the manual button.
-  if (genieCrawl && !force && Date.now() - genieCrawl.startedAt < CRAWL_TIMEOUT_MS && await tabExists(genieCrawl.tabId)) {
-    console.log('[genie] crawl already running')
+  if (state && !force && Date.now() - state.startedAt < CRAWL_TIMEOUT_MS && await tabExists(state.tabId)) {
+    console.log(`[${c.name}] crawl already running`)
     return { started: false, reason: 'already running' }
   }
   // Force, or leftover state — tear down anything stale before starting fresh.
-  if (genieCrawl) {
-    chrome.alarms.clear(GENIE_TIMEOUT_ALARM)
-    if (genieCrawl.tabId != null) { try { await chrome.tabs.remove(genieCrawl.tabId) } catch { /* already closed */ } }
+  if (state) {
+    chrome.alarms.clear(c.timeoutAlarm)
+    if (state.tabId != null) { try { await chrome.tabs.remove(state.tabId) } catch { /* already closed */ } }
   }
-  await chrome.storage.local.set({ genieCrawlMode: mode })
-  const tab = await chrome.tabs.create({ url: GENIE_LIST_URL, active: false })
-  await chrome.storage.local.set({ genieCrawl: { tabId: tab.id, mode, startedAt: Date.now() } })
-  await setStatus({ source: 'genie-schedule', mode, state: 'running' })
-  chrome.alarms.create(GENIE_TIMEOUT_ALARM, { when: Date.now() + CRAWL_TIMEOUT_MS })
-  console.log('[genie] crawl started:', mode, force ? '(forced)' : '')
+  await chrome.storage.local.set({ [c.modeKey]: mode })
+  const tab = await chrome.tabs.create({ url: c.listUrl, active: false })
+  await chrome.storage.local.set({ [c.stateKey]: { tabId: tab.id, mode, startedAt: Date.now() } })
+  await setStatus({ source: `${c.name}-schedule`, mode, state: 'running' })
+  chrome.alarms.create(c.timeoutAlarm, { when: Date.now() + CRAWL_TIMEOUT_MS })
+  console.log(`[${c.name}] crawl started:`, mode, force ? '(forced)' : '')
   return { started: true }
 }
 
-async function finishCrawl(reason) {
-  const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
-  chrome.alarms.clear(GENIE_TIMEOUT_ALARM)
-  await chrome.storage.local.remove(['genieCrawl', 'genieCrawlMode'])
-  if (genieCrawl && genieCrawl.tabId != null && reason !== 'login') {
-    try { await chrome.tabs.remove(genieCrawl.tabId) } catch { /* already closed */ }
+async function finishCrawl(c, reason) {
+  const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
+  chrome.alarms.clear(c.timeoutAlarm)
+  await chrome.storage.local.remove([c.stateKey, c.modeKey])
+  if (state && state.tabId != null && reason !== 'login') {
+    try { await chrome.tabs.remove(state.tabId) } catch { /* already closed */ }
   }
-  console.log('[genie] crawl finished:', reason)
+  console.log(`[${c.name}] crawl finished:`, reason)
 }
 
 function setBadge(text) {
@@ -160,41 +187,47 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'run-now') { run('manual').then(r => sendResponse(r)); return true }
 })
 
-// "Full Genie crawl now" from the popup — same machinery as a scheduled full
+// "Full <portal> crawl now" from the popup — same machinery as a scheduled full
 // crawl (opens a background tab, details every order, closes when done), but on
-// demand and regardless of the schedule/auto-detail toggles.
+// demand and regardless of the schedule/auto-detail toggles. One handler per
+// crawler: 'genie-crawl-now', 'clopay-crawl-now', …
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type !== 'genie-crawl-now') return
+  const c = typeof msg?.type === 'string' && msg.type.endsWith('-crawl-now') ? crawlerByName(msg.type.slice(0, -'-crawl-now'.length)) : null
+  if (!c) return
   ;(async () => {
     const cfg = await getConfig()
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'set Castle Admin URL + token in Options' }); return }
     setBadge('')
     // force:true — a manual click always opens a fresh crawl tab, even if stale
     // crawl state is lingering from a previous run.
-    const r = await startCrawl('full', { force: true })
+    const r = await startCrawl(c, 'full', { force: true })
     sendResponse({ ok: !!r.started, error: r.started ? undefined : (r.reason || 'could not start') })
   })()
   return true
 })
 
-// content-genie.js asks whether it's running in the extension's crawl tab, so it
+// A content script asks whether it's running in the extension's crawl tab, so it
 // only auto-navigates the portal there (never in the user's own browsing).
+// 'genie-crawl-tab?', 'clopay-crawl-tab?', …
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'genie-crawl-tab?') return
+  const c = typeof msg?.type === 'string' && msg.type.endsWith('-crawl-tab?') ? crawlerByName(msg.type.slice(0, -'-crawl-tab?'.length)) : null
+  if (!c) return
   ;(async () => {
-    const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
-    sendResponse({ isCrawlTab: !!(genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) })
+    const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
+    sendResponse({ isCrawlTab: !!(state && sender.tab && sender.tab.id === state.tabId) })
   })()
   return true
 })
 
-// Content scripts signal a scheduled crawl's outcome.
+// Content scripts signal a scheduled crawl's outcome. 'genie-crawl-done',
+// 'clopay-crawl-done', …
 chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
-  if (msg?.type === 'genie-crawl-done') {
+  const done = typeof msg?.type === 'string' && msg.type.endsWith('-crawl-done') ? crawlerByName(msg.type.slice(0, -'-crawl-done'.length)) : null
+  if (done) {
     ;(async () => {
-      const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
+      const state = (await chrome.storage.local.get(done.stateKey))[done.stateKey]
       // Only act on the crawl's own tab — a manual crawl in a user tab is ignored.
-      if (genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) { setBadge(''); await finishCrawl('done') }
+      if (state && sender.tab && sender.tab.id === state.tabId) { setBadge(''); await finishCrawl(done, 'done') }
     })()
     return
   }
@@ -202,6 +235,7 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
   // they didn't take / MFA). Badge + email so someone signs in by hand.
   const LOGIN_ALERTS = {
     'genie-login-detected': 'genie',
+    'clopay-login-detected': 'clopay',
     'sf-login-detected': 'service_fusion',
     'castle-login-detected': 'castle_admin',
   }
@@ -211,11 +245,15 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
       await setStatus({ source: `${source}-login`, state: 'login_required' })
       setBadge('!')
       await notifyAlert(source, 'logged_out') // email chosen recipients (deduped server-side)
-      if (msg.type === 'genie-login-detected') {
-        const { genieCrawl } = await chrome.storage.local.get('genieCrawl')
-        if (genieCrawl && sender.tab && sender.tab.id === genieCrawl.tabId) {
-          try { await chrome.tabs.update(genieCrawl.tabId, { active: true }) } catch { /* ignore */ } // surface for one-click login
-          await finishCrawl('login') // keep the tab open for re-auth
+      // If this login belongs to a crawler and the logged-out page IS that
+      // crawler's own tab, surface it for one-click login and end the crawl
+      // (keeping the tab open so re-auth can happen).
+      const c = crawlerByLoginFlag(msg.type)
+      if (c) {
+        const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
+        if (state && sender.tab && sender.tab.id === state.tabId) {
+          try { await chrome.tabs.update(state.tabId, { active: true }) } catch { /* ignore */ }
+          await finishCrawl(c, 'login')
         }
       }
     })()
@@ -223,25 +261,27 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
   }
 })
 
-// Orders scraped from a vendor portal (content-genie.js) → Castle Admin ingest.
-// Independent of the SF poll loop; posts in the user's session using the same
-// base URL + token.
+// Orders scraped from a vendor portal (content-genie.js / content-clopay.js) →
+// Castle Admin ingest. Independent of the SF poll loop; posts in the user's
+// session using the same base URL + token. The content script sends the crawler
+// name as `type` (e.g. 'genie', 'clopay') plus the vendor key.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type !== 'genie') return
+  const c = crawlerByIngestType(msg?.type)
+  if (!c) return
   ;(async () => {
     const cfg = await getConfig()
-    if (cfg.genieEnabled === false) { sendResponse({ ok: false, error: 'genie disabled' }); return }
+    if (cfg[c.enabledFlag] === false) { sendResponse({ ok: false, error: `${c.name} disabled` }); return }
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'not configured' }); return }
     const orders = msg.kind === 'detail' ? [msg.payload] : (msg.payload || [])
     if (!orders.length) { sendResponse({ ok: true, skipped: 'no orders' }); return }
     try {
       const res = await postVendorOrders(cfg.baseUrl, cfg.token, msg.vendor, orders, { kind: msg.kind, mode: msg.mode })
-      await setStatus({ source: 'genie', vendor: msg.vendor, kind: msg.kind, ingest: res })
-      console.log('[sf-remittance] genie ingest', res)
+      await setStatus({ source: c.name, vendor: msg.vendor, kind: msg.kind, ingest: res })
+      console.log(`[sf-remittance] ${c.name} ingest`, res)
       sendResponse({ ok: true, ...res })
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e)
-      console.error('[sf-remittance] genie ingest failed', error)
+      console.error(`[sf-remittance] ${c.name} ingest failed`, error)
       sendResponse({ ok: false, error })
     }
   })()

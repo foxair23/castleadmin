@@ -17,24 +17,38 @@ const statusStyle = (s: string | null) => {
 }
 
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
-// /sales/hd-orders (sales). Data is service-role; each page guards its own role.
-export default async function VendorOrdersView({ canManage = false, basePath = '/admin/vendor-orders' }: { canManage?: boolean; basePath?: string }) {
+// /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
+// vendor_orders rows (and which scrape-run freshness) this tab shows; it defaults
+// to Genie so the existing pages keep working unchanged. Data is service-role;
+// each page guards its own role.
+//
+// Genie-only machinery (SF-job matching + create button, the schedule nudge, and
+// autopilot) is gated to genie_thd. Other portal vendors (e.g. Clopay) are
+// capture-only for now: the same table, minus the SF actions, plus a detail
+// drawer fed from vendor_orders.raw.
+export default async function VendorOrdersView({
+  canManage = false,
+  basePath = '/admin/vendor-orders',
+  vendor = 'genie_thd',
+}: { canManage?: boolean; basePath?: string; vendor?: string }) {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
-  const autopilot = await getAutopilot()
-  const nudge = await getNudgeSettings()
+  const isGenie = vendor === 'genie_thd'
+  const shortName = (VENDORS[vendor]?.label || vendor).split(' — ')[0]
+
+  const autopilot = isGenie ? await getAutopilot() : { enabled: false }
+  const nudge = isGenie ? await getNudgeSettings() : { enabled: false, scheduleUrl: '' }
   const { data } = await db
     .from('vendor_orders')
-    .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at')
-    .eq('vendor', 'genie_thd')
+    .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, raw')
+    .eq('vendor', vendor)
     .order('first_seen_at', { ascending: false })
     .limit(1000)
   const base = (data ?? []) as VendorOrder[]
 
   // Resolve each order's SF job via the shared matching service (PO → name →
-  // email → phone). If the mirror doesn't have it yet but we just created the job,
-  // fall back to the captured number, flagged 'pending' (shown until the mirror
-  // ingests it, then the real match takes over).
-  const matches = await resolveSfJobMatches(db, base)
+  // email → phone). Genie only — other vendors don't create SF jobs yet, and
+  // running the matcher for them would surface spurious matches.
+  const matches = isGenie ? await resolveSfJobMatches(db, base) : new Map()
   const orders: VendorOrder[] = base.map(o => {
     const m = matches.get(o.id)
     if (m?.sfJobNumber) return { ...o, sf_job_number: m.sfJobNumber, sf_match_method: m.method ?? null }
@@ -49,11 +63,13 @@ export default async function VendorOrdersView({ canManage = false, basePath = '
   }, {})
   const needDetail = orders.filter(o => !o.detail_scraped_at).length
 
-  // Last scrape from the vendor portal — freshness + kind, so a broken scraper
+  // Last scrape from this vendor's portal — freshness + kind, so a broken scraper
   // (stale time, or an unexpectedly small order count) is obvious at a glance.
+  // Filtered by vendor so each tab's banner reflects only its own crawler.
   const { data: runRow } = await db
     .from('vendor_scrape_runs')
     .select('mode, received, inserted, updated, status_changes, created_at')
+    .eq('vendor', vendor)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -69,23 +85,22 @@ export default async function VendorOrdersView({ canManage = false, basePath = '
     <div className="max-w-7xl mx-auto px-4 py-6">
       <HdOrdersNav base={basePath} />
       <div className="flex items-baseline justify-between mb-1">
-        <h1 className="text-2xl font-bold text-gray-900">HD Orders — Genie</h1>
+        <h1 className="text-2xl font-bold text-gray-900">HD Orders — {shortName}</h1>
         <div className="flex items-center gap-4">
-          <NudgeControls on={nudge.enabled} scheduleUrl={nudge.scheduleUrl} canManage={canManage} />
-          <AutopilotToggle on={autopilot.enabled} canManage={canManage} />
+          {isGenie && <NudgeControls on={nudge.enabled} scheduleUrl={nudge.scheduleUrl} canManage={canManage} />}
+          {isGenie && <AutopilotToggle on={autopilot.enabled} canManage={canManage} />}
           <span className="text-sm text-gray-500">{orders.length} total</span>
         </div>
       </div>
       <p className="text-sm text-gray-500 mb-3">
-        Orders scraped from vendor portals by the browser extension.{' '}
-        {Object.values(VENDORS).map(v => v.label).join(' · ') || 'No vendors configured.'}
+        Orders scraped from the {shortName} portal by the browser extension.
       </p>
 
       <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${stale || thin ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
         {lastRun ? (
           <span>
             {(stale || thin) && <span className="font-semibold">⚠ </span>}
-            <span className="font-medium">Last Genie scrape:</span>{' '}
+            <span className="font-medium">Last {shortName} scrape:</span>{' '}
             {fmtRun(lastRun.created_at)} ({rel(hoursSince!)})
             {lastRun.mode && <> · <span className="uppercase text-xs tracking-wide">{lastRun.mode}</span></>}
             {' · '}{lastRun.received} orders
@@ -94,7 +109,7 @@ export default async function VendorOrdersView({ canManage = false, basePath = '
             {thin && <span className="ml-1 font-medium">— fewer orders than expected, check pagination</span>}
           </span>
         ) : (
-          <span>No scrapes recorded yet — open the Genie order list with the extension installed.</span>
+          <span>No scrapes recorded yet — open the {shortName} order list with the extension installed.</span>
         )}
       </div>
 
@@ -107,10 +122,10 @@ export default async function VendorOrdersView({ canManage = false, basePath = '
 
       {orders.length === 0 ? (
         <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
-          No orders yet. Open the Genie portal with the extension installed — orders appear here on the next scrape.
+          No orders yet. Open the {shortName} portal with the extension installed — orders appear here on the next scrape.
         </div>
       ) : (
-        <VendorOrdersTable orders={orders} />
+        <VendorOrdersTable orders={orders} enableSf={isGenie} />
       )}
     </div>
   )
