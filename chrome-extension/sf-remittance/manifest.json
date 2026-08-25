@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Castle — Service Fusion Remittance Poster",
-  "version": "0.6.0",
+  "version": "0.6.6",
   "description": "Automates Castle Admin ↔ Service Fusion (remittance posting, job notes) and logs vendor-portal orders (Genie/Home Depot, Clopay), all in your logged-in sessions.",
   "permissions": [
     "storage",
@@ -12,7 +12,7 @@
     "https://auth.servicefusion.com/*",
     "https://hq.castlegaragedoors.com/*",
     "https://install.openings.net/*",
-    "https://hdprogram.clopay.com/*"
+    "https://*.clopay.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -43,6 +43,8 @@
         "https://install.openings.net/CustomLogin/*",
         "https://auth.servicefusion.com/*",
         "https://hq.castlegaragedoors.com/login*",
+        "https://prod-iam.clopay.com/*",
+        "https://cca.clopay.com/*",
         "https://hdprogram.clopay.com/*"
       ],
       "js": [

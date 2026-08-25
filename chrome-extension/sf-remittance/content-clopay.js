@@ -51,80 +51,161 @@
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
     }
   }
-  const visible = (el) => !!(el && el.offsetParent !== null)
+  // Rect-based visibility — robust inside shadow DOM, where offsetParent is often
+  // null even for on-screen elements.
+  const visible = (el) => {
+    if (!el || typeof el.getBoundingClientRect !== 'function') return false
+    const r = el.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
+
+  // Every element in the document INCLUDING open shadow roots. Angular can render
+  // components into shadow trees (ViewEncapsulation.ShadowDom), which a plain
+  // querySelectorAll('*') — and innerText — can't see; that shows up as a visible
+  // grid but bodyTextLen ~0. Traversing shadow roots makes the scraper see it.
+  function allElements(root) {
+    const out = []
+    const stack = [root || document]
+    while (stack.length) {
+      const node = stack.pop()
+      let els
+      try { els = node.querySelectorAll('*') } catch { continue }
+      for (const el of els) {
+        out.push(el)
+        if (el.shadowRoot) stack.push(el.shadowRoot)
+      }
+    }
+    return out
+  }
+  // Like querySelectorAll, but pierces shadow roots (via allElements).
+  function deepQueryAll(selector) {
+    return allElements(document).filter(el => { try { return el.matches(selector) } catch { return false } })
+  }
 
   // ── Order List ────────────────────────────────────────────────────────────
-  // Header text → our field. The Clopay grid columns (from the portal):
+  // The portal is an Angular app — the grid is NOT a <table> / role="row"
+  // structure, so we can't map by DOM rows. Instead we read the grid GEOMETRICALLY:
+  // locate the column headers (PO DATE / PO / STORE / …), read their x-positions,
+  // then bucket every visible text cell into a column by x and into a row by the
+  // PO-DATE anchor's y. This is markup-agnostic (works for div/mat-row/custom
+  // tags) and survives the lazy-scroll list.
   //   PO DATE · PO · STORE · ORDER TYPE · CUSTOMER DETAILS · CITY · STATUS · STATUS DATE
-  // Matched by longest header substring so "PO DATE" beats "PO" and "STATUS DATE"
-  // beats "STATUS".
-  const LIST_COLUMNS = [
-    { match: 'po date', field: 'order_date', iso: true },
-    { match: 'po', field: 'external_id' },
-    { match: 'store', field: 'store_number' },
-    { match: 'order type', field: 'order_type' },
-    { match: 'customer', field: '__customer' }, // "CUSTOMER DETAILS" → name + address (split below)
-    { match: 'city', field: 'city' },
-    { match: 'status date', field: '__statusDate' },
-    { match: 'status', field: 'status' },
+  const HEADERS = [
+    { re: /^po\s*date$/i, field: 'order_date' },
+    { re: /^po$/i, field: 'external_id' },
+    { re: /^store$/i, field: 'store_number' },
+    { re: /^order\s*type$/i, field: 'order_type' },
+    { re: /^customer\s*details$/i, field: '__customer' },
+    { re: /^city$/i, field: 'city' },
+    { re: /^status\s*date$/i, field: '__statusDate' },
+    { re: /^status$/i, field: 'status' },
   ]
-
-  // Rows of the grid. Prefers real <tr>; falls back to ARIA grid rows for a
-  // div-based table.
-  function gridRows() {
-    let trs = [...document.querySelectorAll('table tr')]
-    if (trs.length < 2) trs = [...document.querySelectorAll('[role="row"]')]
-    return trs
-      .map(tr => {
-        const cellEls = [...tr.querySelectorAll('td, th, [role="cell"], [role="gridcell"], [role="columnheader"]')]
-        const els = cellEls.length ? cellEls : [...tr.children]
-        return { tr, els, cells: els.map(c => norm(c.innerText)) }
-      })
-      .filter(r => r.cells.length >= 5)
-  }
-
-  // Best (longest) column match for a header cell, so overlapping names resolve.
-  function columnFor(headerText) {
-    const k = key(headerText)
-    let best = null
-    for (const c of LIST_COLUMNS) if (k.includes(c.match) && (!best || c.match.length > best.match.length)) best = c
-    return best
-  }
 
   // A PO is alphanumeric on this portal (e.g. 60425672, RPP88431947, RP30448613),
   // so — unlike Genie's digits-only check — accept letters too.
   const isPo = (s) => /^[A-Z0-9][A-Z0-9-]{4,}$/i.test(norm(s))
+  // An element's OWN text (direct text-node children only), so a wrapper div whose
+  // text lives in descendants isn't mistaken for a leaf cell.
+  function ownText(el) {
+    let s = ''
+    for (const n of el.childNodes) if (n.nodeType === 3) s += n.textContent + ' '
+    return norm(s)
+  }
+  const absCenterX = (r) => r.left + r.width / 2
+  const absTop = (r) => r.top + window.scrollY
+
+  // Header columns, cached — the header can scroll out of view in the lazy list,
+  // and x-positions don't change with vertical scroll, so once found we reuse them.
+  let COLS_CACHE = null
+  function detectColumns() {
+    const found = []
+    for (const el of allElements(document)) {
+      if (!visible(el)) continue
+      const t = ownText(el)
+      if (!t) continue
+      const h = HEADERS.find(h => h.re.test(t))
+      if (!h || found.some(c => c.field === h.field)) continue
+      const r = el.getBoundingClientRect()
+      if (!r.width) continue
+      // Store the header's LEFT edge — the grid's data is left-aligned under its
+      // header, so the left edge (not the center) is what lines up with the cells.
+      found.push({ field: h.field, left: r.left })
+    }
+    if (found.length < 5) return COLS_CACHE // keep whatever we had
+    found.sort((a, b) => a.left - b.left)
+    COLS_CACHE = { cols: found }
+    return COLS_CACHE
+  }
+
+  // The column a left-aligned cell belongs to: the last header whose left edge is
+  // at or before the cell's left edge (TOL absorbs padding/sub-pixel drift).
+  // Cells left of the first column (sidebar) or well right of the last (chat
+  // widget) return null.
+  function columnForLeft(cols, leftX) {
+    const TOL = 24
+    if (leftX < cols[0].left - TOL) return null
+    if (leftX > cols[cols.length - 1].left + 260) return null
+    let col = null
+    for (const c of cols) { if (leftX + TOL >= c.left) col = c; else break }
+    return col
+  }
 
   function scrapeListPage() {
-    const rows = gridRows()
-    if (!rows.length) return []
-    const header = rows.find(r => r.cells.some(c => key(c) === 'po' || key(c).startsWith('po ') || key(c).includes('order type')))
-    let colMap // index → column
-    if (header) colMap = header.cells.map(columnFor)
-    else { colMap = LIST_COLUMNS; LOG('header row not found — using positional fallback') }
+    const detected = detectColumns()
+    if (!detected) return []
+    const { cols } = detected
+    const anchorCol = cols.find(c => c.field === 'order_date') || cols.find(c => c.field === 'external_id')
+    if (!anchorCol) return []
+
+    // All visible leaf cells, assigned to a column by their LEFT edge. Header
+    // cells are dropped by content (not by y) so a sticky header — whose
+    // document-y grows as you scroll — never masks real rows.
+    const isHeaderText = (t) => HEADERS.some(h => h.re.test(t))
+    const leaves = []
+    for (const el of allElements(document)) {
+      if (!visible(el)) continue
+      const t = ownText(el) // direct text only → wrappers contribute nothing, mixed nodes contribute their own text
+      if (!t || isHeaderText(t)) continue
+      const r = el.getBoundingClientRect()
+      if (!r.width || !r.height) continue
+      const col = columnForLeft(cols, r.left)
+      if (!col) continue // outside the grid (sidebar, chat widget, etc.)
+      leaves.push({ t, left: r.left, y: absTop(r), field: col.field })
+    }
+
+    // Row anchors: PO-DATE cells (a date in the anchor column). Each anchor's y
+    // starts a row; the row spans to the next anchor (the last is height-capped so
+    // it can't absorb anything rendered below the grid).
+    const anchorIsDate = anchorCol.field === 'order_date'
+    const anchors = leaves
+      .filter(l => l.field === anchorCol.field && (anchorIsDate ? /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l.t) : isPo(l.t)))
+      .sort((a, b) => a.y - b.y)
+    if (!anchors.length) return []
 
     const out = []
-    for (const row of rows) {
-      if (header && row === header) continue
-      const { els, cells } = row
+    for (let i = 0; i < anchors.length; i++) {
+      const yTop = anchors[i].y - 6
+      const yBot = i + 1 < anchors.length ? anchors[i + 1].y - 6 : anchors[i].y + 200
+      const rowLeaves = leaves.filter(l => l.y >= yTop && l.y < yBot)
+      const byField = {}
+      for (const l of rowLeaves) (byField[l.field] ||= []).push(l)
       const o = {}, raw = {}
-      cells.forEach((val, i) => {
-        const c = colMap[i]
-        if (!c) return
-        if (c.field === '__customer') {
-          // Name on the first line, street address on the rest.
-          const lines = (els[i]?.innerText || val).split('\n').map(x => norm(x)).filter(Boolean)
-          if (lines[0]) o.customer_name = lines[0]
-          if (lines.length > 1) o.street_address = lines.slice(1).join(', ')
-          raw.customer_details = norm(val)
-        } else if (c.field === '__statusDate') {
-          raw.status_date = norm(val) || null
-        } else if (c.field) {
-          o[c.field] = c.iso ? (toISO(val) ?? null) : (norm(val) || null)
+      for (const [field, arr] of Object.entries(byField)) {
+        arr.sort((a, b) => a.y - b.y || a.left - b.left)
+        const text = norm(arr.map(a => a.t).join(' '))
+        if (field === '__customer') {
+          o.customer_name = arr[0] ? norm(arr[0].t) : null
+          if (arr.length > 1) o.street_address = arr.slice(1).map(a => norm(a.t)).join(', ')
+          raw.customer_details = text
+        } else if (field === '__statusDate') {
+          raw.status_date = text || null
+        } else if (field === 'order_date') {
+          o.order_date = toISO(text)
+        } else {
+          o[field] = text || null
         }
-      })
+      }
       if (Object.keys(raw).length) o.raw = raw
-      // A real data row has a valid PO in the external_id column.
       if (o.external_id && isPo(o.external_id)) out.push(o)
     }
     return out
@@ -132,12 +213,58 @@
 
   function rowCount() { return scrapeListPage().length }
 
+  // Structural snapshot for live tuning — when the grid isn't recognized, this
+  // tells us what the page actually looks like (paste it back to refine
+  // selectors). Also exposed as window.__clopayDiag() to run by hand.
+  function diagnostics() {
+    const all = allElements(document)
+    const count = (sel) => { try { return document.querySelectorAll(sel).length } catch { return -1 } }
+    const shadowHosts = all.filter(el => el.shadowRoot).length
+    const NOTEXT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|LINK|META|HEAD)$/
+    // What's actually RENDERED: visible leaf texts (excludes hidden modals, script/
+    // style). If the grid is on screen we'll see PO/customer text here; if only the
+    // shell is up we'll see header/nav text. This is the signal that tells apart
+    // "not rendered yet" from "rendered but not recognized".
+    const visibleTexts = []
+    let renderedTextLen = 0
+    for (const el of all) {
+      if (NOTEXT.test(el.tagName) || !visible(el)) continue
+      const t = ownText(el)
+      if (t) { renderedTextLen += t.length; if (visibleTexts.length < 60) visibleTexts.push(t) }
+    }
+    const appRoot = document.querySelector('app-root')
+    let cols = null
+    try { const d = detectColumns(); if (d) cols = d.cols.map(c => ({ field: c.field, left: Math.round(c.left) })) } catch { /* ignore */ }
+    const snap = {
+      url: location.href,
+      totalEls: all.length, shadowHosts,
+      appRootDescendants: appRoot ? appRoot.querySelectorAll('*').length : -1,
+      tables: count('table'), roleRows: count('[role="row"]'), iframes: count('iframe'),
+      headersDetected: cols,
+      renderedTextLen, bodyTextLen: (document.body?.innerText || '').length,
+      visibleTextSample: visibleTexts.join(' | ').slice(0, 800),
+    }
+    LOG('DIAGNOSTIC', JSON.stringify(snap))
+    return snap
+  }
+  function cssPath(el) {
+    const parts = []
+    for (let e = el; e && e.nodeType === 1 && parts.length < 6; e = e.parentElement) {
+      let s = e.tagName.toLowerCase()
+      if (e.id) { s += `#${e.id}`; parts.unshift(s); break }
+      if (e.className && typeof e.className === 'string') s += '.' + e.className.trim().split(/\s+/).slice(0, 2).join('.')
+      parts.unshift(s)
+    }
+    return parts.join(' > ')
+  }
+  try { window.__clopayDiag = diagnostics } catch { /* ignore */ }
+
   // ── Pagination / lazy-load ──────────────────────────────────────────────
   // The list shows ~19 of ~169 → either a pager or scroll-to-load. Handle both:
   // page via a "next" control when present, else scroll the window/containers to
   // pull in more rows, until nothing new loads. Dedup by PO.
   function findNextPager() {
-    const cands = [...document.querySelectorAll('.pagination a, .pagination li, ul.pagination *, nav a, [aria-label], a, button, li')]
+    const cands = deepQueryAll('.pagination a, .pagination li, ul.pagination *, nav a, [aria-label], a, button, li')
     return cands.find(el => {
       const t = norm(el.innerText)
       const meta = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''} ${el.className || ''}`
@@ -215,13 +342,13 @@
   ]
 
   function findTabControl(re) {
-    return [...document.querySelectorAll('[role="tab"], button, a, li, .tab, .nav-link, [class*="tab" i]')]
+    return deepQueryAll('[role="tab"], button, a, li, .tab, .nav-link, [class*="tab" i]')
       .find(el => visible(el) && re.test(norm(el.innerText)) && norm(el.innerText).length < 40)
   }
 
   // The main detail/content region (excluding the tab strip), for raw-text capture.
   function detailPanel() {
-    return document.querySelector('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i]') || document.body
+    return (deepQueryAll('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i]')[0] || document.body)
   }
 
   function scrapeSummary() {
@@ -374,23 +501,38 @@
   // Return to the list. Prefer an in-app "back to orders" control (keeps the SPA
   // session warm); fall back to a hard navigation.
   function goToList() {
-    const back = [...document.querySelectorAll('a, button')].find(el =>
+    const back = deepQueryAll('a, button').find(el =>
       visible(el) && /(my\s*)?hd\s*orders|back to orders|all orders|my orders/i.test(norm(el.innerText)))
     if (back) { LOG('returning to list via in-app control'); realClick(back); return }
     if (LIST_URL_RE.test(location.href)) location.reload()
     else location.href = LIST_URL
   }
 
-  // Find the clickable element that opens order `id`'s detail — an anchor/cell
-  // whose text is the PO, else the row containing it.
-  function findOrderOpener(id) {
+  // Find the clickable element that opens order `id`'s detail. The PO shows as a
+  // leaf cell; clicking the row opens it. We locate the leaf whose text is the PO,
+  // then climb to the row-level ancestor (the one that also spans the other
+  // columns) and click that — Angular's row handler is delegated, so a full mouse
+  // sequence on the row container is what fires it.
+  function findPoLeaf(id) {
     const target = String(id)
-    const direct = [...document.querySelectorAll('a, [role="link"], button, td, [role="cell"], [role="gridcell"]')]
-      .find(el => visible(el) && norm(el.textContent) === target)
-    if (direct) return direct.closest('a, [role="link"], button') || direct
-    const row = gridRows().find(r => r.cells.some(c => norm(c) === target))
-    if (row) return row.els.find(e => visible(e)) || row.tr
-    return null
+    return [...allElements(document)]
+      .find(el => visible(el) && el.children.length === 0 && ownText(el) === target)
+  }
+  function findOrderOpener(id) {
+    const leaf = findPoLeaf(id)
+    if (!leaf) return null
+    // Climb until the ancestor is wide enough to be the whole row (spans most of
+    // the grid width), or we hit a real link/button/row element.
+    let el = leaf
+    const gridWidth = (COLS_CACHE && COLS_CACHE.cols.length)
+      ? (COLS_CACHE.cols[COLS_CACHE.cols.length - 1].left - COLS_CACHE.cols[0].left + 200) : 600
+    for (let hops = 0; el && hops < 8; hops++) {
+      if (/^(a|button)$/i.test(el.tagName) || el.getAttribute('role') === 'row' || /(^|[-_ ])row([-_ ]|$)/i.test(el.className || '')) return el
+      const w = el.getBoundingClientRect().width
+      if (w >= gridWidth * 0.7) return el
+      el = el.parentElement
+    }
+    return leaf.closest('a, button, [role="row"]') || leaf.parentElement || leaf
   }
 
   async function dropHead(sweep) {
@@ -452,7 +594,7 @@
       LOG('detail sweep: discarding stale queue'); await clearSweep()
     }
 
-    if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); return }
+    if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); diagnostics(); return }
     const orders = await scrapeAllListPages()
     LOG(`list: scraped ${orders.length} order(s)`)
     const res = await ingest('list', orders)
@@ -512,7 +654,11 @@
     const sweep = await getSweep()
     const sweeping = !!(sweep && sweep.queue.length)
 
-    if (!type) { if (sweeping) { LOG('unexpected page during sweep — recovering to list'); goToList() } return }
+    if (!type) {
+      LOG('page not classified as list or detail'); diagnostics()
+      if (sweeping) { LOG('unexpected page during sweep — recovering to list'); goToList() }
+      return
+    }
 
     // Watchdog: if a page stalls mid-sweep, recover to the list so one stuck page
     // can't wedge the whole crawl. A normal in-place advance clears nothing here,
@@ -549,7 +695,7 @@
   // so the browser navigates to the login page, where content-login.js re-auths
   // with the saved Clopay password — keeping the crawl going unattended.
   function dismissLogoutModal() {
-    const boxes = [...document.querySelectorAll('[role="dialog"], .modal, .ui-dialog, [class*="modal" i], [class*="dialog" i], [class*="popup" i]')]
+    const boxes = deepQueryAll('[role="dialog"], .modal, .ui-dialog, [class*="modal" i], [class*="dialog" i], [class*="popup" i]')
     for (const m of boxes) {
       if (!visible(m)) continue
       const txt = norm(m.innerText).toLowerCase()
@@ -561,8 +707,53 @@
     return false
   }
 
-  LOG('loaded on', location.href, '→', pageType())
+  // ── Bootstrap ────────────────────────────────────────────────────────────
+  // The orders app is an Angular SPA that paints AFTER this script is injected
+  // (a fresh load showed bodyTextLen ~372 for many seconds) and route-changes
+  // without reloading. So don't run once at document_idle — wait until the page
+  // actually classifies (grid/detail rendered), run, and re-run on SPA URL change.
+  let mainRunning = false
+  async function runMainOnce(reason) {
+    if (mainRunning) return
+    mainRunning = true
+    try { LOG('run:', reason, '→', pageType()); await main() }
+    catch (e) { LOG('main error', e?.message || e) }
+    finally { mainRunning = false }
+  }
+
+  // Wait for the page to become classifiable, then run. The Clopay app can
+  // pinwheel for a long time (observed >60s; the data sometimes loads late), so we
+  // NEVER give up while the tab is open — we keep polling once a second until the
+  // grid renders. Diagnostics fire at ~8s and ~60s for visibility, but the wait
+  // continues past them. A generation token cancels a stale wait when the URL
+  // changes (so an old wait can't fire runMain after we've moved on).
+  let waitGen = 0
+  function waitThenRun(reason) {
+    const gen = ++waitGen
+    let ticks = 0, fired = false
+    const iv = setInterval(() => {
+      if (gen !== waitGen) { clearInterval(iv); return } // superseded by a newer wait
+      ticks++
+      if (!fired && pageType()) {
+        fired = true; clearInterval(iv); runMainOnce(reason)
+      } else if (!fired && ticks === 8) {
+        LOG('not classified after ~8s — diagnostic (grid may still be loading):'); diagnostics()
+      } else if (!fired && ticks === 60) {
+        LOG('still not classified after ~60s — the Clopay app is slow/pinwheeling; still waiting:'); diagnostics()
+      }
+      // else: keep waiting indefinitely until it renders.
+    }, 1000)
+  }
+
+  // SPA route changes (orders ↔ installer-details) don't reload the script; watch
+  // the URL so a manual navigation still scrapes.
+  let lastHref = location.href
+  setInterval(() => {
+    if (location.href !== lastHref) { lastHref = location.href; LOG('URL changed →', location.href); COLS_CACHE = null; waitThenRun('url-change') }
+  }, 1000)
+
+  LOG('loaded on', location.href)
   dismissLogoutModal()
   setInterval(() => { try { dismissLogoutModal() } catch { /* ignore */ } }, 8000)
-  main()
+  waitThenRun('initial-load')
 })()
