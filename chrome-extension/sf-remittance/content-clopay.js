@@ -721,24 +721,28 @@
     finally { mainRunning = false }
   }
 
-  // Poll (cheap-ish) for up to ~90s for the page to become classifiable, then run.
-  // A MutationObserver would fire on every Angular tick (storms), so a 500ms poll
-  // is simpler and plenty fast for a human-visible render.
-  function waitThenRun(reason, maxTicks = 120) {
-    let ticks = 0, fired = false, interimLogged = false
+  // Wait for the page to become classifiable, then run. The Clopay app can
+  // pinwheel for a long time (observed >60s; the data sometimes loads late), so we
+  // NEVER give up while the tab is open — we keep polling once a second until the
+  // grid renders. Diagnostics fire at ~8s and ~60s for visibility, but the wait
+  // continues past them. A generation token cancels a stale wait when the URL
+  // changes (so an old wait can't fire runMain after we've moved on).
+  let waitGen = 0
+  function waitThenRun(reason) {
+    const gen = ++waitGen
+    let ticks = 0, fired = false
     const iv = setInterval(() => {
+      if (gen !== waitGen) { clearInterval(iv); return } // superseded by a newer wait
       ticks++
       if (!fired && pageType()) {
         fired = true; clearInterval(iv); runMainOnce(reason)
-      } else if (!fired && ticks === 16) {
-        // ~8s in and still not classified — emit a diagnostic now for fast
-        // feedback, but keep waiting in case the app is just slow to paint.
-        interimLogged = true; LOG('still not classified after ~8s — interim diagnostic:'); diagnostics()
-      } else if (ticks >= maxTicks) {
-        clearInterval(iv)
-        if (!fired) { LOG(`gave up after ${Math.round(maxTicks / 2)}s — final diagnostic (compare totals to the interim to see if the grid ever rendered):`); diagnostics() }
+      } else if (!fired && ticks === 8) {
+        LOG('not classified after ~8s — diagnostic (grid may still be loading):'); diagnostics()
+      } else if (!fired && ticks === 60) {
+        LOG('still not classified after ~60s — the Clopay app is slow/pinwheeling; still waiting:'); diagnostics()
       }
-    }, 500)
+      // else: keep waiting indefinitely until it renders.
+    }, 1000)
   }
 
   // SPA route changes (orders ↔ installer-details) don't reload the script; watch
