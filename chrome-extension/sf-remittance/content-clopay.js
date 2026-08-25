@@ -51,6 +51,27 @@
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
     }
   }
+  /** Robust click for Angular controls (tabs, rows, buttons): scroll into view,
+   *  then fire a full pointer+mouse sequence at the element's real on-screen point
+   *  (dispatched on whatever is actually topmost there, so the framework's handler
+   *  — which may sit on a parent — receives a properly-targeted, bubbling event).
+   *  A bare synthetic click on a guessed element often doesn't navigate. */
+  function clickEl(el) {
+    if (!el) return false
+    try { el.scrollIntoView({ block: 'center', inline: 'center' }) } catch { /* ignore */ }
+    const r = el.getBoundingClientRect()
+    const cx = Math.max(1, Math.min(window.innerWidth - 1, r.left + r.width / 2))
+    const cy = Math.max(1, Math.min(window.innerHeight - 1, r.top + r.height / 2))
+    const target = document.elementFromPoint(cx, cy) || el
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 }
+    for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      try {
+        const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
+        target.dispatchEvent(new Ctor(type, opts))
+      } catch { try { target.dispatchEvent(new MouseEvent(type.replace(/^pointer\w+/, 'mousedown'), opts)) } catch { /* ignore */ } }
+    }
+    return true
+  }
   // Rect-based visibility — robust inside shadow DOM, where offsetParent is often
   // null even for on-screen elements.
   const visible = (el) => {
@@ -345,15 +366,22 @@
   // Notes). We click each tab, wait, and capture both a best-effort structured
   // form AND the panel's raw text (so anything the structured pass misses is still
   // captured in `raw` and easy to refine against).
+  // Tab headers are plain elements with EXACTLY the label text (anchored so the
+  // "IPO Document" card in the Summary panel isn't mistaken for the Documents tab).
   const TABS = [
-    { label: 'summary', re: /summary/i, scrape: scrapeSummary },
-    { label: 'documents', re: /documents?|photos?/i, scrape: scrapeDocuments },
-    { label: 'notes', re: /notes?/i, scrape: scrapeNotes },
+    { label: 'summary', re: /^summary$/i, scrape: scrapeSummary },
+    { label: 'documents', re: /^documents?\s*\/?\s*photos?$/i, scrape: scrapeDocuments },
+    { label: 'notes', re: /^notes$/i, scrape: scrapeNotes },
   ]
 
   function findTabControl(re) {
-    return deepQueryAll('[role="tab"], button, a, li, .tab, .nav-link, [class*="tab" i]')
-      .find(el => visible(el) && re.test(norm(el.innerText)) && norm(el.innerText).length < 40)
+    // The tab header may be a plain <div>/<span>, not a button/[role=tab]. Match any
+    // visible element whose text is exactly the label; prefer the smallest (the
+    // label itself rather than a wrapping container).
+    const cands = allElements(document)
+      .filter(el => visible(el) && re.test(norm(el.innerText || '')))
+      .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)
+    return cands[0]
   }
 
   // The main detail/content region (excluding the tab strip), for raw-text capture.
@@ -440,9 +468,12 @@
   function scrapeNotes() {
     const raw = panelInnerText()
     if (/no notes to display/i.test(raw)) return []
+    // The Notes tab has a compose box whose author label is the logged-in user's
+    // org + name (e.g. "CASTLE GARAGE INC" / "John Fox") — that's not a note.
+    const isComposer = (l) => /castle\s*garage|add(\s+a)?\s+note|type (your|a) note|^send$|^post$|^\+$/i.test(l)
     const out = []
     for (const l of raw.split('\n').map(s => norm(s)).filter(Boolean)) {
-      if (l.length < 3 || isTabLine(l) || isCardLine(l) || /^\d+\s+\S/.test(l) || MILESTONE_RE.test(l)) continue
+      if (l.length < 3 || isTabLine(l) || isCardLine(l) || /^\d+\s+\S/.test(l) || MILESTONE_RE.test(l) || isComposer(l)) continue
       const ts = (l.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
       out.push({ text: ts ? norm(l.replace(ts, '')) : l, timestamp: ts })
     }
@@ -492,7 +523,8 @@
     scrapeCustomerCard(o)
     for (const tab of TABS) {
       const ctl = findTabControl(tab.re)
-      if (ctl) { realClick(ctl); await sleep(1200) }
+      if (ctl) { LOG(`detail: clicking ${tab.label} tab`); clickEl(ctl); await sleep(1400) }
+      else LOG(`detail: ${tab.label} tab not found`)
       try {
         const data = tab.scrape()
         if (tab.label === 'summary') { raw.summary = data.milestones; raw.summary_text = data.text }
@@ -578,12 +610,20 @@
     return false
   }
 
-  // Return to the list. Prefer an in-app "back to orders" control (keeps the SPA
-  // session warm); fall back to a hard navigation.
+  // Return to the list by clicking the "My HD Orders" button on the detail page
+  // (fast, keeps the SPA warm) — a hard URL navigation is the slow last resort.
+  // The button can be a plain <div>/<span>, so match any small visible element
+  // whose text is the button label, then click it robustly.
+  function findBackToList() {
+    const cands = allElements(document).filter(el =>
+      visible(el) && /^(my\s*hd\s*orders|back to orders|all orders|my orders)$/i.test(norm(el.innerText || '')))
+    cands.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)
+    return cands[0]
+  }
   function goToList() {
-    const back = deepQueryAll('a, button').find(el =>
-      visible(el) && /(my\s*)?hd\s*orders|back to orders|all orders|my orders/i.test(norm(el.innerText)))
-    if (back) { LOG('returning to list via in-app control'); realClick(back); return }
+    const back = findBackToList()
+    if (back) { LOG('returning to list via "My HD Orders" button'); clickEl(back); return }
+    LOG('back button not found — falling back to URL nav (slow)')
     if (LIST_URL_RE.test(location.href)) location.reload()
     else location.href = LIST_URL
   }
@@ -652,13 +692,18 @@
     }
     if (!opener) { LOG(`detail sweep: could not find #${id} — skipping`); return dropHead(sweep) }
 
-    // Click to open. If it's an in-place route change we stay in this context, so
-    // poll for the detail view then scrape it directly; if it's a real nav the
-    // page unloads mid-wait and the fresh load handles it.
-    realClick(opener)
-    for (let i = 0; i < 24; i++) {
-      await sleep(500)
-      if (pageType() === 'detail') { LOG(`detail sweep: #${id} opened in place`); return runDetail() }
+    // Click to open. Retry a few times (an Angular row handler can miss a single
+    // dispatch), polling for the detail view after each. An in-place route change
+    // keeps this context (scrape directly); a real nav unloads the page and the
+    // fresh load's main() handles it.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      clickEl(opener)
+      for (let i = 0; i < 12; i++) {
+        await sleep(500)
+        if (pageType() === 'detail') { LOG(`detail sweep: #${id} opened`); return runDetail() }
+      }
+      opener = findOrderOpener(id) || opener
+      LOG(`detail sweep: #${id} didn't open, retry ${attempt + 1}`)
     }
     LOG(`detail sweep: #${id} wouldn't open — skipping`)
     return dropHead(sweep)
