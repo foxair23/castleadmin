@@ -690,7 +690,10 @@
       LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} tries — skipping`)
       return dropHead({ ...sweep, attempts })
     }
-    await setSweep({ ...sweep, attempts })
+    // Remember which id we're opening so runDetail removes THIS one from the queue
+    // (the detail page's scraped PO can differ from the list id; keying advancement
+    // off the detail PO left the head in place and re-opened the same order).
+    await setSweep({ ...sweep, attempts, current: id })
     LOG(`detail sweep: locating #${id} (${sweep.queue.length} left, try ${attempts[id]})`)
     await waitForRows()
     await sleep(800)
@@ -772,9 +775,12 @@
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) return
     if (o) {
-      const attempts = { ...(sweep.attempts || {}) }; delete attempts[o.external_id]
-      const remaining = sweep.queue.filter(x => x !== o.external_id)
-      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
+      // Remove the id we OPENED (and the detail's PO, if different) so we always
+      // advance past this order — never re-open the same one.
+      const opened = sweep.current || o.external_id
+      const attempts = { ...(sweep.attempts || {}) }; delete attempts[opened]; delete attempts[o.external_id]
+      const remaining = sweep.queue.filter(x => x !== opened && x !== o.external_id)
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts, current: null }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
       else { await clearSweep(); LOG('detail sweep: complete'); endCrawl(); goToList() }
     } else {
       LOG('detail sweep: scrape missed, returning to list to retry/skip'); goToList(); await afterBackResume()
