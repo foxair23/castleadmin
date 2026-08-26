@@ -889,11 +889,18 @@
   async function handleCcaDashboard() {
     if (!(await isCrawlTab())) { LOG('on cca dashboard, not the crawl tab — leaving it alone'); return }
     LOG('crawl tab on cca dashboard → heading to HD Program orders')
-    for (let i = 0; i < 30; i++) { // ~15s for the dashboard to render the tile
-      const tile = allElements(document)
+    for (let i = 0; i < 40; i++) { // ~20s for the dashboard (swiper tiles) to render
+      // The label is a <p>HD Program</p>; the clickable is its <a> (a routerLink,
+      // no href), so climb to that before clicking.
+      const label = allElements(document)
         .filter(el => visible(el) && /^hd\s*program$/i.test(norm(el.innerText || '')))
         .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
-      if (tile) { LOG('clicking "HD Program" tile'); clickEl(tile); break }
+      if (label) {
+        const link = label.closest('a, button, [role="link"], [role="button"]') || label
+        LOG('clicking "HD Program" tile')
+        clickEl(link)
+        break
+      }
       await sleep(500)
     }
     // Give the click a moment to navigate; if we're still on cca, go direct.
