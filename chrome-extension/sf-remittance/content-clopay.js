@@ -445,7 +445,10 @@
       const date = (detail.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
       milestones.push({ label: l, detail: detail || null, date })
     }
-    return { text: norm(text).slice(0, 3000), milestones }
+    // Drop the persistent "add a note" composer label (org + user) from the raw
+    // text so it isn't shown as Summary content.
+    const cleanText = lines.filter(l => !/castle\s*garage/i.test(l)).join('\n')
+    return { text: norm(cleanText).slice(0, 3000), milestones }
   }
 
   function scrapeDocuments() {
