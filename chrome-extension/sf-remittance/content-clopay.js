@@ -425,7 +425,13 @@
   // Lines that are the customer card / header, not tab content.
   const isCardLine = (l) => /@|\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|,\s*[A-Z]{2}\s+\d{5}|PO\s*#/.test(l) || /^(call|email|directions)$/i.test(l)
   const isTabLine = (l) => /^(summary|documents?\/?\s?photos?|notes?)$/i.test(l)
-  const MILESTONE_RE = /^(order received|site\s?check|order changes?|new po|on order|shipment tracker|shipment|install|delivery|payment status|payment)\b/i
+  // Action buttons that live inside the Summary/Notes panels — never content.
+  const isButtonLine = (l) => /^(add to calendar|start install|show notes|reschedule|·?\s*reschedule|edit|delete|reply)$/i.test(l)
+  const isComposerLine = (l) => /castle\s*garage|add(\s+a)?\s+note|type (your|a) note|^send$|^post$|^\+$/i.test(l)
+  const isTsLine = (l) => /^\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}\s*[AP]\.?M\.?/i.test(l) // "04/16/2026 12:54 PM"
+  // Milestone headings (Summary). "New PO#" is a sub-line of Order Changes, not a
+  // heading of its own, so it's intentionally NOT here.
+  const MILESTONE_RE = /^(order received|site\s?check|order changes?|on order|shipment tracker|shipment|install|delivery|payment status|payment)\b/i
 
   function scrapeSummary() {
     const text = panelInnerText()
@@ -436,9 +442,9 @@
       // A milestone heading matches a known label, has no date of its own, is short.
       if (!MILESTONE_RE.test(l) || /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l) || l.length > 40) continue
       const detailParts = []
-      for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+      for (let j = i + 1; j < lines.length && j < i + 6; j++) {
         if (MILESTONE_RE.test(lines[j]) && lines[j].length <= 40) break
-        if (isTabLine(lines[j]) || isCardLine(lines[j])) continue
+        if (isTabLine(lines[j]) || isCardLine(lines[j]) || isButtonLine(lines[j]) || isComposerLine(lines[j])) continue
         detailParts.push(lines[j])
       }
       const detail = norm(detailParts.join(' '))
@@ -479,15 +485,26 @@
   function scrapeNotes() {
     const raw = panelInnerText()
     if (/no notes to display/i.test(raw)) return []
-    // The Notes tab has a compose box whose author label is the logged-in user's
-    // org + name (e.g. "CASTLE GARAGE INC" / "John Fox") — that's not a note.
-    const isComposer = (l) => /castle\s*garage|add(\s+a)?\s+note|type (your|a) note|^send$|^post$|^\+$/i.test(l)
+    // Each note is one or more body lines followed by a timestamp line
+    // ("04/16/2026 12:54 PM"). Accumulate body lines, and flush a note when the
+    // timestamp line arrives. Skip the compose box, buttons, and the customer card.
+    const lines = raw.split('\n').map(s => norm(s)).filter(Boolean)
     const out = []
-    for (const l of raw.split('\n').map(s => norm(s)).filter(Boolean)) {
-      if (l.length < 3 || isTabLine(l) || isCardLine(l) || /^\d+\s+\S/.test(l) || MILESTONE_RE.test(l) || isComposer(l)) continue
-      const ts = (l.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
-      out.push({ text: ts ? norm(l.replace(ts, '')) : l, timestamp: ts })
+    let body = []
+    for (const l of lines) {
+      if (isTabLine(l)) { body = []; continue } // clear the header/card that precedes the tab strip
+      if (isCardLine(l) || isComposerLine(l) || isButtonLine(l) || /^\d+\s+\S/.test(l)) continue // skip card address/phone/etc.
+      if (isTsLine(l)) {
+        const text = norm(body.join(' '))
+        if (text) out.push({ text, timestamp: l.replace(/\s*\|.*$/, '').trim() })
+        body = []
+      } else {
+        body.push(l)
+      }
     }
+    // A trailing note with no timestamp line (rare).
+    const tail = norm(body.join(' '))
+    if (tail.length > 3) out.push({ text: tail, timestamp: null })
     return out
   }
 
