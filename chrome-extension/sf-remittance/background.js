@@ -46,6 +46,10 @@ const CRAWLERS = {
     // hdprogram.clopay.com/orders. Opening /orders directly does NOT bounce to
     // login, so a logged-out crawl would just sit on a blank page.
     listUrl: 'https://prod-iam.clopay.com/Account/Login?ReturnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fresponse_type%3Dcode%26client_id%3D6f5a9fb9039d422abebe546ef935951b%26state%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH%26redirect_uri%3Dhttps%253A%252F%252Fcca.clopay.com%252Fsignin-oidc%26scope%3Dopenid%2520profile%26code_challenge%3DFemCme6P6lp59gS8nDRLwOnnnyZgSAWtuHKdUlpHcf8%26code_challenge_method%3DS256%26nonce%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH',
+    // A full detail backfill of ~170 orders takes a while; give it longer before
+    // the safety timeout force-closes the tab (the in-page sweep also resumes if
+    // it is interrupted).
+    timeoutMs: 90 * 60 * 1000,
     stateKey: 'clopayCrawl', modeKey: 'clopayCrawlMode',
     alarm: 'clopay-crawl', timeoutAlarm: 'clopay-crawl-timeout',
     scheduleFlag: 'clopayScheduleEnabled', enabledFlag: 'clopayEnabled',
@@ -109,11 +113,12 @@ async function tabExists(tabId) {
 // mode: 'full' | 'incremental'. force:true (the manual button) always starts a
 // fresh crawl. Returns { started, reason }.
 async function startCrawl(c, mode, { force = false } = {}) {
+  const timeoutMs = c.timeoutMs || CRAWL_TIMEOUT_MS
   const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
   // Only treat an existing crawl as "already running" if it's recent AND its tab
   // is actually still open. Stale state (tab closed / worker died / a missed
   // 'done' message) must not block a new crawl — especially the manual button.
-  if (state && !force && Date.now() - state.startedAt < CRAWL_TIMEOUT_MS && await tabExists(state.tabId)) {
+  if (state && !force && Date.now() - state.startedAt < timeoutMs && await tabExists(state.tabId)) {
     console.log(`[${c.name}] crawl already running`)
     return { started: false, reason: 'already running' }
   }
@@ -126,7 +131,7 @@ async function startCrawl(c, mode, { force = false } = {}) {
   const tab = await chrome.tabs.create({ url: c.listUrl, active: false })
   await chrome.storage.local.set({ [c.stateKey]: { tabId: tab.id, mode, startedAt: Date.now() } })
   await setStatus({ source: `${c.name}-schedule`, mode, state: 'running' })
-  chrome.alarms.create(c.timeoutAlarm, { when: Date.now() + CRAWL_TIMEOUT_MS })
+  chrome.alarms.create(c.timeoutAlarm, { when: Date.now() + timeoutMs })
   console.log(`[${c.name}] crawl started:`, mode, force ? '(forced)' : '')
   return { started: true }
 }
