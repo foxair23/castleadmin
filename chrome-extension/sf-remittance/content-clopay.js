@@ -538,25 +538,44 @@
     }
   }
 
+  // A short signature of the tab-panel content, to tell whether a tab click
+  // actually switched the panel (vs. a click that didn't register).
+  const panelSig = () => { const t = norm(panelInnerText()); return `${t.length}:${t.slice(0, 40)}:${t.slice(-40)}` }
+
   async function scrapeDetail() {
     const o = { hasDetail: true }
     const raw = {}
     scrapeCustomerCard(o)
     // The tab strip can render seconds after the customer card (and pinwheel), so
-    // wait for the whole tab bar (first + last tab) to exist before touching it —
-    // otherwise we'd click nothing and get stuck on the default (Summary) tab.
+    // wait for the whole tab bar (first + last tab) to exist before touching it.
     for (let i = 0; i < 60; i++) { // up to ~24s
       if (findTabControl(TABS[0].re) && findTabControl(TABS[TABS.length - 1].re)) break
       await sleep(400)
     }
+    let prevSig = panelSig() // the (Summary) panel we start on
     for (const tab of TABS) {
       let ctl = null
       for (let i = 0; i < 12 && !ctl; i++) { ctl = findTabControl(tab.re); if (!ctl) await sleep(400) }
       if (!ctl) { LOG(`detail: ${tab.label} tab not found`); continue }
-      LOG(`detail: clicking ${tab.label} tab`)
-      clickEl(ctl)
-      await sleep(500)
-      await waitForPanelStable() // wait for the panel to actually load (handles pinwheel)
+
+      // Summary is the default tab (already showing); the others must be switched
+      // to. A synthetic click often doesn't register until the tab is interactive,
+      // so re-click until the panel content actually CHANGES — otherwise we'd
+      // scrape the Summary panel again as "documents"/"notes".
+      let switched = tab.label === 'summary'
+      for (let attempt = 0; attempt < 5 && !switched; attempt++) {
+        LOG(`detail: clicking ${tab.label} tab (try ${attempt + 1})`)
+        clickEl(ctl)
+        for (let i = 0; i < 10; i++) { // ~4s to register the switch
+          await sleep(400)
+          if (panelSig() !== prevSig) { switched = true; break }
+        }
+        if (!switched) ctl = findTabControl(tab.re) || ctl
+      }
+      if (!switched && tab.label !== 'summary') { LOG(`detail: ${tab.label} tab did not switch — skipping`); continue }
+
+      await waitForPanelStable() // let the (now-switched) panel finish loading
+      prevSig = panelSig()
       try {
         const data = tab.scrape()
         if (tab.label === 'summary') { raw.summary = data.milestones; raw.summary_text = data.text }
