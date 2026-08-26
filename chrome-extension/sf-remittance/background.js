@@ -40,12 +40,12 @@ const CRAWLERS = {
   },
   clopay: {
     name: 'clopay', vendor: 'clopay_hd',
-    // Start at cca.clopay.com (the OIDC entry point): logged out it redirects to
-    // the prod-iam login (content-login signs in), logged in it shows the
-    // dashboard. Either way content-clopay's cca handler then goes HD Program →
+    // Start at the Clopay IAM login URL (per Castle — this stable entry point does
+    // not expire): content-login signs in on prod-iam, the OIDC flow returns to
+    // cca.clopay.com, and content-clopay's cca handler clicks HD Program →
     // hdprogram.clopay.com/orders. Opening /orders directly does NOT bounce to
     // login, so a logged-out crawl would just sit on a blank page.
-    listUrl: 'https://cca.clopay.com/',
+    listUrl: 'https://prod-iam.clopay.com/Account/Login?ReturnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fresponse_type%3Dcode%26client_id%3D6f5a9fb9039d422abebe546ef935951b%26state%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH%26redirect_uri%3Dhttps%253A%252F%252Fcca.clopay.com%252Fsignin-oidc%26scope%3Dopenid%2520profile%26code_challenge%3DFemCme6P6lp59gS8nDRLwOnnnyZgSAWtuHKdUlpHcf8%26code_challenge_method%3DS256%26nonce%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH',
     stateKey: 'clopayCrawl', modeKey: 'clopayCrawlMode',
     alarm: 'clopay-crawl', timeoutAlarm: 'clopay-crawl-timeout',
     scheduleFlag: 'clopayScheduleEnabled', enabledFlag: 'clopayEnabled',
