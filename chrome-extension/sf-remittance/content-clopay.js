@@ -445,7 +445,10 @@
       const date = (detail.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
       milestones.push({ label: l, detail: detail || null, date })
     }
-    return { text: norm(text).slice(0, 3000), milestones }
+    // Drop the persistent "add a note" composer label (org + user) from the raw
+    // text so it isn't shown as Summary content.
+    const cleanText = lines.filter(l => !/castle\s*garage/i.test(l)).join('\n')
+    return { text: norm(cleanText).slice(0, 3000), milestones }
   }
 
   function scrapeDocuments() {
@@ -785,9 +788,15 @@
     const mode = await getCrawlMode()
     const autoDetail = !!mode || cfg.clopayAutoDetail
     const cap = mode === 'full' ? 250 : mode === 'incremental' ? 25 : cfg.clopayMaxDetailPerRun
-    if (autoDetail && res && res.needDetail && res.needDetail.length) {
-      const queue = res.needDetail.slice(0, cap)
-      LOG(`detail sweep: starting ${queue.length} of ${res.needDetail.length} needing detail${mode ? ` (${mode})` : ''}`)
+    // A FULL crawl re-details EVERY order (refreshes detail / repopulates it after
+    // a data change), even ones already marked detail_scraped_at. Incremental /
+    // manual detail only the orders the server still flags as needing it.
+    const targets = mode === 'full'
+      ? orders.map(o => o.external_id).filter(Boolean)
+      : ((res && res.needDetail) || [])
+    if (autoDetail && targets.length) {
+      const queue = targets.slice(0, cap)
+      LOG(`detail sweep: starting ${queue.length}${mode === 'full' ? ` (full — all orders)` : ` of ${targets.length} needing detail`}${mode ? ` (${mode})` : ''}`)
       await setSweep({ queue, startedAt: Date.now() })
       await resumeSweepOnList()
     } else {

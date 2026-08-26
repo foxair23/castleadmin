@@ -142,6 +142,11 @@ function NudgeButton({ orderId, sentAt }: { orderId: string; sentAt: string | nu
 
 // ── Detail drawer (Clopay: Summary timeline / Documents / Notes) ────────────
 const str = (v: unknown): string => v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+// The Clopay detail pages carry a persistent "add a note" composer whose author
+// label is the logged-in org + user (e.g. "CASTLE GARAGE INCJohn Fox"). It's not
+// real content, so scrub it wherever it lands in the captured text.
+const stripComposer = (t: string): string =>
+  t.replace(/castle\s*garage[^\n]*/gi, '').replace(/[ \t]{2,}/g, ' ').replace(/\n{2,}/g, '\n').trim()
 // Keys used for the done/date badges — everything else in a milestone object is
 // shown as a plain key: value line so nothing captured is hidden.
 const DONE_KEYS = ['done', 'completed', 'complete', 'isDone']
@@ -190,7 +195,10 @@ function SummaryList({ summary }: { summary: unknown }) {
 function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number }) {
   const r = order.raw ?? {}
   const documents = Array.isArray(r.documents) ? r.documents : []
-  const notes = Array.isArray(r.notes) ? r.notes : []
+  // Drop notes that are only the composer label (nothing left after scrubbing).
+  const notes = (Array.isArray(r.notes) ? r.notes : []).filter(
+    n => stripComposer(str((n as Record<string, unknown>).text || (n as Record<string, unknown>).note || (n as Record<string, unknown>).body || (n as Record<string, unknown>).message)),
+  )
   return (
     <tr className="bg-gray-50">
       <td colSpan={colSpan} className="px-4 py-4">
@@ -199,9 +207,12 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Summary</h4>
             {Array.isArray(r.summary) && r.summary.length > 0
               ? <SummaryList summary={r.summary} />
-              : (typeof (r as { summary_text?: unknown }).summary_text === 'string' && (r as { summary_text: string }).summary_text
-                  ? <p className="text-gray-600 text-sm whitespace-pre-wrap">{(r as { summary_text: string }).summary_text}</p>
-                  : <SummaryList summary={r.summary} />)}
+              : (() => {
+                  const cleaned = stripComposer(str((r as { summary_text?: unknown }).summary_text))
+                  return cleaned
+                    ? <p className="text-gray-600 text-sm whitespace-pre-wrap">{cleaned}</p>
+                    : <SummaryList summary={r.summary} />
+                })()}
           </section>
           <section>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Documents</h4>
@@ -228,7 +239,7 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
             {notes.length ? (
               <ul className="space-y-2">
                 {notes.map((n, i) => {
-                  const text = str(n.text || n.note || n.body || n.message)
+                  const text = stripComposer(str(n.text || n.note || n.body || n.message))
                   const ts = str(n.timestamp || n.date || n.time)
                   return (
                     <li key={i} className="text-sm">
