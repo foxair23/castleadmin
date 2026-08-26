@@ -6,6 +6,7 @@ import { loadSfJobIndex, matchToSfJob, type SfJobMatch } from '@/lib/matching/sf
 
 interface OrderLike {
   id: string
+  external_id?: string | null
   customer_po: string | null
   customer_name: string | null
   email: string | null
@@ -20,7 +21,9 @@ export async function resolveSfJobMatches(db: SupabaseClient, orders: OrderLike[
   const index = await loadSfJobIndex(db, { withContacts: true })
   for (const o of orders) {
     out.set(o.id, matchToSfJob(index, {
-      po: o.customer_po,
+      // Genie's PO is customer_po; Clopay has none, and its PO is the external_id
+      // (which we also write to the SF job's po_number on create), so fall back.
+      po: o.customer_po ?? o.external_id ?? null,
       customerName: o.customer_name,
       email: o.email,
       phone: o.phone,

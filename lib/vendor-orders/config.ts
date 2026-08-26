@@ -71,8 +71,14 @@ export const VENDORS: Record<string, VendorConfig> = {
   clopay_hd: {
     key: 'clopay_hd',
     label: 'Clopay — Home Depot',
+    // Clopay HD Program orders are Home Depot orders, so created SF jobs use the
+    // same custom fields as Genie: the Clopay PO is the Home Depot Order # and the
+    // store maps to Home Depot Store #. No service line (priced/added in SF).
     sfJobSource: 'Clopay',
-    sfCustomFields: [],
+    sfCustomFields: [
+      { sfFieldName: 'Home Depot Order #', from: 'external_id' },
+      { sfFieldName: 'Home Depot Store #', from: 'store_number' },
+    ],
   },
 }
 

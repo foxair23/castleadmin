@@ -26,7 +26,7 @@
   const MAX_PAGES = 40            // safety cap for list pagination
   const MAX_ATTEMPTS = 3          // per-order tries in a sweep before giving up (retried next crawl)
   const WATCHDOG_MS = 60000       // if a page doesn't progress in this long mid-sweep, recover to the list
-  const SWEEP_STALE_MS = 15 * 60 * 1000 // a sweep older than this is abandoned, not resumed
+  const SWEEP_STALE_MS = 30 * 60 * 1000 // a sweep with no PROGRESS for this long is abandoned (startedAt is refreshed as orders complete, so an actively-progressing sweep never goes stale)
   const LIST_URL = 'https://hdprogram.clopay.com/orders'
   const LIST_URL_RE = /\/orders(?:$|[/?#])/i
   const DETAIL_URL_RE = /installer-details/i
@@ -425,7 +425,13 @@
   // Lines that are the customer card / header, not tab content.
   const isCardLine = (l) => /@|\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|,\s*[A-Z]{2}\s+\d{5}|PO\s*#/.test(l) || /^(call|email|directions)$/i.test(l)
   const isTabLine = (l) => /^(summary|documents?\/?\s?photos?|notes?)$/i.test(l)
-  const MILESTONE_RE = /^(order received|site\s?check|order changes?|new po|on order|shipment tracker|shipment|install|delivery|payment status|payment)\b/i
+  // Action buttons that live inside the Summary/Notes panels — never content.
+  const isButtonLine = (l) => /^(add to calendar|start install|show notes|reschedule|·?\s*reschedule|edit|delete|reply)$/i.test(l)
+  const isComposerLine = (l) => /castle\s*garage|add(\s+a)?\s+note|type (your|a) note|^send$|^post$|^\+$/i.test(l)
+  const isTsLine = (l) => /^\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}\s*[AP]\.?M\.?/i.test(l) // "04/16/2026 12:54 PM"
+  // Milestone headings (Summary). "New PO#" is a sub-line of Order Changes, not a
+  // heading of its own, so it's intentionally NOT here.
+  const MILESTONE_RE = /^(order received|site\s?check|order changes?|on order|shipment tracker|shipment|install|delivery|payment status|payment)\b/i
 
   function scrapeSummary() {
     const text = panelInnerText()
@@ -436,9 +442,9 @@
       // A milestone heading matches a known label, has no date of its own, is short.
       if (!MILESTONE_RE.test(l) || /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l) || l.length > 40) continue
       const detailParts = []
-      for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+      for (let j = i + 1; j < lines.length && j < i + 6; j++) {
         if (MILESTONE_RE.test(lines[j]) && lines[j].length <= 40) break
-        if (isTabLine(lines[j]) || isCardLine(lines[j])) continue
+        if (isTabLine(lines[j]) || isCardLine(lines[j]) || isButtonLine(lines[j]) || isComposerLine(lines[j])) continue
         detailParts.push(lines[j])
       }
       const detail = norm(detailParts.join(' '))
@@ -479,15 +485,26 @@
   function scrapeNotes() {
     const raw = panelInnerText()
     if (/no notes to display/i.test(raw)) return []
-    // The Notes tab has a compose box whose author label is the logged-in user's
-    // org + name (e.g. "CASTLE GARAGE INC" / "John Fox") — that's not a note.
-    const isComposer = (l) => /castle\s*garage|add(\s+a)?\s+note|type (your|a) note|^send$|^post$|^\+$/i.test(l)
+    // Each note is one or more body lines followed by a timestamp line
+    // ("04/16/2026 12:54 PM"). Accumulate body lines, and flush a note when the
+    // timestamp line arrives. Skip the compose box, buttons, and the customer card.
+    const lines = raw.split('\n').map(s => norm(s)).filter(Boolean)
     const out = []
-    for (const l of raw.split('\n').map(s => norm(s)).filter(Boolean)) {
-      if (l.length < 3 || isTabLine(l) || isCardLine(l) || /^\d+\s+\S/.test(l) || MILESTONE_RE.test(l) || isComposer(l)) continue
-      const ts = (l.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
-      out.push({ text: ts ? norm(l.replace(ts, '')) : l, timestamp: ts })
+    let body = []
+    for (const l of lines) {
+      if (isTabLine(l)) { body = []; continue } // clear the header/card that precedes the tab strip
+      if (isCardLine(l) || isComposerLine(l) || isButtonLine(l) || /^\d+\s+\S/.test(l)) continue // skip card address/phone/etc.
+      if (isTsLine(l)) {
+        const text = norm(body.join(' '))
+        if (text) out.push({ text, timestamp: l.replace(/\s*\|.*$/, '').trim() })
+        body = []
+      } else {
+        body.push(l)
+      }
     }
+    // A trailing note with no timestamp line (rare).
+    const tail = norm(body.join(' '))
+    if (tail.length > 3) out.push({ text: tail, timestamp: null })
     return out
   }
 
@@ -532,7 +549,7 @@
   // can take 4–8s to populate, so: never return before a small minimum (so a
   // spinner-then-content tab isn't scraped early), require the length to hold
   // steady across ~1.2s, and allow up to ~12s.
-  async function waitForPanelStable(maxMs = 12000, minMs = 1500) {
+  async function waitForPanelStable(maxMs = 7000, minMs = 1000) {
     const start = performance.now()
     let prev = -1, stable = 0
     while (performance.now() - start < maxMs) {
@@ -542,6 +559,24 @@
       if (stable >= 3 && performance.now() - start >= minMs) return // steady ~1.2s and past the floor
       await sleep(400)
     }
+  }
+
+  // Some tabs (Notes/Documents on busy orders) lazy-load more rows as you scroll,
+  // so scroll the window + any scrollable container to the bottom repeatedly until
+  // the panel text stops growing, then return to the top. Without this we only
+  // capture what's initially visible.
+  async function loadAllInPanel(maxMs = 15000) {
+    const start = performance.now()
+    let prev = -1, stable = 0
+    while (performance.now() - start < maxMs) {
+      scrollAllToBottom()
+      await sleep(600)
+      const len = panelInnerText().length
+      if (len === prev) { if (++stable >= 2) break } else stable = 0
+      prev = len
+    }
+    try { window.scrollTo(0, 0) } catch { /* ignore */ }
+    for (const el of document.querySelectorAll('*')) { if (el.scrollTop > 0) try { el.scrollTop = 0 } catch { /* ignore */ } }
   }
 
   // A short signature of the tab-panel content, to tell whether a tab click
@@ -559,7 +594,9 @@
       await sleep(400)
     }
     let prevSig = panelSig() // the (Summary) panel we start on
+    const deadline = performance.now() + 45000 // hard cap so one long order can't wedge the sweep
     for (const tab of TABS) {
+      if (performance.now() > deadline) { LOG(`detail: time budget hit — capturing ${tab.label}+ from what's loaded`); break }
       let ctl = null
       for (let i = 0; i < 12 && !ctl; i++) { ctl = findTabControl(tab.re); if (!ctl) await sleep(400) }
       if (!ctl) { LOG(`detail: ${tab.label} tab not found`); continue }
@@ -580,10 +617,13 @@
       }
       if (!switched && tab.label !== 'summary') { LOG(`detail: ${tab.label} tab did not switch — skipping`); continue }
 
-      await waitForPanelStable() // let the (now-switched) panel finish loading
+      await waitForPanelStable()  // let the (now-switched) panel finish loading
+      if (tab.label !== 'summary') await loadAllInPanel(10000) // scroll to pull in lazy rows (long Notes/Docs)
       prevSig = panelSig()
       try {
         const data = tab.scrape()
+        const n = tab.label === 'summary' ? (data.milestones || []).length : (Array.isArray(data) ? data.length : 0)
+        LOG(`detail: ${tab.label} captured ${n} item(s)`)
         if (tab.label === 'summary') { raw.summary = data.milestones; raw.summary_text = data.text }
         else if (tab.label === 'documents') raw.documents = data
         else if (tab.label === 'notes') raw.notes = data
@@ -830,7 +870,9 @@
       const opened = sweep.current || o.external_id
       const attempts = { ...(sweep.attempts || {}) }; delete attempts[opened]; delete attempts[o.external_id]
       const remaining = sweep.queue.filter(x => x !== opened && x !== o.external_id)
-      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts, current: null }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
+      // Refresh startedAt so an actively-progressing sweep survives a crawl-timeout
+      // and resumes (rather than going stale and restarting from the front).
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts, current: null, startedAt: Date.now() }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
       else { await clearSweep(); LOG('detail sweep: complete'); endCrawl(); goToList() }
     } else {
       LOG('detail sweep: scrape missed, returning to list to retry/skip'); goToList(); await afterBackResume()
