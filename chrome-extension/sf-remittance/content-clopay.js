@@ -51,6 +51,35 @@
       el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
     }
   }
+  /** Robust click for Angular controls (tabs, rows, buttons): scroll into view,
+   *  then fire a full pointer+mouse sequence at the element's real on-screen point
+   *  (dispatched on whatever is actually topmost there, so the framework's handler
+   *  — which may sit on a parent — receives a properly-targeted, bubbling event).
+   *  A bare synthetic click on a guessed element often doesn't navigate. */
+  function clickEl(el) {
+    if (!el) return false
+    try { el.scrollIntoView({ block: 'center', inline: 'center' }) } catch { /* ignore */ }
+    const r = el.getBoundingClientRect()
+    const cx = Math.max(1, Math.min(window.innerWidth - 1, r.left + r.width / 2))
+    const cy = Math.max(1, Math.min(window.innerHeight - 1, r.top + r.height / 2))
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 }
+    // Dispatch on the element ITSELF (so its handler fires even if something sits
+    // on top at that point) AND on whatever is topmost there; then the native
+    // .click() for the default action (anchor routerLink / (click) handler).
+    const fromPt = document.elementFromPoint(cx, cy)
+    const targets = fromPt && fromPt !== el ? [el, fromPt] : [el]
+    for (const t of targets) {
+      for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        try {
+          const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
+          t.dispatchEvent(new Ctor(type, opts))
+        } catch { try { t.dispatchEvent(new MouseEvent('click', opts)) } catch { /* ignore */ } }
+      }
+    }
+    try { el.focus() } catch { /* ignore */ }
+    try { el.click() } catch { /* ignore */ } // native default action (most faithful)
+    return true
+  }
   // Rect-based visibility — robust inside shadow DOM, where offsetParent is often
   // null even for on-screen elements.
   const visible = (el) => {
@@ -194,14 +223,19 @@
         arr.sort((a, b) => a.y - b.y || a.left - b.left)
         const text = norm(arr.map(a => a.t).join(' '))
         if (field === '__customer') {
-          // The CUSTOMER DETAILS cell holds the name and the street address —
-          // sometimes as separate lines, sometimes in one text node ("SMITH JOHN
-          // 402 8TH ST"). Split the joined text at the first street-number token:
-          // everything before it is the name, from it on is the address.
-          const m = text.match(/^(.+?)\s+(\d.*)$/)
-          if (m) { o.customer_name = norm(m[1]); o.street_address = norm(m[2]) }
-          else { o.customer_name = text || null }
+          // Clopay's list "CUSTOMER DETAILS" cell is unreliable — it's rendered
+          // address-first ("<street> <NAME>") and the NAME frequently belongs to a
+          // different row (observed: order A's cell carrying order B's name). So we
+          // do NOT trust the list name. Keep the whole cell in raw for reference,
+          // capture just the street address (which IS row-aligned) when it's the
+          // clear leading part, and leave customer_name for the DETAIL scrape to
+          // fill authoritatively.
           raw.customer_details = text
+          // Trailing "Last, First" (comma) is the one unambiguous case — split it.
+          const comma = text.match(/^(\d.+?)\s+([A-Z][A-Za-z'’\-]+,\s*[A-Z][A-Za-z'’\-]+)$/)
+          if (comma) { o.street_address = norm(comma[1]); o.customer_name = norm(comma[2]) }
+          else if (/^\d/.test(text)) { o.street_address = text } // address-led: keep as address, name via detail
+          else { o.customer_name = text } // name-led fallback (older layout)
         } else if (field === '__statusDate') {
           raw.status_date = text || null
         } else if (field === 'order_date') {
@@ -340,15 +374,22 @@
   // Notes). We click each tab, wait, and capture both a best-effort structured
   // form AND the panel's raw text (so anything the structured pass misses is still
   // captured in `raw` and easy to refine against).
+  // Tab headers are plain elements with EXACTLY the label text (anchored so the
+  // "IPO Document" card in the Summary panel isn't mistaken for the Documents tab).
   const TABS = [
-    { label: 'summary', re: /summary/i, scrape: scrapeSummary },
-    { label: 'documents', re: /documents?|photos?/i, scrape: scrapeDocuments },
-    { label: 'notes', re: /notes?/i, scrape: scrapeNotes },
+    { label: 'summary', re: /^summary$/i, scrape: scrapeSummary },
+    { label: 'documents', re: /^documents?\s*\/?\s*photos?$/i, scrape: scrapeDocuments },
+    { label: 'notes', re: /^notes$/i, scrape: scrapeNotes },
   ]
 
   function findTabControl(re) {
-    return deepQueryAll('[role="tab"], button, a, li, .tab, .nav-link, [class*="tab" i]')
-      .find(el => visible(el) && re.test(norm(el.innerText)) && norm(el.innerText).length < 40)
+    // The tab header may be a plain <div>/<span>, not a button/[role=tab]. Match any
+    // visible element whose text is exactly the label; prefer the smallest (the
+    // label itself rather than a wrapping container).
+    const cands = allElements(document)
+      .filter(el => visible(el) && re.test(norm(el.innerText || '')))
+      .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)
+    return cands[0]
   }
 
   // The main detail/content region (excluding the tab strip), for raw-text capture.
@@ -375,90 +416,172 @@
   }
   try { window.__clopayDetailDiag = detailDiagnostics } catch { /* ignore */ }
 
+  // Text of the active tab's content. Angular renders only the active tab, so the
+  // body is header + customer card + this tab; each parser filters the noise.
+  function panelInnerText() {
+    const p = detailPanel()
+    return (p && p.innerText) || document.body.innerText || ''
+  }
+  // Lines that are the customer card / header, not tab content.
+  const isCardLine = (l) => /@|\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|,\s*[A-Z]{2}\s+\d{5}|PO\s*#/.test(l) || /^(call|email|directions)$/i.test(l)
+  const isTabLine = (l) => /^(summary|documents?\/?\s?photos?|notes?)$/i.test(l)
+  const MILESTONE_RE = /^(order received|site\s?check|order changes?|new po|on order|shipment tracker|shipment|install|delivery|payment status|payment)\b/i
+
   function scrapeSummary() {
-    const panel = detailPanel()
-    const summary = { _text: norm(panel.innerText).slice(0, 4000) }
-    // Best-effort milestone timeline: rows/items that carry a label + a date and a
-    // completed/pending marker (green check vs gray). Captured leniently.
-    const items = [...panel.querySelectorAll('li, [class*="step" i], [class*="milestone" i], [class*="timeline" i], [class*="status" i], tr')]
+    const text = panelInnerText()
+    const lines = text.split('\n').map(s => norm(s)).filter(Boolean)
     const milestones = []
-    for (const el of items) {
-      const text = norm(el.innerText)
-      if (!text || text.length > 200) continue
-      const date = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
-      const cls = `${el.className || ''} ${[...el.querySelectorAll('[class]')].map(x => x.className).join(' ')}`.toLowerCase()
-      const done = /complete|done|success|green|check|active/.test(cls) || /✓|✔/.test(el.innerHTML)
-      const label = norm(text.replace(/\d{1,2}\/\d{1,2}\/\d{2,4}.*$/, '')) || text
-      if (label) milestones.push({ label, date, done })
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i]
+      // A milestone heading matches a known label, has no date of its own, is short.
+      if (!MILESTONE_RE.test(l) || /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l) || l.length > 40) continue
+      const detailParts = []
+      for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+        if (MILESTONE_RE.test(lines[j]) && lines[j].length <= 40) break
+        if (isTabLine(lines[j]) || isCardLine(lines[j])) continue
+        detailParts.push(lines[j])
+      }
+      const detail = norm(detailParts.join(' '))
+      const date = (detail.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
+      milestones.push({ label: l, detail: detail || null, date })
     }
-    if (milestones.length) summary.milestones = milestones
-    // Payment: a PAID marker + doc #/date/amount if present.
-    const payMatch = norm(panel.innerText).match(/payment[^$]*?(paid|pending|unpaid)?[^$]*?(?:\$?\s*([\d,]+\.\d{2}))?/i)
-    if (payMatch && (payMatch[1] || payMatch[2])) summary.payment = { status: payMatch[1] || null, amount: payMatch[2] || null }
-    return summary
+    return { text: norm(text).slice(0, 3000), milestones }
   }
 
   function scrapeDocuments() {
-    const panel = detailPanel()
     const out = []
     const seen = new Set()
-    for (const a of panel.querySelectorAll('a[href]')) {
+    for (const a of deepQueryAll('a[href]')) {
+      if (!visible(a)) continue
       const href = a.href
       if (!href || /^javascript:/i.test(href) || seen.has(href)) continue
       const name = norm(a.innerText) || norm(a.getAttribute('title') || a.getAttribute('aria-label') || '') || href.split('/').pop()
-      const row = a.closest('li, tr, [class*="row" i], div')
-      const date = (norm(row?.innerText || '').match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
+      if (!name || /^(call|email|directions)$/i.test(name)) continue
       seen.add(href)
-      out.push({ name, date, href })
+      out.push({ name, date: null, href })
     }
-    // Rows that name a document/photo but have no link yet (metadata only).
-    for (const el of panel.querySelectorAll('li, tr, [class*="document" i], [class*="photo" i]')) {
-      const text = norm(el.innerText)
-      if (!text || text.length > 160 || el.querySelector('a[href]')) continue
-      if (/\.(pdf|jpe?g|png|docx?|xlsx?|tiff?)\b/i.test(text) || /document|photo|acknowledg|invoice/i.test(text)) {
-        const date = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/) || [])[0] || null
-        out.push({ name: norm(text.replace(/\d{1,2}\/\d{1,2}\/\d{2,4}.*$/, '')) || text, date, href: null })
+    // Text rows: a name line immediately followed by a date line (e.g. "New IPO" /
+    // "08/25/26").
+    const lines = panelInnerText().split('\n').map(s => norm(s)).filter(Boolean)
+    for (let i = 0; i < lines.length - 1; i++) {
+      const name = lines[i], next = lines[i + 1]
+      if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(next) && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(name)
+        && name.length <= 60 && !isTabLine(name) && !isCardLine(name) && !/^\d+\s+\S/.test(name)) {
+        if (!out.some(d => d.name === name && d.date === next)) out.push({ name, date: next, href: null })
       }
     }
     return out
   }
 
   function scrapeNotes() {
-    const panel = detailPanel()
+    const raw = panelInnerText()
+    if (/no notes to display/i.test(raw)) return []
+    // The Notes tab has a compose box whose author label is the logged-in user's
+    // org + name (e.g. "CASTLE GARAGE INC" / "John Fox") — that's not a note.
+    const isComposer = (l) => /castle\s*garage|add(\s+a)?\s+note|type (your|a) note|^send$|^post$|^\+$/i.test(l)
     const out = []
-    for (const el of panel.querySelectorAll('li, tr, [class*="note" i], [class*="comment" i], [class*="message" i]')) {
-      const text = norm(el.innerText)
-      if (!text || text.length > 800) continue
-      const ts = (text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
-      const body = ts ? norm(text.replace(ts, '')) : text
-      if (body) out.push({ text: body, timestamp: ts })
+    for (const l of raw.split('\n').map(s => norm(s)).filter(Boolean)) {
+      if (l.length < 3 || isTabLine(l) || isCardLine(l) || /^\d+\s+\S/.test(l) || MILESTONE_RE.test(l) || isComposer(l)) continue
+      const ts = (l.match(/\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2}\s*[ap]?m?)?/i) || [])[0] || null
+      out.push({ text: ts ? norm(l.replace(ts, '')) : l, timestamp: ts })
     }
     return out
   }
 
-  // Customer card at the top of the detail view → address/phone/email + PO header.
+  // Customer card at the top of the detail view. This is the AUTHORITATIVE source
+  // for name + address (the list cell is mangled). The card is the smallest
+  // visible element containing the "DIRECTIONS" button and a phone number; we read
+  // its lines directly:  NAME / street / City, ST ZIP / phone / email / CALL EMAIL
+  // DIRECTIONS.
   function scrapeCustomerCard(o) {
-    const txt = norm(document.body.innerText)
-    const po = (txt.match(/PO\s*#?\s*[:]?\s*([A-Z0-9][A-Z0-9-]{4,})/i) || [])[1]
+    const bodyTxt = norm(document.body.innerText)
+    const po = (bodyTxt.match(/PO\s*#?\s*[:]?\s*([A-Z0-9][A-Z0-9-]{4,})/i) || [])[1]
     if (po) o.external_id = po
-    const email = (txt.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0]
+    const ot = bodyTxt.match(/([A-Z][A-Z /]{2,30}?)\s*[·|]\s*PO\s*#/i)
+    if (ot) o.order_type = norm(ot[1])
+
+    const phoneRe = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/
+    const card = deepQueryAll('*')
+      .filter(el => visible(el) && /directions/i.test(el.innerText || '') && phoneRe.test(el.innerText || ''))
+      .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+    const cardTxt = card ? card.innerText : document.body.innerText
+
+    const email = (cardTxt.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [])[0]
     if (email) o.email = email
-    const phone = (txt.match(/\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/) || [])[0]
+    const phone = (cardTxt.match(phoneRe) || [])[0]
     if (phone) o.phone = phone
-    const csz = txt.match(/([A-Za-z .'-]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/)
-    if (csz) { o.city = o.city || norm(csz[1]); o.state_prov = csz[2]; o.postal_code = csz[3] }
+    const csz = cardTxt.match(/([A-Za-z][A-Za-z .'-]+),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/)
+    if (csz) { o.city = norm(csz[1]); o.state_prov = csz[2]; o.postal_code = csz[3] }
+
+    const lines = cardTxt.split('\n').map(s => norm(s)).filter(Boolean)
+      .filter(l => !/^(call|email|directions)$/i.test(l)) // drop the action buttons
+    // Name: first line that isn't the address (no leading number), a phone, an
+    // email, or the city/state/zip line.
+    const nameLine = lines.find(l =>
+      !/^\d/.test(l) && !/@/.test(l) && !phoneRe.test(l) && !(csz && l.includes(csz[0])) && /[A-Za-z]{2}/.test(l) && l.length < 60)
+    if (nameLine) o.customer_name = nameLine
+    // Street address: first line that starts with a number and isn't the city line.
+    const addrLine = lines.find(l => /^\d+\s+\S/.test(l) && !(csz && l.includes(csz[0])))
+    if (addrLine) o.street_address = norm(addrLine.replace(/[\s,]+$/, ''))
   }
+
+  // Wait until the active tab's panel text stops growing (loaded) or a cap. Tabs
+  // can take 4–8s to populate, so: never return before a small minimum (so a
+  // spinner-then-content tab isn't scraped early), require the length to hold
+  // steady across ~1.2s, and allow up to ~12s.
+  async function waitForPanelStable(maxMs = 12000, minMs = 1500) {
+    const start = performance.now()
+    let prev = -1, stable = 0
+    while (performance.now() - start < maxMs) {
+      const len = panelInnerText().length
+      if (len > 0 && len === prev) stable++; else stable = 0
+      prev = len
+      if (stable >= 3 && performance.now() - start >= minMs) return // steady ~1.2s and past the floor
+      await sleep(400)
+    }
+  }
+
+  // A short signature of the tab-panel content, to tell whether a tab click
+  // actually switched the panel (vs. a click that didn't register).
+  const panelSig = () => { const t = norm(panelInnerText()); return `${t.length}:${t.slice(0, 40)}:${t.slice(-40)}` }
 
   async function scrapeDetail() {
     const o = { hasDetail: true }
     const raw = {}
     scrapeCustomerCard(o)
+    // The tab strip can render seconds after the customer card (and pinwheel), so
+    // wait for the whole tab bar (first + last tab) to exist before touching it.
+    for (let i = 0; i < 60; i++) { // up to ~24s
+      if (findTabControl(TABS[0].re) && findTabControl(TABS[TABS.length - 1].re)) break
+      await sleep(400)
+    }
+    let prevSig = panelSig() // the (Summary) panel we start on
     for (const tab of TABS) {
-      const ctl = findTabControl(tab.re)
-      if (ctl) { realClick(ctl); await sleep(1200) }
+      let ctl = null
+      for (let i = 0; i < 12 && !ctl; i++) { ctl = findTabControl(tab.re); if (!ctl) await sleep(400) }
+      if (!ctl) { LOG(`detail: ${tab.label} tab not found`); continue }
+
+      // Summary is the default tab (already showing); the others must be switched
+      // to. A synthetic click often doesn't register until the tab is interactive,
+      // so re-click until the panel content actually CHANGES — otherwise we'd
+      // scrape the Summary panel again as "documents"/"notes".
+      let switched = tab.label === 'summary'
+      for (let attempt = 0; attempt < 5 && !switched; attempt++) {
+        LOG(`detail: clicking ${tab.label} tab (try ${attempt + 1})`)
+        clickEl(ctl)
+        for (let i = 0; i < 10; i++) { // ~4s to register the switch
+          await sleep(400)
+          if (panelSig() !== prevSig) { switched = true; break }
+        }
+        if (!switched) ctl = findTabControl(tab.re) || ctl
+      }
+      if (!switched && tab.label !== 'summary') { LOG(`detail: ${tab.label} tab did not switch — skipping`); continue }
+
+      await waitForPanelStable() // let the (now-switched) panel finish loading
+      prevSig = panelSig()
       try {
         const data = tab.scrape()
-        if (tab.label === 'summary') raw.summary = data
+        if (tab.label === 'summary') { raw.summary = data.milestones; raw.summary_text = data.text }
         else if (tab.label === 'documents') raw.documents = data
         else if (tab.label === 'notes') raw.notes = data
       } catch (e) { LOG(`detail: ${tab.label} scrape error`, e?.message || e) }
@@ -484,13 +607,29 @@
   }
 
   // ── Crawl coordination (background) ──────────────────────────────────────
-  const getCrawlMode = () => new Promise(r => chrome.storage.local.get({ clopayCrawlMode: null }, d => r(d.clopayCrawlMode)))
+  // True only while this content script still has a live link to the extension.
+  // After the extension is reloaded/updated, an already-injected script is
+  // orphaned and every chrome.* call throws "Extension context invalidated" — so
+  // we check this before touching chrome APIs and bail cleanly (the user just
+  // needs to reload the tab to get a fresh script).
+  function ctxAlive() { try { return !!(chrome.runtime && chrome.runtime.id) } catch { return false } }
+  // Promise-returning chrome.storage.local.get that never throws on a dead context.
+  function storageGet(defaults) {
+    return new Promise(resolve => {
+      if (!ctxAlive()) { resolve(defaults); return }
+      try { chrome.storage.local.get(defaults, d => resolve(chrome.runtime.lastError ? defaults : d)) }
+      catch { resolve(defaults) }
+    })
+  }
+  const getCrawlMode = () => storageGet({ clopayCrawlMode: null }).then(d => d.clopayCrawlMode)
   function endCrawl() {
-    chrome.storage.local.remove('clopayCrawlMode')
+    if (!ctxAlive()) return
+    try { chrome.storage.local.remove('clopayCrawlMode') } catch { /* ignore */ }
     try { chrome.runtime.sendMessage({ type: `${NAME}-crawl-done` }) } catch { /* SW asleep — timeout alarm covers it */ }
   }
   function isCrawlTab() {
     return new Promise(resolve => {
+      if (!ctxAlive()) { resolve(false); return }
       try {
         chrome.runtime.sendMessage({ type: `${NAME}-crawl-tab?` }, (resp) => resolve(!chrome.runtime.lastError && !!(resp && resp.isCrawlTab)))
       } catch { resolve(false) }
@@ -500,21 +639,24 @@
   /** Post scraped orders to the background → Castle Admin ingest. Resolves with
    *  the ingest result (incl. needDetail), or null on error. */
   async function ingest(kind, payload) {
+    if (!ctxAlive()) { LOG('extension link is gone — reload this tab (F5) to re-enable scraping'); return null }
     const mode = (await getCrawlMode()) || 'manual'
     return new Promise(resolve => {
-      chrome.runtime.sendMessage({ type: NAME, kind, mode, vendor: VENDOR, payload }, (res) => {
-        if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); resolve(null); return }
-        resolve(res)
-      })
+      try {
+        chrome.runtime.sendMessage({ type: NAME, kind, mode, vendor: VENDOR, payload }, (res) => {
+          if (chrome.runtime.lastError) { LOG('send error', chrome.runtime.lastError.message); resolve(null); return }
+          resolve(res)
+        })
+      } catch (e) { LOG('ingest send failed', e?.message || e); resolve(null) }
     })
   }
 
   // ── Detail sweep (storage-backed, reload-resilient + SPA-friendly) ───────
   const SWEEP_KEY = 'clopaySweep'
-  const getCfg = () => new Promise(r => chrome.storage.local.get({ clopayAutoDetail: false, clopayMaxDetailPerRun: 12 }, r))
-  const getSweep = () => new Promise(r => chrome.storage.local.get({ [SWEEP_KEY]: null }, d => r(d[SWEEP_KEY])))
-  const setSweep = (s) => new Promise(r => chrome.storage.local.set({ [SWEEP_KEY]: s }, r))
-  const clearSweep = () => new Promise(r => chrome.storage.local.remove(SWEEP_KEY, r))
+  const getCfg = () => storageGet({ clopayAutoDetail: false, clopayMaxDetailPerRun: 12 })
+  const getSweep = () => storageGet({ [SWEEP_KEY]: null }).then(d => d[SWEEP_KEY])
+  const setSweep = (s) => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.set({ [SWEEP_KEY]: s }, r) } catch { r() } })
+  const clearSweep = () => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.remove(SWEEP_KEY, r) } catch { r() } })
 
   async function waitForRows(ms = 20000) {
     const start = Date.now()
@@ -522,12 +664,20 @@
     return false
   }
 
-  // Return to the list. Prefer an in-app "back to orders" control (keeps the SPA
-  // session warm); fall back to a hard navigation.
+  // Return to the list by clicking the "My HD Orders" button on the detail page
+  // (fast, keeps the SPA warm) — a hard URL navigation is the slow last resort.
+  // The button can be a plain <div>/<span>, so match any small visible element
+  // whose text is the button label, then click it robustly.
+  function findBackToList() {
+    const cands = allElements(document).filter(el =>
+      visible(el) && /^(my\s*hd\s*orders|back to orders|all orders|my orders)$/i.test(norm(el.innerText || '')))
+    cands.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)
+    return cands[0]
+  }
   function goToList() {
-    const back = deepQueryAll('a, button').find(el =>
-      visible(el) && /(my\s*)?hd\s*orders|back to orders|all orders|my orders/i.test(norm(el.innerText)))
-    if (back) { LOG('returning to list via in-app control'); realClick(back); return }
+    const back = findBackToList()
+    if (back) { LOG('returning to list via "My HD Orders" button'); clickEl(back); return }
+    LOG('back button not found — falling back to URL nav (slow)')
     if (LIST_URL_RE.test(location.href)) location.reload()
     else location.href = LIST_URL
   }
@@ -580,7 +730,10 @@
       LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} tries — skipping`)
       return dropHead({ ...sweep, attempts })
     }
-    await setSweep({ ...sweep, attempts })
+    // Remember which id we're opening so runDetail removes THIS one from the queue
+    // (the detail page's scraped PO can differ from the list id; keying advancement
+    // off the detail PO left the head in place and re-opened the same order).
+    await setSweep({ ...sweep, attempts, current: id })
     LOG(`detail sweep: locating #${id} (${sweep.queue.length} left, try ${attempts[id]})`)
     await waitForRows()
     await sleep(800)
@@ -596,13 +749,17 @@
     }
     if (!opener) { LOG(`detail sweep: could not find #${id} — skipping`); return dropHead(sweep) }
 
-    // Click to open. If it's an in-place route change we stay in this context, so
-    // poll for the detail view then scrape it directly; if it's a real nav the
-    // page unloads mid-wait and the fresh load handles it.
-    realClick(opener)
-    for (let i = 0; i < 24; i++) {
-      await sleep(500)
-      if (pageType() === 'detail') { LOG(`detail sweep: #${id} opened in place`); return runDetail() }
+    // Click to open, then give a SINGLE click up to ~18s to land on the detail
+    // view before re-clicking — a slow-loading order (observed ~8s) must not be
+    // re-clicked mid-load, which cancels the navigation and wedges the sweep.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      clickEl(opener)
+      for (let i = 0; i < 36; i++) {
+        await sleep(500)
+        if (pageType() === 'detail') { LOG(`detail sweep: #${id} opened`); return runDetail() }
+      }
+      opener = findOrderOpener(id) || opener
+      LOG(`detail sweep: #${id} didn't open in ~18s, retry ${attempt + 1}`)
     }
     LOG(`detail sweep: #${id} wouldn't open — skipping`)
     return dropHead(sweep)
@@ -638,18 +795,33 @@
     }
   }
 
+  // The customer card (PO#) has rendered → the detail page is ready enough to
+  // scrape. The Summary tab can still be pinwheeling; we give it a short grace
+  // period but never block the whole crawl on one slow page.
+  function detailReady() { return /PO\s*#/i.test(document.body.innerText) && !!scrapeCustomerCardMarker() }
+
   async function runDetail() {
-    let tries = 0, o = null
-    while (tries++ < 40 && !(o = await safeScrapeDetail())) await sleep(500)
-    if (o) { LOG('detail: scraped', o.external_id); detailDiagnostics(); await ingest('detail', o) }
-    else { LOG('detail: nothing scraped — DOM likely differs'); detailDiagnostics() }
+    // Wait (bounded) for the page to render, then scrape ONCE. Retrying the full
+    // scrape — which clicks all 3 tabs — on a pinwheeling page burned minutes and
+    // looked stuck; cap the wait and move on instead.
+    const t0 = performance.now()
+    let ready = false
+    for (let i = 0; i < 50 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
+    LOG(ready ? `detail: page ready in ${Math.round(performance.now() - t0)}ms` : 'detail: page did not render in ~25s — skipping')
+    if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
+    const o = ready ? await safeScrapeDetail() : null
+    if (o) { LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`); await ingest('detail', o) }
+    else if (ready) LOG('detail: nothing scraped — DOM differs')
 
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) return
     if (o) {
-      const attempts = { ...(sweep.attempts || {}) }; delete attempts[o.external_id]
-      const remaining = sweep.queue.filter(x => x !== o.external_id)
-      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
+      // Remove the id we OPENED (and the detail's PO, if different) so we always
+      // advance past this order — never re-open the same one.
+      const opened = sweep.current || o.external_id
+      const attempts = { ...(sweep.attempts || {}) }; delete attempts[opened]; delete attempts[o.external_id]
+      const remaining = sweep.queue.filter(x => x !== opened && x !== o.external_id)
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts, current: null }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
       else { await clearSweep(); LOG('detail sweep: complete'); endCrawl(); goToList() }
     } else {
       LOG('detail sweep: scrape missed, returning to list to retry/skip'); goToList(); await afterBackResume()
@@ -739,6 +911,7 @@
   let mainRunning = false
   async function runMainOnce(reason) {
     if (mainRunning) return
+    if (!ctxAlive()) { LOG('extension was reloaded — reload this tab (F5) to re-enable Clopay scraping'); return }
     mainRunning = true
     try { LOG('run:', reason, '→', pageType()); await main() }
     catch (e) { LOG('main error', e?.message || e) }
@@ -769,6 +942,73 @@
     }, 1000)
   }
 
+  // Clopay's OIDC hops land on blank pages that only advance after a reload (the
+  // post-login cca.clopay.com/login, and the blank page the HD Program click lands
+  // on). A near-empty <body> is the signal; reload once per page (guarded so it
+  // never loops). A slow/pinwheeling app page is NOT blank (it has the header/
+  // sidebar shell), so this never fights a page that's merely rendering.
+  const looksBlank = () => ((document.body && document.body.innerText) || '').trim().length < 30
+  function reloadOnce(tag) {
+    const k = `clopay-reloaded-${tag}-${location.pathname}`
+    try { if (sessionStorage.getItem(k)) return false; sessionStorage.setItem(k, '1') } catch { /* ignore */ }
+    LOG(`blank Clopay page (${tag}) — reloading once to advance`)
+    setTimeout(() => { try { location.reload() } catch { /* ignore */ } }, 800)
+    return true
+  }
+  const findHdProgramTile = () => allElements(document)
+    .filter(el => visible(el) && /^hd\s*program$/i.test(norm(el.innerText || '')))
+    .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+
+  // After a fresh login the OIDC flow lands the crawl on cca.clopay.com, not the
+  // orders app. Manual path: (the blank /login settles →) dashboard → click "HD
+  // Program" → hdprogram.clopay.com/orders. Do the same, only in the crawl tab.
+  // Real elapsed time gates the blank-page reload (so it never fires early), and
+  // a direct navigation guarantees we reach orders even if the tile click doesn't.
+  async function handleCcaDashboard() {
+    if (!(await isCrawlTab())) { LOG('cca: not the crawl tab — leaving it alone'); return }
+    const t0 = performance.now()
+    const ms = () => Math.round(performance.now() - t0)
+    LOG('cca: crawl tab — getting to HD Program orders')
+    for (let i = 0; i < 120; i++) { // up to ~60s
+      if (/hdprogram\.clopay\.com/.test(location.hostname)) return // already navigated away
+      const tile = findHdProgramTile()
+      if (tile) {
+        const link = tile.closest('a, button, [role="link"], [role="button"]') || tile
+        LOG(`cca: HD Program tile found at ${ms()}ms — clicking`)
+        clickEl(link)
+        for (let j = 0; j < 16; j++) { await sleep(500); if (/hdprogram\.clopay\.com/.test(location.hostname)) { LOG('cca: reached hdprogram'); return } }
+        // Click didn't navigate → SSO is live, so go straight to orders.
+        LOG(`cca: tile click didn't navigate by ${ms()}ms — navigating directly to orders`)
+        location.href = LIST_URL
+        return
+      }
+      // The post-login /login (and OIDC hops) render without the dashboard and
+      // need a refresh to advance. If after a genuine 5s there's no dashboard yet
+      // (no tile and no dashboard markers), reload once. The real dashboard has
+      // "My Clopay Programs" / "Installer Tools", so we never reload it.
+      const onDashboard = /my\s*clopay\s*programs|installer\s*tools/i.test(document.body.innerText || '')
+      if (ms() >= 5000 && !onDashboard) {
+        LOG(`cca: no dashboard at ${ms()}ms (${location.pathname}) — reloading once to advance`)
+        if (reloadOnce('cca-advance')) return
+      }
+      await sleep(500)
+    }
+    LOG(`cca: no HD Program tile after ${ms()}ms — navigating directly to orders`)
+    location.href = LIST_URL
+  }
+
+  // On the orders app (hdprogram) a blank OIDC landing also needs one reload to
+  // advance; the normal render wait handles a merely-slow page.
+  function startBlankWatcher() {
+    let ticks = 0
+    const iv = setInterval(() => {
+      ticks++
+      if (!ctxAlive() || pageType()) { clearInterval(iv); return } // rendered/classifiable → stop
+      if (ticks >= 12 && looksBlank()) { clearInterval(iv); reloadOnce('hd-blank') } // ~6s truly blank → reload once
+      if (ticks > 60) clearInterval(iv)
+    }, 500)
+  }
+
   // SPA route changes (orders ↔ installer-details) don't reload the script; watch
   // the URL so a manual navigation still scrapes.
   let lastHref = location.href
@@ -779,5 +1019,6 @@
   LOG('loaded on', location.href)
   dismissLogoutModal()
   setInterval(() => { try { dismissLogoutModal() } catch { /* ignore */ } }, 8000)
-  waitThenRun('initial-load')
+  if (/(^|\.)cca\.clopay\.com$/.test(location.hostname)) handleCcaDashboard()
+  else { startBlankWatcher(); waitThenRun('initial-load') }
 })()

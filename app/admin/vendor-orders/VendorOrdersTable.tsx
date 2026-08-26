@@ -50,7 +50,10 @@ function hasDrawer(o: VendorOrder): boolean {
   if (!r || typeof r !== 'object') return false
   const summary = r.summary
   const hasSummary = Array.isArray(summary) ? summary.length > 0 : (!!summary && typeof summary === 'object' && Object.keys(summary).length > 0)
-  return hasSummary || (Array.isArray(r.documents) && r.documents.length > 0) || (Array.isArray(r.notes) && r.notes.length > 0)
+  // summary_text is captured whenever the detail page was scraped, so it's the
+  // reliable "this row has detail" signal even if the milestone parse came up empty.
+  const hasSummaryText = typeof (r as { summary_text?: unknown }).summary_text === 'string' && (r as { summary_text: string }).summary_text.length > 0
+  return hasSummary || hasSummaryText || (Array.isArray(r.documents) && r.documents.length > 0) || (Array.isArray(r.notes) && r.notes.length > 0)
 }
 
 const fmtDate = (s: string | null) =>
@@ -194,7 +197,11 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
         <div className="grid gap-6 md:grid-cols-3">
           <section>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Summary</h4>
-            <SummaryList summary={r.summary} />
+            {Array.isArray(r.summary) && r.summary.length > 0
+              ? <SummaryList summary={r.summary} />
+              : (typeof (r as { summary_text?: unknown }).summary_text === 'string' && (r as { summary_text: string }).summary_text
+                  ? <p className="text-gray-600 text-sm whitespace-pre-wrap">{(r as { summary_text: string }).summary_text}</p>
+                  : <SummaryList summary={r.summary} />)}
           </section>
           <section>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Documents</h4>

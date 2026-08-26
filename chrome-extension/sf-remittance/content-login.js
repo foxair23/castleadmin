@@ -55,7 +55,9 @@
   // ("re-hit enter"). These nudge it along — but ONLY on the auth hosts
   // (prod-iam / cca), never on the app (hdprogram) where clicking a stray button
   // or submitting the search form would interfere with the orders grid.
-  const isClopayAuthHost = /(^|\.)(prod-iam|cca)\.clopay\.com$/.test(location.hostname)
+  // Only prod-iam here — content-clopay owns cca.clopay.com (its blank /login
+  // reload + the HD Program tile), so we don't double-drive that page.
+  const isClopayAuthHost = /(^|\.)prod-iam\.clopay\.com$/.test(location.hostname)
   function oidcContinue() {
     const form = [...document.forms].find(f =>
       /signin-oidc|connect\/authorize|callback|oidc/i.test(f.getAttribute('action') || '') ||

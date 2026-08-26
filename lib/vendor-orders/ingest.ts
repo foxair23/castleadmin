@@ -63,13 +63,16 @@ export async function ingestOrders(vendor: string, orders: ScrapedOrder[], meta:
   const supabase = db()
   const ids = [...new Set(orders.map(o => o.external_id).filter(Boolean))]
 
-  // Existing rows for this vendor's incoming ids.
+  // Existing rows for this vendor's incoming ids. `raw` is included so we can
+  // MERGE the incoming raw into it rather than replace — the list scrape and the
+  // detail scrape each carry different raw keys, and replacing would wipe the
+  // other's (e.g. a later list scrape erasing the captured Summary/Documents/Notes).
   const { data: existingRows } = await supabase
     .from('vendor_orders')
-    .select('id, external_id, status, next_step, detail_scraped_at')
+    .select('id, external_id, status, next_step, detail_scraped_at, raw')
     .eq('vendor', vendor)
     .in('external_id', ids.length ? ids : ['__none__'])
-  const existing = new Map((existingRows ?? []).map((r: { id: string; external_id: string; status: string | null; next_step: string | null; detail_scraped_at: string | null }) => [r.external_id, r]))
+  const existing = new Map((existingRows ?? []).map((r: { id: string; external_id: string; status: string | null; next_step: string | null; detail_scraped_at: string | null; raw: Record<string, unknown> | null }) => [r.external_id, r]))
 
   const now = new Date().toISOString()
   let inserted = 0, updated = 0, statusChanges = 0
@@ -87,7 +90,9 @@ export async function ingestOrders(vendor: string, orders: ScrapedOrder[], meta:
       for (const f of DETAIL_FIELDS) if (f in o) row[f] = clean(o[f])
       row.detail_scraped_at = now
     }
-    if (o.raw) row.raw = o.raw
+    // Merge raw so list-scrape keys and detail-scrape keys accumulate instead of
+    // clobbering each other.
+    if (o.raw) row.raw = prior ? { ...(prior.raw ?? {}), ...o.raw } : o.raw
 
     if (!prior) {
       row.first_seen_at = now
