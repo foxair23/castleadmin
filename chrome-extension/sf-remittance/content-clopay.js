@@ -881,32 +881,57 @@
     }, 1000)
   }
 
-  // After a fresh login the OIDC flow lands the crawl on the cca.clopay.com
-  // dashboard, not the orders app. From there the manual path is: click "HD
-  // Program" → hdprogram.clopay.com/orders. Do the same when this is the crawl tab
-  // (never touch the user's own cca browsing). SSO carries the session over, so a
-  // direct navigation is the reliable fallback if the tile isn't found.
+  // Clopay's OIDC hops land on blank pages that only advance after a reload (the
+  // post-login cca.clopay.com/login, and the blank page the HD Program click lands
+  // on). A near-empty <body> is the signal; reload once per page (guarded so it
+  // never loops). A slow/pinwheeling app page is NOT blank (it has the header/
+  // sidebar shell), so this never fights a page that's merely rendering.
+  const looksBlank = () => ((document.body && document.body.innerText) || '').trim().length < 30
+  function reloadOnce(tag) {
+    const k = `clopay-reloaded-${tag}-${location.pathname}`
+    try { if (sessionStorage.getItem(k)) return false; sessionStorage.setItem(k, '1') } catch { /* ignore */ }
+    LOG(`blank Clopay page (${tag}) — reloading once to advance`)
+    setTimeout(() => { try { location.reload() } catch { /* ignore */ } }, 800)
+    return true
+  }
+  const findHdProgramTile = () => allElements(document)
+    .filter(el => visible(el) && /^hd\s*program$/i.test(norm(el.innerText || '')))
+    .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+
+  // After a fresh login the OIDC flow lands the crawl on cca.clopay.com, not the
+  // orders app. Manual path: (reload the blank /login →) dashboard → click "HD
+  // Program" → hdprogram.clopay.com/orders. Do the same, only in the crawl tab.
   async function handleCcaDashboard() {
-    if (!(await isCrawlTab())) { LOG('on cca dashboard, not the crawl tab — leaving it alone'); return }
-    LOG('crawl tab on cca dashboard → heading to HD Program orders')
-    for (let i = 0; i < 40; i++) { // ~20s for the dashboard (swiper tiles) to render
-      // The label is a <p>HD Program</p>; the clickable is its <a> (a routerLink,
-      // no href), so climb to that before clicking.
-      const label = allElements(document)
-        .filter(el => visible(el) && /^hd\s*program$/i.test(norm(el.innerText || '')))
-        .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+    if (!(await isCrawlTab())) { LOG('on cca, not the crawl tab — leaving it alone'); return }
+    LOG('crawl tab on cca → getting to HD Program orders')
+    for (let i = 0; i < 80; i++) { // up to ~40s (covers the blank /login reload + dashboard render)
+      if (/hdprogram\.clopay\.com/.test(location.hostname)) return // navigated away already
+      const label = findHdProgramTile()
       if (label) {
         const link = label.closest('a, button, [role="link"], [role="button"]') || label
-        LOG('clicking "HD Program" tile')
-        clickEl(link)
-        break
+        LOG('clicking "HD Program" tile (<a>)')
+        try { link.click() } catch { /* ignore */ } // native click = most faithful to a real mouse click
+        clickEl(link)                                 // + full pointer/mouse sequence as backup
+        for (let j = 0; j < 20; j++) { await sleep(500); if (/hdprogram\.clopay\.com/.test(location.hostname)) { LOG('reached hdprogram'); return } }
+        LOG('HD Program click did not navigate yet — retrying')
+      } else if (i >= 6 && looksBlank()) {
+        if (reloadOnce('cca-login')) return // reload advances the blank /login; the reloaded page re-runs this
       }
       await sleep(500)
     }
-    // Give the click a moment to navigate; if we're still on cca, go direct.
-    for (let i = 0; i < 16; i++) { await sleep(500); if (/hdprogram\.clopay\.com/.test(location.hostname)) return }
-    LOG('still on cca — navigating directly to the orders page')
-    location.href = LIST_URL
+    if (!/hdprogram\.clopay\.com/.test(location.hostname)) { LOG('HD Program tile unusable — hard-navigating to orders'); location.href = LIST_URL }
+  }
+
+  // On the orders app (hdprogram) a blank OIDC landing also needs one reload to
+  // advance; the normal render wait handles a merely-slow page.
+  function startBlankWatcher() {
+    let ticks = 0
+    const iv = setInterval(() => {
+      ticks++
+      if (!ctxAlive() || pageType()) { clearInterval(iv); return } // rendered/classifiable → stop
+      if (ticks >= 12 && looksBlank()) { clearInterval(iv); reloadOnce('hd-blank') } // ~6s truly blank → reload once
+      if (ticks > 60) clearInterval(iv)
+    }, 500)
   }
 
   // SPA route changes (orders ↔ installer-details) don't reload the script; watch
@@ -920,5 +945,5 @@
   dismissLogoutModal()
   setInterval(() => { try { dismissLogoutModal() } catch { /* ignore */ } }, 8000)
   if (/(^|\.)cca\.clopay\.com$/.test(location.hostname)) handleCcaDashboard()
-  else waitThenRun('initial-load')
+  else { startBlankWatcher(); waitThenRun('initial-load') }
 })()
