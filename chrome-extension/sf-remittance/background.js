@@ -40,7 +40,12 @@ const CRAWLERS = {
   },
   clopay: {
     name: 'clopay', vendor: 'clopay_hd',
-    listUrl: 'https://hdprogram.clopay.com/orders',
+    // Start at cca.clopay.com (the OIDC entry point): logged out it redirects to
+    // the prod-iam login (content-login signs in), logged in it shows the
+    // dashboard. Either way content-clopay's cca handler then goes HD Program →
+    // hdprogram.clopay.com/orders. Opening /orders directly does NOT bounce to
+    // login, so a logged-out crawl would just sit on a blank page.
+    listUrl: 'https://cca.clopay.com/',
     stateKey: 'clopayCrawl', modeKey: 'clopayCrawlMode',
     alarm: 'clopay-crawl', timeoutAlarm: 'clopay-crawl-timeout',
     scheduleFlag: 'clopayScheduleEnabled', enabledFlag: 'clopayEnabled',
