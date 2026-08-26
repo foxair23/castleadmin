@@ -739,11 +739,21 @@
     }
   }
 
+  // The customer card (PO#) has rendered → the detail page is ready enough to
+  // scrape. The Summary tab can still be pinwheeling; we give it a short grace
+  // period but never block the whole crawl on one slow page.
+  function detailReady() { return /PO\s*#/i.test(document.body.innerText) && !!scrapeCustomerCardMarker() }
+
   async function runDetail() {
-    let tries = 0, o = null
-    while (tries++ < 40 && !(o = await safeScrapeDetail())) await sleep(500)
-    if (o) { LOG('detail: scraped', o.external_id); detailDiagnostics(); await ingest('detail', o) }
-    else { LOG('detail: nothing scraped — DOM likely differs'); detailDiagnostics() }
+    // Wait (bounded) for the page to render, then scrape ONCE. Retrying the full
+    // scrape — which clicks all 3 tabs — on a pinwheeling page burned minutes and
+    // looked stuck; cap the wait and move on instead.
+    let ready = false
+    for (let i = 0; i < 30 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
+    if (ready) await sleep(1200) // small grace for the Summary timeline to fill in
+    const o = ready ? await safeScrapeDetail() : null
+    if (o) { LOG('detail: scraped', o.external_id); await ingest('detail', o) }
+    else LOG(ready ? 'detail: nothing scraped — DOM differs' : 'detail: page did not render in ~15s (pinwheel) — skipping')
 
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) return
@@ -871,6 +881,27 @@
     }, 1000)
   }
 
+  // After a fresh login the OIDC flow lands the crawl on the cca.clopay.com
+  // dashboard, not the orders app. From there the manual path is: click "HD
+  // Program" → hdprogram.clopay.com/orders. Do the same when this is the crawl tab
+  // (never touch the user's own cca browsing). SSO carries the session over, so a
+  // direct navigation is the reliable fallback if the tile isn't found.
+  async function handleCcaDashboard() {
+    if (!(await isCrawlTab())) { LOG('on cca dashboard, not the crawl tab — leaving it alone'); return }
+    LOG('crawl tab on cca dashboard → heading to HD Program orders')
+    for (let i = 0; i < 30; i++) { // ~15s for the dashboard to render the tile
+      const tile = allElements(document)
+        .filter(el => visible(el) && /^hd\s*program$/i.test(norm(el.innerText || '')))
+        .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+      if (tile) { LOG('clicking "HD Program" tile'); clickEl(tile); break }
+      await sleep(500)
+    }
+    // Give the click a moment to navigate; if we're still on cca, go direct.
+    for (let i = 0; i < 16; i++) { await sleep(500); if (/hdprogram\.clopay\.com/.test(location.hostname)) return }
+    LOG('still on cca — navigating directly to the orders page')
+    location.href = LIST_URL
+  }
+
   // SPA route changes (orders ↔ installer-details) don't reload the script; watch
   // the URL so a manual navigation still scrapes.
   let lastHref = location.href
@@ -881,5 +912,6 @@
   LOG('loaded on', location.href)
   dismissLogoutModal()
   setInterval(() => { try { dismissLogoutModal() } catch { /* ignore */ } }, 8000)
-  waitThenRun('initial-load')
+  if (/(^|\.)cca\.clopay\.com$/.test(location.hostname)) handleCcaDashboard()
+  else waitThenRun('initial-load')
 })()
