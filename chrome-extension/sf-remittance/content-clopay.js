@@ -727,18 +727,17 @@
     }
     if (!opener) { LOG(`detail sweep: could not find #${id} — skipping`); return dropHead(sweep) }
 
-    // Click to open. Retry a few times (an Angular row handler can miss a single
-    // dispatch), polling for the detail view after each. An in-place route change
-    // keeps this context (scrape directly); a real nav unloads the page and the
-    // fresh load's main() handles it.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Click to open, then give a SINGLE click up to ~18s to land on the detail
+    // view before re-clicking — a slow-loading order (observed ~8s) must not be
+    // re-clicked mid-load, which cancels the navigation and wedges the sweep.
+    for (let attempt = 0; attempt < 2; attempt++) {
       clickEl(opener)
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 36; i++) {
         await sleep(500)
         if (pageType() === 'detail') { LOG(`detail sweep: #${id} opened`); return runDetail() }
       }
       opener = findOrderOpener(id) || opener
-      LOG(`detail sweep: #${id} didn't open, retry ${attempt + 1}`)
+      LOG(`detail sweep: #${id} didn't open in ~18s, retry ${attempt + 1}`)
     }
     LOG(`detail sweep: #${id} wouldn't open — skipping`)
     return dropHead(sweep)
@@ -783,12 +782,14 @@
     // Wait (bounded) for the page to render, then scrape ONCE. Retrying the full
     // scrape — which clicks all 3 tabs — on a pinwheeling page burned minutes and
     // looked stuck; cap the wait and move on instead.
+    const t0 = performance.now()
     let ready = false
     for (let i = 0; i < 50 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
+    LOG(ready ? `detail: page ready in ${Math.round(performance.now() - t0)}ms` : 'detail: page did not render in ~25s — skipping')
     if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
     const o = ready ? await safeScrapeDetail() : null
-    if (o) { LOG('detail: scraped', o.external_id); await ingest('detail', o) }
-    else LOG(ready ? 'detail: nothing scraped — DOM differs' : 'detail: page did not render in ~25s (pinwheel) — skipping')
+    if (o) { LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`); await ingest('detail', o) }
+    else if (ready) LOG('detail: nothing scraped — DOM differs')
 
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) return
