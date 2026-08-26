@@ -62,14 +62,22 @@
     const r = el.getBoundingClientRect()
     const cx = Math.max(1, Math.min(window.innerWidth - 1, r.left + r.width / 2))
     const cy = Math.max(1, Math.min(window.innerHeight - 1, r.top + r.height / 2))
-    const target = document.elementFromPoint(cx, cy) || el
     const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 }
-    for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-      try {
-        const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
-        target.dispatchEvent(new Ctor(type, opts))
-      } catch { try { target.dispatchEvent(new MouseEvent(type.replace(/^pointer\w+/, 'mousedown'), opts)) } catch { /* ignore */ } }
+    // Dispatch on the element ITSELF (so its handler fires even if something sits
+    // on top at that point) AND on whatever is topmost there; then the native
+    // .click() for the default action (anchor routerLink / (click) handler).
+    const fromPt = document.elementFromPoint(cx, cy)
+    const targets = fromPt && fromPt !== el ? [el, fromPt] : [el]
+    for (const t of targets) {
+      for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        try {
+          const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
+          t.dispatchEvent(new Ctor(type, opts))
+        } catch { try { t.dispatchEvent(new MouseEvent('click', opts)) } catch { /* ignore */ } }
+      }
     }
+    try { el.focus() } catch { /* ignore */ }
+    try { el.click() } catch { /* ignore */ } // native default action (most faithful)
     return true
   }
   // Rect-based visibility — robust inside shadow DOM, where offsetParent is often
@@ -522,9 +530,15 @@
     const raw = {}
     scrapeCustomerCard(o)
     for (const tab of TABS) {
-      const ctl = findTabControl(tab.re)
-      if (ctl) { LOG(`detail: clicking ${tab.label} tab`); clickEl(ctl); await sleep(1400) }
-      else LOG(`detail: ${tab.label} tab not found`)
+      // The tab strip can render a few seconds after the customer card, so wait
+      // for this tab's control to appear before clicking it. Then click and wait
+      // for the panel to actually swap in (poll instead of a fixed sleep).
+      let ctl = null
+      for (let i = 0; i < 16 && !ctl; i++) { ctl = findTabControl(tab.re); if (!ctl) await sleep(400) }
+      if (!ctl) { LOG(`detail: ${tab.label} tab not found`); continue }
+      LOG(`detail: clicking ${tab.label} tab`)
+      clickEl(ctl)
+      await sleep(1600) // let the panel swap in + populate
       try {
         const data = tab.scrape()
         if (tab.label === 'summary') { raw.summary = data.milestones; raw.summary_text = data.text }
@@ -914,7 +928,7 @@
         clickEl(link)                                 // + full pointer/mouse sequence as backup
         for (let j = 0; j < 20; j++) { await sleep(500); if (/hdprogram\.clopay\.com/.test(location.hostname)) { LOG('reached hdprogram'); return } }
         LOG('HD Program click did not navigate yet — retrying')
-      } else if (i >= 6 && looksBlank()) {
+      } else if (i >= 10 && looksBlank()) { // wait ~5s before refreshing the blank /login (it settles late)
         if (reloadOnce('cca-login')) return // reload advances the blank /login; the reloaded page re-runs this
       }
       await sleep(500)
