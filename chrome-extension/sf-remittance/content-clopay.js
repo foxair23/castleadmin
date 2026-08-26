@@ -525,20 +525,38 @@
     if (addrLine) o.street_address = norm(addrLine.replace(/[\s,]+$/, ''))
   }
 
+  // Wait until the active tab's panel text stops growing (loaded) or a cap — so a
+  // slow/pinwheeling tab is given time to populate instead of being scraped empty.
+  async function waitForPanelStable(maxMs = 8000) {
+    const start = performance.now()
+    let prev = -1, stable = 0
+    while (performance.now() - start < maxMs) {
+      const len = panelInnerText().length
+      if (len > 0 && len === prev) { if (++stable >= 2) return } else stable = 0
+      prev = len
+      await sleep(400)
+    }
+  }
+
   async function scrapeDetail() {
     const o = { hasDetail: true }
     const raw = {}
     scrapeCustomerCard(o)
+    // The tab strip can render seconds after the customer card (and pinwheel), so
+    // wait for the whole tab bar (first + last tab) to exist before touching it —
+    // otherwise we'd click nothing and get stuck on the default (Summary) tab.
+    for (let i = 0; i < 60; i++) { // up to ~24s
+      if (findTabControl(TABS[0].re) && findTabControl(TABS[TABS.length - 1].re)) break
+      await sleep(400)
+    }
     for (const tab of TABS) {
-      // The tab strip can render a few seconds after the customer card, so wait
-      // for this tab's control to appear before clicking it. Then click and wait
-      // for the panel to actually swap in (poll instead of a fixed sleep).
       let ctl = null
-      for (let i = 0; i < 16 && !ctl; i++) { ctl = findTabControl(tab.re); if (!ctl) await sleep(400) }
+      for (let i = 0; i < 12 && !ctl; i++) { ctl = findTabControl(tab.re); if (!ctl) await sleep(400) }
       if (!ctl) { LOG(`detail: ${tab.label} tab not found`); continue }
       LOG(`detail: clicking ${tab.label} tab`)
       clickEl(ctl)
-      await sleep(1600) // let the panel swap in + populate
+      await sleep(500)
+      await waitForPanelStable() // wait for the panel to actually load (handles pinwheel)
       try {
         const data = tab.scrape()
         if (tab.label === 'summary') { raw.summary = data.milestones; raw.summary_text = data.text }
@@ -766,11 +784,11 @@
     // scrape — which clicks all 3 tabs — on a pinwheeling page burned minutes and
     // looked stuck; cap the wait and move on instead.
     let ready = false
-    for (let i = 0; i < 30 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
-    if (ready) await sleep(1200) // small grace for the Summary timeline to fill in
+    for (let i = 0; i < 50 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
+    if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
     const o = ready ? await safeScrapeDetail() : null
     if (o) { LOG('detail: scraped', o.external_id); await ingest('detail', o) }
-    else LOG(ready ? 'detail: nothing scraped — DOM differs' : 'detail: page did not render in ~15s (pinwheel) — skipping')
+    else LOG(ready ? 'detail: nothing scraped — DOM differs' : 'detail: page did not render in ~25s (pinwheel) — skipping')
 
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) return
@@ -941,11 +959,14 @@
         location.href = LIST_URL
         return
       }
-      // Blank post-login page: only reload after a genuine 5s of still-blank (the
-      // page settles late), and only once.
-      if (looksBlank() && ms() >= 5000) {
-        LOG(`cca: still blank at ${ms()}ms — reloading once to advance`)
-        if (reloadOnce('cca-login')) return
+      // The post-login /login (and OIDC hops) render without the dashboard and
+      // need a refresh to advance. If after a genuine 5s there's no dashboard yet
+      // (no tile and no dashboard markers), reload once. The real dashboard has
+      // "My Clopay Programs" / "Installer Tools", so we never reload it.
+      const onDashboard = /my\s*clopay\s*programs|installer\s*tools/i.test(document.body.innerText || '')
+      if (ms() >= 5000 && !onDashboard) {
+        LOG(`cca: no dashboard at ${ms()}ms (${location.pathname}) — reloading once to advance`)
+        if (reloadOnce('cca-advance')) return
       }
       await sleep(500)
     }
