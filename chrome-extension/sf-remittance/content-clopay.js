@@ -913,27 +913,38 @@
     .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
 
   // After a fresh login the OIDC flow lands the crawl on cca.clopay.com, not the
-  // orders app. Manual path: (reload the blank /login →) dashboard → click "HD
+  // orders app. Manual path: (the blank /login settles →) dashboard → click "HD
   // Program" → hdprogram.clopay.com/orders. Do the same, only in the crawl tab.
+  // Real elapsed time gates the blank-page reload (so it never fires early), and
+  // a direct navigation guarantees we reach orders even if the tile click doesn't.
   async function handleCcaDashboard() {
-    if (!(await isCrawlTab())) { LOG('on cca, not the crawl tab — leaving it alone'); return }
-    LOG('crawl tab on cca → getting to HD Program orders')
-    for (let i = 0; i < 80; i++) { // up to ~40s (covers the blank /login reload + dashboard render)
-      if (/hdprogram\.clopay\.com/.test(location.hostname)) return // navigated away already
-      const label = findHdProgramTile()
-      if (label) {
-        const link = label.closest('a, button, [role="link"], [role="button"]') || label
-        LOG('clicking "HD Program" tile (<a>)')
-        try { link.click() } catch { /* ignore */ } // native click = most faithful to a real mouse click
-        clickEl(link)                                 // + full pointer/mouse sequence as backup
-        for (let j = 0; j < 20; j++) { await sleep(500); if (/hdprogram\.clopay\.com/.test(location.hostname)) { LOG('reached hdprogram'); return } }
-        LOG('HD Program click did not navigate yet — retrying')
-      } else if (i >= 10 && looksBlank()) { // wait ~5s before refreshing the blank /login (it settles late)
-        if (reloadOnce('cca-login')) return // reload advances the blank /login; the reloaded page re-runs this
+    if (!(await isCrawlTab())) { LOG('cca: not the crawl tab — leaving it alone'); return }
+    const t0 = performance.now()
+    const ms = () => Math.round(performance.now() - t0)
+    LOG('cca: crawl tab — getting to HD Program orders')
+    for (let i = 0; i < 120; i++) { // up to ~60s
+      if (/hdprogram\.clopay\.com/.test(location.hostname)) return // already navigated away
+      const tile = findHdProgramTile()
+      if (tile) {
+        const link = tile.closest('a, button, [role="link"], [role="button"]') || tile
+        LOG(`cca: HD Program tile found at ${ms()}ms — clicking`)
+        clickEl(link)
+        for (let j = 0; j < 16; j++) { await sleep(500); if (/hdprogram\.clopay\.com/.test(location.hostname)) { LOG('cca: reached hdprogram'); return } }
+        // Click didn't navigate → SSO is live, so go straight to orders.
+        LOG(`cca: tile click didn't navigate by ${ms()}ms — navigating directly to orders`)
+        location.href = LIST_URL
+        return
+      }
+      // Blank post-login page: only reload after a genuine 5s of still-blank (the
+      // page settles late), and only once.
+      if (looksBlank() && ms() >= 5000) {
+        LOG(`cca: still blank at ${ms()}ms — reloading once to advance`)
+        if (reloadOnce('cca-login')) return
       }
       await sleep(500)
     }
-    if (!/hdprogram\.clopay\.com/.test(location.hostname)) { LOG('HD Program tile unusable — hard-navigating to orders'); location.href = LIST_URL }
+    LOG(`cca: no HD Program tile after ${ms()}ms — navigating directly to orders`)
+    location.href = LIST_URL
   }
 
   // On the orders app (hdprogram) a blank OIDC landing also needs one reload to
