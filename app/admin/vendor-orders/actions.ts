@@ -35,14 +35,15 @@ export async function sendNudgeNowAction(orderId: string): Promise<{ ok: boolean
   return res
 }
 
-/** Toggle Genie autopilot (admin only). */
-export async function setAutopilotAction(enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+/** Toggle a vendor's autopilot (admin only). vendor: 'genie_thd' | 'clopay_hd'. */
+export async function setAutopilotAction(vendor: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+  if (!['genie_thd', 'clopay_hd'].includes(vendor)) return { ok: false, error: 'invalid vendor' }
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'not authorized' }
   const { data: profile } = await supabase.from('profiles').select('role, is_active').eq('id', user.id).single()
   if (!profile?.is_active || profile.role !== 'admin') return { ok: false, error: 'admin only' }
-  await setAutopilot('genie_thd', enabled, user.id)
+  await setAutopilot(vendor, enabled, user.id)
   revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders')
   return { ok: true }
 }

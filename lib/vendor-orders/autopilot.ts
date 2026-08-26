@@ -40,22 +40,29 @@ const isActive = (status: string | null) => {
 
 export interface AutopilotRunResult { enabled: boolean; created: number; failed: number; skippedMatched: number; remaining: number; errors: string[] }
 
+/** Genie autopilot (kept for callers/back-compat). */
 export async function runGenieAutopilot(): Promise<AutopilotRunResult> {
-  const ap = await getAutopilot()
+  return runVendorAutopilot(VENDOR)
+}
+
+/** Auto-create SF jobs for NEW, active, unmatched orders of one vendor. Vendor-
+ *  generic — same guards as before, keyed by `vendor` (genie_thd, clopay_hd, …). */
+export async function runVendorAutopilot(vendor: string): Promise<AutopilotRunResult> {
+  const ap = await getAutopilot(vendor)
   if (!ap.enabled || !ap.enabledAt) return { enabled: false, created: 0, failed: 0, skippedMatched: 0, remaining: 0, errors: [] }
 
   const supabase = db()
   const { data } = await supabase
     .from('vendor_orders')
-    .select('id, status, customer_po, customer_name, email, phone, sf_job_id')
-    .eq('vendor', VENDOR)
+    .select('id, external_id, status, customer_po, customer_name, email, phone, sf_job_id')
+    .eq('vendor', vendor)
     .is('sf_job_id', null)
     .is('sf_created_job_number', null)
     .gte('first_seen_at', ap.enabledAt)     // new-only
     .order('first_seen_at', { ascending: true })
     .limit(300)
 
-  const candidates = ((data ?? []) as Array<{ id: string; status: string | null; customer_po: string | null; customer_name: string | null; email: string | null; phone: string | null; sf_job_id: string | null }>)
+  const candidates = ((data ?? []) as Array<{ id: string; external_id: string | null; status: string | null; customer_po: string | null; customer_name: string | null; email: string | null; phone: string | null; sf_job_id: string | null }>)
     .filter(o => isActive(o.status))
     .slice(0, LOOKAHEAD)
   if (candidates.length === 0) return { enabled: true, created: 0, failed: 0, skippedMatched: 0, remaining: 0, errors: [] }

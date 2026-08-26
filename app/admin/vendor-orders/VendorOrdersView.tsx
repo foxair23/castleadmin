@@ -33,9 +33,13 @@ export default async function VendorOrdersView({
 }: { canManage?: boolean; basePath?: string; vendor?: string }) {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
   const isGenie = vendor === 'genie_thd'
+  // SF-job machinery (matching + create + autopilot) runs for the portal vendors
+  // that create SF jobs — Genie and Clopay HD. The schedule nudge stays Genie-only
+  // (only Genie has a customer self-scheduler).
+  const sfEnabled = vendor === 'genie_thd' || vendor === 'clopay_hd'
   const shortName = (VENDORS[vendor]?.label || vendor).split(' — ')[0]
 
-  const autopilot = isGenie ? await getAutopilot() : { enabled: false }
+  const autopilot = sfEnabled ? await getAutopilot(vendor) : { enabled: false }
   const nudge = isGenie ? await getNudgeSettings() : { enabled: false, scheduleUrl: '' }
   const { data } = await db
     .from('vendor_orders')
@@ -46,9 +50,8 @@ export default async function VendorOrdersView({
   const base = (data ?? []) as VendorOrder[]
 
   // Resolve each order's SF job via the shared matching service (PO → name →
-  // email → phone). Genie only — other vendors don't create SF jobs yet, and
-  // running the matcher for them would surface spurious matches.
-  const matches = isGenie ? await resolveSfJobMatches(db, base) : new Map()
+  // email → phone). For Clopay the PO is the external_id (handled in the matcher).
+  const matches = sfEnabled ? await resolveSfJobMatches(db, base) : new Map()
   const orders: VendorOrder[] = base.map(o => {
     const m = matches.get(o.id)
     if (m?.sfJobNumber) return { ...o, sf_job_number: m.sfJobNumber, sf_match_method: m.method ?? null }
@@ -88,7 +91,7 @@ export default async function VendorOrdersView({
         <h1 className="text-2xl font-bold text-gray-900">HD Orders — {shortName}</h1>
         <div className="flex items-center gap-4">
           {isGenie && <NudgeControls on={nudge.enabled} scheduleUrl={nudge.scheduleUrl} canManage={canManage} />}
-          {isGenie && <AutopilotToggle on={autopilot.enabled} canManage={canManage} />}
+          {sfEnabled && <AutopilotToggle on={autopilot.enabled} canManage={canManage} vendor={vendor} label={`auto-create new ${shortName} jobs`} />}
           <span className="text-sm text-gray-500">{orders.length} total</span>
         </div>
       </div>
@@ -125,7 +128,7 @@ export default async function VendorOrdersView({
           No orders yet. Open the {shortName} portal with the extension installed — orders appear here on the next scrape.
         </div>
       ) : (
-        <VendorOrdersTable orders={orders} enableSf={isGenie} />
+        <VendorOrdersTable orders={orders} enableSf={sfEnabled} enableNudge={isGenie} />
       )}
     </div>
   )

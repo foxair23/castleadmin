@@ -257,7 +257,7 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
   )
 }
 
-export default function VendorOrdersTable({ orders, enableSf = true }: { orders: VendorOrder[]; enableSf?: boolean }) {
+export default function VendorOrdersTable({ orders, enableSf = true, enableNudge = true }: { orders: VendorOrder[]; enableSf?: boolean; enableNudge?: boolean }) {
   const [sortKey, setSortKey] = useState<SortKey>('first_seen_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
@@ -410,7 +410,7 @@ export default function VendorOrdersTable({ orders, enableSf = true }: { orders:
                           )}
                         </span>
                       ) : <CreateJobButton orderId={o.id} />}
-                      {(o.sf_created_job_number || o.sf_job_id) && (o.email || o.phone) && (
+                      {enableNudge && (o.sf_created_job_number || o.sf_job_id) && (o.email || o.phone) && (
                         <NudgeButton orderId={o.id} sentAt={o.schedule_nudge_sent_at} />
                       )}
                     </div>

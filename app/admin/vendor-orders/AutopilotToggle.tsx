@@ -3,9 +3,10 @@
 import { useTransition } from 'react'
 import { setAutopilotAction } from './actions'
 
-// Genie autopilot: when ON, a cron auto-creates SF jobs for NEW orders (never the
-// backlog). Admin-only to toggle; sales sees a read-only status pill.
-export function AutopilotToggle({ on, canManage }: { on: boolean; canManage: boolean }) {
+// Vendor autopilot: when ON, a cron auto-creates SF jobs for NEW orders (never the
+// backlog). Admin-only to toggle; sales sees a read-only status pill. `vendor`
+// selects which vendor's toggle (genie_thd / clopay_hd); `label` names it.
+export function AutopilotToggle({ on, canManage, vendor = 'genie_thd', label = 'auto-create new Genie jobs' }: { on: boolean; canManage: boolean; vendor?: string; label?: string }) {
   const [pending, start] = useTransition()
 
   if (!canManage) {
@@ -19,12 +20,12 @@ export function AutopilotToggle({ on, canManage }: { on: boolean; canManage: boo
 
   return (
     <span className="inline-flex items-center gap-1.5 text-xs">
-      <span className="text-gray-500">Autopilot (auto-create new Genie jobs)</span>
+      <span className="text-gray-500">Autopilot ({label})</span>
       <button
         type="button"
         role="switch"
         aria-checked={on}
-        onClick={() => start(async () => { await setAutopilotAction(!on) })}
+        onClick={() => start(async () => { await setAutopilotAction(vendor, !on) })}
         disabled={pending}
         title={on ? 'ON — new orders auto-create an SF job (never the backlog)' : 'OFF — create jobs manually with the button'}
         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${on ? 'bg-green-600' : 'bg-gray-300'} disabled:opacity-50`}

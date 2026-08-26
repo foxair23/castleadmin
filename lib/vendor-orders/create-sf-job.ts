@@ -112,7 +112,9 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       postal_code: o.postal_code,
       status: status.name,
       ...(vendor?.sfJobSource ? { source: vendor.sfJobSource } : {}),
-      ...(o.customer_po ? { po_number: o.customer_po } : {}),
+      // po_number carries the PO for future matching. Genie has customer_po;
+      // Clopay's PO is the external_id, so fall back to it.
+      ...((o.customer_po || o.external_id) ? { po_number: o.customer_po || o.external_id } : {}),
       description: buildDescription(o, vendor?.label ?? 'Genie'),
       ...(customFields.length ? { custom_fields: customFields } : {}),
       ...(services.length ? { services } : {}),
