@@ -525,15 +525,18 @@
     if (addrLine) o.street_address = norm(addrLine.replace(/[\s,]+$/, ''))
   }
 
-  // Wait until the active tab's panel text stops growing (loaded) or a cap — so a
-  // slow/pinwheeling tab is given time to populate instead of being scraped empty.
-  async function waitForPanelStable(maxMs = 8000) {
+  // Wait until the active tab's panel text stops growing (loaded) or a cap. Tabs
+  // can take 4–8s to populate, so: never return before a small minimum (so a
+  // spinner-then-content tab isn't scraped early), require the length to hold
+  // steady across ~1.2s, and allow up to ~12s.
+  async function waitForPanelStable(maxMs = 12000, minMs = 1500) {
     const start = performance.now()
     let prev = -1, stable = 0
     while (performance.now() - start < maxMs) {
       const len = panelInnerText().length
-      if (len > 0 && len === prev) { if (++stable >= 2) return } else stable = 0
+      if (len > 0 && len === prev) stable++; else stable = 0
       prev = len
+      if (stable >= 3 && performance.now() - start >= minMs) return // steady ~1.2s and past the floor
       await sleep(400)
     }
   }
