@@ -63,10 +63,10 @@ const fmtSeen = (s: string) =>
 
 const statusStyle = (s: string | null) => {
   const k = (s || '').toLowerCase()
+  if (k.includes('cancel')) return 'bg-red-100 text-red-700'                          // Cancelled
+  if (k.includes('complet') || k.startsWith('clos')) return 'bg-gray-100 text-gray-500' // completed/closed → grey
   if (k.startsWith('open')) return 'bg-green-100 text-green-800'
-  if (k.startsWith('cancel')) return 'bg-red-100 text-red-700'
-  if (k.startsWith('clos') || k.startsWith('complet')) return 'bg-gray-100 text-gray-500'
-  return 'bg-amber-100 text-amber-800'
+  return 'bg-amber-100 text-amber-800'                                                 // in progress
 }
 
 type SortKey =
