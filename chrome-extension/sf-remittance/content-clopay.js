@@ -841,20 +841,15 @@
     return false
   }
 
-  // Return to the list by clicking the "My HD Orders" button on the detail page
-  // (fast, keeps the SPA warm) — a hard URL navigation is the slow last resort.
-  // The button can be a plain <div>/<span>, so match any small visible element
-  // whose text is the button label, then click it robustly.
-  function findBackToList() {
-    const cands = allElements(document).filter(el =>
-      visible(el) && /^(my\s*hd\s*orders|back to orders|all orders|my orders)$/i.test(norm(el.innerText || '')))
-    cands.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)
-    return cands[0]
-  }
+  // Return to the list by a FULL page reload rather than the SPA "My HD Orders"
+  // button. The button is faster, but this portal's Angular app gets wedged after
+  // the first in-place back-navigation and then serves the PREVIOUS order's cached
+  // detail for every subsequent row click (observed: every order opened Dawson's
+  // page). A hard reload resets the app so each order loads clean, the way the very
+  // first order of a run does. Slower, but correct. main() re-runs on the fresh load
+  // and continues the sweep via runList → resumeSweepOnList.
   function goToList() {
-    const back = findBackToList()
-    if (back) { LOG('returning to list via "My HD Orders" button'); clickEl(back); return }
-    LOG('back button not found — falling back to URL nav (slow)')
+    LOG('reloading list for a clean SPA state')
     if (LIST_URL_RE.test(location.href)) location.reload()
     else location.href = LIST_URL
   }
@@ -945,13 +940,22 @@
   }
 
   async function runList() {
-    // Always take a FRESH list scrape and rebuild the detail queue from the server's
-    // current needDetail (below). We deliberately do NOT blindly resume a saved
-    // queue: a queue left over from an earlier crawl can hold stale ids — e.g. an
-    // order's pre-change-order PO — that the server already considers done, and
-    // resuming it made the sweep reopen a ghost order forever. Rebuilding from
-    // needDetail purges those (already-detailed orders have dropped off) while still
-    // resuming the backlog, since detailed orders simply aren't returned again.
+    // We reload the list between EVERY order (to reset the portal's SPA, which wedges
+    // after an in-place back-navigation). So on most list loads there is already an
+    // in-progress queue — resume it and open the next order WITHOUT re-scraping all
+    // ~170 rows each time (that would be far too slow). The customer-name guard in
+    // runDetail catches any stale/wrong detail, and orders are removed on success or
+    // set aside after MAX_ATTEMPTS, so the queue strictly shrinks — no infinite loop.
+    const active = await getSweep()
+    if (active && active.queue && active.queue.length && active.startedAt && (Date.now() - active.startedAt < 90 * 60 * 1000)) {
+      LOG(`detail sweep: resuming ${active.queue.length} queued (no re-scrape)`)
+      await resumeSweepOnList()
+      return
+    }
+    // No fresh in-progress queue — take a full list scrape and BUILD the queue from
+    // the server's current needDetail. Building from needDetail (not a leftover saved
+    // queue) drops orders the server already considers done, so a stale id can't be
+    // reopened; the backlog still resumes because detailed orders aren't returned.
     if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); diagnostics(); return }
     const orders = await scrapeAllListPages()
     LOG(`list: scraped ${orders.length} order(s)`)
@@ -978,9 +982,14 @@
     LOG(`needDetail (${needDetail.length}): ${JSON.stringify(ndNamed.slice(0, 25))}`)
     if (autoDetail && targets.length) {
       const queue = targets.slice(0, cap)
+      // Map each order id → the customer name the list shows, so runDetail can verify
+      // the detail page it lands on is actually the order it opened (the portal's SPA
+      // sometimes serves a stale/previous detail for every click).
+      const names = {}
+      for (const ord of orders) if (ord.external_id) names[ord.external_id] = ord.customer_name || ''
       const setAside = needDetail.length - targets.length
       LOG(`detail sweep: starting ${queue.length} of ${needDetail.length} needing detail${setAside ? ` (${setAside} set aside)` : ''}${mode ? ` (${mode})` : ''}`)
-      await setSweep({ queue, startedAt: Date.now() })
+      await setSweep({ queue, names, startedAt: Date.now() })
       await resumeSweepOnList()
     } else {
       if (autoDetail) LOG(`detail sweep: nothing left to detail${needDetail.length ? ` (${needDetail.length} set aside)` : ''} — backfill complete`)
@@ -1004,53 +1013,39 @@
     LOG(ready ? `detail: page ready in ${Math.round(performance.now() - t0)}ms` : 'detail: page did not render in ~25s — skipping')
     if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
     const o = ready ? await safeScrapeDetail() : null
-    // File the detail under the id we OPENED from the list (sweep.current) — that is
-    // the id the server's needDetail asked about. Clopay's detail page can show a
-    // different PO than the list row (a change order shows a "New PO#"), and filing
-    // under that detail PO leaves the list order permanently "needing detail", so the
-    // sweep reopens it forever. The queue is reconciled to real needDetail ids first
-    // (runList), so `current` is always a genuine order. Keep the detail PO in raw.
-    const openedId = (sweep0 && sweep0.current) || null
-    if (o && openedId && o.external_id !== openedId) {
-      LOG(`detail: page PO ${o.external_id} ≠ list id ${openedId} — filing under list id ${openedId}`)
-      if (o.raw) o.raw.detail_po = o.external_id
-      o.external_id = openedId
-    }
-    // Always ingest what we got (even a content-less scrape carries the customer
-    // card's phone/email), but only ADVANCE past the order when real detail landed.
-    if (o) { LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`); await ingest('detail', o) }
-    else if (ready) LOG('detail: nothing scraped — DOM differs')
-    const complete = detailHasContent(o)
+    // GUARD against the portal's stale-detail bug: after the first order, its SPA can
+    // keep showing the PREVIOUS order's detail for every subsequent row click (same
+    // customer/PO, "page ready in 0ms"). If the scraped customer doesn't match the
+    // customer of the row we opened, this is a stale/wrong page — do NOT ingest it
+    // (that would file one order's detail under many others). Treat it as a failed
+    // navigation so we reset the list and retry.
+    const expectName = (sweep0 && sweep0.names && sweep0.current) ? sweep0.names[sweep0.current] : null
+    const gotName = o && o.customer_name ? norm(o.customer_name).toLowerCase() : ''
+    const nameMismatch = !!(expectName && gotName && norm(expectName).toLowerCase() !== gotName)
+    if (nameMismatch) {
+      LOG(`detail: STALE PAGE — opened ${sweep0.current} (${expectName}) but detail shows ${o.external_id} (${o.customer_name}); not ingesting`)
+    } else if (o) {
+      // Real detail for the intended order — ingest under the PO the detail shows.
+      LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`)
+      await ingest('detail', o)
+    } else if (ready) LOG('detail: nothing scraped — DOM differs')
+    const complete = !nameMismatch && detailHasContent(o)
 
+    // Advance the queue, then reload the list (resets the wedged SPA) so the fresh
+    // load opens the NEXT order. On success, drop this order from the queue; on a
+    // stale/empty scrape, LEAVE it queued so it's retried (bounded by the per-order
+    // attempt cap in resumeSweepOnList, which then sets it aside).
     const sweep = await getSweep()
-    if (!sweep || !sweep.queue.length) return
-    if (complete) {
-      // Remove the id we OPENED (and the detail's PO, if different) so we always
-      // advance past this order — never re-open the same one. Clear its attempt
-      // ledger entry: it succeeded, so a future crawl may re-detail it freely.
-      const opened = sweep.current || o.external_id
-      await clearAttempt(opened); await clearAttempt(o.external_id)
-      const remaining = sweep.queue.filter(x => x !== opened && x !== o.external_id)
-      // Refresh startedAt so an actively-progressing sweep survives a crawl-timeout
-      // and resumes (rather than going stale and restarting from the front).
-      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, current: null, startedAt: Date.now() }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
-      else { await clearSweep(); LOG('detail sweep: complete'); endCrawl(); goToList() }
+    if (sweep && complete) {
+      const opened = (sweep0 && sweep0.current) || (o && o.external_id)
+      await clearAttempt(opened)
+      const remaining = (sweep.queue || []).filter(x => x !== opened)
+      await setSweep({ ...sweep, queue: remaining, current: null, startedAt: Date.now() })
+      LOG(`detail: captured — ${remaining.length} left, reloading list for the next order`)
     } else {
-      // Opened but no real detail (empty/partial render). Back to the list — the
-      // attempts counter ticks up there and, once it hits MAX_ATTEMPTS, the order
-      // is set aside so we don't keep reopening it.
-      LOG('detail sweep: no content scraped, returning to list to retry/skip'); goToList(); await afterBackResume()
+      LOG(nameMismatch ? 'detail: stale/wrong page — reloading list to retry' : 'detail: no content — reloading list to retry/skip')
     }
-  }
-
-  // After clicking "back to list" in an SPA (no reload), wait for the list to
-  // reappear and continue the sweep in-place. If a real reload happened this never
-  // runs (the fresh load's main() resumes instead).
-  async function afterBackResume() {
-    for (let i = 0; i < 30; i++) {
-      await sleep(500)
-      if (pageType() === 'list') { LOG('back on list in place — continuing sweep'); return resumeSweepOnList() }
-    }
+    goToList()
   }
 
   async function safeScrapeDetail() {
