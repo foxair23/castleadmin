@@ -417,10 +417,20 @@
   try { window.__clopayDetailDiag = detailDiagnostics } catch { /* ignore */ }
 
   // Text of the active tab's content. Angular renders only the active tab, so the
-  // body is header + customer card + this tab; each parser filters the noise.
+  // page body is header + customer card + this tab; each parser filters the noise.
+  // Pick the region with the MOST text (falling back to the whole body) — a
+  // single-selector pick landed on an empty wrapper, which made every tab scrape
+  // come back empty.
   function panelInnerText() {
-    const p = detailPanel()
-    return (p && p.innerText) || document.body.innerText || ''
+    let best = (document.body && document.body.innerText) || ''
+    for (const el of detailPanelCandidates()) {
+      const t = (el && el.innerText) || ''
+      if (t.length > best.length) best = t
+    }
+    return best
+  }
+  function detailPanelCandidates() {
+    return deepQueryAll('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i], app-installer-details').filter(visible)
   }
   // Lines that are the customer card / header, not tab content.
   const isCardLine = (l) => /@|\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|,\s*[A-Z]{2}\s+\d{5}|PO\s*#/.test(l) || /^(call|email|directions)$/i.test(l)
