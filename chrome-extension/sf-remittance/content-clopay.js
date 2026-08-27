@@ -392,6 +392,27 @@
     return cands[0]
   }
 
+  // The clickable tab is an <a> whose text is the label (the portal renders each tab
+  // as `<a class="active?">Notes</a>` next to a `<div class="col">Notes</div>`). Prefer
+  // the anchor — clicking it is what switches the panel — and fall back to any match.
+  function findTab(re) {
+    const anchors = allElements(document).filter(el =>
+      visible(el) && el.tagName === 'A' && re.test(norm(el.innerText || '')))
+    if (anchors.length) return anchors.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+    return findTabControl(re)
+  }
+  // A tab is "active" (its panel is the one showing) when the anchor — or an ancestor
+  // (its column) or descendant — carries the `active` class. This, not a panel-text
+  // diff, is the reliable signal for which tab is selected, and it's what tells us
+  // the default tab is already showing (so we scrape it without needing a switch).
+  function tabActive(el) {
+    if (!el) return false
+    if (el.classList && el.classList.contains('active')) return true
+    if (el.closest && el.closest('.active')) return true
+    if (el.querySelector && el.querySelector('.active')) return true
+    return false
+  }
+
   // The main detail/content region (excluding the tab strip), for raw-text capture.
   function detailPanel() {
     return (deepQueryAll('[role="tabpanel"], .tab-content, .tab-pane.active, main, [class*="detail" i]')[0] || document.body)
@@ -571,6 +592,32 @@
     }
   }
 
+  // Wait for a specific tab's content to actually appear. The portal renders the
+  // panel asynchronously (often several seconds after the tab activates), so a
+  // generic "text stopped changing" check can settle on the card-only page before
+  // the real content loads. Instead we wait for content the tab is SUPPOSED to have
+  // — a note timestamp, a document date/link, or a summary milestone — or the
+  // portal's own empty-state text, whichever comes first, capped by maxMs so a
+  // genuinely empty tab can't hang the sweep.
+  async function waitForTabContent(label, maxMs = 18000) {
+    const start = performance.now()
+    const has = () => {
+      const raw = panelInnerText()
+      const lines = raw.split('\n').map(s => norm(s)).filter(Boolean)
+      if (label === 'notes') return /no notes( to display)?/i.test(raw) || lines.some(isTsLine)
+      if (label === 'documents') return /no (documents|photos|files)/i.test(raw)
+        || deepQueryAll('a[href]').some(a => visible(a) && /\.(pdf|jpe?g|png|docx?|xlsx?)(\?|$)/i.test(a.href))
+        || lines.some(l => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(l))
+      // summary
+      return /no (summary|milestones?)/i.test(raw) || lines.some(l => MILESTONE_RE.test(l) && l.length <= 40)
+    }
+    while (performance.now() - start < maxMs) {
+      if (has()) { await sleep(700); return true } // small grace so late siblings finish
+      await sleep(400)
+    }
+    return false
+  }
+
   // Some tabs (Notes/Documents on busy orders) lazy-load more rows as you scroll,
   // so scroll the window + any scrollable container to the bottom repeatedly until
   // the panel text stops growing, then return to the top. Without this we only
@@ -603,33 +650,40 @@
       if (findTabControl(TABS[0].re) && findTabControl(TABS[TABS.length - 1].re)) break
       await sleep(400)
     }
-    let prevSig = panelSig() // the (Summary) panel we start on
-    const deadline = performance.now() + 45000 // hard cap so one long order can't wedge the sweep
-    for (const tab of TABS) {
-      if (performance.now() > deadline) { LOG(`detail: time budget hit — capturing ${tab.label}+ from what's loaded`); break }
+    // Scrape the ALREADY-ACTIVE tab first. On a Change Order the default tab is
+    // Notes (the one with content); the other tabs may be empty and slow, so doing
+    // the active one first guarantees we capture real content well within the 60s
+    // watchdog even if a later empty tab eats its time budget.
+    const order = [...TABS].sort((a, b) => (tabActive(findTab(a.re)) ? -1 : 0) - (tabActive(findTab(b.re)) ? -1 : 0))
+    const deadline = performance.now() + 52000 // stay under the 60s stall watchdog
+    for (const tab of order) {
+      if (performance.now() > deadline) { LOG(`detail: time budget hit — stopping after what's loaded`); break }
       let ctl = null
-      for (let i = 0; i < 12 && !ctl; i++) { ctl = findTabControl(tab.re); if (!ctl) await sleep(400) }
+      for (let i = 0; i < 12 && !ctl; i++) { ctl = findTab(tab.re); if (!ctl) await sleep(400) }
       if (!ctl) { LOG(`detail: ${tab.label} tab not found`); continue }
 
-      // Summary is the default tab (already showing); the others must be switched
-      // to. A synthetic click often doesn't register until the tab is interactive,
-      // so re-click until the panel content actually CHANGES — otherwise we'd
-      // scrape the Summary panel again as "documents"/"notes".
-      let switched = tab.label === 'summary'
-      for (let attempt = 0; attempt < 5 && !switched; attempt++) {
-        LOG(`detail: clicking ${tab.label} tab (try ${attempt + 1})`)
+      // Activate the tab by clicking its anchor until it carries the `active` class —
+      // ANY tab can be the default (a Change Order opens on Notes, not Summary), so
+      // an already-active tab needs no click and must NOT be skipped.
+      let active = tabActive(ctl)
+      for (let attempt = 0; attempt < 5 && !active; attempt++) {
+        LOG(`detail: activating ${tab.label} tab (try ${attempt + 1})`)
         clickEl(ctl)
-        for (let i = 0; i < 10; i++) { // ~4s to register the switch
+        for (let i = 0; i < 15; i++) { // ~6s to register the switch
           await sleep(400)
-          if (panelSig() !== prevSig) { switched = true; break }
+          ctl = findTab(tab.re) || ctl
+          if (tabActive(ctl)) { active = true; break }
         }
-        if (!switched) ctl = findTabControl(tab.re) || ctl
       }
-      if (!switched && tab.label !== 'summary') { LOG(`detail: ${tab.label} tab did not switch — skipping`); continue }
+      if (!active) { LOG(`detail: ${tab.label} tab wouldn't activate — skipping`); continue }
 
-      await waitForPanelStable()  // let the (now-switched) panel finish loading
-      if (tab.label !== 'summary') await loadAllInPanel(10000) // scroll to pull in lazy rows (long Notes/Docs)
-      prevSig = panelSig()
+      // Wait for THIS tab's own content to actually render — the portal is slow and
+      // the panel often fills several seconds after the tab activates (scraping too
+      // early is what returned empty pages before). We wait for tab-appropriate
+      // content (a note timestamp, a document date, a summary milestone, or the
+      // portal's own "nothing to show" text), capped so a truly empty tab can't hang.
+      await waitForTabContent(tab.label, 14000)
+      await loadAllInPanel(10000) // scroll to pull in lazy rows (long Notes/Docs); returns early when the panel stops growing
       try {
         const data = tab.scrape()
         const n = tab.label === 'summary' ? (data.milestones || []).length : (Array.isArray(data) ? data.length : 0)
