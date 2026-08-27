@@ -69,15 +69,18 @@
 
   <h1 style="font-size:15px;margin-top:26px;">Clopay HD Program orders</h1>
   <div class="row"><input id="clopayEnabled" type="checkbox" /><label for="clopayEnabled">Log orders from the Clopay portal</label></div>
-  <div class="hint">Scrapes the Clopay HD Program order list (hdprogram.clopay.com) into Castle Admin whenever you open the portal.</div>
-  <div class="row"><input id="clopayAutoDetail" type="checkbox" /><label for="clopayAutoDetail">Auto-open orders to capture full detail</label></div>
-  <div class="hint">Opens each order needing detail (Summary, Documents, Notes) and returns to the list. Leave off while you're actively using the portal — it navigates for you. Backfills a few per visit.</div>
+  <div class="hint">Reads the Clopay HD Program orders + detail (Summary, Documents, Notes) straight from the portal's API (no clicking through the site) and logs them into Castle Admin.</div>
 
-  <label>Max orders to detail per visit</label>
-  <input id="clopayMaxDetailPerRun" type="number" min="1" max="220" />
+  <label>Clopay installer / dealer number</label>
+  <input id="clopayInstallerNum" type="text" placeholder="56505" />
+  <div class="hint">Castle's Clopay dealer number, used for the order API calls. Only change this if Clopay assigns Castle a different number.</div>
+
+  <label>Max orders to detail per manual run</label>
+  <input id="clopayMaxDetailPerRun" type="number" min="1" max="400" />
+  <div class="hint">Caps how many orders a single manual "crawl now" fetches full detail for. Scheduled / full crawls use a larger cap and pick up where the last left off.</div>
 
   <div class="row"><input id="clopayScheduleEnabled" type="checkbox" /><label for="clopayScheduleEnabled">Crawl automatically on a schedule</label></div>
-  <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, crawls, closes it. Needs Chrome running and logged into the Clopay portal; if it finds you logged out, it signs back in with the credentials below, then badges the icon and emails whoever you pick in Notifications.</div>
+  <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, reads the API, closes it. Needs Chrome running and logged into the Clopay portal; if it finds you logged out, it signs back in with the credentials below, then badges the icon and emails whoever you pick in Notifications.</div>
 
   <label>Clopay username</label>
   <input id="clopayUser" type="text" autocomplete="off" placeholder="you@castlegaragedoors.com" />

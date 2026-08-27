@@ -271,6 +271,34 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
   }
 })
 
+// Proxy Clopay portal-API calls from the content script. The content script reads
+// the bearer token from the page's localStorage and asks us to make the request:
+// the service worker has host_permissions for *.clopay.com, so it can call the
+// cross-origin prod-apigateway.clopay.com host without being blocked by CORS.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'clopay-api') return
+  ;(async () => {
+    try {
+      if (!/^https:\/\/prod-apigateway\.clopay\.com\//.test(msg.url || '')) { sendResponse({ status: 0, error: 'blocked url' }); return }
+      const res = await fetch(msg.url, {
+        method: msg.method || 'GET',
+        headers: {
+          authorization: 'Bearer ' + msg.token,
+          accept: 'application/json',
+          ...(msg.body ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(msg.body ? { body: JSON.stringify(msg.body) } : {}),
+      })
+      let json = null
+      try { json = await res.json() } catch { /* non-JSON */ }
+      sendResponse({ status: res.status, json })
+    } catch (e) {
+      sendResponse({ status: -1, error: e instanceof Error ? e.message : String(e) })
+    }
+  })()
+  return true // async response
+})
+
 // Orders scraped from a vendor portal (content-genie.js / content-clopay.js) →
 // Castle Admin ingest. Independent of the SF poll loop; posts in the user's
 // session using the same base URL + token. The content script sends the crawler
