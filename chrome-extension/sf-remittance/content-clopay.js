@@ -421,13 +421,20 @@
   // Structural snapshot for tuning the DETAIL page — what tabs/controls we can see
   // and a sample of the rendered text. Also on window.__clopayDetailDiag().
   function detailDiagnostics() {
-    const tabs = TABS.map(t => { const el = findTabControl(t.re); return { label: t.label, found: !!el, text: el ? norm(el.innerText).slice(0, 40) : null } })
+    const tabs = TABS.map(t => { const a = findTab(t.re); return { label: t.label, found: !!a, tag: a ? a.tagName : null, active: tabActive(a), text: a ? norm(a.innerText).slice(0, 30) : null } })
     const clickable = deepQueryAll('[role="tab"], button, a, li').filter(visible)
       .map(el => norm(el.innerText)).filter(t => t && t.length < 30).slice(0, 40)
+    const panelRaw = panelInnerText()
+    const panelLines = panelRaw.split('\n').map(l => norm(l)).filter(Boolean)
     const snap = {
       url: location.href,
       hasCustomerMarker: /PO\s*#/i.test(document.body.innerText),
       tabsFound: tabs,
+      panelTextLen: norm(panelRaw).length,
+      bodyTextLen: norm(document.body.innerText).length,
+      hasTimestampLine: panelLines.some(l => isTsLine(l)),
+      hasMilestone: panelLines.some(l => MILESTONE_RE.test(l)),
+      emptyState: /no (notes|documents|photos|summary|milestones?|files)/i.test(panelRaw),
       clickableLabels: clickable,
       links: deepQueryAll('a[href]').filter(visible).length,
       bodyTextSample: norm(document.body.innerText).slice(0, 900),
@@ -682,8 +689,9 @@
       // early is what returned empty pages before). We wait for tab-appropriate
       // content (a note timestamp, a document date, a summary milestone, or the
       // portal's own "nothing to show" text), capped so a truly empty tab can't hang.
-      await waitForTabContent(tab.label, 14000)
+      const contentReady = await waitForTabContent(tab.label, 14000)
       await loadAllInPanel(10000) // scroll to pull in lazy rows (long Notes/Docs); returns early when the panel stops growing
+      LOG(`detail: ${tab.label} active=${tabActive(ctl)} contentReady=${contentReady} panelLen=${norm(panelInnerText()).length}`)
       try {
         const data = tab.scrape()
         const n = tab.label === 'summary' ? (data.milestones || []).length : (Array.isArray(data) ? data.length : 0)
@@ -695,6 +703,10 @@
     }
     o.raw = raw
     if (!o.external_id) { LOG('detail: no PO found — DOM may differ'); return null }
+    // If we captured no real detail, dump a snapshot of exactly what the scraper saw
+    // at this moment (active tab, panel length, content markers) so we can tune it.
+    const gotAny = (raw.summary_text && raw.summary_text.trim()) || (raw.notes && raw.notes.length) || (raw.documents && raw.documents.length)
+    if (!gotAny) { LOG(`detail: captured NOTHING for ${o.external_id} — snapshot follows`); detailDiagnostics() }
     return o
   }
 
