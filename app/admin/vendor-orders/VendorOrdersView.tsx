@@ -7,14 +7,7 @@ import VendorOrdersTable, { type VendorOrder } from './VendorOrdersTable'
 import { AutopilotToggle } from './AutopilotToggle'
 import { NudgeControls } from './NudgeControls'
 import HdOrdersNav from './HdOrdersNav'
-
-const statusStyle = (s: string | null) => {
-  const k = (s || '').toLowerCase()
-  if (k.includes('cancel')) return 'bg-red-100 text-red-700'                          // Cancelled
-  if (k.includes('complet') || k.startsWith('clos')) return 'bg-gray-100 text-gray-500' // completed/closed → grey
-  if (k.startsWith('open')) return 'bg-green-100 text-green-800'
-  return 'bg-amber-100 text-amber-800'                                                 // in progress
-}
+import { statusChipStyle, isTerminalStatus } from '@/lib/vendor-orders/status-style'
 
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
@@ -49,15 +42,37 @@ export default async function VendorOrdersView({
     .limit(1000)
   const base = (data ?? []) as VendorOrder[]
 
+  // Last time each order's status changed (from the status_change events), for
+  // the "Last Status Change" column + default sort. Chunk the id list to keep the
+  // .in() query URL small.
+  const orderIds = base.map(o => o.id)
+  const lastStatusChange = new Map<string, string>()
+  for (let i = 0; i < orderIds.length; i += 150) {
+    const chunk = orderIds.slice(i, i + 150)
+    const { data: ev } = await db
+      .from('vendor_order_events')
+      .select('order_id, created_at')
+      .in('order_id', chunk)
+      .eq('event_type', 'status_change')
+      .order('created_at', { ascending: false })
+    for (const e of (ev ?? []) as Array<{ order_id: string; created_at: string }>) {
+      if (!lastStatusChange.has(e.order_id)) lastStatusChange.set(e.order_id, e.created_at)
+    }
+  }
+
   // Resolve each order's SF job via the shared matching service (PO → name →
   // email → phone). For Clopay the PO is the external_id (handled in the matcher).
   const matches = sfEnabled ? await resolveSfJobMatches(db, base) : new Map()
   const orders: VendorOrder[] = base.map(o => {
+    const withLsc = { ...o, last_status_change_at: lastStatusChange.get(o.id) ?? null }
     const m = matches.get(o.id)
-    if (m?.sfJobNumber) return { ...o, sf_job_number: m.sfJobNumber, sf_match_method: m.method ?? null }
-    if (o.sf_created_job_number) return { ...o, sf_job_number: o.sf_created_job_number, sf_match_method: 'pending' }
-    return { ...o, sf_job_number: null, sf_match_method: null }
+    if (m?.sfJobNumber) return { ...withLsc, sf_job_number: m.sfJobNumber, sf_match_method: m.method ?? null }
+    if (o.sf_created_job_number) return { ...withLsc, sf_job_number: o.sf_created_job_number, sf_match_method: 'pending' }
+    return { ...withLsc, sf_job_number: null, sf_match_method: null }
   })
+  // Default order: most recent status change first (fall back to first seen).
+  const sortValue = (o: VendorOrder) => o.last_status_change_at ?? o.first_seen_at
+  orders.sort((a, b) => sortValue(b).localeCompare(sortValue(a)))
 
   const counts = orders.reduce<Record<string, number>>((a, o) => {
     const k = (o.status || 'unknown').toLowerCase().startsWith('open') ? 'Open' : (o.status || 'Unknown')
@@ -118,7 +133,7 @@ export default async function VendorOrdersView({
 
       <div className="flex flex-wrap gap-2 mb-4 text-sm">
         {Object.entries(counts).map(([k, n]) => (
-          <span key={k} className={`px-2.5 py-1 rounded-full ${statusStyle(k)}`}>{k}: {n}</span>
+          <span key={k} className={`px-2.5 py-1 rounded-full ${statusChipStyle(k)}`}>{k}: {n}</span>
         ))}
         {needDetail > 0 && <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700">Awaiting detail: {needDetail}</span>}
       </div>
@@ -127,8 +142,27 @@ export default async function VendorOrdersView({
         <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-500">
           No orders yet. Open the {shortName} portal with the extension installed — orders appear here on the next scrape.
         </div>
+      ) : isGenie ? (
+        <VendorOrdersTable orders={orders} enableSf={sfEnabled} enableNudge={isGenie} defaultSortKey="last_status_change_at" />
       ) : (
-        <VendorOrdersTable orders={orders} enableSf={sfEnabled} enableNudge={isGenie} />
+        // Clopay: split into Active vs Completed/Cancelled. Only "Install/Delivery
+        // Completed" (and any cancelled) are terminal; everything else is active.
+        <div className="space-y-8">
+          <VendorOrdersTable
+            orders={orders.filter(o => !isTerminalStatus(o.status))}
+            enableSf={sfEnabled}
+            enableNudge={false}
+            title="Active Orders"
+            defaultSortKey="last_status_change_at"
+          />
+          <VendorOrdersTable
+            orders={orders.filter(o => isTerminalStatus(o.status))}
+            enableSf={sfEnabled}
+            enableNudge={false}
+            title="Completed / Cancelled Orders"
+            defaultSortKey="last_status_change_at"
+          />
+        </div>
       )}
     </div>
   )

@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState, useTransition } from 'react'
 import { createSfJobAction, sendNudgeNowAction } from './actions'
+import { statusChipStyle } from '@/lib/vendor-orders/status-style'
 
 // Portal-specific detail captured verbatim by the crawler (Clopay's Summary
 // timeline, documents, and notes). Loosely typed — the crawler's exact shape is
@@ -38,6 +39,7 @@ export interface VendorOrder {
   detail_scraped_at: string | null
   first_seen_at: string
   last_seen_at: string
+  last_status_change_at: string | null
   schedule_nudge_sent_at: string | null
   raw?: VendorOrderRaw | null
 }
@@ -61,24 +63,16 @@ const fmtDate = (s: string | null) =>
 const fmtSeen = (s: string) =>
   new Date(s).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
-const statusStyle = (s: string | null) => {
-  const k = (s || '').toLowerCase()
-  if (k.includes('cancel')) return 'bg-red-100 text-red-700'                          // Cancelled
-  if (k.includes('complet') || k.startsWith('clos')) return 'bg-gray-100 text-gray-500' // completed/closed → grey
-  if (k.startsWith('open')) return 'bg-green-100 text-green-800'
-  return 'bg-amber-100 text-amber-800'                                                 // in progress
-}
-
 type SortKey =
   | 'external_id' | 'status' | 'next_step' | 'customer_name' | 'street_address'
   | 'phone' | 'email' | 'scope' | 'order_date' | 'schedule_date' | 'customer_po'
-  | 'store_number' | 'sf_job_number' | 'first_seen_at' | 'last_seen_at'
+  | 'store_number' | 'sf_job_number' | 'first_seen_at' | 'last_seen_at' | 'last_status_change_at'
 
 const COLUMNS: { key: SortKey; label: string }[] = [
-  { key: 'first_seen_at', label: 'First Seen' },
   { key: 'order_date', label: 'Order Date' },
   { key: 'external_id', label: 'HD Order #' },
   { key: 'status', label: 'Status' },
+  { key: 'last_status_change_at', label: 'Last Status Change' },
   { key: 'customer_po', label: 'PO' },
   { key: 'sf_job_number', label: 'SF Job #' },
   { key: 'next_step', label: 'Next Step' },
@@ -90,6 +84,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'schedule_date', label: 'Scheduled' },
   { key: 'store_number', label: 'Store' },
   { key: 'last_seen_at', label: 'Seen' },
+  { key: 'first_seen_at', label: 'First Seen' },
 ]
 
 const uniq = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b))
@@ -257,8 +252,8 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
   )
 }
 
-export default function VendorOrdersTable({ orders, enableSf = true, enableNudge = true }: { orders: VendorOrder[]; enableSf?: boolean; enableNudge?: boolean }) {
-  const [sortKey, setSortKey] = useState<SortKey>('first_seen_at')
+export default function VendorOrdersTable({ orders, enableSf = true, enableNudge = true, title, defaultSortKey = 'first_seen_at' }: { orders: VendorOrder[]; enableSf?: boolean; enableNudge?: boolean; title?: string; defaultSortKey?: SortKey }) {
+  const [sortKey, setSortKey] = useState<SortKey>(defaultSortKey)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
@@ -316,7 +311,7 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
 
   function toggleSort(k: SortKey) {
     if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
-    else { setSortKey(k); setSortDir(['order_date', 'schedule_date', 'first_seen_at', 'last_seen_at'].includes(k) ? 'desc' : 'asc') }
+    else { setSortKey(k); setSortDir(['order_date', 'schedule_date', 'first_seen_at', 'last_seen_at', 'last_status_change_at'].includes(k) ? 'desc' : 'asc') }
   }
 
   const selectCls = 'text-gray-900 border border-gray-300 rounded-md px-2 py-1 text-sm bg-white'
@@ -324,6 +319,9 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
 
   return (
     <div>
+      {title && (
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">{title} <span className="text-sm font-normal text-gray-500">({orders.length})</span></h2>
+      )}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <input
           type="text"
@@ -393,10 +391,10 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                     )}
                   </td>
                 )}
-                <td className="px-3 py-2 whitespace-nowrap text-gray-700">{fmtSeen(o.first_seen_at)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.order_date)}</td>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{o.external_id}</td>
-                <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusStyle(o.status)}`}>{o.status || '—'}</span></td>
+                <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusChipStyle(o.status)}`}>{o.status || '—'}</span></td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.last_status_change_at ? fmtSeen(o.last_status_change_at) : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {enableSf ? (
@@ -427,6 +425,7 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.schedule_date)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.store_number || '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-400 text-xs">{fmtSeen(o.last_seen_at)}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{fmtSeen(o.first_seen_at)}</td>
               </tr>
               {drawer && isOpen && <DetailDrawer order={o} colSpan={COLUMNS.length + (anyDrawer ? 1 : 0)} />}
               </Fragment>
