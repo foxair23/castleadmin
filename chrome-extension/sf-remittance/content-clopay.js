@@ -715,9 +715,8 @@
   // open, or keeps scraping empty), we record it here with a timestamp and exclude
   // it from the queue — so restarting the crawler mid-backfill does NOT reopen the
   // same stuck job again and again. Entries expire after SKIP_TTL so the next day's
-  // crawl retries them. This is what enforces "never come back to a job more than
-  // MAX_ATTEMPTS times" ACROSS restarts (the in-sweep attempts counter only holds
-  // within one sweep object).
+  // crawl retries them. Together with the attempt ledger below, this enforces
+  // "never come back to a job more than MAX_ATTEMPTS times" across restarts.
   const SKIP_KEY = 'clopayDetailSkip'
   const SKIP_TTL = 6 * 60 * 60 * 1000 // 6h
   const getSkipRaw = () => storageGet({ [SKIP_KEY]: {} }).then(d => d[SKIP_KEY] || {})
@@ -733,6 +732,28 @@
     for (const [id, ts] of Object.entries(m)) if (now - ts < SKIP_TTL) { live[id] = ts; set.add(id) }
     if (Object.keys(live).length !== Object.keys(m).length) await setSkipRaw(live)
     return set
+  }
+
+  // Per-order attempt ledger — how many times we've OPENED each order this backfill.
+  // Kept in its OWN storage key (not in the sweep object) on purpose: the sweep's
+  // queue is rebuilt from scratch every time the list is re-scraped, which used to
+  // reset the in-sweep attempts counter to zero and let a stuck order (e.g. one
+  // that keeps forcing a list reload) be reopened forever. This ledger survives
+  // those rebuilds, so the MAX_ATTEMPTS cap actually holds. TTL'd like the skip set.
+  const ATT_KEY = 'clopayDetailAttempts'
+  const getAttRaw = () => storageGet({ [ATT_KEY]: {} }).then(d => d[ATT_KEY] || {})
+  const setAttRaw = (m) => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.set({ [ATT_KEY]: m }, r) } catch { r() } })
+  async function bumpAttempt(id) {
+    const m = await getAttRaw(), now = Date.now()
+    const prev = m[id] && (now - m[id].ts < SKIP_TTL) ? m[id].n : 0
+    m[id] = { n: prev + 1, ts: now }
+    await setAttRaw(m)
+    return prev + 1
+  }
+  async function clearAttempt(id) {
+    if (!id) return
+    const m = await getAttRaw()
+    if (m[id]) { delete m[id]; await setAttRaw(m) }
   }
   // Does a scraped detail object actually carry detail-page content? An order that
   // opens but scrapes empty is treated as a failed attempt (retried, then skipped),
@@ -802,8 +823,7 @@
   async function dropHead(sweep) {
     const [head, ...rest] = sweep.queue
     await addSkip(head) // failed to open / scrape → set aside so a restart won't reopen it
-    const attempts = { ...(sweep.attempts || {}) }; delete attempts[head]
-    await setSweep({ ...sweep, queue: rest, attempts })
+    await setSweep({ ...sweep, queue: rest, current: null })
     return resumeSweepOnList()
   }
 
@@ -815,17 +835,19 @@
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) { await clearSweep(); endCrawl(); return }
     const id = sweep.queue[0]
-    const attempts = { ...(sweep.attempts || {}) }
-    attempts[id] = (attempts[id] || 0) + 1
-    if (attempts[id] > MAX_ATTEMPTS) {
-      LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} tries this backfill`)
-      return dropHead({ ...sweep, attempts }) // dropHead records the skip
+    // Count this open in the PERSISTENT ledger (survives sweep-queue rebuilds) and
+    // stop the moment an order has been opened MAX_ATTEMPTS times this backfill —
+    // this is the hard "never come back to the same job more than 3 times" rule.
+    const nAttempt = await bumpAttempt(id)
+    if (nAttempt > MAX_ATTEMPTS) {
+      LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} opens this backfill`)
+      return dropHead(sweep) // dropHead records the skip so it's excluded on restarts
     }
     // Remember which id we're opening so runDetail removes THIS one from the queue
     // (the detail page's scraped PO can differ from the list id; keying advancement
     // off the detail PO left the head in place and re-opened the same order).
-    await setSweep({ ...sweep, attempts, current: id })
-    LOG(`detail sweep: locating #${id} (${sweep.queue.length} left, try ${attempts[id]})`)
+    await setSweep({ ...sweep, current: id })
+    LOG(`detail sweep: locating #${id} (${sweep.queue.length} left, open ${nAttempt}/${MAX_ATTEMPTS})`)
     await waitForRows()
     await sleep(800)
 
@@ -922,13 +944,14 @@
     if (!sweep || !sweep.queue.length) return
     if (complete) {
       // Remove the id we OPENED (and the detail's PO, if different) so we always
-      // advance past this order — never re-open the same one.
+      // advance past this order — never re-open the same one. Clear its attempt
+      // ledger entry: it succeeded, so a future crawl may re-detail it freely.
       const opened = sweep.current || o.external_id
-      const attempts = { ...(sweep.attempts || {}) }; delete attempts[opened]; delete attempts[o.external_id]
+      await clearAttempt(opened); await clearAttempt(o.external_id)
       const remaining = sweep.queue.filter(x => x !== opened && x !== o.external_id)
       // Refresh startedAt so an actively-progressing sweep survives a crawl-timeout
       // and resumes (rather than going stale and restarting from the front).
-      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts, current: null, startedAt: Date.now() }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
+      if (remaining.length) { await setSweep({ ...sweep, queue: remaining, current: null, startedAt: Date.now() }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
       else { await clearSweep(); LOG('detail sweep: complete'); endCrawl(); goToList() }
     } else {
       // Opened but no real detail (empty/partial render). Back to the list — the
