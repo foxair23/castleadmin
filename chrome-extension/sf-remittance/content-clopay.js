@@ -945,15 +945,13 @@
   }
 
   async function runList() {
-    // Mid-sweep: advance it instead of re-scraping — unless it's stale (crash
-    // leftover), in which case drop it and start fresh.
-    const active = await getSweep()
-    if (active && active.queue.length) {
-      const stale = !active.startedAt || (Date.now() - active.startedAt > SWEEP_STALE_MS)
-      if (!stale) { await resumeSweepOnList(); return }
-      LOG('detail sweep: discarding stale queue'); await clearSweep()
-    }
-
+    // Always take a FRESH list scrape and rebuild the detail queue from the server's
+    // current needDetail (below). We deliberately do NOT blindly resume a saved
+    // queue: a queue left over from an earlier crawl can hold stale ids — e.g. an
+    // order's pre-change-order PO — that the server already considers done, and
+    // resuming it made the sweep reopen a ghost order forever. Rebuilding from
+    // needDetail purges those (already-detailed orders have dropped off) while still
+    // resuming the backlog, since detailed orders simply aren't returned again.
     if (!(await waitForRows())) { LOG('list: no rows after waiting — DOM likely differs'); diagnostics(); return }
     const orders = await scrapeAllListPages()
     LOG(`list: scraped ${orders.length} order(s)`)
@@ -999,19 +997,7 @@
     for (let i = 0; i < 50 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
     LOG(ready ? `detail: page ready in ${Math.round(performance.now() - t0)}ms` : 'detail: page did not render in ~25s — skipping')
     if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
-    // The id we OPENED from the list — the detail MUST be filed under THIS id so it
-    // attaches to the right order row. Clopay's detail page can show a different PO
-    // than the list (e.g. a change-order PO 73435853 vs the list's HD order 49529087);
-    // filing under the detail PO created a phantom order and left the list order
-    // permanently "needing detail", so the sweep reopened it forever.
-    const pre = await getSweep()
-    const openedId = (pre && pre.current) || null
     const o = ready ? await safeScrapeDetail() : null
-    if (o && openedId && o.external_id !== openedId) {
-      LOG(`detail: page PO ${o.external_id} ≠ list id ${openedId} — filing under list id`)
-      if (o.raw) o.raw.detail_po = o.external_id // keep the detail-page PO for reference
-      o.external_id = openedId
-    }
     // Always ingest what we got (even a content-less scrape carries the customer
     // card's phone/email), but only ADVANCE past the order when real detail landed.
     if (o) { LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`); await ingest('detail', o) }
