@@ -999,7 +999,19 @@
     for (let i = 0; i < 50 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
     LOG(ready ? `detail: page ready in ${Math.round(performance.now() - t0)}ms` : 'detail: page did not render in ~25s — skipping')
     if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
+    // The id we OPENED from the list — the detail MUST be filed under THIS id so it
+    // attaches to the right order row. Clopay's detail page can show a different PO
+    // than the list (e.g. a change-order PO 73435853 vs the list's HD order 49529087);
+    // filing under the detail PO created a phantom order and left the list order
+    // permanently "needing detail", so the sweep reopened it forever.
+    const pre = await getSweep()
+    const openedId = (pre && pre.current) || null
     const o = ready ? await safeScrapeDetail() : null
+    if (o && openedId && o.external_id !== openedId) {
+      LOG(`detail: page PO ${o.external_id} ≠ list id ${openedId} — filing under list id`)
+      if (o.raw) o.raw.detail_po = o.external_id // keep the detail-page PO for reference
+      o.external_id = openedId
+    }
     // Always ingest what we got (even a content-less scrape carries the customer
     // card's phone/email), but only ADVANCE past the order when real detail landed.
     if (o) { LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`); await ingest('detail', o) }
