@@ -971,6 +971,11 @@
     const needDetail = (res && res.needDetail) || []
     const skip = await activeSkip()
     const targets = needDetail.filter(id => !skip.has(id))
+    // Diagnostic: show which orders the server still wants detail for, with the
+    // customer name the LIST scrape read for each — so a looping id is obvious.
+    const ndSet = new Set(needDetail)
+    const ndNamed = orders.filter(o => ndSet.has(o.external_id)).map(o => `${o.external_id}=${(o.customer_name || '').slice(0, 18)}`)
+    LOG(`needDetail (${needDetail.length}): ${JSON.stringify(ndNamed.slice(0, 25))}`)
     if (autoDetail && targets.length) {
       const queue = targets.slice(0, cap)
       const setAside = needDetail.length - targets.length
@@ -992,12 +997,25 @@
     // Wait (bounded) for the page to render, then scrape ONCE. Retrying the full
     // scrape — which clicks all 3 tabs — on a pinwheeling page burned minutes and
     // looked stuck; cap the wait and move on instead.
+    const sweep0 = await getSweep() // the id we're on (sweep.current) before scraping
     const t0 = performance.now()
     let ready = false
     for (let i = 0; i < 50 && !ready; i++) { if (detailReady()) ready = true; else await sleep(500) }
     LOG(ready ? `detail: page ready in ${Math.round(performance.now() - t0)}ms` : 'detail: page did not render in ~25s — skipping')
     if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
     const o = ready ? await safeScrapeDetail() : null
+    // File the detail under the id we OPENED from the list (sweep.current) — that is
+    // the id the server's needDetail asked about. Clopay's detail page can show a
+    // different PO than the list row (a change order shows a "New PO#"), and filing
+    // under that detail PO leaves the list order permanently "needing detail", so the
+    // sweep reopens it forever. The queue is reconciled to real needDetail ids first
+    // (runList), so `current` is always a genuine order. Keep the detail PO in raw.
+    const openedId = (sweep0 && sweep0.current) || null
+    if (o && openedId && o.external_id !== openedId) {
+      LOG(`detail: page PO ${o.external_id} ≠ list id ${openedId} — filing under list id ${openedId}`)
+      if (o.raw) o.raw.detail_po = o.external_id
+      o.external_id = openedId
+    }
     // Always ingest what we got (even a content-less scrape carries the customer
     // card's phone/email), but only ADVANCE past the order when real detail landed.
     if (o) { LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`); await ingest('detail', o) }
