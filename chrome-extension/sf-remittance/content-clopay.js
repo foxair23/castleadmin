@@ -711,6 +711,43 @@
   const setSweep = (s) => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.set({ [SWEEP_KEY]: s }, r) } catch { r() } })
   const clearSweep = () => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.remove(SWEEP_KEY, r) } catch { r() } })
 
+  // Persistent per-order "give up" set. When an order exhausts its attempts (can't
+  // open, or keeps scraping empty), we record it here with a timestamp and exclude
+  // it from the queue — so restarting the crawler mid-backfill does NOT reopen the
+  // same stuck job again and again. Entries expire after SKIP_TTL so the next day's
+  // crawl retries them. This is what enforces "never come back to a job more than
+  // MAX_ATTEMPTS times" ACROSS restarts (the in-sweep attempts counter only holds
+  // within one sweep object).
+  const SKIP_KEY = 'clopayDetailSkip'
+  const SKIP_TTL = 6 * 60 * 60 * 1000 // 6h
+  const getSkipRaw = () => storageGet({ [SKIP_KEY]: {} }).then(d => d[SKIP_KEY] || {})
+  const setSkipRaw = (m) => new Promise(r => { if (!ctxAlive()) { r(); return } try { chrome.storage.local.set({ [SKIP_KEY]: m }, r) } catch { r() } })
+  async function addSkip(id) {
+    if (!id) return
+    const m = await getSkipRaw(); m[id] = Date.now(); await setSkipRaw(m)
+    LOG(`detail sweep: set #${id} aside for ${Math.round(SKIP_TTL / 3600000)}h (won't reopen this backfill)`)
+  }
+  // Live skip ids (unexpired), pruning stale entries as a side effect.
+  async function activeSkip() {
+    const m = await getSkipRaw(), now = Date.now(), live = {}, set = new Set()
+    for (const [id, ts] of Object.entries(m)) if (now - ts < SKIP_TTL) { live[id] = ts; set.add(id) }
+    if (Object.keys(live).length !== Object.keys(m).length) await setSkipRaw(live)
+    return set
+  }
+  // Does a scraped detail object actually carry detail-page content? An order that
+  // opens but scrapes empty is treated as a failed attempt (retried, then skipped),
+  // not "done" — otherwise it would fall out of the queue yet still lack detail and
+  // get re-queued on every future crawl. Mirrors the server's hasStoredDetail().
+  function detailHasContent(o) {
+    const r = o && o.raw
+    if (!r || typeof r !== 'object') return false
+    if (typeof r.summary_text === 'string' && r.summary_text.trim()) return true
+    if (Array.isArray(r.summary) && r.summary.length) return true
+    if (Array.isArray(r.notes) && r.notes.length) return true
+    if (Array.isArray(r.documents) && r.documents.length) return true
+    return false
+  }
+
   async function waitForRows(ms = 20000) {
     const start = Date.now()
     while (Date.now() - start < ms) { if (rowCount()) return true; await sleep(500) }
@@ -764,6 +801,7 @@
 
   async function dropHead(sweep) {
     const [head, ...rest] = sweep.queue
+    await addSkip(head) // failed to open / scrape → set aside so a restart won't reopen it
     const attempts = { ...(sweep.attempts || {}) }; delete attempts[head]
     await setSweep({ ...sweep, queue: rest, attempts })
     return resumeSweepOnList()
@@ -780,8 +818,8 @@
     const attempts = { ...(sweep.attempts || {}) }
     attempts[id] = (attempts[id] || 0) + 1
     if (attempts[id] > MAX_ATTEMPTS) {
-      LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} tries — skipping`)
-      return dropHead({ ...sweep, attempts })
+      LOG(`detail sweep: giving up on #${id} after ${MAX_ATTEMPTS} tries this backfill`)
+      return dropHead({ ...sweep, attempts }) // dropHead records the skip
     }
     // Remember which id we're opening so runDetail removes THIS one from the queue
     // (the detail page's scraped PO can differ from the list id; keying advancement
@@ -838,18 +876,23 @@
     const mode = await getCrawlMode()
     const autoDetail = !!mode || cfg.clopayAutoDetail
     const cap = mode === 'full' ? 250 : mode === 'incremental' ? 25 : cfg.clopayMaxDetailPerRun
-    // A FULL crawl re-details EVERY order (refreshes detail / repopulates it after
-    // a data change), even ones already marked detail_scraped_at. Incremental /
-    // manual detail only the orders the server still flags as needing it.
-    const targets = mode === 'full'
-      ? orders.map(o => o.external_id).filter(Boolean)
-      : ((res && res.needDetail) || [])
+    // Detail only the orders the server says still LACK real detail (needDetail now
+    // reflects stored content, not just detail_scraped_at). This is what makes a
+    // backfill resumable: each (re)start queues only what's still missing, so
+    // restarting the crawler 10× never starts from the beginning — already-indexed
+    // orders have dropped off the list. `full` just uses a big cap so one run can
+    // clear the whole backlog; `incremental`/manual use smaller caps.
+    const needDetail = (res && res.needDetail) || []
+    const skip = await activeSkip()
+    const targets = needDetail.filter(id => !skip.has(id))
     if (autoDetail && targets.length) {
       const queue = targets.slice(0, cap)
-      LOG(`detail sweep: starting ${queue.length}${mode === 'full' ? ` (full — all orders)` : ` of ${targets.length} needing detail`}${mode ? ` (${mode})` : ''}`)
+      const setAside = needDetail.length - targets.length
+      LOG(`detail sweep: starting ${queue.length} of ${needDetail.length} needing detail${setAside ? ` (${setAside} set aside)` : ''}${mode ? ` (${mode})` : ''}`)
       await setSweep({ queue, startedAt: Date.now() })
       await resumeSweepOnList()
     } else {
+      if (autoDetail) LOG(`detail sweep: nothing left to detail${needDetail.length ? ` (${needDetail.length} set aside)` : ''} — backfill complete`)
       endCrawl()
     }
   }
@@ -869,12 +912,15 @@
     LOG(ready ? `detail: page ready in ${Math.round(performance.now() - t0)}ms` : 'detail: page did not render in ~25s — skipping')
     if (ready) await sleep(1000) // small grace before the tab-bar wait inside scrapeDetail
     const o = ready ? await safeScrapeDetail() : null
+    // Always ingest what we got (even a content-less scrape carries the customer
+    // card's phone/email), but only ADVANCE past the order when real detail landed.
     if (o) { LOG('detail: scraped', o.external_id, `in ${Math.round(performance.now() - t0)}ms`); await ingest('detail', o) }
     else if (ready) LOG('detail: nothing scraped — DOM differs')
+    const complete = detailHasContent(o)
 
     const sweep = await getSweep()
     if (!sweep || !sweep.queue.length) return
-    if (o) {
+    if (complete) {
       // Remove the id we OPENED (and the detail's PO, if different) so we always
       // advance past this order — never re-open the same one.
       const opened = sweep.current || o.external_id
@@ -885,7 +931,10 @@
       if (remaining.length) { await setSweep({ ...sweep, queue: remaining, attempts, current: null, startedAt: Date.now() }); LOG(`detail sweep: ${remaining.length} left, returning to list`); goToList(); await afterBackResume() }
       else { await clearSweep(); LOG('detail sweep: complete'); endCrawl(); goToList() }
     } else {
-      LOG('detail sweep: scrape missed, returning to list to retry/skip'); goToList(); await afterBackResume()
+      // Opened but no real detail (empty/partial render). Back to the list — the
+      // attempts counter ticks up there and, once it hits MAX_ATTEMPTS, the order
+      // is set aside so we don't keep reopening it.
+      LOG('detail sweep: no content scraped, returning to list to retry/skip'); goToList(); await afterBackResume()
     }
   }
 

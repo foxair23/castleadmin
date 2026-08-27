@@ -40,6 +40,25 @@ function clean(v: unknown): string | null {
   return s === '' || s === '-' ? null : s
 }
 
+/** Whether a stored `raw` actually carries detail-page content (Summary text /
+ *  milestones, Notes, or Documents). We key "still needs detail" off this rather
+ *  than `detail_scraped_at` alone: an order the crawler opened but scraped EMPTY
+ *  (e.g. the earlier panel-text bug) has detail_scraped_at set yet no real
+ *  content, and must be re-detailed on the next backfill. Mirrors the drawer's
+ *  hasDrawer() check on the client. */
+function hasStoredDetail(raw: Record<string, unknown> | null | undefined): boolean {
+  if (!raw || typeof raw !== 'object') return false
+  const st = (raw as { summary_text?: unknown }).summary_text
+  if (typeof st === 'string' && st.trim().length > 0) return true
+  const summary = (raw as { summary?: unknown }).summary
+  if (Array.isArray(summary) && summary.length > 0) return true
+  const notes = (raw as { notes?: unknown }).notes
+  if (Array.isArray(notes) && notes.length > 0) return true
+  const docs = (raw as { documents?: unknown }).documents
+  if (Array.isArray(docs) && docs.length > 0) return true
+  return false
+}
+
 export interface IngestResult {
   ok: boolean
   vendor: string
@@ -111,7 +130,12 @@ export async function ingestOrders(vendor: string, orders: ScrapedOrder[], meta:
       if (newStatus !== prior.status) { statusChanges++; events.push({ order_id: prior.id, event_type: 'status_change', from_value: prior.status, to_value: newStatus }) }
       if (newNext !== prior.next_step) events.push({ order_id: prior.id, event_type: 'next_step_change', from_value: prior.next_step, to_value: newNext })
       if (o.hasDetail && !prior.detail_scraped_at) events.push({ order_id: prior.id, event_type: 'detail_scraped' })
-      if (!prior.detail_scraped_at && !o.hasDetail) needDetail.push(o.external_id) // still missing detail
+      // "Still needs detail" = the merged raw has no real detail content. Using the
+      // stored content (not just detail_scraped_at) means a backfill re-queues the
+      // orders that were opened but came back empty, and skips ones already indexed —
+      // so restarting the crawler resumes instead of starting over.
+      const mergedRaw = (row.raw ?? prior.raw) as Record<string, unknown> | null
+      if (!o.hasDetail && !hasStoredDetail(mergedRaw)) needDetail.push(o.external_id)
     }
   }
 
