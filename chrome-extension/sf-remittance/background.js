@@ -299,50 +299,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true // async response
 })
 
-// Download one Clopay document and store it on Castle's own storage. The content
-// script (which holds the Clopay bearer) sends the resolved showdocument URL + doc
-// metadata; we ask Castle for a signed upload URL (which also dedups on the Clopay
-// documentId), fetch the PDF bytes from Clopay (host_permissions cover *.clopay.com),
-// PUT them straight to Supabase Storage, then record the row. Already-stored docs are
-// skipped WITHOUT downloading.
+// Store one Clopay document. The CONTENT SCRIPT downloads the PDF in the page context
+// (where the Clopay session cookie is present — the background worker's fetch isn't
+// authenticated and got a ~15KB error page instead of the real file), so we just
+// forward its check/upload to Castle's store endpoint with our token. Called twice per
+// new doc: once with no bytes (dedup check), then with the base64 bytes to store.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== 'clopay-store-doc') return
   ;(async () => {
     const cfg = await getConfig()
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'not configured' }); return }
-    const { external_id, documentId, docUrl, filename, clopayToken } = msg
-    if (!external_id || documentId == null || !docUrl) { sendResponse({ ok: false, error: 'bad args' }); return }
+    const { external_id, documentId, filename, mime, dataB64 } = msg
+    if (!external_id || documentId == null) { sendResponse({ ok: false, error: 'bad args' }); return }
     try {
-      // 1) sign — mints a signed upload URL, or reports the doc is already stored.
-      const signRes = await fetch(`${cfg.baseUrl}/api/vendor-orders/attachment/sign`, {
+      const res = await fetch(`${cfg.baseUrl}/api/vendor-orders/attachment/store`, {
         method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ vendor: 'clopay_hd', external_id, documentId, filename }),
+        body: JSON.stringify({ vendor: 'clopay_hd', external_id, documentId, filename, mime, ...(dataB64 ? { dataB64 } : {}) }),
       })
-      const sign = await signRes.json().catch(() => ({}))
-      if (!signRes.ok || !sign.ok) { sendResponse({ ok: false, error: sign.error || `sign ${signRes.status}` }); return }
-      if (sign.alreadyStored) { sendResponse({ ok: true, skipped: 'exists' }); return }
-      // 2) fetch the document bytes from Clopay (bearer; cookies also included).
-      const docRes = await fetch(docUrl, { headers: { authorization: `Bearer ${clopayToken}` }, credentials: 'include' })
-      if (!docRes.ok) { sendResponse({ ok: false, error: `doc ${docRes.status}` }); return }
-      const buf = await docRes.arrayBuffer()
-      if (!buf.byteLength) { sendResponse({ ok: false, error: 'empty doc' }); return }
-      // The bucket enforces an allowed-MIME list against the BARE type, so strip any
-      // "; charset=…" parameters (Clopay returns "application/pdf; charset=…", which
-      // wouldn't match) and fall back to application/pdf for anything unexpected —
-      // Clopay serves docs as showdocument/{id}.pdf.
-      const ALLOWED = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/webp']
-      let mime = (docRes.headers.get('content-type') || 'application/pdf').split(';')[0].trim().toLowerCase()
-      if (!ALLOWED.includes(mime)) mime = 'application/pdf'
-      // 3) PUT the bytes straight to Supabase Storage (bypasses Vercel's body cap).
-      const putRes = await fetch(sign.uploadUrl, { method: 'PUT', headers: { 'content-type': mime, 'x-upsert': 'true' }, body: buf })
-      if (!putRes.ok) { const t = await putRes.text().catch(() => ''); sendResponse({ ok: false, error: `put ${putRes.status} ${t.slice(0, 160)}` }); return }
-      // 4) record the attachment row.
-      const compRes = await fetch(`${cfg.baseUrl}/api/vendor-orders/attachment/complete`, {
-        method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ vendor: 'clopay_hd', external_id, documentId, path: sign.path, filename, mime, size: buf.byteLength }),
-      })
-      const comp = await compRes.json().catch(() => ({}))
-      sendResponse(compRes.ok && comp.ok ? { ok: true, stored: true, bytes: buf.byteLength } : { ok: false, error: comp.error || `complete ${compRes.status}` })
+      const j = await res.json().catch(() => ({}))
+      sendResponse(res.ok ? j : { ok: false, error: j.error || `store ${res.status}` })
     } catch (e) { sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }) }
   })()
   return true // async response
