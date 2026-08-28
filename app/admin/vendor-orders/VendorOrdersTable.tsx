@@ -42,6 +42,17 @@ export interface VendorOrder {
   last_status_change_at: string | null
   schedule_nudge_sent_at: string | null
   raw?: VendorOrderRaw | null
+  attachments?: StoredAttachment[]
+}
+
+// A document file the crawler downloaded to our own storage (signed URL minted
+// server-side). `external_ref` is the Clopay documentId, matching raw.documents[].id.
+export interface StoredAttachment {
+  id: string
+  filename: string | null
+  mime_type: string | null
+  external_ref: string | null
+  url: string | null
 }
 
 // A row has a detail drawer when its raw carries any portal-specific detail
@@ -190,6 +201,10 @@ function SummaryList({ summary }: { summary: unknown }) {
 function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number }) {
   const r = order.raw ?? {}
   const documents = Array.isArray(r.documents) ? r.documents : []
+  // Map Clopay documentId → our stored copy's signed URL, so the drawer links to the
+  // file on our server (works even when logged out of Clopay) and falls back to the
+  // Clopay link only for docs not yet downloaded.
+  const storedByRef = new Map((order.attachments ?? []).filter(a => a.external_ref && a.url).map(a => [a.external_ref as string, a.url as string]))
   // Drop notes that are only the composer label (nothing left after scrubbing).
   const notes = (Array.isArray(r.notes) ? r.notes : []).filter(
     n => stripComposer(str((n as Record<string, unknown>).text || (n as Record<string, unknown>).note || (n as Record<string, unknown>).body || (n as Record<string, unknown>).message)),
@@ -214,7 +229,9 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
             {documents.length ? (
               <ul className="space-y-1.5">
                 {documents.map((d, i) => {
-                  const href = str(d.href || d.url || d.link)
+                  const docId = str(d.id || d.documentId)
+                  const stored = docId ? storedByRef.get(docId) : undefined
+                  const href = stored || str(d.href || d.url || d.link)
                   const name = str(d.name || d.filename || d.title) || `Document ${i + 1}`
                   const date = str(d.date || d.timestamp)
                   return (
@@ -223,6 +240,7 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
                         <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline">{name}</a>
                       ) : <span className="text-gray-800">{name}</span>}
                       {date && <span className="text-gray-500 text-xs"> · {date}</span>}
+                      {!stored && href && <span className="text-amber-600 text-[10px] ml-1" title="Links to Clopay — not yet saved to our server">· on Clopay</span>}
                     </li>
                   )
                 })}

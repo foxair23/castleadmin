@@ -13,8 +13,9 @@ export const DEFAULTS = {
   genieScheduleEnabled: false, // auto-crawl on a schedule (hourly 7a–6p Mon–Sat + nightly full) — office PC only
   // Clopay HD Program portal (hdprogram.clopay.com) — mirrors the Genie options.
   clopayEnabled: true,           // scrape + log Clopay portal orders (content script)
-  clopayAutoDetail: false,       // after a list scrape, auto-open orders to capture their detail (Summary/Documents/Notes)
-  clopayMaxDetailPerRun: 12,     // cap orders auto-detailed per list visit (keeps the sweep bounded/reliable)
+  clopayAutoDetail: false,       // (legacy; API crawler always fetches detail) kept for options compatibility
+  clopayInstallerNum: '56505',   // Castle's Clopay dealer/installer number — used for the API list/detail calls
+  clopayMaxDetailPerRun: 12,     // cap orders detailed per manual run (full/scheduled crawls use a larger cap)
   clopayScheduleEnabled: false,  // auto-crawl on a schedule (hourly 7a–6p Mon–Sat + nightly full) — office PC only
   // Saved logins for unattended re-login (this machine's local storage only).
   // Chrome won't let a script submit ITS autofilled password (anti-phishing), so
