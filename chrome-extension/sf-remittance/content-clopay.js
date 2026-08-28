@@ -242,10 +242,10 @@
     const text = summary.map(m => `${m.label}${m.date ? ' — ' + m.date : ''}`).join('\n')
     return { summary, text }
   }
-  // Documents (GET /installerdocuments/{inst}/{incident}/{po}). The raw `url` field
-  // points at an unresolvable internal host; the real, fetchable URL is deterministic:
-  // hdprogram.clopay.com/showdocument/{documentId}.pdf (verified). We keep that as the
-  // href (Clopay-authed fallback) and the id for downloading + de-duping the stored copy.
+  // Documents (GET /installerdocuments/{inst}/{incident}/{po}). To download a doc you
+  // must call getdocumenturl with its `documenT_TYPE` (which GENERATES the PDF, ~5s) and
+  // fetch the URL it returns — the raw `url`/showdocument URL is otherwise unauthorized.
+  // So we keep the documentId + type; the href is a best-effort display fallback only.
   function mapDocuments(arr) {
     if (!Array.isArray(arr)) return []
     return arr.map(d => {
@@ -253,6 +253,7 @@
       return {
         name: clean(d.filE_NAME) || clean(d.documenT_DESC) || (id ? `Document ${id}` : 'Document'),
         id,
+        docType: clean(d.documenT_TYPE),
         href: id ? `https://hdprogram.clopay.com/showdocument/${id}.pdf` : clean(d.url),
         date: clean(d.creation_date),
         category: d.categorY_ID != null ? String(d.categorY_ID).replace(/\.0$/, '') : null,
@@ -328,22 +329,25 @@
       const resolve = _fetchPending.get(d.id); _fetchPending.delete(d.id); resolve(d)
     }
   })
-  function fetchDocMainWorld(url) {
+  function fetchDocMainWorld(documentId, documentType, installerNum) {
     return new Promise(resolve => {
       const id = ++_fetchSeq
       _fetchPending.set(id, resolve)
-      window.postMessage({ __clopayFetch: true, id, url }, '*')
-      setTimeout(() => { if (_fetchPending.has(id)) { _fetchPending.delete(id); resolve({ ok: false, error: 'timeout' }) } }, 25000)
+      window.postMessage({ __clopayFetch: true, id, documentId, documentType, installerNum }, '*')
+      // getdocumenturl generates the PDF server-side (~5s), so allow a generous window.
+      setTimeout(() => { if (_fetchPending.has(id)) { _fetchPending.delete(id); resolve({ ok: false, error: 'timeout' }) } }, 45000)
     })
   }
   // Store one document. Dedup-check with the server first (skip if we already have it),
-  // else download the PDF via the main-world bridge, validate it's really a PDF, and
-  // hand the base64 bytes to the background to upload.
-  async function storeDoc(external_id, documentId, docUrl, filename) {
+  // else download the PDF via the main-world bridge (which runs the proven
+  // getdocumenturl-then-fetch sequence for this doc's type), validate it's really a PDF,
+  // and hand the base64 bytes to the background to upload.
+  async function storeDoc(external_id, doc, installerNum) {
+    const documentId = doc.id, filename = doc.name || `doc-${doc.id}`
     const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename })
     if (!chk.ok) return { ok: false, error: chk.error || 'check failed' }
     if (chk.alreadyStored) return { ok: true, skipped: 'exists' }
-    const f = await fetchDocMainWorld(docUrl)
+    const f = await fetchDocMainWorld(documentId, doc.docType || '', installerNum)
     if (!f.ok) return { ok: false, error: `fetch ${f.status || f.error || '?'}` }
     const isImg = /^image\/(jpeg|png|heic|webp)$/.test(f.ct || '')
     const isPdf = typeof f.b64 === 'string' && f.b64.startsWith('JVBER') // base64 of "%PDF"
@@ -351,13 +355,13 @@
     const mime = isImg ? f.ct : 'application/pdf'
     return await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename, mime, dataB64: f.b64 })
   }
-  async function storeDocuments(detail) {
+  async function storeDocuments(detail, installerNum) {
     const docs = (detail && detail.raw && detail.raw.documents) || []
     if (!docs.length) return
     let stored = 0, existing = 0, failed = 0
     for (const d of docs) {
-      if (!d.id || !d.href) continue
-      const r = await storeDoc(detail.external_id, d.id, d.href, d.name || `doc-${d.id}`)
+      if (!d.id) continue
+      const r = await storeDoc(detail.external_id, d, installerNum)
       if (r.skipped) existing++
       else if (r.stored) stored++
       else { failed++; if (r.error) LOG(`doc ${d.id} store failed: ${r.error}`) }
@@ -422,7 +426,7 @@
           done++
           const n = (detail.raw.summary || []).length, dn = (detail.raw.documents || []).length, nt = (detail.raw.notes || []).length
           LOG(`detail #${id}: summary ${n}, docs ${dn}, notes ${nt}  (${done}/${targets.length})`)
-          if (storeDocs) await storeDocuments(detail) // download + store the files on our server
+          if (storeDocs) await storeDocuments(detail, installerNum) // download + store the files on our server
         } else {
           LOG(`detail #${id}: nothing captured`)
         }
