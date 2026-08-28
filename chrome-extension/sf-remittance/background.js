@@ -334,8 +334,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       let mime = (docRes.headers.get('content-type') || 'application/pdf').split(';')[0].trim().toLowerCase()
       if (!ALLOWED.includes(mime)) mime = 'application/pdf'
       // 3) PUT the bytes straight to Supabase Storage (bypasses Vercel's body cap).
-      const putRes = await fetch(sign.uploadUrl, { method: 'PUT', headers: { 'content-type': mime, 'x-upsert': 'true' }, body: buf })
-      if (!putRes.ok) { const t = await putRes.text().catch(() => ''); sendResponse({ ok: false, error: `put ${putRes.status} ${t.slice(0, 160)}` }); return }
+      // A signed-upload URL is created with upsert:false, so re-uploading a path that
+      // already has bytes returns 409 KeyAlreadyExists. That means the file is already
+      // there (e.g. an orphaned object from an earlier run whose row insert failed) —
+      // treat it as success and just (re)record the row below.
+      const putRes = await fetch(sign.uploadUrl, { method: 'PUT', headers: { 'content-type': mime }, body: buf })
+      if (!putRes.ok) {
+        const t = await putRes.text().catch(() => '')
+        const alreadyThere = putRes.status === 409 || /already exists|keyalreadyexists|duplicate/i.test(t)
+        if (!alreadyThere) { sendResponse({ ok: false, error: `put ${putRes.status} ${t.slice(0, 160)}` }); return }
+      }
       // 4) record the attachment row.
       const compRes = await fetch(`${cfg.baseUrl}/api/vendor-orders/attachment/complete`, {
         method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
