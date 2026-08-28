@@ -8,6 +8,7 @@ import { AutopilotToggle } from './AutopilotToggle'
 import { NudgeControls } from './NudgeControls'
 import HdOrdersNav from './HdOrdersNav'
 import { statusChipStyle, isTerminalStatus } from '@/lib/vendor-orders/status-style'
+import { attachmentsForOrders, signedUrls } from '@/lib/vendor-orders/attachments'
 
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
@@ -70,6 +71,23 @@ export default async function VendorOrdersView({
     if (o.sf_created_job_number) return { ...withLsc, sf_job_number: o.sf_created_job_number, sf_match_method: 'pending' }
     return { ...withLsc, sf_job_number: null, sf_match_method: null }
   })
+  // Stored document files (Clopay docs the crawler downloaded to our own storage).
+  // Load them for the page's orders + batch-mint signed URLs so the drawer can link
+  // to our copy instead of the Clopay site. Clopay-only (Genie has none).
+  if (vendor === 'clopay_hd') {
+    const attMap = await attachmentsForOrders(orders.map(o => o.id))
+    const allPaths: string[] = []
+    for (const rows of attMap.values()) for (const a of rows) allPaths.push(a.storage_path)
+    const urls = await signedUrls(allPaths)
+    for (const o of orders) {
+      const rows = attMap.get(o.id) || []
+      o.attachments = rows.map(a => ({
+        id: a.id, filename: a.filename, mime_type: a.mime_type,
+        external_ref: a.external_ref, url: urls.get(a.storage_path) ?? null,
+      }))
+    }
+  }
+
   // Default order: most recent status change first (fall back to first seen).
   const sortValue = (o: VendorOrder) => o.last_status_change_at ?? o.first_seen_at
   orders.sort((a, b) => sortValue(b).localeCompare(sortValue(a)))

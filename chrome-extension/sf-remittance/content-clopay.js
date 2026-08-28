@@ -100,7 +100,7 @@
     })
   }
   const getCrawlMode = () => storageGet({ clopayCrawlMode: null }).then(d => d.clopayCrawlMode)
-  const getCfg = () => storageGet({ clopayInstallerNum: DEFAULT_INSTALLER, clopayMaxDetailPerRun: 12 })
+  const getCfg = () => storageGet({ clopayInstallerNum: DEFAULT_INSTALLER, clopayMaxDetailPerRun: 12, clopayStoreDocs: true })
   function endCrawl() {
     if (!ctxAlive()) return
     try { chrome.storage.local.remove('clopayCrawlMode') } catch { /* ignore */ }
@@ -242,16 +242,22 @@
     const text = summary.map(m => `${m.label}${m.date ? ' — ' + m.date : ''}`).join('\n')
     return { summary, text }
   }
-  // Documents (GET /installerdocuments/{inst}/{incident}/{po}).
+  // Documents (GET /installerdocuments/{inst}/{incident}/{po}). The raw `url` field
+  // points at an unresolvable internal host; the real, fetchable URL is deterministic:
+  // hdprogram.clopay.com/showdocument/{documentId}.pdf (verified). We keep that as the
+  // href (Clopay-authed fallback) and the id for downloading + de-duping the stored copy.
   function mapDocuments(arr) {
     if (!Array.isArray(arr)) return []
-    return arr.map(d => ({
-      name: clean(d.filE_NAME) || clean(d.documenT_DESC) || `Document ${clean(d.documenT_ID) || ''}`.trim(),
-      id: d.documenT_ID != null ? String(d.documenT_ID).replace(/\.0$/, '') : null,
-      href: clean(d.url),
-      date: clean(d.creation_date),
-      category: d.categorY_ID != null ? String(d.categorY_ID).replace(/\.0$/, '') : null,
-    })).filter(d => d.name || d.href)
+    return arr.map(d => {
+      const id = d.documenT_ID != null ? String(d.documenT_ID).replace(/\.0$/, '') : null
+      return {
+        name: clean(d.filE_NAME) || clean(d.documenT_DESC) || (id ? `Document ${id}` : 'Document'),
+        id,
+        href: id ? `https://hdprogram.clopay.com/showdocument/${id}.pdf` : clean(d.url),
+        date: clean(d.creation_date),
+        category: d.categorY_ID != null ? String(d.categorY_ID).replace(/\.0$/, '') : null,
+      }
+    }).filter(d => d.id || d.href)
   }
   // Notes (GET /notes/{inst}/{header}/{user} → responseObject.notesList).
   function mapNotes(obj) {
@@ -301,6 +307,34 @@
     }
   }
 
+  // Download this order's documents to Castle's own storage (via the background
+  // worker, which holds the Castle token + can fetch Clopay with host permissions).
+  // Sign-first means already-stored docs are skipped WITHOUT re-downloading.
+  function storeDoc(external_id, documentId, docUrl, filename) {
+    return new Promise(resolve => {
+      if (!ctxAlive()) { resolve({ ok: false }); return }
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'clopay-store-doc', external_id, documentId, docUrl, filename, clopayToken: readToken() },
+          (r) => resolve(chrome.runtime.lastError ? { ok: false, error: chrome.runtime.lastError.message } : (r || { ok: false })),
+        )
+      } catch (e) { resolve({ ok: false, error: String(e) }) }
+    })
+  }
+  async function storeDocuments(detail) {
+    const docs = (detail && detail.raw && detail.raw.documents) || []
+    if (!docs.length) return
+    let stored = 0, existing = 0, failed = 0
+    for (const d of docs) {
+      if (!d.id || !d.href) continue
+      const r = await storeDoc(detail.external_id, d.id, d.href, d.name || `doc-${d.id}`)
+      if (r.skipped) existing++
+      else if (r.stored) stored++
+      else { failed++; if (r.error) LOG(`doc ${d.id} store failed: ${r.error}`) }
+    }
+    LOG(`docs #${detail.external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
+  }
+
   // ── Crawl ────────────────────────────────────────────────────────────────────
   let crawling = false
   async function crawl() {
@@ -313,7 +347,8 @@
       const mode = await getCrawlMode()
       const cap = mode === 'full' ? 400 : mode === 'incremental' ? 60 : (cfg.clopayMaxDetailPerRun || 12)
       const username = readUsername() || 'crawler' // server ignores this segment; any value works
-      LOG(`crawl start (installer ${installerNum}, mode ${mode || 'manual'})`)
+      const storeDocs = cfg.clopayStoreDocs !== false // download + store document files on our server
+      LOG(`crawl start (installer ${installerNum}, mode ${mode || 'manual'}, storeDocs ${storeDocs})`)
 
       // 1) LIST
       const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
@@ -353,6 +388,7 @@
           done++
           const n = (detail.raw.summary || []).length, dn = (detail.raw.documents || []).length, nt = (detail.raw.notes || []).length
           LOG(`detail #${id}: summary ${n}, docs ${dn}, notes ${nt}  (${done}/${targets.length})`)
+          if (storeDocs) await storeDocuments(detail) // download + store the files on our server
         } else {
           LOG(`detail #${id}: nothing captured`)
         }

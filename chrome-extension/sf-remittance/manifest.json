@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Castle \u2014 Service Fusion Remittance Poster",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Automates Castle Admin \u2194 Service Fusion (remittance posting, job notes) and logs vendor-portal orders (Genie/Home Depot, Clopay), all in your logged-in sessions.",
   "permissions": [
     "storage",
