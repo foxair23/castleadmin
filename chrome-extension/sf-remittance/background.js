@@ -327,21 +327,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true // async response
 })
 
-// ── Clopay generated-document capture (chrome.debugger navigation) ───────────
-// Generated Clopay PDFs (New IPO, Blank ICA/LW, … — the majority) are served ONLY to
-// a real top-level NAVIGATION to hdprogram.clopay.com/showdocument/{id}.pdf. A fetch
-// from ANY context (content script, MAIN world, worker) gets a ~15KB Angular shell,
-// because JS cannot set `Sec-Fetch-Mode: navigate` (the browser owns Sec-Fetch-*).
-// So we drive a hidden helper tab with the DevTools Protocol: attach the debugger,
-// intercept the showdocument response via the Fetch domain, read the real PDF bytes,
-// then abort the request (Chrome never has to spin up its PDF viewer). One helper tab
-// is reused for the whole crawl and torn down when it finishes. (If Fetch-domain body
-// capture ever proves unreliable for a PDF, the fallback is Network.enable +
-// Network.getResponseBody on loadingFinished.)
-const CAPTURE_PATTERN = '*://hdprogram.clopay.com/showdocument/*'
+// ── Clopay document capture (chrome.debugger navigation) ─────────────────────
+// Clopay documents are served ONLY to a real top-level NAVIGATION to
+// hdprogram.clopay.com/showdocument/{id}.pdf — a fetch from ANY context (content
+// script, MAIN world, worker) gets a ~15KB Angular shell, because JS cannot set
+// `Sec-Fetch-Mode: navigate` (the browser owns Sec-Fetch-*). So we drive a hidden
+// helper tab with the DevTools Protocol and read the real bytes off the wire.
+//
+// Two response shapes, handled uniformly by matching on RESPONSE CONTENT-TYPE:
+//  • SCANNED/inbound docs → /showdocument itself returns application/pdf (the file).
+//  • GENERATED docs (New IPO, Blank ICA/LW, …) → /showdocument returns a small HTML
+//    "pdf_embedder" wrapper page whose script then fetches the real PDF as a SEPARATE
+//    request (a per-session GUID URL, application/pdf, ~1MB). Matching the showdocument
+//    URL captured the wrapper HTML (the "not a pdf (200)" failures); matching by
+//    content-type instead lets the wrapper load and captures that follow-up PDF.
+// We intercept every response in the helper tab (Fetch domain), grab the body of the
+// first application/pdf or image response after each navigation, and continue the rest.
+// One helper tab is reused for the whole crawl and torn down when it finishes.
 let captureTabId = null
 let captureAttached = false
-let pendingCapture = null // { url, resolve } — capture is serial, so at most one
+let pendingCapture = null // { resolve } — capture is serial, so at most one
 
 function dbgSend(target, method, params) {
   return new Promise((resolve, reject) => {
@@ -359,23 +364,29 @@ function dbgAttach(target) {
     })
   })
 }
-const urlBase = (u) => (u || '').split('?')[0]
+function headerValue(headers, name) {
+  for (const h of (headers || [])) if (h && typeof h.name === 'string' && h.name.toLowerCase() === name) return h.value
+  return ''
+}
 
-// One global CDP event router. On a paused showdocument RESPONSE, hand its body to the
-// waiting capture (matched by URL) and abort the request; anything else continues.
+// One global CDP event router. For each paused RESPONSE in the capture tab: if it's the
+// file we want (application/pdf or an image) and a capture is waiting, read its body and
+// hand it back; otherwise let it continue so the wrapper page can load and fire the real
+// PDF request.
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (captureTabId == null || source.tabId !== captureTabId || method !== 'Fetch.requestPaused') return
   const reqId = params.requestId
-  const url = params.request && params.request.url
+  const ct = (headerValue(params.responseHeaders, 'content-type') || '').split(';')[0].trim().toLowerCase()
+  const isFile = ct === 'application/pdf' || /^image\/(jpeg|jpg|png|heic|heif|webp)$/.test(ct)
+  const p = pendingCapture
   ;(async () => {
-    const p = pendingCapture
-    if (p && url && urlBase(url) === urlBase(p.url)) {
+    if (p && isFile) {
       pendingCapture = null
       try {
         const status = params.responseStatusCode || 0
         const body = await dbgSend({ tabId: captureTabId }, 'Fetch.getResponseBody', { requestId: reqId })
         try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-        p.resolve({ ok: true, status, base64: body && body.base64Encoded ? body.body : null })
+        p.resolve({ ok: true, status, mime: ct, base64: body && body.base64Encoded ? body.body : null })
       } catch (e) {
         try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
         p.resolve({ ok: false, error: e instanceof Error ? e.message : String(e) })
@@ -405,7 +416,9 @@ async function ensureCaptureTab() {
   await waitTabComplete(captureTabId)
   await dbgAttach({ tabId: captureTabId })
   captureAttached = true
-  await dbgSend({ tabId: captureTabId }, 'Fetch.enable', { patterns: [{ urlPattern: CAPTURE_PATTERN, requestStage: 'Response' }] })
+  // Intercept ALL responses at the response stage; the router keeps only the PDF/image
+  // (generated docs serve the real PDF from a follow-up request, not from /showdocument).
+  await dbgSend({ tabId: captureTabId }, 'Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Response' }] })
 }
 
 async function teardownCaptureTab() {
@@ -417,13 +430,15 @@ async function teardownCaptureTab() {
   try { await chrome.tabs.remove(id) } catch { /* already closed */ }
 }
 
-// Capture ONE document's PDF bytes by navigating the helper tab to its showdocument
-// URL and reading the intercepted response. Serial (one pendingCapture at a time).
+// Capture ONE document's bytes by navigating the helper tab to its showdocument URL and
+// reading the first PDF/image response that results (the file itself for scanned docs,
+// or the wrapper's follow-up PDF request for generated ones). Serial — one pendingCapture
+// at a time, so "the next file" is unambiguously this doc's.
 async function captureDocBytes(url, timeoutMs = 30000) {
   await ensureCaptureTab()
   let timer = null
   const done = new Promise((resolve) => {
-    pendingCapture = { url, resolve }
+    pendingCapture = { resolve }
     timer = setTimeout(() => { if (pendingCapture && pendingCapture.resolve === resolve) { pendingCapture = null; resolve({ ok: false, error: 'timeout' }) } }, timeoutMs)
   })
   try {
@@ -449,8 +464,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (!d || !d.url || d.documentId == null || !d.external_id) { results.push({ documentId: d && d.documentId, ok: false, error: 'bad args' }); continue }
       const cap = await captureDocBytes(d.url)
       if (!cap.ok || !cap.base64) { results.push({ documentId: d.documentId, ok: false, error: cap.error || `capture ${cap.status || '?'}` }); continue }
-      if (!cap.base64.startsWith('JVBER')) { results.push({ documentId: d.documentId, ok: false, error: `not a pdf (${cap.status})` }); continue } // "JVBER" = base64 of "%PDF"
-      const store = await storeClopayDoc({ external_id: d.external_id, documentId: d.documentId, filename: d.filename, mime: 'application/pdf', dataB64: cap.base64 })
+      const store = await storeClopayDoc({ external_id: d.external_id, documentId: d.documentId, filename: d.filename, mime: cap.mime || 'application/pdf', dataB64: cap.base64 })
       results.push({ documentId: d.documentId, ...store })
     }
     sendResponse({ ok: true, results })
