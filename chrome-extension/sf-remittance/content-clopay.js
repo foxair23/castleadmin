@@ -317,56 +317,49 @@
       } catch (e) { resolve({ ok: false, error: String(e) }) }
     })
   }
-  // Bridge to the MAIN-world fetch helper (content-clopay-main.js). Only a page-context
-  // (main-world) fetch is authenticated for /showdocument — a background-worker or
-  // isolated content-script fetch both get a ~15KB "not authorized" page. We ask the
-  // main world to fetch and return the bytes as base64 over window.postMessage.
-  let _fetchSeq = 0
-  const _fetchPending = new Map()
-  window.addEventListener('message', (e) => {
-    const d = e.data
-    if (e.source === window && d && d.__clopayFetchResult === true && _fetchPending.has(d.id)) {
-      const resolve = _fetchPending.get(d.id); _fetchPending.delete(d.id); resolve(d)
-    }
-  })
-  function fetchDocMainWorld(documentId, documentType, installerNum) {
-    return new Promise(resolve => {
-      const id = ++_fetchSeq
-      _fetchPending.set(id, resolve)
-      window.postMessage({ __clopayFetch: true, id, documentId, documentType, installerNum }, '*')
-      // getdocumenturl generates the PDF server-side (~5s), so allow a generous window.
-      setTimeout(() => { if (_fetchPending.has(id)) { _fetchPending.delete(id); resolve({ ok: false, error: 'timeout' }) } }, 45000)
-    })
+  // Resolve a document's fetchable URL via getdocumenturl. This is NOT just a URL
+  // formatter — it GENERATES the PDF server-side (~5–9s) for the doc's `documenT_TYPE`
+  // and returns the hdprogram.clopay.com/showdocument/{id}.pdf URL. Routed through the
+  // background `clopay-api` proxy (bearer from the page); returns the URL string or null.
+  async function resolveDocUrl(documentId, docType, installerNum) {
+    const path = `/installerdocuments/getdocumenturl?documentId=${encodeURIComponent(documentId)}`
+      + `&installerNum=${encodeURIComponent(installerNum)}&isChubOrder=N`
+      + `&documentType=${encodeURIComponent(docType || '')}`
+    const r = await apiGet(path)
+    const url = r && r.obj
+    return typeof url === 'string' && url ? url : null
   }
-  // Store one document. Dedup-check with the server first (skip if we already have it),
-  // else download the PDF via the main-world bridge (which runs the proven
-  // getdocumenturl-then-fetch sequence for this doc's type), validate it's really a PDF,
-  // and hand the base64 bytes to the background to upload.
-  async function storeDoc(external_id, doc, installerNum) {
-    const documentId = doc.id, filename = doc.name || `doc-${doc.id}`
-    const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename })
-    if (!chk.ok) return { ok: false, error: chk.error || 'check failed' }
-    if (chk.alreadyStored) return { ok: true, skipped: 'exists' }
-    const f = await fetchDocMainWorld(documentId, doc.docType || '', installerNum)
-    if (!f.ok) return { ok: false, error: `fetch ${f.status || f.error || '?'}` }
-    const isImg = /^image\/(jpeg|png|heic|webp)$/.test(f.ct || '')
-    const isPdf = typeof f.b64 === 'string' && f.b64.startsWith('JVBER') // base64 of "%PDF"
-    if (!isPdf && !isImg) return { ok: false, error: `not a file (${f.size || 0}b, ${f.ct || '?'})` }
-    const mime = isImg ? f.ct : 'application/pdf'
-    return await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename, mime, dataB64: f.b64 })
-  }
+  // Download + store an order's documents on Castle's server. The showdocument PDF is
+  // served ONLY to a real top-level NAVIGATION (proven — a fetch from any context gets a
+  // ~15KB Angular shell because JS can't set Sec-Fetch-Mode:navigate), so the actual
+  // byte capture is done by the background worker via chrome.debugger. Here we: dedup
+  // pre-check each doc (skip ones already stored → resumable backfill), resolve+generate
+  // its URL, then hand the batch to `clopay-capture-docs` to navigate-capture + store.
   async function storeDocuments(detail, installerNum) {
     const docs = (detail && detail.raw && detail.raw.documents) || []
     if (!docs.length) return
-    let stored = 0, existing = 0, failed = 0
+    const external_id = detail.external_id
+    let existing = 0
+    const toCapture = []
     for (const d of docs) {
       if (!d.id) continue
-      const r = await storeDoc(detail.external_id, d, installerNum)
-      if (r.skipped) existing++
-      else if (r.stored) stored++
-      else { failed++; if (r.error) LOG(`doc ${d.id} store failed: ${r.error}`) }
+      const filename = d.name || `doc-${d.id}`
+      const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId: d.id, filename })
+      if (chk.ok && chk.alreadyStored) { existing++; continue }
+      if (!chk.ok) { LOG(`doc ${d.id}: check failed (${chk.error || '?'})`); continue }
+      const url = await resolveDocUrl(d.id, d.docType, installerNum)
+      if (!url) { LOG(`doc ${d.id}: getdocumenturl failed`); continue }
+      toCapture.push({ external_id, documentId: d.id, filename, url })
     }
-    LOG(`docs #${detail.external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
+    if (!toCapture.length) { if (existing) LOG(`docs #${external_id}: ${existing} existing`); return }
+    const res = await msgBg({ type: 'clopay-capture-docs', docs: toCapture })
+    const results = (res && res.results) || []
+    let stored = 0, failed = 0
+    for (const r of results) {
+      if (r.stored || r.alreadyStored) stored++
+      else { failed++; if (r.error) LOG(`doc ${r.documentId} capture failed: ${r.error}`) }
+    }
+    LOG(`docs #${external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
   }
 
   // ── Crawl ────────────────────────────────────────────────────────────────────
