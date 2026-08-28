@@ -316,32 +316,40 @@
       } catch (e) { resolve({ ok: false, error: String(e) }) }
     })
   }
-  const looksPdf = (buf) => { const b = new Uint8Array(buf); return b.length > 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 } // %PDF
-  function abToB64(buf) {
-    const bytes = new Uint8Array(buf)
-    let bin = ''
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
-    return btoa(bin)
+  // Bridge to the MAIN-world fetch helper (content-clopay-main.js). Only a page-context
+  // (main-world) fetch is authenticated for /showdocument — a background-worker or
+  // isolated content-script fetch both get a ~15KB "not authorized" page. We ask the
+  // main world to fetch and return the bytes as base64 over window.postMessage.
+  let _fetchSeq = 0
+  const _fetchPending = new Map()
+  window.addEventListener('message', (e) => {
+    const d = e.data
+    if (e.source === window && d && d.__clopayFetchResult === true && _fetchPending.has(d.id)) {
+      const resolve = _fetchPending.get(d.id); _fetchPending.delete(d.id); resolve(d)
+    }
+  })
+  function fetchDocMainWorld(url) {
+    return new Promise(resolve => {
+      const id = ++_fetchSeq
+      _fetchPending.set(id, resolve)
+      window.postMessage({ __clopayFetch: true, id, url }, '*')
+      setTimeout(() => { if (_fetchPending.has(id)) { _fetchPending.delete(id); resolve({ ok: false, error: 'timeout' }) } }, 25000)
+    })
   }
   // Store one document. Dedup-check with the server first (skip if we already have it),
-  // else download the PDF HERE (the page has the Clopay session cookie — the background
-  // worker's fetch does NOT, and got a ~15KB error page), validate it's really a PDF,
-  // and hand the base64 bytes to the background to upload.
+  // else download the PDF via the main-world bridge, validate it's really a PDF, and
+  // hand the base64 bytes to the background to upload.
   async function storeDoc(external_id, documentId, docUrl, filename) {
     const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename })
     if (!chk.ok) return { ok: false, error: chk.error || 'check failed' }
     if (chk.alreadyStored) return { ok: true, skipped: 'exists' }
-    let buf, ct
-    try {
-      const r = await fetch(docUrl, { credentials: 'include' }) // same-origin → cookie sent
-      if (!r.ok) return { ok: false, error: `fetch ${r.status}` }
-      ct = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
-      buf = await r.arrayBuffer()
-    } catch (e) { return { ok: false, error: `fetch ${e?.message || e}` } }
-    const isImg = /^image\/(jpeg|png|heic|webp)$/.test(ct)
-    if (!looksPdf(buf) && !isImg) return { ok: false, error: `not a file (${buf.byteLength}b, ${ct || '?'})` }
-    const mime = isImg ? ct : 'application/pdf'
-    return await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename, mime, dataB64: abToB64(buf) })
+    const f = await fetchDocMainWorld(docUrl)
+    if (!f.ok) return { ok: false, error: `fetch ${f.status || f.error || '?'}` }
+    const isImg = /^image\/(jpeg|png|heic|webp)$/.test(f.ct || '')
+    const isPdf = typeof f.b64 === 'string' && f.b64.startsWith('JVBER') // base64 of "%PDF"
+    if (!isPdf && !isImg) return { ok: false, error: `not a file (${f.size || 0}b, ${f.ct || '?'})` }
+    const mime = isImg ? f.ct : 'application/pdf'
+    return await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename, mime, dataB64: f.b64 })
   }
   async function storeDocuments(detail) {
     const docs = (detail && detail.raw && detail.raw.documents) || []
