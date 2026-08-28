@@ -10,6 +10,34 @@ import HdOrdersNav from './HdOrdersNav'
 import { statusChipStyle, isTerminalStatus } from '@/lib/vendor-orders/status-style'
 import { attachmentsForOrders, signedUrls } from '@/lib/vendor-orders/attachments'
 
+// Parse a Clopay timestamp string ("08/20/2026 02:44 PM CST", "06/10/2026") → Date,
+// dropping the trailing timezone abbreviation and "Not Applicable". Null if unparseable.
+function parseClopayTs(s: unknown): Date | null {
+  if (typeof s !== 'string') return null
+  const t = s.replace(/\s+(CST|CDT|EST|EDT|MST|MDT|PST|PDT|UTC|GMT)\b.*$/i, '').trim()
+  if (!t || /not applicable/i.test(t)) return null
+  const d = new Date(t)
+  return isNaN(d.getTime()) ? null : d
+}
+// Derive Clopay display dates from the captured detail: Order Date = the "Order
+// Received" milestone; Last Status Change = the most recent timestamp anywhere in the
+// Summary milestones or the Notes.
+function clopayDerivedDates(raw: unknown): { orderDate: string | null; lastActivity: string | null } {
+  const r = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+  const summary = Array.isArray(r.summary) ? r.summary as Array<Record<string, unknown>> : []
+  const notes = Array.isArray(r.notes) ? r.notes as Array<Record<string, unknown>> : []
+  const recv = summary.find(m => /order received/i.test(String(m?.label || '')))
+  const orderDate = parseClopayTs(recv?.completed) || parseClopayTs(recv?.posted) || parseClopayTs(recv?.date)
+  let last: Date | null = null
+  const consider = (v: unknown) => { const d = parseClopayTs(v); if (d && (!last || d > last)) last = d }
+  for (const m of summary) { consider(m?.completed); consider(m?.posted) }
+  for (const n of notes) { consider(n?.timestamp) }
+  return {
+    orderDate: orderDate ? orderDate.toISOString().slice(0, 10) : null,
+    lastActivity: last ? (last as Date).toISOString() : null,
+  }
+}
+
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
 // vendor_orders rows (and which scrape-run freshness) this tab shows; it defaults
@@ -66,6 +94,14 @@ export default async function VendorOrdersView({
   const matches = sfEnabled ? await resolveSfJobMatches(db, base) : new Map()
   const orders: VendorOrder[] = base.map(o => {
     const withLsc = { ...o, last_status_change_at: lastStatusChange.get(o.id) ?? null }
+    // Clopay: Order Date ← the "Order Received" milestone; Last Status Change ← the
+    // most recent timestamp in the Summary/Notes (falls back to the status-change
+    // events when the detail hasn't been captured yet).
+    if (vendor === 'clopay_hd') {
+      const der = clopayDerivedDates(o.raw)
+      if (der.orderDate) withLsc.order_date = der.orderDate
+      if (der.lastActivity) withLsc.last_status_change_at = der.lastActivity
+    }
     const m = matches.get(o.id)
     if (m?.sfJobNumber) return { ...withLsc, sf_job_number: m.sfJobNumber, sf_match_method: m.method ?? null }
     if (o.sf_created_job_number) return { ...withLsc, sf_job_number: o.sf_created_job_number, sf_match_method: 'pending' }

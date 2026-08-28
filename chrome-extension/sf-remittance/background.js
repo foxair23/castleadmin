@@ -324,12 +324,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       // 2) fetch the document bytes from Clopay (bearer; cookies also included).
       const docRes = await fetch(docUrl, { headers: { authorization: `Bearer ${clopayToken}` }, credentials: 'include' })
       if (!docRes.ok) { sendResponse({ ok: false, error: `doc ${docRes.status}` }); return }
-      const mime = docRes.headers.get('content-type') || 'application/pdf'
       const buf = await docRes.arrayBuffer()
       if (!buf.byteLength) { sendResponse({ ok: false, error: 'empty doc' }); return }
+      // The bucket enforces an allowed-MIME list against the BARE type, so strip any
+      // "; charset=…" parameters (Clopay returns "application/pdf; charset=…", which
+      // wouldn't match) and fall back to application/pdf for anything unexpected —
+      // Clopay serves docs as showdocument/{id}.pdf.
+      const ALLOWED = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/webp']
+      let mime = (docRes.headers.get('content-type') || 'application/pdf').split(';')[0].trim().toLowerCase()
+      if (!ALLOWED.includes(mime)) mime = 'application/pdf'
       // 3) PUT the bytes straight to Supabase Storage (bypasses Vercel's body cap).
-      const putRes = await fetch(sign.uploadUrl, { method: 'PUT', headers: { 'content-type': mime }, body: buf })
-      if (!putRes.ok) { sendResponse({ ok: false, error: `put ${putRes.status}` }); return }
+      const putRes = await fetch(sign.uploadUrl, { method: 'PUT', headers: { 'content-type': mime, 'x-upsert': 'true' }, body: buf })
+      if (!putRes.ok) { const t = await putRes.text().catch(() => ''); sendResponse({ ok: false, error: `put ${putRes.status} ${t.slice(0, 160)}` }); return }
       // 4) record the attachment row.
       const compRes = await fetch(`${cfg.baseUrl}/api/vendor-orders/attachment/complete`, {
         method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
