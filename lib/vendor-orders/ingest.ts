@@ -127,15 +127,17 @@ export async function ingestOrders(vendor: string, orders: ScrapedOrder[], meta:
       updated++
       const newStatus = 'status' in o ? clean(o.status) : prior.status
       const newNext = 'next_step' in o ? clean(o.next_step) : prior.next_step
-      if (newStatus !== prior.status) { statusChanges++; events.push({ order_id: prior.id, event_type: 'status_change', from_value: prior.status, to_value: newStatus }) }
+      const statusChanged = newStatus !== prior.status
+      if (statusChanged) { statusChanges++; events.push({ order_id: prior.id, event_type: 'status_change', from_value: prior.status, to_value: newStatus }) }
       if (newNext !== prior.next_step) events.push({ order_id: prior.id, event_type: 'next_step_change', from_value: prior.next_step, to_value: newNext })
       if (o.hasDetail && !prior.detail_scraped_at) events.push({ order_id: prior.id, event_type: 'detail_scraped' })
-      // "Still needs detail" = the merged raw has no real detail content. Using the
-      // stored content (not just detail_scraped_at) means a backfill re-queues the
-      // orders that were opened but came back empty, and skips ones already indexed —
-      // so restarting the crawler resumes instead of starting over.
+      // "Still needs detail" when: (a) the merged raw has no real detail content yet
+      // (new/empty), OR (b) the STATUS just changed — a status change is when Clopay
+      // adds new milestones/notes/documents, so re-detail to pick them up. Using the
+      // stored content (not just detail_scraped_at) also lets a backfill re-queue
+      // orders that were captured empty and skip ones already indexed.
       const mergedRaw = (row.raw ?? prior.raw) as Record<string, unknown> | null
-      if (!o.hasDetail && !hasStoredDetail(mergedRaw)) needDetail.push(o.external_id)
+      if (!o.hasDetail && (!hasStoredDetail(mergedRaw) || statusChanged)) needDetail.push(o.external_id)
     }
   }
 

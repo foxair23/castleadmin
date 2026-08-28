@@ -361,11 +361,15 @@
       const res = await ingest('list', orders)
       LOG('ingest(list) →', res && { inserted: res.inserted, updated: res.updated, needDetail: (res.needDetail || []).length })
 
-      // 2) DETAIL for the orders the server still needs (capped/paced)
+      // 2) DETAIL. A FULL crawl re-details EVERY order (refreshes notes/documents/
+      // status for all — the manual "crawl now" + the nightly backfill); incremental
+      // details only the orders the server flags as needing it (new orders + ones whose
+      // status just changed). Capped/paced either way.
       const need = new Set((res && res.needDetail) || [])
       const byId = new Map(orders.map(o => [o.external_id, o]))
-      const targets = [...need].filter(id => byId.has(id)).slice(0, cap)
-      LOG(`detail: ${targets.length} of ${need.size} needing detail (cap ${cap})`)
+      const allIds = orders.map(o => o.external_id)
+      const targets = (mode === 'full' ? allIds : allIds.filter(id => need.has(id))).slice(0, cap)
+      LOG(`detail: ${targets.length} ${mode === 'full' ? '(full — all orders)' : `of ${need.size} needing detail`} (cap ${cap})`)
 
       // Per-order notes-available flags (one list-level call). Keyed by incident_id.
       const notesAvail = new Map()
