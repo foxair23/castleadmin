@@ -54,6 +54,32 @@ export async function recordVendorAttachment(
   return { ok: true }
 }
 
+/** Check-or-store one Clopay document. With no bytes it's a dedup check (returns
+ *  {alreadyStored} or {needsUpload}); with bytes it uploads (UPSERT — overwrites any
+ *  earlier bad copy) and records the row. Keyed/deduped by (order, documentId). */
+export async function storeVendorDoc(
+  vendor: string, externalId: string, documentId: string, filename: string, mime: string, bytes: Uint8Array | null,
+): Promise<{ ok: boolean; alreadyStored?: boolean; needsUpload?: boolean; stored?: boolean; error?: string }> {
+  const orderId = await orderIdFor(vendor, externalId)
+  if (!orderId) return { ok: false, error: 'order not found' }
+  const ref = String(documentId)
+  const { data: existing } = await db().from('vendor_order_attachments')
+    .select('id').eq('order_id', orderId).eq('external_ref', ref).maybeSingle()
+  if (existing) return { ok: true, alreadyStored: true }
+  if (!bytes) return { ok: true, needsUpload: true }
+  const path = `${orderId}/${ref}-${safeName(filename)}`
+  const { error: upErr } = await db().storage.from(BUCKET).upload(path, bytes, {
+    contentType: mime || 'application/pdf', upsert: true,
+  })
+  if (upErr) return { ok: false, error: upErr.message }
+  const { error } = await db().from('vendor_order_attachments').insert({
+    order_id: orderId, storage_path: path, filename: safeName(filename),
+    mime_type: mime || 'application/pdf', byte_size: bytes.byteLength, source: 'clopay_doc', external_ref: ref,
+  })
+  if (error && !/duplicate key|unique/i.test(error.message)) return { ok: false, error: error.message }
+  return { ok: true, stored: true }
+}
+
 export interface StoredAttachment {
   id: string
   order_id: string

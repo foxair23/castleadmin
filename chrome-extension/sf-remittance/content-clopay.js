@@ -307,19 +307,41 @@
     }
   }
 
-  // Download this order's documents to Castle's own storage (via the background
-  // worker, which holds the Castle token + can fetch Clopay with host permissions).
-  // Sign-first means already-stored docs are skipped WITHOUT re-downloading.
-  function storeDoc(external_id, documentId, docUrl, filename) {
+  // Message the background worker and await its reply.
+  function msgBg(payload) {
     return new Promise(resolve => {
       if (!ctxAlive()) { resolve({ ok: false }); return }
       try {
-        chrome.runtime.sendMessage(
-          { type: 'clopay-store-doc', external_id, documentId, docUrl, filename, clopayToken: readToken() },
-          (r) => resolve(chrome.runtime.lastError ? { ok: false, error: chrome.runtime.lastError.message } : (r || { ok: false })),
-        )
+        chrome.runtime.sendMessage(payload, (r) => resolve(chrome.runtime.lastError ? { ok: false, error: chrome.runtime.lastError.message } : (r || { ok: false })))
       } catch (e) { resolve({ ok: false, error: String(e) }) }
     })
+  }
+  const looksPdf = (buf) => { const b = new Uint8Array(buf); return b.length > 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 } // %PDF
+  function abToB64(buf) {
+    const bytes = new Uint8Array(buf)
+    let bin = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
+    return btoa(bin)
+  }
+  // Store one document. Dedup-check with the server first (skip if we already have it),
+  // else download the PDF HERE (the page has the Clopay session cookie — the background
+  // worker's fetch does NOT, and got a ~15KB error page), validate it's really a PDF,
+  // and hand the base64 bytes to the background to upload.
+  async function storeDoc(external_id, documentId, docUrl, filename) {
+    const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename })
+    if (!chk.ok) return { ok: false, error: chk.error || 'check failed' }
+    if (chk.alreadyStored) return { ok: true, skipped: 'exists' }
+    let buf, ct
+    try {
+      const r = await fetch(docUrl, { credentials: 'include' }) // same-origin → cookie sent
+      if (!r.ok) return { ok: false, error: `fetch ${r.status}` }
+      ct = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+      buf = await r.arrayBuffer()
+    } catch (e) { return { ok: false, error: `fetch ${e?.message || e}` } }
+    const isImg = /^image\/(jpeg|png|heic|webp)$/.test(ct)
+    if (!looksPdf(buf) && !isImg) return { ok: false, error: `not a file (${buf.byteLength}b, ${ct || '?'})` }
+    const mime = isImg ? ct : 'application/pdf'
+    return await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename, mime, dataB64: abToB64(buf) })
   }
   async function storeDocuments(detail) {
     const docs = (detail && detail.raw && detail.raw.documents) || []
