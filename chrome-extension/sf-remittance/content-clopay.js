@@ -279,12 +279,12 @@
     const { summary, text } = mapSummary(summaryR.obj)
     const documents = mapDocuments(docsR.obj)
 
-    // Notes: keyed by header_id + username. Only fetch when available (from the flags
-    // call) and we have a username; skipping is fine (summary/docs still make the
-    // order "detailed").
+    // Notes: keyed by installerNum + header_id. The trailing {username} path segment
+    // is IGNORED by the server (verified — any value returns the same notes), so we
+    // pass a constant. Skip only when the flags call says this order has none.
     let notes = []
-    if (hdr != null && username && notesAvail !== false) {
-      const notesR = await apiGet(`/notes/${installerNum}/${hdr}/${encodeURIComponent(username)}`)
+    if (hdr != null && notesAvail !== false) {
+      const notesR = await apiGet(`/notes/${installerNum}/${hdr}/${encodeURIComponent(username || 'crawler')}`)
       notes = mapNotes(notesR.obj)
     }
 
@@ -312,8 +312,8 @@
       const installerNum = clean(cfg.clopayInstallerNum) || DEFAULT_INSTALLER
       const mode = await getCrawlMode()
       const cap = mode === 'full' ? 400 : mode === 'incremental' ? 60 : (cfg.clopayMaxDetailPerRun || 12)
-      const username = readUsername()
-      LOG(`crawl start (installer ${installerNum}, mode ${mode || 'manual'}, username ${username || 'n/a'})`)
+      const username = readUsername() || 'crawler' // server ignores this segment; any value works
+      LOG(`crawl start (installer ${installerNum}, mode ${mode || 'manual'})`)
 
       // 1) LIST
       const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
