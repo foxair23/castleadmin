@@ -330,37 +330,34 @@
     return typeof url === 'string' && url ? url : null
   }
   // Download + store one order's documents on Castle's server. Dedup pre-check each doc
-  // (skip ones already stored → resumable), resolve+generate its URL (getdocumenturl), then
-  // hand the batch to `clopay-capture-docs`. The background captures each PDF via a hidden
-  // iframe injected INTO THIS authenticated orders tab (the only context where /showdocument
-  // returns the real file), so no session data needs to be passed. `budget` caps how many
-  // un-stored docs to attempt this call. Returns per-order counts.
+  // (skip ones already stored → resumable), then PER DOC: resolve+generate its URL
+  // (getdocumenturl) and IMMEDIATELY capture it via `clopay-capture-docs` (the background
+  // injects a hidden iframe into THIS authenticated tab — the only context /showdocument
+  // serves the real file to). Resolve-then-capture must be interleaved one doc at a time:
+  // getdocumenturl is a GRANT that only holds for the most recently requested document —
+  // batching all resolves first left only the LAST doc capturable (proven live: exactly one
+  // stored per order, always the last). `budget` caps un-stored docs attempted this call.
   async function storeDocuments(detail, installerNum, budget) {
     const docs = (detail && detail.raw && detail.raw.documents) || []
     const external_id = detail.external_id
-    let existing = 0
-    const toCapture = []
+    let existing = 0, stored = 0, failed = 0, attempted = 0
     for (const d of docs) {
       if (!d.id) continue
-      if (toCapture.length >= (budget || docs.length)) break
+      if (attempted >= (budget || docs.length)) break
       const filename = d.name || `doc-${d.id}`
       const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId: d.id, filename })
       if (chk.ok && chk.alreadyStored) { existing++; continue }
       if (!chk.ok) { LOG(`doc ${d.id}: check failed (${chk.error || '?'})`); continue }
       const url = await resolveDocUrl(d.id, d.docType, installerNum)
       if (!url) { LOG(`doc ${d.id}: getdocumenturl failed`); continue }
-      toCapture.push({ external_id, documentId: d.id, filename, url })
-    }
-    if (!toCapture.length) { if (existing) LOG(`docs #${external_id}: ${existing} existing`); return { stored: 0, existing, failed: 0, attempted: 0 } }
-    const res = await msgBg({ type: 'clopay-capture-docs', docs: toCapture })
-    const results = (res && res.results) || []
-    let stored = 0, failed = 0
-    for (const r of results) {
+      attempted++
+      const res = await msgBg({ type: 'clopay-capture-docs', docs: [{ external_id, documentId: d.id, filename, url }] })
+      const r = (res && res.results && res.results[0]) || { ok: false, error: res && res.error }
       if (r.stored || r.alreadyStored) stored++
-      else { failed++; if (r.error) LOG(`doc ${r.documentId} capture failed: ${r.error}`) }
+      else { failed++; if (r.error) LOG(`doc ${d.id} capture failed: ${r.error}`) }
     }
-    LOG(`docs #${external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
-    return { stored, existing, failed, attempted: toCapture.length }
+    if (stored || failed || existing) LOG(`docs #${external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
+    return { stored, existing, failed, attempted }
   }
 
   // ── Document sync (separate slow job — mode 'docs') ──────────────────────────
