@@ -402,7 +402,8 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       const status = params.responseStatusCode || 0
       try {
         if (!isFileMime(ct)) {
-          console.log('[clopay] capture: not a file —', status, ct, url)
+          // Dump the response headers — they say WHO served the shell (cache/SW/server).
+          console.log('[clopay] capture: not a file —', status, ct, url, JSON.stringify(params.responseHeaders || []))
           try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
           p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'})` }); return
         }

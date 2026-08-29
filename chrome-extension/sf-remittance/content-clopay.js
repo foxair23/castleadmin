@@ -317,17 +317,27 @@
       } catch (e) { resolve({ ok: false, error: String(e) }) }
     })
   }
-  // Resolve a document's fetchable URL via getdocumenturl. This is NOT just a URL
-  // formatter — it GENERATES the PDF server-side (~5–9s) for the doc's `documenT_TYPE`
-  // and returns the hdprogram.clopay.com/showdocument/{id}.pdf URL. Routed through the
-  // background `clopay-api` proxy (bearer from the page); returns the URL string or null.
+  // Resolve a document's fetchable URL via getdocumenturl — called DIRECTLY from this
+  // page's context, NOT the background proxy. This is not just a URL formatter: it
+  // GENERATES the PDF server-side (~5–9s) AND grants THIS browser session access to the
+  // document. The grant is only honored when the call comes from the portal page itself
+  // (page origin) — a background-worker call returns the same URL but the subsequent
+  // navigation still gets the HTML shell (proven across v0.8.0–0.8.5: generated docs
+  // never stored via the proxy path, while the identical page-context sequence loaded a
+  // real PDF in the console probe). The app's own CORS covers this origin.
   async function resolveDocUrl(documentId, docType, installerNum) {
-    const path = `/installerdocuments/getdocumenturl?documentId=${encodeURIComponent(documentId)}`
+    const token = readToken()
+    if (!token) return null
+    const url = `${API_BASE}/installerdocuments/getdocumenturl?documentId=${encodeURIComponent(documentId)}`
       + `&installerNum=${encodeURIComponent(installerNum)}&isChubOrder=N`
       + `&documentType=${encodeURIComponent(docType || '')}`
-    const r = await apiGet(path)
-    const url = r && r.obj
-    return typeof url === 'string' && url ? url : null
+    try {
+      const r = await fetch(url, { headers: { authorization: 'Bearer ' + token, accept: 'application/json' } })
+      let j = null; try { j = await r.json() } catch { /* non-json */ }
+      const u = j && j.responseObject
+      if (!(typeof u === 'string' && u)) { LOG(`getdocumenturl ${documentId}: status ${r.status}, no url`); return null }
+      return u
+    } catch (e) { LOG(`getdocumenturl ${documentId} failed: ${e?.message || e}`); return null }
   }
   // Download + store one order's documents on Castle's server. Dedup pre-check each doc
   // (skip ones already stored → resumable), then PER DOC: resolve+generate its URL
