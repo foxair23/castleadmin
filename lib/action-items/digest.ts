@@ -19,7 +19,7 @@ import {
   getArHold,
   getUncontactedLeads,
 } from '@/lib/analytics/alerts'
-import { getGenieActionItems, getStsActionItems } from '@/lib/vendor-orders/action-items'
+import { getGenieActionItems, getClopayActionItems, getStsActionItems } from '@/lib/vendor-orders/action-items'
 import { getOnlineEstimateItems } from '@/lib/scheduler/online-estimate-items'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT } from './config'
 
@@ -32,6 +32,8 @@ export interface TodoDigest {
   /** SFI Leads + Genie tabs — Done-cleared lists, sit between Online Scheduling and the buckets. */
   sfiLines: Line[]
   genieLines: Line[]
+  /** Clopay tab — new SF jobs we created for Clopay HD orders, awaiting scheduling. */
+  clopayLines: Line[]
   /** Clopay STS tab — open delivery orders (status ≠ Closed). */
   stsLines: Line[]
   /** Online Estimates tab — open free-online-estimate requests. */
@@ -67,7 +69,7 @@ export function adminDb(): SupabaseClient {
 }
 
 export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest> {
-  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, arHold, leadsToCall, genie, sts, onlineEstimates, { data: actionRows }, { data: acksToday }] =
+  const [unpaid, uninvoiced, stale, followUp, awaitingSf, onlineScheduling, accepted, arHold, leadsToCall, genie, clopay, sts, onlineEstimates, { data: actionRows }, { data: acksToday }] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -79,6 +81,7 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       getArHold(),
       getUncontactedLeads(),
       getGenieActionItems(),
+      getClopayActionItems(),
       getStsActionItems(),
       getOnlineEstimateItems(),
       db.from('action_item_actions').select('entity_type, entity_id, action_label, actioned_at, follow_up_on'),
@@ -151,6 +154,9 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       text: `${g.customer_name ?? '—'} — HD #${g.external_id}${g.sf_job_number ? ` — SF Job ${g.sf_job_number}` : ''} — ${sched} · ${reminded}`,
     }
   })
+  const clopayLines: Line[] = clopay.items.map(c => ({
+    text: `${c.customer_name ?? '—'} — Order #${c.external_id}${c.sf_job_number ? ` — SF Job ${c.sf_job_number}` : ''}${c.status ? ` — ${c.status}` : ''}`,
+  }))
   const stsLines: Line[] = sts.items.map(o => {
     const dc = o.details_received_at ? 'DC replied' : (o.details_requested_at ? 'DC requested' : 'DC not requested')
     return { text: `Order ${o.external_id}${o.customer_po ? ` — ${o.customer_po}` : ''} — ${o.status} · ${dc}` }
@@ -197,9 +203,10 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
     schedulingLines,
     sfiLines,
     genieLines,
+    clopayLines,
     stsLines,
     onlineEstimateLines,
-    totalNew: buckets.reduce((s, b) => s + b.newLines.length, 0) + schedulingLines.length + sfiLines.length + genieLines.length + stsLines.length + onlineEstimateLines.length,
+    totalNew: buckets.reduce((s, b) => s + b.newLines.length, 0) + schedulingLines.length + sfiLines.length + genieLines.length + clopayLines.length + stsLines.length + onlineEstimateLines.length,
     totalDue: buckets.reduce((s, b) => s + b.dueLines.length, 0),
     actionedTodayByLabel,
     actionedToday,
@@ -420,6 +427,7 @@ export function renderTodoEmail(d: TodoDigest, opts: {
     { label: 'Online Estimates (review photos, send price)', lines: d.onlineEstimateLines, tab: 'online-estimates' },
     { label: 'SFI Leads', lines: d.sfiLines, tab: 'leads-to-call' },
     { label: 'Genie (press Done after handling)', lines: d.genieLines, tab: 'genie' },
+    { label: 'Clopay (new SF jobs to schedule)', lines: d.clopayLines, tab: 'clopay' },
     { label: 'Clopay STS (delivery orders)', lines: d.stsLines, tab: 'sts' },
     ...d.buckets.map(b => ({ label: b.label, lines: b.newLines, tab: b.tab })),
   ]

@@ -26,7 +26,7 @@ import type {
   ArHoldResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
-import type { GenieActionItem, GenieActionItemsResult, StsActionItem, StsActionItemsResult } from '@/lib/vendor-orders/action-items'
+import type { GenieActionItem, GenieActionItemsResult, ClopayActionItemsResult, StsActionItem, StsActionItemsResult } from '@/lib/vendor-orders/action-items'
 import type { OnlineEstimateItem, OnlineEstimateItemsResult } from '@/lib/scheduler/online-estimate-items'
 import { CLOPAY_STS_STAGES } from '@/lib/clopay-sts/stages'
 import { setStsStatusAction } from '@/app/admin/vendor-orders/actions'
@@ -1013,6 +1013,8 @@ interface Props {
   arHold?: ArHoldResult
   /** Genie SF jobs our service created, awaiting handling — Genie tab. */
   genie?: GenieActionItemsResult
+  /** Clopay HD SF jobs our service created, awaiting scheduling — Clopay tab. */
+  clopay?: ClopayActionItemsResult
   /** Open Clopay STS orders (status pipeline) — STS tab. */
   sts?: StsActionItemsResult
   /** Open Free Online Estimate requests — Online Estimates tab. */
@@ -1131,7 +1133,7 @@ function Spinner() {
   )
 }
 
-type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold' | 'genie' | 'sts' | 'online-estimates'
+type TabKey = 'unpaid' | 'awaiting-revenue' | 'uninvoiced' | 'estimates' | 'accepted-no-job' | 'followup' | 'awaiting-sf' | 'online-scheduling' | 'leads-to-call' | 'ar-hold' | 'genie' | 'clopay' | 'sts' | 'online-estimates'
 
 // Acquisition cutoff. When the "exclude before" filter is on, rows whose event
 // date is on or after this day are kept (inclusive of the cutoff day itself).
@@ -1149,6 +1151,7 @@ export default function ActionItemsClient({
   leadsToCall,
   arHold,
   genie,
+  clopay,
   sts,
   onlineEstimates,
   actions,
@@ -1158,6 +1161,7 @@ export default function ActionItemsClient({
 }: Props) {
   const leadsToCallItems = leadsToCall?.items ?? []
   const genieItems = genie?.items ?? []
+  const clopayItems = clopay?.items ?? []
   const stsItems = sts?.items ?? []
   const onlineEstimateItems = onlineEstimates?.items ?? []
   const router = useRouter()
@@ -1174,7 +1178,7 @@ export default function ActionItemsClient({
   // useSearchParams Suspense boundary needed).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold', 'genie', 'sts', 'online-estimates']
+    const valid: TabKey[] = ['unpaid', 'awaiting-revenue', 'uninvoiced', 'estimates', 'accepted-no-job', 'followup', 'awaiting-sf', 'online-scheduling', 'leads-to-call', 'ar-hold', 'genie', 'clopay', 'sts', 'online-estimates']
     if (t && (valid as string[]).includes(t)) setActiveTab(t as TabKey)
   }, [])
   const [excludePreCutoff, setExcludePreCutoff] = useState(false)
@@ -1320,6 +1324,7 @@ export default function ActionItemsClient({
     ...(onlineEstimates ? [{ key: 'online-estimates' as TabKey, label: 'Online Estimates', count: onlineEstimateItems.length }] : []),
     ...(leadsToCall ? [{ key: 'leads-to-call' as TabKey, label: 'SFI Leads', count: leadsToCallItems.length }] : []),
     ...(genie ? [{ key: 'genie' as TabKey, label: 'Genie', count: genieItems.length }] : []),
+    ...(clopay ? [{ key: 'clopay' as TabKey, label: 'Clopay', count: clopayItems.length }] : []),
     ...(sts ? [{ key: 'sts' as TabKey, label: 'STS', count: stsItems.length }] : []),
     ...(arHold ? [{ key: 'ar-hold' as TabKey, label: 'AR Hold', count: filteredArHold.length }] : []),
     { key: 'unpaid',       label: 'Unpaid Jobs',    count: filteredUnpaid.length },
@@ -1613,6 +1618,16 @@ export default function ActionItemsClient({
         </AlertSection>
       )}
 
+      {activeTab === 'clopay' && (
+        <AlertSection
+          title="Clopay — New SF Jobs to Schedule"
+          count={clopayItems.length}
+        >
+          <p className="text-xs text-gray-400 mb-2">A row is added when our service creates an SF job from a Clopay HD order. Dispatch needs to schedule it — press Done once it&apos;s been scheduled.</p>
+          {clopayItems.length === 0 ? <AllClear /> : <ClopayTable items={clopayItems} />}
+        </AlertSection>
+      )}
+
       {activeTab === 'sts' && (
         <AlertSection
           title="Clopay STS — Delivery Orders"
@@ -1745,6 +1760,42 @@ function GenieTable({ items }: { items: GenieActionItem[] }) {
               <td className="px-4 py-2 text-gray-500"><div className="max-w-[220px] truncate" title={g.address ?? undefined}>{g.address ?? '—'}</div></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(g.order_date)}</td>
               <td className="px-4 py-2 text-gray-600">{g.status ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{g.status}</span> : <span className="text-gray-400">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// Clopay HD "new SF jobs to schedule" — same as GenieTable minus the Scheduled/Outreach
+// columns (Clopay orders don't self-schedule or get nudges). Done clears the row via the
+// shared vendor-orders ack endpoint.
+function ClopayTable({ items }: { items: GenieActionItem[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-y border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Done</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order #</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">SF Job #</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order Date</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {items.map(c => (
+            <tr key={c.id} className="hover:bg-gray-50">
+              <td className="px-4 py-2 whitespace-nowrap"><DoneButton leadId={c.id} endpoint="/api/vendor-orders/ack" /></td>
+              <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{c.external_id}</td>
+              <td className="px-4 py-2 text-gray-900">{c.customer_name ?? '—'}</td>
+              <td className="px-4 py-2 font-mono text-xs text-gray-600 whitespace-nowrap">{c.sf_job_number ?? '—'}</td>
+              <td className="px-4 py-2 text-gray-500"><div className="max-w-[220px] truncate" title={c.address ?? undefined}>{c.address ?? '—'}</div></td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(c.order_date)}</td>
+              <td className="px-4 py-2 text-gray-600">{c.status ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{c.status}</span> : <span className="text-gray-400">—</span>}</td>
             </tr>
           ))}
         </tbody>

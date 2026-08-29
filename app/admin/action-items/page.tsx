@@ -13,7 +13,7 @@ import {
   getUncontactedLeads,
   getArHold,
 } from '@/lib/analytics/alerts'
-import { getGenieActionItems, getStsActionItems } from '@/lib/vendor-orders/action-items'
+import { getGenieActionItems, getClopayActionItems, getStsActionItems } from '@/lib/vendor-orders/action-items'
 import { getOnlineEstimateItems } from '@/lib/scheduler/online-estimate-items'
 import ActionItemsClient from './ActionItemsClient'
 
@@ -35,7 +35,7 @@ export default async function ActionItemsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, genie, sts, onlineEstimates, notesResult, lastSyncResult] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, genie, clopay, sts, onlineEstimates, notesResult, lastSyncResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -48,6 +48,7 @@ export default async function ActionItemsPage() {
       getUncontactedLeads(),
       getArHold(),
       getGenieActionItems(),
+      getClopayActionItems(),
       getStsActionItems(),
       getOnlineEstimateItems(),
       db.from('action_item_notes').select('entity_type, entity_id, note'),
@@ -94,6 +95,7 @@ export default async function ActionItemsPage() {
       leadsToCall={leadsToCall}
       arHold={arHold}
       genie={genie}
+      clopay={clopay}
       sts={sts}
       onlineEstimates={onlineEstimates}
       actions={actions}
