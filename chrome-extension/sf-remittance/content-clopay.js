@@ -361,8 +361,17 @@
       const url = await resolveDocUrl(d.id, d.docType, installerNum)
       if (!url) { LOG(`doc ${d.id}: getdocumenturl failed`); continue }
       attempted++
-      const res = await msgBg({ type: 'clopay-capture-docs', docs: [{ external_id, documentId: d.id, filename, url }] })
-      const r = (res && res.results && res.results[0]) || { ok: false, error: res && res.error }
+      const capture = async (u) => {
+        const res = await msgBg({ type: 'clopay-capture-docs', docs: [{ external_id, documentId: d.id, filename, url: u }] })
+        return (res && res.results && res.results[0]) || { ok: false, error: res && res.error }
+      }
+      let r = await capture(url)
+      if (!(r.stored || r.alreadyStored)) {
+        // One retry with a FRESH grant — live runs showed isolated transient misses
+        // (server timing, a service-worker restart) while sibling docs stored fine.
+        const url2 = await resolveDocUrl(d.id, d.docType, installerNum)
+        if (url2) r = await capture(url2)
+      }
       if (r.stored || r.alreadyStored) stored++
       else { failed++; if (r.error) LOG(`doc ${d.id} capture failed: ${r.error}`) }
     }
