@@ -317,56 +317,106 @@
       } catch (e) { resolve({ ok: false, error: String(e) }) }
     })
   }
-  // Bridge to the MAIN-world fetch helper (content-clopay-main.js). Only a page-context
-  // (main-world) fetch is authenticated for /showdocument — a background-worker or
-  // isolated content-script fetch both get a ~15KB "not authorized" page. We ask the
-  // main world to fetch and return the bytes as base64 over window.postMessage.
-  let _fetchSeq = 0
-  const _fetchPending = new Map()
-  window.addEventListener('message', (e) => {
-    const d = e.data
-    if (e.source === window && d && d.__clopayFetchResult === true && _fetchPending.has(d.id)) {
-      const resolve = _fetchPending.get(d.id); _fetchPending.delete(d.id); resolve(d)
+  // Resolve a document's fetchable URL via getdocumenturl. This is NOT just a URL
+  // formatter — it GENERATES the PDF server-side (~5–9s) for the doc's `documenT_TYPE`
+  // and returns the hdprogram.clopay.com/showdocument/{id}.pdf URL. Routed through the
+  // background `clopay-api` proxy (bearer from the page); returns the URL string or null.
+  async function resolveDocUrl(documentId, docType, installerNum) {
+    const path = `/installerdocuments/getdocumenturl?documentId=${encodeURIComponent(documentId)}`
+      + `&installerNum=${encodeURIComponent(installerNum)}&isChubOrder=N`
+      + `&documentType=${encodeURIComponent(docType || '')}`
+    const r = await apiGet(path)
+    const url = r && r.obj
+    return typeof url === 'string' && url ? url : null
+  }
+  // The showdocument PDF is served ONLY to a real top-level NAVIGATION in the AUTHENTICATED
+  // session (proven — a fetch gets a ~15KB shell; a fresh cold tab isn't authenticated
+  // because sessionStorage is per-tab). So the background captures via chrome.debugger in a
+  // helper tab whose session storage we inject from THIS (logged-in) tab. Dump both storages
+  // so the helper tab authenticates identically.
+  function gatherSessionData() {
+    const dump = (store) => {
+      const o = {}
+      try { for (let i = 0; i < store.length; i++) { const k = store.key(i); o[k] = store.getItem(k) } } catch { /* ignore */ }
+      return o
     }
-  })
-  function fetchDocMainWorld(documentId, documentType, installerNum) {
-    return new Promise(resolve => {
-      const id = ++_fetchSeq
-      _fetchPending.set(id, resolve)
-      window.postMessage({ __clopayFetch: true, id, documentId, documentType, installerNum }, '*')
-      // getdocumenturl generates the PDF server-side (~5s), so allow a generous window.
-      setTimeout(() => { if (_fetchPending.has(id)) { _fetchPending.delete(id); resolve({ ok: false, error: 'timeout' }) } }, 45000)
-    })
+    return { local: dump(localStorage), session: dump(sessionStorage) }
   }
-  // Store one document. Dedup-check with the server first (skip if we already have it),
-  // else download the PDF via the main-world bridge (which runs the proven
-  // getdocumenturl-then-fetch sequence for this doc's type), validate it's really a PDF,
-  // and hand the base64 bytes to the background to upload.
-  async function storeDoc(external_id, doc, installerNum) {
-    const documentId = doc.id, filename = doc.name || `doc-${doc.id}`
-    const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename })
-    if (!chk.ok) return { ok: false, error: chk.error || 'check failed' }
-    if (chk.alreadyStored) return { ok: true, skipped: 'exists' }
-    const f = await fetchDocMainWorld(documentId, doc.docType || '', installerNum)
-    if (!f.ok) return { ok: false, error: `fetch ${f.status || f.error || '?'}` }
-    const isImg = /^image\/(jpeg|png|heic|webp)$/.test(f.ct || '')
-    const isPdf = typeof f.b64 === 'string' && f.b64.startsWith('JVBER') // base64 of "%PDF"
-    if (!isPdf && !isImg) return { ok: false, error: `not a file (${f.size || 0}b, ${f.ct || '?'})` }
-    const mime = isImg ? f.ct : 'application/pdf'
-    return await msgBg({ type: 'clopay-store-doc', external_id, documentId, filename, mime, dataB64: f.b64 })
-  }
-  async function storeDocuments(detail, installerNum) {
+
+  // Download + store one order's documents on Castle's server. Dedup pre-check each doc
+  // (skip ones already stored → resumable), resolve+generate its URL (getdocumenturl), then
+  // hand the batch (+ session tokens) to `clopay-capture-docs` to navigate-capture + store.
+  // `budget` caps how many un-stored docs to attempt this call. Returns per-order counts.
+  async function storeDocuments(detail, installerNum, sessionData, budget) {
     const docs = (detail && detail.raw && detail.raw.documents) || []
-    if (!docs.length) return
-    let stored = 0, existing = 0, failed = 0
+    const external_id = detail.external_id
+    let existing = 0
+    const toCapture = []
     for (const d of docs) {
       if (!d.id) continue
-      const r = await storeDoc(detail.external_id, d, installerNum)
-      if (r.skipped) existing++
-      else if (r.stored) stored++
-      else { failed++; if (r.error) LOG(`doc ${d.id} store failed: ${r.error}`) }
+      if (toCapture.length >= (budget || docs.length)) break
+      const filename = d.name || `doc-${d.id}`
+      const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId: d.id, filename })
+      if (chk.ok && chk.alreadyStored) { existing++; continue }
+      if (!chk.ok) { LOG(`doc ${d.id}: check failed (${chk.error || '?'})`); continue }
+      const url = await resolveDocUrl(d.id, d.docType, installerNum)
+      if (!url) { LOG(`doc ${d.id}: getdocumenturl failed`); continue }
+      toCapture.push({ external_id, documentId: d.id, filename, url })
     }
-    LOG(`docs #${detail.external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
+    if (!toCapture.length) { if (existing) LOG(`docs #${external_id}: ${existing} existing`); return { stored: 0, existing, failed: 0, attempted: 0 } }
+    const res = await msgBg({ type: 'clopay-capture-docs', docs: toCapture, sessionData })
+    const results = (res && res.results) || []
+    let stored = 0, failed = 0
+    for (const r of results) {
+      if (r.stored || r.alreadyStored) stored++
+      else { failed++; if (r.error) LOG(`doc ${r.documentId} capture failed: ${r.error}`) }
+    }
+    LOG(`docs #${external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
+    return { stored, existing, failed, attempted: toCapture.length }
+  }
+
+  // ── Document sync (separate slow job — mode 'docs') ──────────────────────────
+  // Decoupled from the fast list/summary/notes crawl. Lists orders (API), then per order
+  // fetches its documents and captures each PDF via the authenticated-helper-tab debugger
+  // path. Resumable: the dedup pre-check skips docs we already have, and a per-run cap
+  // bounds each run — re-run (or the nightly job) picks up where it left off.
+  let syncing = false
+  async function docsync() {
+    if (syncing) { LOG('doc sync already running'); return }
+    if (!readToken()) { LOG('doc sync: no token yet — waiting'); return }
+    syncing = true
+    try {
+      const cfg = await getCfg()
+      const installerNum = clean(cfg.clopayInstallerNum) || DEFAULT_INSTALLER
+      const maxDocs = cfg.clopayMaxDocsPerRun || 300
+      const sessionData = gatherSessionData()
+      LOG(`doc sync start (installer ${installerNum}, cap ${maxDocs} docs)`)
+      const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
+      if (listR.noToken || listR.status === 401) { LOG('doc sync: token missing/expired — aborting'); return }
+      const orders = (Array.isArray(listR.obj) ? listR.obj : []).map(mapListItem).filter(Boolean)
+      LOG(`doc sync: ${orders.length} order(s)`)
+      let budget = maxDocs, tStored = 0, tExisting = 0, tFailed = 0
+      for (const item of orders) {
+        if (budget <= 0) { LOG(`doc sync: hit per-run cap (${maxDocs}) — re-run to continue`); break }
+        if (!readToken() || !ctxAlive()) { LOG('doc sync: token/context lost — stopping'); break }
+        const inc = item.raw && item.raw.incident_id
+        const po = item.customer_po
+        if (inc == null || !po) continue
+        const docsR = await apiGet(`/installerdocuments/${installerNum}/${inc}/${encodeURIComponent(po)}`)
+        const documents = mapDocuments(docsR.obj)
+        if (!documents.length) continue
+        const r = await storeDocuments({ external_id: item.external_id, raw: { documents } }, installerNum, sessionData, budget)
+        budget -= (r.attempted || 0)
+        tStored += r.stored; tExisting += r.existing; tFailed += r.failed
+        await sleep(200)
+      }
+      LOG(`doc sync complete — ${tStored} stored, ${tExisting} existing, ${tFailed} failed`)
+    } catch (e) {
+      LOG('doc sync error', e?.message || e)
+    } finally {
+      syncing = false
+      endCrawl() // signals done → background closes the orders tab + the capture tab
+    }
   }
 
   // ── Crawl ────────────────────────────────────────────────────────────────────
@@ -381,8 +431,7 @@
       const mode = await getCrawlMode()
       const cap = mode === 'full' ? 400 : mode === 'incremental' ? 60 : (cfg.clopayMaxDetailPerRun || 12)
       const username = readUsername() || 'crawler' // server ignores this segment; any value works
-      const storeDocs = cfg.clopayStoreDocs !== false // download + store document files on our server
-      LOG(`crawl start (installer ${installerNum}, mode ${mode || 'manual'}, storeDocs ${storeDocs})`)
+      LOG(`crawl start (installer ${installerNum}, mode ${mode || 'manual'})`)
 
       // 1) LIST
       const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
@@ -426,7 +475,8 @@
           done++
           const n = (detail.raw.summary || []).length, dn = (detail.raw.documents || []).length, nt = (detail.raw.notes || []).length
           LOG(`detail #${id}: summary ${n}, docs ${dn}, notes ${nt}  (${done}/${targets.length})`)
-          if (storeDocs) await storeDocuments(detail, installerNum) // download + store the files on our server
+          // Document FILES are downloaded by the SEPARATE doc-sync job (mode 'docs'),
+          // not here — capturing them is slow and needs the authenticated session tab.
         } else {
           LOG(`detail #${id}: nothing captured`)
         }
@@ -511,7 +561,12 @@
     LOG('hdprogram:', reason, '— waiting for token')
     for (let i = 0; i < 240; i++) { // up to ~120s for the app to auth
       if (!ctxAlive()) return
-      if (readToken()) { LOG(`token present after ~${i * 0.5}s — crawling`); await crawl(); return }
+      if (readToken()) {
+        // mode 'docs' → the separate document-sync job; anything else → the fast crawl.
+        if (mode === 'docs') { LOG(`token present after ~${i * 0.5}s — syncing documents`); await docsync() }
+        else { LOG(`token present after ~${i * 0.5}s — crawling`); await crawl() }
+        return
+      }
       if (i === 16 && looksBlank()) { reloadOnce('hd-blank'); return } // truly blank OIDC landing → one reload
       await sleep(500)
     }

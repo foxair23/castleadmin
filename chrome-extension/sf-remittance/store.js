@@ -17,6 +17,9 @@ export const DEFAULTS = {
   clopayInstallerNum: '56505',   // Castle's Clopay dealer/installer number — used for the API list/detail calls
   clopayMaxDetailPerRun: 12,     // cap orders detailed per manual run (full/scheduled crawls use a larger cap)
   clopayScheduleEnabled: false,  // auto-crawl on a schedule (hourly 7a–6p Mon–Sat + nightly full) — office PC only
+  clopayStoreDocs: true,         // download + store Clopay document FILES on our server (via the doc-sync job)
+  clopayDocSyncEnabled: true,    // run the nightly Clopay document-sync job (~2am PT) — office PC only
+  clopayMaxDocsPerRun: 300,      // cap documents captured per doc-sync run (resumable across runs via dedup)
   // Saved logins for unattended re-login (this machine's local storage only).
   // Chrome won't let a script submit ITS autofilled password (anti-phishing), so
   // the login content script types these in itself. Leave blank to skip.

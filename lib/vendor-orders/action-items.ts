@@ -29,12 +29,19 @@ export interface GenieActionItem {
 }
 export interface GenieActionItemsResult { items: GenieActionItem[] }
 
-/** Created-but-not-yet-handled Genie SF jobs. */
-export async function getGenieActionItems(): Promise<GenieActionItemsResult> {
+// The Clopay tab surfaces the same thing (an SF job WE created, awaiting handling) for
+// clopay_hd orders — Clopay orders don't self-schedule or get nudges, so the appointment/
+// nudge fields are simply null. Same row shape, so reuse it.
+export type ClopayActionItem = GenieActionItem
+export interface ClopayActionItemsResult { items: ClopayActionItem[] }
+
+/** Created-but-not-yet-handled SF jobs our service made for a vendor's orders (the
+ *  `sf_created_job_number` marker, set only on create), until someone presses Done. */
+async function getCreatedJobItems(vendor: string): Promise<GenieActionItemsResult> {
   const { data } = await db()
     .from('vendor_orders')
     .select('id, external_id, customer_name, sf_created_job_number, street_address, city, state_prov, postal_code, order_date, status, phone, updated_at, appointment_date, appointment_window_start, appointment_window_end, schedule_nudge_sent_at')
-    .eq('vendor', 'genie_thd')
+    .eq('vendor', vendor)
     .not('sf_created_job_number', 'is', null)
     .is('action_done_at', null)
     .order('updated_at', { ascending: false })
@@ -57,7 +64,17 @@ export async function getGenieActionItems(): Promise<GenieActionItemsResult> {
   return { items }
 }
 
-/** Mark a Genie action-item row Done (clears it from the tab). */
+/** Created-but-not-yet-handled Genie SF jobs. */
+export function getGenieActionItems(): Promise<GenieActionItemsResult> {
+  return getCreatedJobItems('genie_thd')
+}
+
+/** Created-but-not-yet-handled Clopay HD SF jobs — a dispatcher schedules each, then Done. */
+export function getClopayActionItems(): Promise<ClopayActionItemsResult> {
+  return getCreatedJobItems('clopay_hd')
+}
+
+/** Mark a Genie/Clopay action-item row Done (clears it from the tab). */
 export async function markGenieActionDone(id: string, byName: string | null): Promise<void> {
   await db().from('vendor_orders').update({ action_done_at: new Date().toISOString(), action_done_by: byName }).eq('id', id)
 }
