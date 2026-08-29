@@ -146,9 +146,9 @@ async function finishCrawl(c, reason) {
   if (state && state.tabId != null && reason !== 'login') {
     try { await chrome.tabs.remove(state.tabId) } catch { /* already closed */ }
   }
-  // The Clopay crawl's document capture uses a hidden debugger-driven helper tab —
-  // detach + close it when the crawl ends so no "debugging" tab is left behind.
-  if (c.name === 'clopay') { try { await teardownCaptureTab() } catch { /* ignore */ } }
+  // The Clopay doc-sync attaches the debugger to the orders tab to capture documents —
+  // detach when the crawl ends (the tab itself is closed above / by the caller).
+  if (c.name === 'clopay') { try { await teardownCaptureDebugger() } catch { /* ignore */ } }
   console.log(`[${c.name}] crawl finished:`, reason)
 }
 
@@ -346,28 +346,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true // async response
 })
 
-// ── Clopay document capture (chrome.debugger navigation) ─────────────────────
-// Clopay documents are served ONLY to a real top-level NAVIGATION to
-// hdprogram.clopay.com/showdocument/{id}.pdf — a fetch from ANY context (content
-// script, MAIN world, worker) gets a ~15KB Angular shell, because JS cannot set
-// `Sec-Fetch-Mode: navigate` (the browser owns Sec-Fetch-*). So we drive a hidden
-// helper tab with the DevTools Protocol and read the real bytes off the wire.
+// ── Clopay document capture (hidden iframe in the AUTHENTICATED orders tab) ───
+// Clopay documents are served ONLY to a real NAVIGATION in the AUTHENTICATED session
+// (proven: a fetch from any context gets a ~15KB shell because JS can't set
+// Sec-Fetch-Mode:navigate; a SEPARATE helper tab isn't logged in because sessionStorage
+// is per-tab). But an <iframe> pointed at /showdocument INSIDE the real, logged-in orders
+// tab loads the actual application/pdf (Chrome renders it with its built-in PDF viewer —
+// framing is allowed, verified). So during a doc-sync the content script runs in that
+// authenticated tab; we attach the debugger to THAT tab, inject a hidden iframe per doc,
+// and read the PDF bytes off the intercepted response.
 //
-// Two response shapes, handled uniformly by watching RESPONSE MIME-TYPE:
-//  • SCANNED/inbound docs → /showdocument itself returns application/pdf (the file).
-//  • GENERATED docs (New IPO, Blank ICA/LW, …) → /showdocument returns a small HTML
-//    "pdf_embedder" wrapper page whose script then fetches the real PDF as a SEPARATE
-//    request (a per-session GUID URL, application/pdf, ~1MB).
-// We use the PASSIVE Network domain (not Fetch): Network.enable OBSERVES requests
-// without pausing them, so the wrapper page loads normally and fires its PDF request —
-// unlike Fetch-with-urlPattern:'*' at the response stage, which paused every request
-// and wedged the page (blank screen, v0.8.1). We watch for the first application/pdf or
-// image response after each navigation and read its body once it finishes loading. One
-// helper tab is reused for the whole crawl and torn down when it finishes.
-let captureTabId = null
+// The Fetch domain is scoped to `*/showdocument/*` at the Response stage: only the doc
+// requests pause (the SPA is untouched → no blank-screen wedge like v0.8.1's `*` pattern),
+// and reading the body at the Response stage gets the full bytes BEFORE Chrome hands them
+// to the PDF plugin (the reason Fetch beats Network.getResponseBody for a rendered PDF).
+const CAPTURE_PATTERN = '*://hdprogram.clopay.com/showdocument/*'
+let captureTabId = null            // the authenticated orders tab we've attached to
 let captureAttached = false
-let captureSessionData = null // { local:{}, session:{} } tokens copied from the authenticated crawl tab
-let pendingCapture = null // { resolve, reqId, mime } — capture is serial, so at most one
+let pendingCapture = null          // { url, resolve } — capture is serial, so at most one
 
 function dbgSend(target, method, params) {
   return new Promise((resolve, reject) => {
@@ -385,132 +381,110 @@ function dbgAttach(target) {
     })
   })
 }
+function headerValue(headers, name) {
+  for (const h of (headers || [])) if (h && typeof h.name === 'string' && h.name.toLowerCase() === name) return h.value
+  return ''
+}
 const isFileMime = (ct) => ct === 'application/pdf' || /^image\/(jpeg|jpg|png|heic|heif|webp)$/.test(ct)
+const urlBase = (u) => (u || '').split('?')[0]
 
-// One global CDP event router (passive Network domain). responseReceived tells us a
-// response's MIME type + requestId as it arrives (nothing is blocked); when the file we
-// want (pdf/image) shows up we remember its requestId, and on loadingFinished we read
-// the body. Serial per doc, so "the file" is unambiguously this doc's.
+// CDP router: on the paused showdocument RESPONSE for the doc we're waiting on, read its
+// body and abort the request; other showdocument requests just continue.
 chrome.debugger.onEvent.addListener((source, method, params) => {
-  if (captureTabId == null || source.tabId !== captureTabId) return
+  if (captureTabId == null || source.tabId !== captureTabId || method !== 'Fetch.requestPaused') return
+  const reqId = params.requestId
+  const url = params.request && params.request.url
   const p = pendingCapture
-  if (!p) return
-  if (method === 'Network.responseReceived') {
-    if (p.reqId) return // already found this doc's file
-    const ct = ((params.response && params.response.mimeType) || '').toLowerCase()
-    if (isFileMime(ct)) {
-      p.reqId = params.requestId; p.mime = ct
-      console.log('[clopay] capture: file response', ct, params.response && params.response.url)
-    }
-    return
-  }
-  if (method === 'Network.loadingFinished' && p.reqId && params.requestId === p.reqId) {
-    pendingCapture = null
-    ;(async () => {
+  ;(async () => {
+    if (p && url && urlBase(url) === urlBase(p.url)) {
+      pendingCapture = null
+      const ct = (headerValue(params.responseHeaders, 'content-type') || '').split(';')[0].trim().toLowerCase()
+      const status = params.responseStatusCode || 0
       try {
-        const body = await dbgSend({ tabId: captureTabId }, 'Network.getResponseBody', { requestId: p.reqId })
+        if (!isFileMime(ct)) {
+          console.log('[clopay] capture: not a file —', status, ct, url)
+          try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
+          p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'})` }); return
+        }
+        const body = await dbgSend({ tabId: captureTabId }, 'Fetch.getResponseBody', { requestId: reqId })
+        try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
         const b64 = body && body.base64Encoded ? body.body : null
-        console.log('[clopay] capture: body', p.mime, b64 ? `${b64.length} b64 chars` : 'EMPTY/not-base64')
-        p.resolve({ ok: true, mime: p.mime, base64: b64 })
+        console.log('[clopay] capture: body', ct, b64 ? `${b64.length} b64 chars` : 'EMPTY/not-base64')
+        p.resolve({ ok: true, mime: ct, base64: b64 })
       } catch (e) {
-        console.log('[clopay] capture: getResponseBody failed', e && e.message)
+        try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
         p.resolve({ ok: false, error: 'getResponseBody ' + (e instanceof Error ? e.message : String(e)) })
       }
-    })()
-    return
-  }
-  if (method === 'Network.loadingFailed' && p.reqId && params.requestId === p.reqId) {
-    pendingCapture = null
-    p.resolve({ ok: false, error: 'loadingFailed ' + (params.errorText || '') })
-  }
+    } else {
+      try { await dbgSend({ tabId: captureTabId }, 'Fetch.continueRequest', { requestId: reqId }) } catch { /* ignore */ }
+    }
+  })()
 })
-chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) captureAttached = false })
+chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) { captureAttached = false; captureTabId = null } })
 
-async function waitTabComplete(tabId, timeoutMs = 20000) {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try { const t = await chrome.tabs.get(tabId); if (t.status === 'complete') return } catch { return }
-    await sleep(300)
-  }
-}
-
-// Lazily create + attach the hidden capture tab, ON the hdprogram origin so the doc
-// navigations are same-origin and carry the live session cookie.
-async function ensureCaptureTab() {
-  if (captureTabId != null && captureAttached && await tabExists(captureTabId)) return
-  await teardownCaptureTab()
-  const tab = await chrome.tabs.create({ url: 'https://hdprogram.clopay.com/orders', active: false })
-  captureTabId = tab.id
-  await waitTabComplete(captureTabId)
-  await dbgAttach({ tabId: captureTabId })
+// Attach the debugger to the authenticated orders tab (the one the content script runs in)
+// and scope Fetch interception to the document URL only.
+async function ensureCaptureDebugger(tabId) {
+  if (captureTabId === tabId && captureAttached) return
+  if (captureTabId != null && captureTabId !== tabId) await teardownCaptureDebugger()
+  await dbgAttach({ tabId })
+  captureTabId = tabId
   captureAttached = true
-  // Authenticate the helper tab IDENTICALLY to the real crawl tab: sessionStorage is
-  // per-tab, so a fresh tab isn't logged in and the document wrapper's PDF fetch returns
-  // nothing. Copy both storages (captured from the crawl tab) into this tab before we
-  // navigate to any document — sessionStorage then persists across the same-origin doc
-  // navigations that follow.
-  if (captureSessionData) {
-    const L = captureSessionData.local || {}, S = captureSessionData.session || {}
-    const expr = '(function(){try{var L=' + JSON.stringify(L) + ',S=' + JSON.stringify(S)
-      + ';for(var k in L){try{localStorage.setItem(k,L[k])}catch(e){}}for(var k in S){try{sessionStorage.setItem(k,S[k])}catch(e){}}'
-      + 'return "ok local="+Object.keys(L).length+" session="+Object.keys(S).length}catch(e){return "err "+e.message}})()'
-    try {
-      const r = await dbgSend({ tabId: captureTabId }, 'Runtime.evaluate', { expression: expr, returnByValue: true })
-      console.log('[clopay] capture: session injected —', r && r.result && r.result.value)
-    } catch (e) { console.log('[clopay] capture: session inject failed', e && e.message) }
-  }
-  // PASSIVE observation — Network.enable never pauses requests, so the wrapper page loads
-  // normally and fires its follow-up PDF request (which we then read off the wire).
-  await dbgSend({ tabId: captureTabId }, 'Network.enable', {})
+  await dbgSend({ tabId }, 'Fetch.enable', { patterns: [{ urlPattern: CAPTURE_PATTERN, requestStage: 'Response' }] })
 }
 
-async function teardownCaptureTab() {
+async function teardownCaptureDebugger() {
   const id = captureTabId
-  captureTabId = null; captureAttached = false; captureSessionData = null
+  captureTabId = null; captureAttached = false
   if (pendingCapture) { try { pendingCapture.resolve({ ok: false, error: 'torn down' }) } catch { /* ignore */ } pendingCapture = null }
   if (id == null) return
   try { await new Promise(r => chrome.debugger.detach({ tabId: id }, () => { void chrome.runtime.lastError; r() })) } catch { /* ignore */ }
-  try { await chrome.tabs.remove(id) } catch { /* already closed */ }
 }
 
-// Capture ONE document's bytes by navigating the helper tab to its showdocument URL and
-// reading the first PDF/image response that results (the file itself for scanned docs,
-// or the wrapper's follow-up PDF request for generated ones). Serial — one pendingCapture
-// at a time, so "the next file" is unambiguously this doc's.
-async function captureDocBytes(url, timeoutMs = 30000) {
-  await ensureCaptureTab()
+const CAP_FRAME_JS = (u) => '(function(){var f=document.getElementById("__clopayCap");'
+  + 'if(!f){f=document.createElement("iframe");f.id="__clopayCap";f.style.cssText="position:fixed;left:-99999px;top:-99999px;width:900px;height:700px;border:0";document.documentElement.appendChild(f);}'
+  + 'f.src=' + JSON.stringify(u) + ';})()'
+const CAP_FRAME_CLEANUP = '(function(){var f=document.getElementById("__clopayCap");if(f)f.remove();})()'
+
+// Capture ONE document's bytes: inject a hidden iframe (a real navigation in the
+// authenticated tab) pointing at its showdocument URL and read the intercepted PDF/image.
+async function captureDocBytes(tabId, url, timeoutMs = 30000) {
+  await ensureCaptureDebugger(tabId)
   let timer = null
   const done = new Promise((resolve) => {
-    pendingCapture = { resolve }
+    pendingCapture = { url, resolve }
     timer = setTimeout(() => { if (pendingCapture && pendingCapture.resolve === resolve) { pendingCapture = null; resolve({ ok: false, error: 'timeout' }) } }, timeoutMs)
   })
   try {
-    await chrome.tabs.update(captureTabId, { url })
+    await dbgSend({ tabId }, 'Runtime.evaluate', { expression: CAP_FRAME_JS(url) })
   } catch (e) {
-    if (pendingCapture) pendingCapture = null
+    if (pendingCapture && pendingCapture.url === url) pendingCapture = null
     clearTimeout(timer)
-    return { ok: false, error: 'navigate ' + (e instanceof Error ? e.message : String(e)) }
+    return { ok: false, error: 'inject ' + (e instanceof Error ? e.message : String(e)) }
   }
   const res = await done
   clearTimeout(timer)
   return res
 }
 
-// Capture + store a batch of an order's documents (content script sends them after
-// resolving each showdocument URL via getdocumenturl, which generates the PDF).
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// Capture + store a batch of an order's documents. The content script (running in the
+// authenticated orders tab) sends them after resolving each showdocument URL via
+// getdocumenturl; we capture each via a hidden iframe IN that same tab (sender.tab.id).
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'clopay-capture-docs') return
   ;(async () => {
-    if (msg.sessionData) captureSessionData = msg.sessionData // inject into the helper tab on create
+    const tabId = sender.tab && sender.tab.id
+    if (tabId == null) { sendResponse({ ok: false, error: 'no tab' }); return }
     const docs = Array.isArray(msg.docs) ? msg.docs : []
     const results = []
     for (const d of docs) {
       if (!d || !d.url || d.documentId == null || !d.external_id) { results.push({ documentId: d && d.documentId, ok: false, error: 'bad args' }); continue }
-      const cap = await captureDocBytes(d.url)
-      if (!cap.ok || !cap.base64) { results.push({ documentId: d.documentId, ok: false, error: cap.error || `capture ${cap.status || '?'}` }); continue }
+      const cap = await captureDocBytes(tabId, d.url)
+      if (!cap.ok || !cap.base64) { results.push({ documentId: d.documentId, ok: false, error: cap.error || 'capture failed' }); continue }
       const store = await storeClopayDoc({ external_id: d.external_id, documentId: d.documentId, filename: d.filename, mime: cap.mime || 'application/pdf', dataB64: cap.base64 })
       results.push({ documentId: d.documentId, ...store })
     }
+    try { await dbgSend({ tabId }, 'Runtime.evaluate', { expression: CAP_FRAME_CLEANUP }) } catch { /* ignore */ }
     sendResponse({ ok: true, results })
   })()
   return true // async response
