@@ -49,6 +49,14 @@ document.getElementById('crawlClopay').addEventListener('click', () => {
       : `Could not start crawl: ${r?.error || 'unknown'}`
   })
 })
+document.getElementById('syncClopayDocs').addEventListener('click', () => {
+  const el = document.getElementById('status')
+  chrome.runtime.sendMessage({ type: 'clopay-docsync-now' }, (r) => {
+    el.textContent = r?.ok
+      ? 'Clopay document sync started in a background tab — it downloads every order’s documents to Castle (skipping ones already stored), then closes itself. Slow; watch the [clopay] console. Safe to re-run — it resumes where it left off.'
+      : `Could not start doc sync: ${r?.error || 'unknown'}`
+  })
+})
 document.getElementById('options').addEventListener('click', () => chrome.runtime.openOptionsPage())
 
 render()

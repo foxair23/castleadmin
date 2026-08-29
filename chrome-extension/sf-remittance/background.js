@@ -95,8 +95,11 @@ function ptNow() {
 
 async function maybeScheduledCrawl(c) {
   const cfg = await getConfig()
-  if (!cfg[c.scheduleFlag]) return
   const { hour, weekday } = ptNow()
+  // Clopay nightly DOCUMENT SYNC (~2am PT) — a separate slow job, gated by its own toggle
+  // and independent of the list/notes crawl schedule. Runs before the 3am full crawl.
+  if (c.name === 'clopay' && cfg.clopayDocSyncEnabled && hour === 2) { await startCrawl(c, 'docs'); return }
+  if (!cfg[c.scheduleFlag]) return
   const workday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(weekday)
   let mode = null
   if (hour === 3) mode = 'full'                                   // nightly full backfill ~3am PT
@@ -214,6 +217,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // force:true — a manual click always opens a fresh crawl tab, even if stale
     // crawl state is lingering from a previous run.
     const r = await startCrawl(c, 'full', { force: true })
+    sendResponse({ ok: !!r.started, error: r.started ? undefined : (r.reason || 'could not start') })
+  })()
+  return true
+})
+
+// "Sync Clopay documents now" from the popup — opens the authenticated orders tab in
+// document-sync mode (mode 'docs'); the content script lists orders and captures each
+// document's file into Castle via the injected-session debugger helper tab. Separate,
+// slower, and resumable (dedup skips stored docs) — kept off the fast list/notes crawl.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'clopay-docsync-now') return
+  ;(async () => {
+    const cfg = await getConfig()
+    if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'set Castle Admin URL + token in Options' }); return }
+    setBadge('')
+    const r = await startCrawl(CRAWLERS.clopay, 'docs', { force: true })
     sendResponse({ ok: !!r.started, error: r.started ? undefined : (r.reason || 'could not start') })
   })()
   return true
@@ -347,6 +366,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // helper tab is reused for the whole crawl and torn down when it finishes.
 let captureTabId = null
 let captureAttached = false
+let captureSessionData = null // { local:{}, session:{} } tokens copied from the authenticated crawl tab
 let pendingCapture = null // { resolve, reqId, mime } — capture is serial, so at most one
 
 function dbgSend(target, method, params) {
@@ -424,6 +444,21 @@ async function ensureCaptureTab() {
   await waitTabComplete(captureTabId)
   await dbgAttach({ tabId: captureTabId })
   captureAttached = true
+  // Authenticate the helper tab IDENTICALLY to the real crawl tab: sessionStorage is
+  // per-tab, so a fresh tab isn't logged in and the document wrapper's PDF fetch returns
+  // nothing. Copy both storages (captured from the crawl tab) into this tab before we
+  // navigate to any document — sessionStorage then persists across the same-origin doc
+  // navigations that follow.
+  if (captureSessionData) {
+    const L = captureSessionData.local || {}, S = captureSessionData.session || {}
+    const expr = '(function(){try{var L=' + JSON.stringify(L) + ',S=' + JSON.stringify(S)
+      + ';for(var k in L){try{localStorage.setItem(k,L[k])}catch(e){}}for(var k in S){try{sessionStorage.setItem(k,S[k])}catch(e){}}'
+      + 'return "ok local="+Object.keys(L).length+" session="+Object.keys(S).length}catch(e){return "err "+e.message}})()'
+    try {
+      const r = await dbgSend({ tabId: captureTabId }, 'Runtime.evaluate', { expression: expr, returnByValue: true })
+      console.log('[clopay] capture: session injected —', r && r.result && r.result.value)
+    } catch (e) { console.log('[clopay] capture: session inject failed', e && e.message) }
+  }
   // PASSIVE observation — Network.enable never pauses requests, so the wrapper page loads
   // normally and fires its follow-up PDF request (which we then read off the wire).
   await dbgSend({ tabId: captureTabId }, 'Network.enable', {})
@@ -431,7 +466,7 @@ async function ensureCaptureTab() {
 
 async function teardownCaptureTab() {
   const id = captureTabId
-  captureTabId = null; captureAttached = false
+  captureTabId = null; captureAttached = false; captureSessionData = null
   if (pendingCapture) { try { pendingCapture.resolve({ ok: false, error: 'torn down' }) } catch { /* ignore */ } pendingCapture = null }
   if (id == null) return
   try { await new Promise(r => chrome.debugger.detach({ tabId: id }, () => { void chrome.runtime.lastError; r() })) } catch { /* ignore */ }
@@ -466,6 +501,7 @@ async function captureDocBytes(url, timeoutMs = 30000) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== 'clopay-capture-docs') return
   ;(async () => {
+    if (msg.sessionData) captureSessionData = msg.sessionData // inject into the helper tab on create
     const docs = Array.isArray(msg.docs) ? msg.docs : []
     const results = []
     for (const d of docs) {
