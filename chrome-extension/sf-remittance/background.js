@@ -405,31 +405,14 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
           try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
           p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'})` }); return
         }
-        // STREAM the body — Fetch.getResponseBody silently TRUNCATES large bodies at
-        // exactly 1,280,000 bytes (live data: 478 stored "PDFs" all byte-identical at
-        // that size, tails cut off → unreadable). IO.read chunking has no such cap.
-        const stream = await dbgSend({ tabId: captureTabId }, 'Fetch.takeResponseBodyAsStream', { requestId: reqId })
-        let bin = ''
-        for (;;) {
-          const r = await dbgSend({ tabId: captureTabId }, 'IO.read', { handle: stream.stream, size: 1048576 })
-          bin += r.base64Encoded ? atob(r.data) : r.data
-          if (r.eof) break
-        }
-        try { await dbgSend({ tabId: captureTabId }, 'IO.close', { handle: stream.stream }) } catch { /* ignore */ }
+        const body = await dbgSend({ tabId: captureTabId }, 'Fetch.getResponseBody', { requestId: reqId })
         try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-        // Sanity guards so garbage can never be stored: real PDFs start with %PDF, and
-        // anything under 1KB is an error blob regardless of its content-type.
-        if (ct === 'application/pdf' && !bin.startsWith('%PDF')) { p.resolve({ ok: false, error: `bad pdf magic (${bin.length}b)` }); return }
-        // Every valid PDF ends with %%EOF; a tail-truncated read (the 1,280,000-byte
-        // getResponseBody cap stored 400+ unreadable files) never does. Hard-refuse so a
-        // truncated PDF can NEVER be stored, whatever the read path.
-        if (ct === 'application/pdf' && bin.lastIndexOf('%%EOF') < bin.length - 2048) { p.resolve({ ok: false, error: `truncated pdf (${bin.length}b, no trailing %%EOF)` }); return }
-        if (bin.length < 1000) { p.resolve({ ok: false, error: `too small (${bin.length}b)` }); return }
-        console.log('[clopay] capture: body', ct, `${bin.length} bytes`)
-        p.resolve({ ok: true, mime: ct, base64: btoa(bin) })
+        const b64 = body && body.base64Encoded ? body.body : null
+        console.log('[clopay] capture: body', ct, b64 ? `${b64.length} b64 chars` : 'EMPTY/not-base64')
+        p.resolve({ ok: true, mime: ct, base64: b64 })
       } catch (e) {
         try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-        p.resolve({ ok: false, error: 'stream read ' + (e instanceof Error ? e.message : String(e)) })
+        p.resolve({ ok: false, error: 'getResponseBody ' + (e instanceof Error ? e.message : String(e)) })
       }
     } else {
       try { await dbgSend({ tabId: captureTabId }, 'Fetch.continueRequest', { requestId: reqId }) } catch { /* ignore */ }
