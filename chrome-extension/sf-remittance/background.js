@@ -437,21 +437,24 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 // new tab per doc in v0.8.11).
 chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) captureAttached = false })
 
-async function waitTabComplete(tabId, timeoutMs = 30000) {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try { const t = await chrome.tabs.get(tabId); if (t.status === 'complete') return } catch { return }
-    await sleep(300)
+// Once a PDF has RENDERED, the tab's top-level page is Chrome's built-in PDF viewer —
+// an extension page the debugger API is FORBIDDEN to attach to ("Cannot attach to this
+// target", the v0.8.12 wedge). Resetting the tab to about:blank leaves the viewer and
+// makes it attachable again; captureDocBytes also does this after every capture.
+async function attachWithRecovery() {
+  for (let i = 0; i < 3; i++) {
+    try { await dbgAttach({ tabId: captureTabId }); return true } catch (e) {
+      console.log('[clopay] capture: attach failed (' + (e && e.message) + ') — resetting tab and retrying')
+      try { await chrome.tabs.update(captureTabId, { url: 'about:blank' }) } catch { return false }
+      await sleep(700)
+    }
   }
+  return false
 }
 
-// Lazily create the hidden capture tab and attach the debugger. Two hard-won rules:
-// 1. The tab is created ON the portal origin — navigating about:blank → clopay.com swaps
-//    renderer processes, and a process swap FORCE-DETACHES the debugger (that's what made
-//    v0.8.11 spawn a new tab per document). Same-origin doc navigations afterwards keep
-//    both the process and the attachment.
-// 2. ONE tab is reused for the whole sync: its id is persisted (MV3 worker restarts wipe
-//    in-memory state), and a detached-but-alive tab is RE-ATTACHED, never replaced.
+// Lazily create the hidden capture tab and attach the debugger. ONE tab is reused for
+// the whole sync: its id is persisted (MV3 worker restarts wipe in-memory state), and a
+// detached-but-alive tab is RE-ATTACHED, never replaced (v0.8.11 leaked a tab per doc).
 // Network.enable with EXPLICIT buffer sizes — the defaults are what capped bodies at
 // 1,280,000 bytes; these cover the 25MB storage-bucket max many times over.
 async function ensureCaptureTab() {
@@ -461,14 +464,13 @@ async function ensureCaptureTab() {
   }
   if (captureTabId != null && !(await tabExists(captureTabId))) { captureTabId = null; captureAttached = false }
   if (captureTabId == null) {
-    const tab = await chrome.tabs.create({ url: 'https://hdprogram.clopay.com/orders', active: false })
+    const tab = await chrome.tabs.create({ url: 'about:blank', active: false })
     captureTabId = tab.id
     captureAttached = false
     await chrome.storage.local.set({ clopayCapTabId: tab.id })
-    await waitTabComplete(captureTabId)
   }
   if (!captureAttached) {
-    await dbgAttach({ tabId: captureTabId })
+    if (!(await attachWithRecovery())) throw new Error('cannot attach debugger to the capture tab')
     captureAttached = true
     await dbgSend({ tabId: captureTabId }, 'Network.enable', { maxResourceBufferSize: 100 * 1024 * 1024, maxTotalBufferSize: 200 * 1024 * 1024 })
   }
@@ -485,24 +487,28 @@ async function teardownCaptureDebugger() {
 }
 
 // Capture ONE document's bytes: navigate the hidden capture tab to its showdocument URL —
-// a genuine top-level navigation (Sec-Fetch-Dest: document, cookies attached) — and read
-// the intercepted PDF/image body before aborting the request.
+// a genuine top-level navigation (Sec-Fetch-Dest: document, cookies attached) — then read
+// the fully-downloaded body via the passive Network observer. Afterwards the tab is reset
+// to about:blank so the PDF viewer (an undebuggable extension page) never blocks the next
+// attach. Never throws — a failed attach/navigate returns an error result the sync logs.
 async function captureDocBytes(url, timeoutMs = 30000) {
-  await ensureCaptureTab()
+  try { await ensureCaptureTab() } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) } }
   let timer = null
   const done = new Promise((resolve) => {
     pendingCapture = { url, resolve }
     timer = setTimeout(() => { if (pendingCapture && pendingCapture.resolve === resolve) { pendingCapture = null; resolve({ ok: false, error: 'timeout' }) } }, timeoutMs)
   })
+  let res
   try {
     await chrome.tabs.update(captureTabId, { url })
+    res = await done
   } catch (e) {
     if (pendingCapture && pendingCapture.url === url) pendingCapture = null
-    clearTimeout(timer)
-    return { ok: false, error: 'navigate ' + (e instanceof Error ? e.message : String(e)) }
+    res = { ok: false, error: 'navigate ' + (e instanceof Error ? e.message : String(e)) }
   }
-  const res = await done
   clearTimeout(timer)
+  // Leave the PDF viewer immediately (body already read) so the tab stays attachable.
+  try { await chrome.tabs.update(captureTabId, { url: 'about:blank' }) } catch { /* tab gone */ }
   return res
 }
 
