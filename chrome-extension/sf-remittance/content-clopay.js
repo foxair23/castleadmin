@@ -393,12 +393,18 @@
       const cfg = await getCfg()
       const installerNum = clean(cfg.clopayInstallerNum) || DEFAULT_INSTALLER
       const maxDocs = cfg.clopayMaxDocsPerRun || 300
-      LOG(`doc sync start (installer ${installerNum}, cap ${maxDocs} docs)`)
+      const ver = (() => { try { return chrome.runtime.getManifest().version } catch { return '?' } })()
+      LOG(`doc sync start (v${ver}, installer ${installerNum}, cap ${maxDocs} docs)`)
       const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
       if (listR.noToken || listR.status === 401) { LOG('doc sync: token missing/expired — aborting'); return }
       const orders = (Array.isArray(listR.obj) ? listR.obj : []).map(mapListItem).filter(Boolean)
       LOG(`doc sync: ${orders.length} order(s)`)
       let budget = maxDocs, tStored = 0, tExisting = 0, tFailed = 0
+      // The gateway wraps errors in HTTP 200 with a NULL responseObject (seen before as
+      // transient throttling). An order with genuinely no documents returns an EMPTY
+      // ARRAY — so a null list is an API problem, not "no docs", and must not be
+      // swallowed silently (a live run "completed" after 25 of 182 orders that way).
+      let nullStreak = 0
       for (const item of orders) {
         if (budget <= 0) { LOG(`doc sync: hit per-run cap (${maxDocs}) — re-run to continue`); break }
         if (!readToken() || !ctxAlive()) { LOG('doc sync: token/context lost — stopping'); break }
@@ -406,6 +412,16 @@
         const po = item.customer_po
         if (inc == null || !po) continue
         const docsR = await apiGet(`/installerdocuments/${installerNum}/${inc}/${encodeURIComponent(po)}`)
+        if (docsR.status === 401) { LOG('doc sync: documents API 401 — token expired; stopping (re-run resumes from here)'); break }
+        if (!Array.isArray(docsR.obj)) {
+          const w = docsR.raw || {}
+          LOG(`docs #${item.external_id}: API gave no list (http ${docsR.status}, api ${w.statusCode ?? '?'}${w.message ? ' — ' + String(w.message).slice(0, 120) : ''})`)
+          nullStreak++
+          if (nullStreak === 3) { LOG('doc sync: 3 empty API replies in a row — pausing 60s (throttling?), then continuing'); await sleep(60000) }
+          else if (nullStreak >= 10) { LOG('doc sync: documents API keeps returning nothing — stopping this run; re-run or the nightly job resumes'); break }
+          continue
+        }
+        nullStreak = 0
         const documents = mapDocuments(docsR.obj)
         if (!documents.length) continue
         const r = await storeDocuments({ external_id: item.external_id, raw: { documents } }, installerNum, budget)

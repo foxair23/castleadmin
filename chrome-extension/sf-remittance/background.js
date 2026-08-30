@@ -420,6 +420,10 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
         // Sanity guards so garbage can never be stored: real PDFs start with %PDF, and
         // anything under 1KB is an error blob regardless of its content-type.
         if (ct === 'application/pdf' && !bin.startsWith('%PDF')) { p.resolve({ ok: false, error: `bad pdf magic (${bin.length}b)` }); return }
+        // Every valid PDF ends with %%EOF; a tail-truncated read (the 1,280,000-byte
+        // getResponseBody cap stored 400+ unreadable files) never does. Hard-refuse so a
+        // truncated PDF can NEVER be stored, whatever the read path.
+        if (ct === 'application/pdf' && bin.lastIndexOf('%%EOF') < bin.length - 2048) { p.resolve({ ok: false, error: `truncated pdf (${bin.length}b, no trailing %%EOF)` }); return }
         if (bin.length < 1000) { p.resolve({ ok: false, error: `too small (${bin.length}b)` }); return }
         console.log('[clopay] capture: body', ct, `${bin.length} bytes`)
         p.resolve({ ok: true, mime: ct, base64: btoa(bin) })
