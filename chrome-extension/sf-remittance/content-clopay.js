@@ -576,6 +576,11 @@
     const mode = await getCrawlMode()
     const crawlTab = await isCrawlTab()
     if (!mode && !crawlTab) { LOG('hdprogram: not a crawl (no mode / not crawl tab) — idle'); return }
+    // During a doc sync the background's hidden CAPTURE tab also loads this portal (it
+    // must live on this origin so per-doc navigations don't swap processes and detach
+    // the debugger). Only the designated crawl tab may run the sync — a second one here
+    // would race the capture machinery.
+    if (mode === 'docs' && !crawlTab) { LOG('hdprogram: doc sync runs only in its own crawl tab — idle'); return }
     started = true
     LOG('hdprogram:', reason, '— waiting for token')
     for (let i = 0; i < 240; i++) { // up to ~120s for the app to auth

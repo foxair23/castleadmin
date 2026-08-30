@@ -432,24 +432,52 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     p.resolve({ ok: false, error: 'loadingFailed ' + (params.errorText || '') })
   }
 })
-chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) { captureAttached = false; captureTabId = null } })
+// Keep the tab id on detach — the next capture RE-ATTACHES to the same tab (a process
+// swap or manual banner-close detaches without killing the tab; replacing it leaked a
+// new tab per doc in v0.8.11).
+chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) captureAttached = false })
 
-// Lazily create the hidden capture tab and attach the debugger. Network.enable with
-// EXPLICIT buffer sizes (100MB/resource, 200MB total) — the defaults are what capped
-// bodies at 1,280,000 bytes; these cover the 25MB storage-bucket max many times over.
+async function waitTabComplete(tabId, timeoutMs = 30000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try { const t = await chrome.tabs.get(tabId); if (t.status === 'complete') return } catch { return }
+    await sleep(300)
+  }
+}
+
+// Lazily create the hidden capture tab and attach the debugger. Two hard-won rules:
+// 1. The tab is created ON the portal origin — navigating about:blank → clopay.com swaps
+//    renderer processes, and a process swap FORCE-DETACHES the debugger (that's what made
+//    v0.8.11 spawn a new tab per document). Same-origin doc navigations afterwards keep
+//    both the process and the attachment.
+// 2. ONE tab is reused for the whole sync: its id is persisted (MV3 worker restarts wipe
+//    in-memory state), and a detached-but-alive tab is RE-ATTACHED, never replaced.
+// Network.enable with EXPLICIT buffer sizes — the defaults are what capped bodies at
+// 1,280,000 bytes; these cover the 25MB storage-bucket max many times over.
 async function ensureCaptureTab() {
-  if (captureTabId != null && captureAttached && await tabExists(captureTabId)) return
-  await teardownCaptureDebugger()
-  const tab = await chrome.tabs.create({ url: 'about:blank', active: false })
-  captureTabId = tab.id
-  await dbgAttach({ tabId: captureTabId })
-  captureAttached = true
-  await dbgSend({ tabId: captureTabId }, 'Network.enable', { maxResourceBufferSize: 100 * 1024 * 1024, maxTotalBufferSize: 200 * 1024 * 1024 })
+  if (captureTabId == null) {
+    const { clopayCapTabId } = await chrome.storage.local.get('clopayCapTabId')
+    if (clopayCapTabId != null && await tabExists(clopayCapTabId)) captureTabId = clopayCapTabId
+  }
+  if (captureTabId != null && !(await tabExists(captureTabId))) { captureTabId = null; captureAttached = false }
+  if (captureTabId == null) {
+    const tab = await chrome.tabs.create({ url: 'https://hdprogram.clopay.com/orders', active: false })
+    captureTabId = tab.id
+    captureAttached = false
+    await chrome.storage.local.set({ clopayCapTabId: tab.id })
+    await waitTabComplete(captureTabId)
+  }
+  if (!captureAttached) {
+    await dbgAttach({ tabId: captureTabId })
+    captureAttached = true
+    await dbgSend({ tabId: captureTabId }, 'Network.enable', { maxResourceBufferSize: 100 * 1024 * 1024, maxTotalBufferSize: 200 * 1024 * 1024 })
+  }
 }
 
 async function teardownCaptureDebugger() {
   const id = captureTabId
   captureTabId = null; captureAttached = false
+  try { await chrome.storage.local.remove('clopayCapTabId') } catch { /* ignore */ }
   if (pendingCapture) { try { pendingCapture.resolve({ ok: false, error: 'torn down' }) } catch { /* ignore */ } pendingCapture = null }
   if (id == null) return
   try { await new Promise(r => chrome.debugger.detach({ tabId: id }, () => { void chrome.runtime.lastError; r() })) } catch { /* ignore */ }
