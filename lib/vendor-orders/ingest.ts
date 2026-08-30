@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { getVendor, type VendorOrderFields } from './config'
+import { clopayDerivedDates } from './clopay-derived'
 
 // Ingest scraped vendor-portal orders into the shared log. The extension scrapes
 // the orders grid (list-level fields for every order) and, for orders we don't
@@ -112,6 +113,17 @@ export async function ingestOrders(vendor: string, orders: ScrapedOrder[], meta:
     // Merge raw so list-scrape keys and detail-scrape keys accumulate instead of
     // clobbering each other.
     if (o.raw) row.raw = prior ? { ...(prior.raw ?? {}), ...o.raw } : o.raw
+
+    // Clopay display fields derived from the merged raw, stored as columns so the HD
+    // Orders list never has to select `raw` (migration 103; SQL backfill covered
+    // pre-existing rows, this keeps them current).
+    if (vendor === 'clopay_hd' && row.raw) {
+      const merged = row.raw as Record<string, unknown>
+      const der = clopayDerivedDates(merged)
+      if (der.orderDate) row.derived_order_date = der.orderDate
+      if (der.lastActivity) row.derived_last_activity_at = der.lastActivity
+      row.has_detail = hasStoredDetail(merged)
+    }
 
     if (!prior) {
       row.first_seen_at = now
