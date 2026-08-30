@@ -126,15 +126,25 @@ export function matchToSfJob(index: SfJobIndex, key: ExternalOrderKey): SfJobMat
 }
 
 // ── DB loader ────────────────────────────────────────────────────────────────
+// Pages are fetched in PARALLEL WAVES of 8 rather than one-at-a-time — the serial
+// version turned a 40k-row table into 40 sequential round-trips (the dominant cost of
+// building the index). A wave past the end just returns short/empty pages, so the only
+// waste is a few empty responses at the boundary.
 async function fetchAll<T>(run: (from: number, to: number) => Promise<T[]>): Promise<T[]> {
-  const PAGE = 1000
+  const PAGE = 1000, WAVE = 8
   const out: T[] = []
   let from = 0
   for (;;) {
-    const page = await run(from, from + PAGE - 1)
-    out.push(...page)
-    if (page.length < PAGE) break
-    from += PAGE
+    const pages = await Promise.all(
+      Array.from({ length: WAVE }, (_, i) => run(from + i * PAGE, from + i * PAGE + PAGE - 1)),
+    )
+    let done = false
+    for (const p of pages) {
+      out.push(...p)
+      if (p.length < PAGE) { done = true; break }
+    }
+    if (done) break
+    from += WAVE * PAGE
   }
   return out
 }
@@ -142,13 +152,17 @@ async function fetchAll<T>(run: (from: number, to: number) => Promise<T[]>): Pro
 /** Build the index from the SF mirror. `withContacts` pulls customer email/phone
  *  for those fallbacks (skip it if a caller only needs PO/name).
  *
- *  Cached for a short TTL: the index is a pure function of the SF mirror (identical for
- *  every request and user), but building it pages the ENTIRE sf_jobs + sf_customers
- *  tables in ~65 serial PostgREST round-trips — the single slowest step of an HD Orders
- *  page load when done per view. The mirror itself only changes on its sync cadence, so
- *  an index up to 90s old renders identical matches. In-flight promise is shared, so
- *  concurrent renders don't stampede; failures are never cached. */
-const INDEX_TTL_MS = 90_000
+ *  Cached: the index is a pure function of the SF mirror (identical for every request
+ *  and user), but building it pages the ENTIRE sf_jobs + sf_customers tables — the
+ *  single slowest step of an HD Orders page load when done per view. Serving rules:
+ *   - fresher than 90s  → serve as-is (nothing to do)
+ *   - 90s–10min old     → serve the stale copy INSTANTLY and rebuild in the background
+ *                         (only the SF Job # match column can lag, never order data)
+ *   - older than 10min  → hard cap: block and rebuild fresh, same as no cache at all
+ *  In-flight promise is shared so concurrent renders don't stampede; a failed rebuild
+ *  is never cached (and a failed background refresh falls back to blocking next time). */
+const FRESH_TTL_MS = 90_000
+const STALE_MAX_MS = 10 * 60_000
 const indexCache = new Map<string, { at: number; promise: Promise<SfJobIndex> }>()
 
 export function loadSfJobIndex(db: SupabaseClient, opts: { withContacts?: boolean } = {}): Promise<SfJobIndex> {
@@ -156,11 +170,22 @@ export function loadSfJobIndex(db: SupabaseClient, opts: { withContacts?: boolea
   const hit = indexCache.get(key)
   // eslint-disable-next-line react-hooks/purity -- server-side TTL cache, not a component
   const now = Date.now()
-  if (hit && now - hit.at < INDEX_TTL_MS) return hit.promise
-  const promise = loadSfJobIndexUncached(db, opts)
-  indexCache.set(key, { at: now, promise })
-  promise.catch(() => { if (indexCache.get(key)?.promise === promise) indexCache.delete(key) })
-  return promise
+  if (hit && now - hit.at < FRESH_TTL_MS) return hit.promise
+
+  const rebuild = () => {
+    const promise = loadSfJobIndexUncached(db, opts)
+    indexCache.set(key, { at: now, promise })
+    promise.catch(() => { if (indexCache.get(key)?.promise === promise) indexCache.delete(key) })
+    return promise
+  }
+
+  if (hit && now - hit.at < STALE_MAX_MS) {
+    // Serve stale, refresh behind the scenes. The rebuild replaces the cache entry, so
+    // the NEXT request gets the fresh index; this one returns immediately.
+    rebuild()
+    return hit.promise
+  }
+  return rebuild()
 }
 
 async function loadSfJobIndexUncached(db: SupabaseClient, opts: { withContacts?: boolean } = {}): Promise<SfJobIndex> {

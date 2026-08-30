@@ -10,46 +10,6 @@ import HdOrdersNav from './HdOrdersNav'
 import { statusChipStyle, isTerminalStatus } from '@/lib/vendor-orders/status-style'
 import { attachmentsForOrders, signedUrls } from '@/lib/vendor-orders/attachments'
 
-// Parse a Clopay timestamp string ("08/20/2026 02:44 PM CST", "06/10/2026") → Date,
-// dropping the trailing timezone abbreviation and "Not Applicable". Null if unparseable.
-function parseClopayTs(s: unknown): Date | null {
-  if (typeof s !== 'string') return null
-  const t = s.replace(/\s+(CST|CDT|EST|EDT|MST|MDT|PST|PDT|UTC|GMT)\b.*$/i, '').trim()
-  if (!t || /not applicable/i.test(t)) return null
-  const d = new Date(t)
-  return isNaN(d.getTime()) ? null : d
-}
-// Derive Clopay display dates from the captured detail: Order Date = the "Order
-// Received" milestone; Last Status Change = the most recent timestamp anywhere in the
-// Summary milestones or the Notes.
-function clopayDerivedDates(raw: unknown): { orderDate: string | null; lastActivity: string | null } {
-  const r = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
-  const summary = Array.isArray(r.summary) ? r.summary as Array<Record<string, unknown>> : []
-  const notes = Array.isArray(r.notes) ? r.notes as Array<Record<string, unknown>> : []
-  const recv = summary.find(m => /order received/i.test(String(m?.label || '')))
-  const orderDate = parseClopayTs(recv?.completed) || parseClopayTs(recv?.posted) || parseClopayTs(recv?.date)
-  let last: Date | null = null
-  const consider = (v: unknown) => { const d = parseClopayTs(v); if (d && (!last || d > last)) last = d }
-  for (const m of summary) { consider(m?.completed); consider(m?.posted) }
-  for (const n of notes) { consider(n?.timestamp) }
-  return {
-    orderDate: orderDate ? orderDate.toISOString().slice(0, 10) : null,
-    lastActivity: last ? (last as Date).toISOString() : null,
-  }
-}
-
-// Whether an order's captured raw carries any drawer-worthy detail (summary /
-// summary_text / documents / notes). Computed server-side so the raw itself never
-// has to ship to the browser (mirrors the old client-side hasDrawer()).
-function rawHasDetail(raw: unknown): boolean {
-  if (!raw || typeof raw !== 'object') return false
-  const r = raw as Record<string, unknown>
-  const summary = r.summary
-  const hasSummary = Array.isArray(summary) ? summary.length > 0 : (!!summary && typeof summary === 'object' && Object.keys(summary).length > 0)
-  const hasSummaryText = typeof r.summary_text === 'string' && r.summary_text.length > 0
-  return hasSummary || hasSummaryText || (Array.isArray(r.documents) && r.documents.length > 0) || (Array.isArray(r.notes) && r.notes.length > 0)
-}
-
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
 // vendor_orders rows (and which scrape-run freshness) this tab shows; it defaults
@@ -78,8 +38,11 @@ export default async function VendorOrdersView({
   const [autopilot, nudge, { data }, { data: runRow }] = await Promise.all([
     sfEnabled ? getAutopilot(vendor) : Promise.resolve({ enabled: false }),
     isGenie ? getNudgeSettings() : Promise.resolve({ enabled: false, scheduleUrl: '' }),
+    // NOTE: no `raw` — the multi-KB jsonb per order dominated both the DB transfer and
+    // the page payload. The drawer fetches it on demand; the Clopay display dates are
+    // ingest-computed columns (derived_*, has_detail — migration 103).
     db.from('vendor_orders')
-      .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, raw')
+      .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, derived_order_date, derived_last_activity_at, has_detail')
       .eq('vendor', vendor)
       .order('first_seen_at', { ascending: false })
       .limit(1000),
@@ -109,6 +72,9 @@ export default async function VendorOrdersView({
         .in('order_id', chunk)
         .eq('event_type', 'status_change')
         .order('created_at', { ascending: false })
+        // Only the NEWEST event per order is used; newest-first + a generous cap keeps
+        // the transfer bounded instead of hauling every order's full status history.
+        .limit(2000)
         .then(r => (r.data ?? []) as Array<{ order_id: string; created_at: string }>),
     ),
   ])
@@ -119,12 +85,11 @@ export default async function VendorOrdersView({
   const orders: VendorOrder[] = base.map(o => {
     const withLsc = { ...o, last_status_change_at: lastStatusChange.get(o.id) ?? null }
     // Clopay: Order Date ← the "Order Received" milestone; Last Status Change ← the
-    // most recent timestamp in the Summary/Notes (falls back to the status-change
-    // events when the detail hasn't been captured yet).
+    // most recent timestamp in the Summary/Notes — both ingest-computed columns now
+    // (falls back to the status-change events when the detail hasn't been captured).
     if (vendor === 'clopay_hd') {
-      const der = clopayDerivedDates(o.raw)
-      if (der.orderDate) withLsc.order_date = der.orderDate
-      if (der.lastActivity) withLsc.last_status_change_at = der.lastActivity
+      if (o.derived_order_date) withLsc.order_date = o.derived_order_date
+      if (o.derived_last_activity_at) withLsc.last_status_change_at = o.derived_last_activity_at
     }
     const m = matches.get(o.id)
     if (m?.sfJobNumber) return { ...withLsc, sf_job_number: m.sfJobNumber, sf_match_method: m.method ?? null }
@@ -152,12 +117,9 @@ export default async function VendorOrdersView({
   const sortValue = (o: VendorOrder) => o.last_status_change_at ?? o.first_seen_at
   orders.sort((a, b) => sortValue(b).localeCompare(sortValue(a)))
 
-  // STRIP `raw` before it reaches the client component: at ~5–30KB per detail-scraped
-  // order × 1000 rows it dominated the page payload, yet the browser only ever needs it
-  // when one row's drawer opens (the drawer now fetches it on demand via
-  // getOrderDetailAction). The server-side uses above (derived dates) are already done;
-  // all the client needs is whether a drawer exists.
-  const clientOrders: VendorOrder[] = orders.map(({ raw, ...rest }) => ({ ...rest, has_detail: rawHasDetail(raw) }))
+  // `raw` never leaves the database now — the client just needs the has_detail flag
+  // (the drawer fetches a row's raw on demand via getOrderDetailAction).
+  const clientOrders: VendorOrder[] = orders.map(o => ({ ...o, has_detail: o.has_detail === true }))
 
   const counts = orders.reduce<Record<string, number>>((a, o) => {
     const k = (o.status || 'unknown').toLowerCase().startsWith('open') ? 'Open' : (o.status || 'Unknown')

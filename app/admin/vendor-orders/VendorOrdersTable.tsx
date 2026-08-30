@@ -42,9 +42,13 @@ export interface VendorOrder {
   last_status_change_at: string | null
   schedule_nudge_sent_at: string | null
   raw?: VendorOrderRaw | null
-  /** Server-computed "this row has drawer detail" flag — `raw` itself is no longer
+  /** Ingest-computed "this row has drawer detail" flag — `raw` itself is no longer
    *  shipped in the list payload (it's fetched on demand when the drawer opens). */
-  has_detail?: boolean
+  has_detail?: boolean | null
+  /** Ingest-computed Clopay display dates (migration 103) — folded into order_date /
+   *  last_status_change_at server-side; carried on the type for the DB row shape. */
+  derived_order_date?: string | null
+  derived_last_activity_at?: string | null
   attachments?: StoredAttachment[]
 }
 
@@ -62,7 +66,7 @@ export interface StoredAttachment {
 // (Genie's raw is a flat label→value map with none of these, so Genie rows never
 // show the expander).
 function hasDrawer(o: VendorOrder): boolean {
-  if (o.has_detail != null) return o.has_detail // server-computed (raw not shipped)
+  if (o.has_detail != null) return o.has_detail === true // ingest-computed (raw not shipped)
   const r = o.raw
   if (!r || typeof r !== 'object') return false
   const summary = r.summary
