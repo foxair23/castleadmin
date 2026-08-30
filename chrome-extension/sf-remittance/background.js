@@ -355,13 +355,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // v0.8.4–0.8.6) and fetches (`mode: cors` → shell, v0.7.x) never do. Session cookies are
 // browser-wide, so the capture tab's navigation is cookie-authenticated.
 //
-// The Fetch domain is scoped to `*/showdocument/*` at the Response stage: reading the body
-// there gets the full bytes BEFORE Chrome hands them to its PDF plugin, then the request
-// is aborted (nothing renders). One hidden tab is reused for the whole sync.
-const CAPTURE_PATTERN = '*://hdprogram.clopay.com/showdocument/*'
+// Bodies are read via the PASSIVE Network domain with explicitly enlarged buffers —
+// the same mechanism DevTools' Network panel uses. Fetch-domain interception proved
+// doubly broken for these slow Oracle-generated PDFs: its buffer caps at exactly
+// 1,280,000 bytes AND it pauses at response-HEADERS time, so bodies still streaming in
+// arrive truncated at arbitrary sizes (live run: 150 failures at 1280000b and below).
+// Passive observation waits for Network.loadingFinished — the body is only read after
+// the download fully completes, then validated (%PDF magic + trailing %%EOF).
+// The PDF also renders in the hidden tab (nothing aborts it) — harmless; the next
+// doc's navigation replaces it. One hidden tab is reused for the whole sync.
 let captureTabId = null            // the hidden capture tab
 let captureAttached = false
-let pendingCapture = null          // { url, resolve } — capture is serial, so at most one
+let pendingCapture = null          // { url, resolve, reqId?, mime? } — capture is serial, at most one
 
 function dbgSend(target, method, params) {
   return new Promise((resolve, reject) => {
@@ -379,67 +384,59 @@ function dbgAttach(target) {
     })
   })
 }
-function headerValue(headers, name) {
-  for (const h of (headers || [])) if (h && typeof h.name === 'string' && h.name.toLowerCase() === name) return h.value
-  return ''
-}
 const isFileMime = (ct) => ct === 'application/pdf' || /^image\/(jpeg|jpg|png|heic|heif|webp)$/.test(ct)
 const urlBase = (u) => (u || '').split('?')[0]
 
-// CDP router: on the paused showdocument RESPONSE for the doc we're waiting on, read its
-// body and abort the request; other showdocument requests just continue.
+// CDP router (passive Network domain). responseReceived tells us the doc response's
+// mime + requestId as headers arrive (nothing is paused or blocked); loadingFinished
+// means the body is FULLY downloaded — only then do we read and validate it.
 chrome.debugger.onEvent.addListener((source, method, params) => {
-  if (captureTabId == null || source.tabId !== captureTabId || method !== 'Fetch.requestPaused') return
-  const reqId = params.requestId
-  const url = params.request && params.request.url
+  if (captureTabId == null || source.tabId !== captureTabId) return
   const p = pendingCapture
-  ;(async () => {
-    if (p && url && urlBase(url) === urlBase(p.url)) {
+  if (!p) return
+  if (method === 'Network.responseReceived') {
+    const url = params.response && params.response.url
+    if (p.reqId || !url || urlBase(url) !== urlBase(p.url)) return
+    const ct = ((params.response && params.response.mimeType) || '').toLowerCase()
+    const status = (params.response && params.response.status) || 0
+    if (!isFileMime(ct)) {
       pendingCapture = null
-      const ct = (headerValue(params.responseHeaders, 'content-type') || '').split(';')[0].trim().toLowerCase()
-      const status = params.responseStatusCode || 0
-      try {
-        if (!isFileMime(ct)) {
-          // Dump the response headers — they say WHO served the shell (cache/SW/server).
-          console.log('[clopay] capture: not a file —', status, ct, url, JSON.stringify(params.responseHeaders || []))
-          try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-          p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'})` }); return
-        }
-        // STREAM the body — Fetch.getResponseBody silently TRUNCATES large bodies at
-        // exactly 1,280,000 bytes (live data: 478 stored "PDFs" all byte-identical at
-        // that size, tails cut off → unreadable). IO.read chunking has no such cap.
-        const stream = await dbgSend({ tabId: captureTabId }, 'Fetch.takeResponseBodyAsStream', { requestId: reqId })
-        let bin = ''
-        for (;;) {
-          const r = await dbgSend({ tabId: captureTabId }, 'IO.read', { handle: stream.stream, size: 1048576 })
-          bin += r.base64Encoded ? atob(r.data) : r.data
-          if (r.eof) break
-        }
-        try { await dbgSend({ tabId: captureTabId }, 'IO.close', { handle: stream.stream }) } catch { /* ignore */ }
-        try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-        // Sanity guards so garbage can never be stored: real PDFs start with %PDF, and
-        // anything under 1KB is an error blob regardless of its content-type.
-        if (ct === 'application/pdf' && !bin.startsWith('%PDF')) { p.resolve({ ok: false, error: `bad pdf magic (${bin.length}b)` }); return }
-        // Every valid PDF ends with %%EOF; a tail-truncated read (the 1,280,000-byte
-        // getResponseBody cap stored 400+ unreadable files) never does. Hard-refuse so a
-        // truncated PDF can NEVER be stored, whatever the read path.
-        if (ct === 'application/pdf' && bin.lastIndexOf('%%EOF') < bin.length - 2048) { p.resolve({ ok: false, error: `truncated pdf (${bin.length}b, no trailing %%EOF)` }); return }
-        if (bin.length < 1000) { p.resolve({ ok: false, error: `too small (${bin.length}b)` }); return }
-        console.log('[clopay] capture: body', ct, `${bin.length} bytes`)
-        p.resolve({ ok: true, mime: ct, base64: btoa(bin) })
-      } catch (e) {
-        try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-        p.resolve({ ok: false, error: 'stream read ' + (e instanceof Error ? e.message : String(e)) })
-      }
-    } else {
-      try { await dbgSend({ tabId: captureTabId }, 'Fetch.continueRequest', { requestId: reqId }) } catch { /* ignore */ }
+      console.log('[clopay] capture: not a file —', status, ct, url)
+      p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'})` })
+      return
     }
-  })()
+    p.reqId = params.requestId; p.mime = ct
+    return
+  }
+  if (method === 'Network.loadingFinished' && p.reqId && params.requestId === p.reqId) {
+    pendingCapture = null
+    ;(async () => {
+      try {
+        const r = await dbgSend({ tabId: captureTabId }, 'Network.getResponseBody', { requestId: p.reqId })
+        const bin = r && r.base64Encoded ? atob(r.body) : (r && r.body) || ''
+        // Sanity guards so garbage can never be stored: %PDF magic, a trailing %%EOF
+        // (a truncated PDF never has one), and a 1KB floor for error blobs.
+        if (p.mime === 'application/pdf' && !bin.startsWith('%PDF')) { p.resolve({ ok: false, error: `bad pdf magic (${bin.length}b)` }); return }
+        if (p.mime === 'application/pdf' && bin.lastIndexOf('%%EOF') < bin.length - 2048) { p.resolve({ ok: false, error: `truncated pdf (${bin.length}b, no trailing %%EOF)` }); return }
+        if (bin.length < 1000) { p.resolve({ ok: false, error: `too small (${bin.length}b)` }); return }
+        console.log('[clopay] capture: body', p.mime, `${bin.length} bytes`)
+        p.resolve({ ok: true, mime: p.mime, base64: r.base64Encoded ? r.body : btoa(bin) })
+      } catch (e) {
+        p.resolve({ ok: false, error: 'getResponseBody ' + (e instanceof Error ? e.message : String(e)) })
+      }
+    })()
+    return
+  }
+  if (method === 'Network.loadingFailed' && p.reqId && params.requestId === p.reqId) {
+    pendingCapture = null
+    p.resolve({ ok: false, error: 'loadingFailed ' + (params.errorText || '') })
+  }
 })
 chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) { captureAttached = false; captureTabId = null } })
 
-// Lazily create the hidden capture tab and attach the debugger, scoping Fetch
-// interception to the document URL only (nothing else in that tab is touched).
+// Lazily create the hidden capture tab and attach the debugger. Network.enable with
+// EXPLICIT buffer sizes (100MB/resource, 200MB total) — the defaults are what capped
+// bodies at 1,280,000 bytes; these cover the 25MB storage-bucket max many times over.
 async function ensureCaptureTab() {
   if (captureTabId != null && captureAttached && await tabExists(captureTabId)) return
   await teardownCaptureDebugger()
@@ -447,7 +444,7 @@ async function ensureCaptureTab() {
   captureTabId = tab.id
   await dbgAttach({ tabId: captureTabId })
   captureAttached = true
-  await dbgSend({ tabId: captureTabId }, 'Fetch.enable', { patterns: [{ urlPattern: CAPTURE_PATTERN, requestStage: 'Response' }] })
+  await dbgSend({ tabId: captureTabId }, 'Network.enable', { maxResourceBufferSize: 100 * 1024 * 1024, maxTotalBufferSize: 200 * 1024 * 1024 })
 }
 
 async function teardownCaptureDebugger() {
