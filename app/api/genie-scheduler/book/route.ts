@@ -165,7 +165,37 @@ export async function POST(req: NextRequest) {
     sfJobId = m?.sfJobId ?? null
     sfJobNumber = sfJobNumber ?? m?.sfJobNumber ?? null
   }
-  if (!sfJobId) return NextResponse.json({ error: 'We couldn’t find your job in our system. Please call the office.' }, { status: 409, headers: cors })
+  if (!sfJobId) {
+    // The customer IDENTIFIED successfully but the job can't be resolved (typically the
+    // SF mirror hasn't synced a manually-created job yet). Capture it as a Genie partial
+    // lead — we know exactly who they are here — so the office sees it in Action Items
+    // and the Partial Lead email instead of the customer silently giving up.
+    try {
+      const nameParts = (order.customer_name ?? '').trim().split(/\s+/)
+      const phoneVal = (body.contact_phone ?? order.phone ?? '').trim() || null
+      const emailVal = (body.contact_email ?? order.email ?? '').trim() || null
+      let dedupe = db.from('scheduler_leads').select('id')
+        .eq('is_partial', true).eq('lead_source', 'genie').is('acknowledged_at', null)
+      if (phoneVal) dedupe = dedupe.eq('customer_phone', phoneVal)
+      else if (emailVal) dedupe = dedupe.eq('customer_email', emailVal)
+      else dedupe = dedupe.eq('customer_last_name', nameParts.slice(-1)[0] ?? '')
+      const { data: existing } = await dedupe.limit(1).maybeSingle()
+      if (!existing) {
+        await db.from('scheduler_leads').insert({
+          session_id: `genie-book-${crypto.randomUUID()}`,
+          is_partial: true,
+          lead_source: 'genie',
+          widget_instance_id: widget.id,
+          customer_first_name: nameParts.length > 1 ? nameParts.slice(0, -1).join(' ') : (nameParts[0] || null),
+          customer_last_name: nameParts.length > 1 ? nameParts.slice(-1)[0] : null,
+          customer_phone: phoneVal,
+          customer_email: emailVal,
+          address_zip: order.postal_code ?? null,
+        })
+      }
+    } catch (e) { console.error('[genie-book] partial-lead capture failed (non-critical):', e) }
+    return NextResponse.json({ error: 'We couldn’t find your job in our system. Please call the office.' }, { status: 409, headers: cors })
+  }
 
   const answers: GenieAnswers = body.answers ?? {}
 
@@ -225,6 +255,22 @@ export async function POST(req: NextRequest) {
     to_value: useWindow ? `${appointment_date} ${window_start}-${window_end}` : appointment_date,
     detail: { sfSynced, sfError, slotMode, answers },
   })
+
+  // If an earlier failed lookup captured this customer as a Genie partial lead, the
+  // problem is now solved — acknowledge it so the office isn't asked to chase a
+  // customer who already booked. Matched by the contacts we know for the order.
+  try {
+    const contacts: Array<{ col: string; val: string }> = []
+    for (const v of [body.contact_phone, order.phone]) if (v?.trim()) contacts.push({ col: 'customer_phone', val: v.trim() })
+    for (const v of [body.contact_email, order.email]) if (v?.trim()) contacts.push({ col: 'customer_email', val: v.trim() })
+    const nowAck = new Date().toISOString()
+    for (const c of contacts) {
+      await db.from('scheduler_leads')
+        .update({ acknowledged_at: nowAck, partial_notified_at: nowAck })
+        .eq('is_partial', true).eq('lead_source', 'genie').is('acknowledged_at', null)
+        .eq(c.col, c.val)
+    }
+  } catch { /* non-critical */ }
 
   // 4) Notify (non-blocking, best-effort): a confirmation email to the customer
   //    and a team alert on the same subscriber path as the main scheduler.

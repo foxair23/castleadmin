@@ -66,7 +66,7 @@ export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
   // batch; final active/contact checks in JS.
   const { data: rows } = await supabase
     .from('vendor_orders')
-    .select('id, external_id, customer_name, phone, email, status, first_seen_at')
+    .select('id, external_id, customer_name, phone, email, status, first_seen_at, sf_job_id')
     .eq('vendor', VENDOR)
     .not('sf_created_job_number', 'is', null)
     .not('detail_scraped_at', 'is', null)
@@ -78,7 +78,24 @@ export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
     .order('first_seen_at', { ascending: true })
     .limit(SEND_CAP)
 
-  const eligible = (rows ?? []).filter(o => isActive(o.status) && (o.email || o.phone))
+  const candidates = (rows ?? []).filter(o => isActive(o.status) && (o.email || o.phone))
+
+  // MIRROR GATE: only nudge once the created SF job is VISIBLE in the sf_jobs mirror.
+  // The autopilot creates the job and (before this gate) the nudge fired seconds later
+  // in the same cron run — but the mirror syncs hourly, and until it catches up parts
+  // of the scheduler (mirror-based job matching, availability capacity) can't see the
+  // job, so the customer could hit "we couldn't find your order" and abandon. Held
+  // orders are simply picked up by a later run — the nudge is a convenience, not
+  // urgent, so waiting ≤ ~1 hour for certainty is the right trade.
+  let eligible = candidates
+  const jobIds = [...new Set(candidates.map(o => o.sf_job_id).filter((v): v is string => !!v))]
+  if (jobIds.length) {
+    const { data: mirrored } = await supabase.from('sf_jobs').select('id').in('id', jobIds)
+    const present = new Set((mirrored ?? []).map((r: { id: string }) => String(r.id)))
+    eligible = candidates.filter(o => o.sf_job_id && present.has(String(o.sf_job_id)))
+  } else {
+    eligible = [] // sf_created_job_number without sf_job_id shouldn't happen; hold rather than risk it
+  }
 
   let sent = 0, failed = 0
   const errors: string[] = []
@@ -150,6 +167,13 @@ export async function sendNudgeForOrder(orderId: string): Promise<{ ok: boolean;
   if (!o) return { ok: false, error: 'Order not found.' }
   if (!o.sf_created_job_number && !o.sf_job_id) return { ok: false, error: 'No SF job yet — create it first so the scheduler can find the customer.' }
   if (!o.email && !o.phone) return { ok: false, error: 'No phone or email on this order.' }
+  // Same mirror gate as the automatic nudge: don't invite the customer to schedule
+  // until the SF job has synced into the mirror (hourly), or they may hit
+  // "we couldn't find your order".
+  if (o.sf_job_id) {
+    const { data: mj } = await supabase.from('sf_jobs').select('id').eq('id', o.sf_job_id).maybeSingle()
+    if (!mj) return { ok: false, error: 'The SF job hasn’t synced to our mirror yet (syncs hourly) — try again after the top of the hour.' }
+  }
   try {
     const { channels, error } = await deliverNudge(supabase, o, s.scheduleUrl)
     if (!channels.length) return { ok: false, error: error ?? 'Nothing sent (opted out / no reachable channel).' }

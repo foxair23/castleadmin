@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   const { data: leads } = await supabase
     .from('scheduler_leads')
-    .select('id, customer_first_name, customer_phone, created_at')
+    .select('id, customer_first_name, customer_phone, created_at, lead_source')
     .eq('is_partial', true)
     .is('partial_notified_at', null)
     .lt('created_at', cutoff)
@@ -52,17 +52,21 @@ export async function GET(req: NextRequest) {
       : '—'
 
   let notified = 0
-  for (const lead of list as Array<{ id: string; customer_first_name: string | null; customer_phone: string | null; created_at: string | null }>) {
+  for (const lead of list as Array<{ id: string; customer_first_name: string | null; customer_phone: string | null; created_at: string | null; lead_source: string | null }>) {
+    // A Genie-scheduler lead is a Home Depot install customer who got our schedule
+    // text/email and couldn't finish — flag it so the office knows which flow (and
+    // which customer set) this came from.
+    const isGenie = lead.lead_source === 'genie'
     const { bodyHtml, bodyText } = renderSchedulerLeadStuck({
       customerName: lead.customer_first_name ?? 'Customer',
       phoneNumber: lead.customer_phone ?? '—',
-      serviceLabel: 'Incomplete submission',
+      serviceLabel: isGenie ? 'Incomplete submission — Genie / Home Depot install scheduler' : 'Incomplete submission',
       appointmentDate: '—',
       reason: 'manual_push',
       adminUrl,
       ackUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'}/scheduler/ack/${lead.id}`,
     })
-    const subject = `Partial Lead: ${lead.customer_first_name?.trim() || 'Customer'} — ${fmtDate(lead.created_at)}`
+    const subject = `Partial Lead${isGenie ? ' (Genie)' : ''}: ${lead.customer_first_name?.trim() || 'Customer'} — ${fmtDate(lead.created_at)}`
 
     await enqueueForSubscribers({
       notificationTypeKey: 'scheduler_lead_stuck',
