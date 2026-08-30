@@ -317,69 +317,73 @@
       } catch (e) { resolve({ ok: false, error: String(e) }) }
     })
   }
-  // Resolve a document's fetchable URL via getdocumenturl. This is NOT just a URL
-  // formatter — it GENERATES the PDF server-side (~5–9s) for the doc's `documenT_TYPE`
-  // and returns the hdprogram.clopay.com/showdocument/{id}.pdf URL. Routed through the
-  // background `clopay-api` proxy (bearer from the page); returns the URL string or null.
+  // Resolve a document's fetchable URL via getdocumenturl — called DIRECTLY from this
+  // page's context, NOT the background proxy. This is not just a URL formatter: it
+  // GENERATES the PDF server-side (~5–9s) AND grants THIS browser session access to the
+  // document. The grant is only honored when the call comes from the portal page itself
+  // (page origin) — a background-worker call returns the same URL but the subsequent
+  // navigation still gets the HTML shell (proven across v0.8.0–0.8.5: generated docs
+  // never stored via the proxy path, while the identical page-context sequence loaded a
+  // real PDF in the console probe). The app's own CORS covers this origin.
   async function resolveDocUrl(documentId, docType, installerNum) {
-    const path = `/installerdocuments/getdocumenturl?documentId=${encodeURIComponent(documentId)}`
+    const token = readToken()
+    if (!token) return null
+    const url = `${API_BASE}/installerdocuments/getdocumenturl?documentId=${encodeURIComponent(documentId)}`
       + `&installerNum=${encodeURIComponent(installerNum)}&isChubOrder=N`
       + `&documentType=${encodeURIComponent(docType || '')}`
-    const r = await apiGet(path)
-    const url = r && r.obj
-    return typeof url === 'string' && url ? url : null
+    try {
+      const r = await fetch(url, { headers: { authorization: 'Bearer ' + token, accept: 'application/json' } })
+      let j = null; try { j = await r.json() } catch { /* non-json */ }
+      const u = j && j.responseObject
+      if (!(typeof u === 'string' && u)) { LOG(`getdocumenturl ${documentId}: status ${r.status}, no url`); return null }
+      return u
+    } catch (e) { LOG(`getdocumenturl ${documentId} failed: ${e?.message || e}`); return null }
   }
-  // The showdocument PDF is served ONLY to a real top-level NAVIGATION in the AUTHENTICATED
-  // session (proven — a fetch gets a ~15KB shell; a fresh cold tab isn't authenticated
-  // because sessionStorage is per-tab). So the background captures via chrome.debugger in a
-  // helper tab whose session storage we inject from THIS (logged-in) tab. Dump both storages
-  // so the helper tab authenticates identically.
-  function gatherSessionData() {
-    const dump = (store) => {
-      const o = {}
-      try { for (let i = 0; i < store.length; i++) { const k = store.key(i); o[k] = store.getItem(k) } } catch { /* ignore */ }
-      return o
-    }
-    return { local: dump(localStorage), session: dump(sessionStorage) }
-  }
-
   // Download + store one order's documents on Castle's server. Dedup pre-check each doc
-  // (skip ones already stored → resumable), resolve+generate its URL (getdocumenturl), then
-  // hand the batch (+ session tokens) to `clopay-capture-docs` to navigate-capture + store.
-  // `budget` caps how many un-stored docs to attempt this call. Returns per-order counts.
-  async function storeDocuments(detail, installerNum, sessionData, budget) {
+  // (skip ones already stored → resumable), then PER DOC: resolve+generate its URL
+  // (getdocumenturl) and IMMEDIATELY capture it via `clopay-capture-docs` (the background
+  // injects a hidden iframe into THIS authenticated tab — the only context /showdocument
+  // serves the real file to). Resolve-then-capture must be interleaved one doc at a time:
+  // getdocumenturl is a GRANT that only holds for the most recently requested document —
+  // batching all resolves first left only the LAST doc capturable (proven live: exactly one
+  // stored per order, always the last). `budget` caps un-stored docs attempted this call.
+  async function storeDocuments(detail, installerNum, budget) {
     const docs = (detail && detail.raw && detail.raw.documents) || []
     const external_id = detail.external_id
-    let existing = 0
-    const toCapture = []
+    let existing = 0, stored = 0, failed = 0, attempted = 0
     for (const d of docs) {
       if (!d.id) continue
-      if (toCapture.length >= (budget || docs.length)) break
+      if (attempted >= (budget || docs.length)) break
       const filename = d.name || `doc-${d.id}`
       const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId: d.id, filename })
       if (chk.ok && chk.alreadyStored) { existing++; continue }
       if (!chk.ok) { LOG(`doc ${d.id}: check failed (${chk.error || '?'})`); continue }
       const url = await resolveDocUrl(d.id, d.docType, installerNum)
       if (!url) { LOG(`doc ${d.id}: getdocumenturl failed`); continue }
-      toCapture.push({ external_id, documentId: d.id, filename, url })
-    }
-    if (!toCapture.length) { if (existing) LOG(`docs #${external_id}: ${existing} existing`); return { stored: 0, existing, failed: 0, attempted: 0 } }
-    const res = await msgBg({ type: 'clopay-capture-docs', docs: toCapture, sessionData })
-    const results = (res && res.results) || []
-    let stored = 0, failed = 0
-    for (const r of results) {
+      attempted++
+      const capture = async (u) => {
+        const res = await msgBg({ type: 'clopay-capture-docs', docs: [{ external_id, documentId: d.id, filename, url: u }] })
+        return (res && res.results && res.results[0]) || { ok: false, error: res && res.error }
+      }
+      let r = await capture(url)
+      if (!(r.stored || r.alreadyStored)) {
+        // One retry with a FRESH grant — live runs showed isolated transient misses
+        // (server timing, a service-worker restart) while sibling docs stored fine.
+        const url2 = await resolveDocUrl(d.id, d.docType, installerNum)
+        if (url2) r = await capture(url2)
+      }
       if (r.stored || r.alreadyStored) stored++
-      else { failed++; if (r.error) LOG(`doc ${r.documentId} capture failed: ${r.error}`) }
+      else { failed++; if (r.error) LOG(`doc ${d.id} capture failed: ${r.error}`) }
     }
-    LOG(`docs #${external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
-    return { stored, existing, failed, attempted: toCapture.length }
+    if (stored || failed || existing) LOG(`docs #${external_id}: ${stored} stored, ${existing} existing, ${failed} failed`)
+    return { stored, existing, failed, attempted }
   }
 
   // ── Document sync (separate slow job — mode 'docs') ──────────────────────────
   // Decoupled from the fast list/summary/notes crawl. Lists orders (API), then per order
-  // fetches its documents and captures each PDF via the authenticated-helper-tab debugger
-  // path. Resumable: the dedup pre-check skips docs we already have, and a per-run cap
-  // bounds each run — re-run (or the nightly job) picks up where it left off.
+  // fetches its documents and captures each PDF via a hidden iframe the background injects
+  // into THIS authenticated tab. Resumable: the dedup pre-check skips docs we already have,
+  // and a per-run cap bounds each run — re-run (or the nightly job) picks up where it left off.
   let syncing = false
   async function docsync() {
     if (syncing) { LOG('doc sync already running'); return }
@@ -389,13 +393,18 @@
       const cfg = await getCfg()
       const installerNum = clean(cfg.clopayInstallerNum) || DEFAULT_INSTALLER
       const maxDocs = cfg.clopayMaxDocsPerRun || 300
-      const sessionData = gatherSessionData()
-      LOG(`doc sync start (installer ${installerNum}, cap ${maxDocs} docs)`)
+      const ver = (() => { try { return chrome.runtime.getManifest().version } catch { return '?' } })()
+      LOG(`doc sync start (v${ver}, installer ${installerNum}, cap ${maxDocs} docs)`)
       const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
       if (listR.noToken || listR.status === 401) { LOG('doc sync: token missing/expired — aborting'); return }
       const orders = (Array.isArray(listR.obj) ? listR.obj : []).map(mapListItem).filter(Boolean)
       LOG(`doc sync: ${orders.length} order(s)`)
       let budget = maxDocs, tStored = 0, tExisting = 0, tFailed = 0
+      // The gateway wraps errors in HTTP 200 with a NULL responseObject (seen before as
+      // transient throttling). An order with genuinely no documents returns an EMPTY
+      // ARRAY — so a null list is an API problem, not "no docs", and must not be
+      // swallowed silently (a live run "completed" after 25 of 182 orders that way).
+      let nullStreak = 0
       for (const item of orders) {
         if (budget <= 0) { LOG(`doc sync: hit per-run cap (${maxDocs}) — re-run to continue`); break }
         if (!readToken() || !ctxAlive()) { LOG('doc sync: token/context lost — stopping'); break }
@@ -403,9 +412,19 @@
         const po = item.customer_po
         if (inc == null || !po) continue
         const docsR = await apiGet(`/installerdocuments/${installerNum}/${inc}/${encodeURIComponent(po)}`)
+        if (docsR.status === 401) { LOG('doc sync: documents API 401 — token expired; stopping (re-run resumes from here)'); break }
+        if (!Array.isArray(docsR.obj)) {
+          const w = docsR.raw || {}
+          LOG(`docs #${item.external_id}: API gave no list (http ${docsR.status}, api ${w.statusCode ?? '?'}${w.message ? ' — ' + String(w.message).slice(0, 120) : ''})`)
+          nullStreak++
+          if (nullStreak === 3) { LOG('doc sync: 3 empty API replies in a row — pausing 60s (throttling?), then continuing'); await sleep(60000) }
+          else if (nullStreak >= 10) { LOG('doc sync: documents API keeps returning nothing — stopping this run; re-run or the nightly job resumes'); break }
+          continue
+        }
+        nullStreak = 0
         const documents = mapDocuments(docsR.obj)
         if (!documents.length) continue
-        const r = await storeDocuments({ external_id: item.external_id, raw: { documents } }, installerNum, sessionData, budget)
+        const r = await storeDocuments({ external_id: item.external_id, raw: { documents } }, installerNum, budget)
         budget -= (r.attempted || 0)
         tStored += r.stored; tExisting += r.existing; tFailed += r.failed
         await sleep(200)
@@ -415,7 +434,7 @@
       LOG('doc sync error', e?.message || e)
     } finally {
       syncing = false
-      endCrawl() // signals done → background closes the orders tab + the capture tab
+      endCrawl() // signals done → background detaches the debugger + closes the orders tab
     }
   }
 
