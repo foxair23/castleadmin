@@ -401,8 +401,15 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     const status = (params.response && params.response.status) || 0
     if (!isFileMime(ct)) {
       pendingCapture = null
-      console.log('[clopay] capture: not a file —', status, ct, url)
-      p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'})` })
+      // Name the culprit: did this shell come from a service worker, the cache, or the
+      // real server (and with what headers)? Decides session-expiry vs interception.
+      const rsp = params.response || {}
+      const hdrs = rsp.headers || {}
+      const keyHdrs = {}
+      for (const k of Object.keys(hdrs)) if (/content-type|location|set-cookie|cache-control|server|x-/i.test(k)) keyHdrs[k] = String(hdrs[k]).slice(0, 120)
+      console.log('[clopay] capture: not a file —', status, ct, url,
+        JSON.stringify({ fromServiceWorker: !!rsp.fromServiceWorker, fromDiskCache: !!rsp.fromDiskCache, remoteIP: rsp.remoteIPAddress || null, headers: keyHdrs }))
+      p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'}${rsp.fromServiceWorker ? ', via SW' : ''}${rsp.fromDiskCache ? ', cached' : ''})` })
       return
     }
     p.reqId = params.requestId; p.mime = ct
@@ -473,6 +480,11 @@ async function ensureCaptureTab() {
     if (!(await attachWithRecovery())) throw new Error('cannot attach debugger to the capture tab')
     captureAttached = true
     await dbgSend({ tabId: captureTabId }, 'Network.enable', { maxResourceBufferSize: 100 * 1024 * 1024, maxTotalBufferSize: 200 * 1024 * 1024 })
+    // The portal registers service workers, and either a SW or the HTTP cache can answer
+    // a showdocument navigation with the cached Angular shell instead of letting it reach
+    // the server. Force every capture navigation to the network.
+    try { await dbgSend({ tabId: captureTabId }, 'Network.setBypassServiceWorker', { bypass: true }) } catch { /* older Chrome */ }
+    try { await dbgSend({ tabId: captureTabId }, 'Network.setCacheDisabled', { cacheDisabled: true }) } catch { /* ignore */ }
   }
 }
 
