@@ -35,7 +35,7 @@ export default async function SalesActionItemsPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, genie, clopay, sts, onlineEstimates, notesResult] =
+  const [unpaidJobs, uninvoicedJobs, staleEstimates, followUpJobs, awaitingSfJob, onlineScheduling, acceptedEstimates, zeroRevenueJobs, leadsToCall, arHold, genie, clopay, sts, onlineEstimates, notesResult, actionRowsResult] =
     await Promise.all([
       getUnpaidJobs(),
       getUninvoicedJobs(),
@@ -52,6 +52,9 @@ export default async function SalesActionItemsPage() {
       getStsActionItems(),
       getOnlineEstimateItems(),
       db.from('action_item_notes').select('entity_type, entity_id, note'),
+      // Action-tracking rows — independent of everything above, so it belongs in the
+      // parallel batch rather than as a serial epilogue query.
+      db.from('action_item_actions').select('entity_type, entity_id, action_label, actioned_at, follow_up_on, actioned_by'),
     ])
 
   const notes: Record<string, string> = {}
@@ -60,9 +63,7 @@ export default async function SalesActionItemsPage() {
   }
 
   // Action-tracking rows (button presses + follow-up dates), keyed like notes.
-  const { data: actionRows } = await db
-    .from('action_item_actions')
-    .select('entity_type, entity_id, action_label, actioned_at, follow_up_on, actioned_by')
+  const actionRows = actionRowsResult.data
   const actorIds = [...new Set((actionRows ?? []).map(a => a.actioned_by).filter(Boolean))] as string[]
   const actorNames = new Map<string, string>()
   if (actorIds.length > 0) {

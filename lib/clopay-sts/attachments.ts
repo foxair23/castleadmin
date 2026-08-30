@@ -52,3 +52,13 @@ export async function signedUrl(storagePath: string, expiresIn = 3600): Promise<
   const { data } = await db().storage.from(BUCKET).createSignedUrl(storagePath, expiresIn)
   return data?.signedUrl ?? null
 }
+
+/** Batch-mint signed URLs (path → url) in ONE Storage round-trip — the per-attachment
+ *  loop this replaces cost a client + an HTTPS call per file. */
+export async function signedUrlsForPaths(paths: string[], expiresIn = 3600): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (!paths.length) return map
+  const { data } = await db().storage.from(BUCKET).createSignedUrls(paths, expiresIn)
+  for (const d of (data ?? [])) if (d.path && d.signedUrl) map.set(d.path, d.signedUrl)
+  return map
+}

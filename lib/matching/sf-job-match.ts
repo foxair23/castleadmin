@@ -140,8 +140,30 @@ async function fetchAll<T>(run: (from: number, to: number) => Promise<T[]>): Pro
 }
 
 /** Build the index from the SF mirror. `withContacts` pulls customer email/phone
- *  for those fallbacks (skip it if a caller only needs PO/name). */
-export async function loadSfJobIndex(db: SupabaseClient, opts: { withContacts?: boolean } = {}): Promise<SfJobIndex> {
+ *  for those fallbacks (skip it if a caller only needs PO/name).
+ *
+ *  Cached for a short TTL: the index is a pure function of the SF mirror (identical for
+ *  every request and user), but building it pages the ENTIRE sf_jobs + sf_customers
+ *  tables in ~65 serial PostgREST round-trips — the single slowest step of an HD Orders
+ *  page load when done per view. The mirror itself only changes on its sync cadence, so
+ *  an index up to 90s old renders identical matches. In-flight promise is shared, so
+ *  concurrent renders don't stampede; failures are never cached. */
+const INDEX_TTL_MS = 90_000
+const indexCache = new Map<string, { at: number; promise: Promise<SfJobIndex> }>()
+
+export function loadSfJobIndex(db: SupabaseClient, opts: { withContacts?: boolean } = {}): Promise<SfJobIndex> {
+  const key = opts.withContacts === false ? 'bare' : 'contacts'
+  const hit = indexCache.get(key)
+  // eslint-disable-next-line react-hooks/purity -- server-side TTL cache, not a component
+  const now = Date.now()
+  if (hit && now - hit.at < INDEX_TTL_MS) return hit.promise
+  const promise = loadSfJobIndexUncached(db, opts)
+  indexCache.set(key, { at: now, promise })
+  promise.catch(() => { if (indexCache.get(key)?.promise === promise) indexCache.delete(key) })
+  return promise
+}
+
+async function loadSfJobIndexUncached(db: SupabaseClient, opts: { withContacts?: boolean } = {}): Promise<SfJobIndex> {
   const jobs = await fetchAll<SfJobLite>(async (from, to) => {
     const { data } = await db.from('sf_jobs')
       .select('id, number, customer_name, customer_id, po_number')

@@ -35,6 +35,16 @@ export async function sendNudgeNowAction(orderId: string): Promise<{ ok: boolean
   return res
 }
 
+/** One order's captured `raw` detail (Clopay Summary/Documents/Notes) for the HD Orders
+ *  drawer. Fetched on demand when a drawer opens — the list payload no longer carries
+ *  `raw` (at 5–30KB × 1000 rows it dominated page load). Admin + sales. */
+export async function getOrderDetailAction(orderId: string): Promise<{ ok: boolean; raw?: unknown; error?: string }> {
+  if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
+  const { data } = await stsDb().from('vendor_orders').select('raw').eq('id', orderId).maybeSingle()
+  if (!data) return { ok: false, error: 'order not found' }
+  return { ok: true, raw: data.raw ?? {} }
+}
+
 /** Toggle a vendor's autopilot (admin only). vendor: 'genie_thd' | 'clopay_hd'. */
 export async function setAutopilotAction(vendor: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
   if (!['genie_thd', 'clopay_hd'].includes(vendor)) return { ok: false, error: 'invalid vendor' }

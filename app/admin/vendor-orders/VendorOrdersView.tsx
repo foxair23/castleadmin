@@ -38,6 +38,18 @@ function clopayDerivedDates(raw: unknown): { orderDate: string | null; lastActiv
   }
 }
 
+// Whether an order's captured raw carries any drawer-worthy detail (summary /
+// summary_text / documents / notes). Computed server-side so the raw itself never
+// has to ship to the browser (mirrors the old client-side hasDrawer()).
+function rawHasDetail(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false
+  const r = raw as Record<string, unknown>
+  const summary = r.summary
+  const hasSummary = Array.isArray(summary) ? summary.length > 0 : (!!summary && typeof summary === 'object' && Object.keys(summary).length > 0)
+  const hasSummaryText = typeof r.summary_text === 'string' && r.summary_text.length > 0
+  return hasSummary || hasSummaryText || (Array.isArray(r.documents) && r.documents.length > 0) || (Array.isArray(r.notes) && r.notes.length > 0)
+}
+
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
 // vendor_orders rows (and which scrape-run freshness) this tab shows; it defaults
@@ -61,37 +73,49 @@ export default async function VendorOrdersView({
   const sfEnabled = vendor === 'genie_thd' || vendor === 'clopay_hd'
   const shortName = (VENDORS[vendor]?.label || vendor).split(' — ')[0]
 
-  const autopilot = sfEnabled ? await getAutopilot(vendor) : { enabled: false }
-  const nudge = isGenie ? await getNudgeSettings() : { enabled: false, scheduleUrl: '' }
-  const { data } = await db
-    .from('vendor_orders')
-    .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, raw')
-    .eq('vendor', vendor)
-    .order('first_seen_at', { ascending: false })
-    .limit(1000)
+  // Independent head-of-render queries run concurrently (they were serial, adding
+  // whole round-trips of dead time before the orders even arrived).
+  const [autopilot, nudge, { data }, { data: runRow }] = await Promise.all([
+    sfEnabled ? getAutopilot(vendor) : Promise.resolve({ enabled: false }),
+    isGenie ? getNudgeSettings() : Promise.resolve({ enabled: false, scheduleUrl: '' }),
+    db.from('vendor_orders')
+      .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, raw')
+      .eq('vendor', vendor)
+      .order('first_seen_at', { ascending: false })
+      .limit(1000),
+    db.from('vendor_scrape_runs')
+      .select('mode, received, inserted, updated, status_changes, created_at')
+      .eq('vendor', vendor)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
   const base = (data ?? []) as VendorOrder[]
 
   // Last time each order's status changed (from the status_change events), for
-  // the "Last Status Change" column + default sort. Chunk the id list to keep the
-  // .in() query URL small.
+  // the "Last Status Change" column + default sort. Chunk the id list to keep each
+  // .in() query URL small; the chunks are independent, so they run concurrently —
+  // and in parallel with the SF-job match resolution below.
   const orderIds = base.map(o => o.id)
+  const chunks: string[][] = []
+  for (let i = 0; i < orderIds.length; i += 150) chunks.push(orderIds.slice(i, i + 150))
+  const [matches, ...chunkResults] = await Promise.all([
+    // Resolve each order's SF job via the shared matching service (PO → name →
+    // email → phone). For Clopay the PO is the external_id (handled in the matcher).
+    sfEnabled ? resolveSfJobMatches(db, base) : Promise.resolve(new Map()),
+    ...chunks.map(chunk =>
+      db.from('vendor_order_events')
+        .select('order_id, created_at')
+        .in('order_id', chunk)
+        .eq('event_type', 'status_change')
+        .order('created_at', { ascending: false })
+        .then(r => (r.data ?? []) as Array<{ order_id: string; created_at: string }>),
+    ),
+  ])
   const lastStatusChange = new Map<string, string>()
-  for (let i = 0; i < orderIds.length; i += 150) {
-    const chunk = orderIds.slice(i, i + 150)
-    const { data: ev } = await db
-      .from('vendor_order_events')
-      .select('order_id, created_at')
-      .in('order_id', chunk)
-      .eq('event_type', 'status_change')
-      .order('created_at', { ascending: false })
-    for (const e of (ev ?? []) as Array<{ order_id: string; created_at: string }>) {
-      if (!lastStatusChange.has(e.order_id)) lastStatusChange.set(e.order_id, e.created_at)
-    }
+  for (const evs of chunkResults) {
+    for (const e of evs) if (!lastStatusChange.has(e.order_id)) lastStatusChange.set(e.order_id, e.created_at)
   }
-
-  // Resolve each order's SF job via the shared matching service (PO → name →
-  // email → phone). For Clopay the PO is the external_id (handled in the matcher).
-  const matches = sfEnabled ? await resolveSfJobMatches(db, base) : new Map()
   const orders: VendorOrder[] = base.map(o => {
     const withLsc = { ...o, last_status_change_at: lastStatusChange.get(o.id) ?? null }
     // Clopay: Order Date ← the "Order Received" milestone; Last Status Change ← the
@@ -128,6 +152,13 @@ export default async function VendorOrdersView({
   const sortValue = (o: VendorOrder) => o.last_status_change_at ?? o.first_seen_at
   orders.sort((a, b) => sortValue(b).localeCompare(sortValue(a)))
 
+  // STRIP `raw` before it reaches the client component: at ~5–30KB per detail-scraped
+  // order × 1000 rows it dominated the page payload, yet the browser only ever needs it
+  // when one row's drawer opens (the drawer now fetches it on demand via
+  // getOrderDetailAction). The server-side uses above (derived dates) are already done;
+  // all the client needs is whether a drawer exists.
+  const clientOrders: VendorOrder[] = orders.map(({ raw, ...rest }) => ({ ...rest, has_detail: rawHasDetail(raw) }))
+
   const counts = orders.reduce<Record<string, number>>((a, o) => {
     const k = (o.status || 'unknown').toLowerCase().startsWith('open') ? 'Open' : (o.status || 'Unknown')
     a[k] = (a[k] || 0) + 1
@@ -138,13 +169,7 @@ export default async function VendorOrdersView({
   // Last scrape from this vendor's portal — freshness + kind, so a broken scraper
   // (stale time, or an unexpectedly small order count) is obvious at a glance.
   // Filtered by vendor so each tab's banner reflects only its own crawler.
-  const { data: runRow } = await db
-    .from('vendor_scrape_runs')
-    .select('mode, received, inserted, updated, status_changes, created_at')
-    .eq('vendor', vendor)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  // (Fetched up top in the parallel batch.)
   const lastRun = runRow as { mode: string | null; received: number; inserted: number; updated: number; status_changes: number; created_at: string } | null
   // eslint-disable-next-line react-hooks/purity -- server render; wall-clock freshness is intentional
   const hoursSince = lastRun ? (Date.now() - new Date(lastRun.created_at).getTime()) / 3600000 : null
@@ -197,20 +222,20 @@ export default async function VendorOrdersView({
           No orders yet. Open the {shortName} portal with the extension installed — orders appear here on the next scrape.
         </div>
       ) : isGenie ? (
-        <VendorOrdersTable orders={orders} enableSf={sfEnabled} enableNudge={isGenie} defaultSortKey="last_status_change_at" />
+        <VendorOrdersTable orders={clientOrders} enableSf={sfEnabled} enableNudge={isGenie} defaultSortKey="last_status_change_at" />
       ) : (
         // Clopay: split into Active vs Completed/Cancelled. Only "Install/Delivery
         // Completed" (and any cancelled) are terminal; everything else is active.
         <div className="space-y-8">
           <VendorOrdersTable
-            orders={orders.filter(o => !isTerminalStatus(o.status))}
+            orders={clientOrders.filter(o => !isTerminalStatus(o.status))}
             enableSf={sfEnabled}
             enableNudge={false}
             title="Active Orders"
             defaultSortKey="last_status_change_at"
           />
           <VendorOrdersTable
-            orders={orders.filter(o => isTerminalStatus(o.status))}
+            orders={clientOrders.filter(o => isTerminalStatus(o.status))}
             enableSf={sfEnabled}
             enableNudge={false}
             title="Completed / Cancelled Orders"

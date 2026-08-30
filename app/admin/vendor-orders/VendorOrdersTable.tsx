@@ -1,7 +1,7 @@
 'use client'
 
-import { Fragment, useMemo, useState, useTransition } from 'react'
-import { createSfJobAction, sendNudgeNowAction } from './actions'
+import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
+import { createSfJobAction, sendNudgeNowAction, getOrderDetailAction } from './actions'
 import { statusChipStyle } from '@/lib/vendor-orders/status-style'
 
 // Portal-specific detail captured verbatim by the crawler (Clopay's Summary
@@ -42,6 +42,9 @@ export interface VendorOrder {
   last_status_change_at: string | null
   schedule_nudge_sent_at: string | null
   raw?: VendorOrderRaw | null
+  /** Server-computed "this row has drawer detail" flag — `raw` itself is no longer
+   *  shipped in the list payload (it's fetched on demand when the drawer opens). */
+  has_detail?: boolean
   attachments?: StoredAttachment[]
 }
 
@@ -59,6 +62,7 @@ export interface StoredAttachment {
 // (Genie's raw is a flat label→value map with none of these, so Genie rows never
 // show the expander).
 function hasDrawer(o: VendorOrder): boolean {
+  if (o.has_detail != null) return o.has_detail // server-computed (raw not shipped)
   const r = o.raw
   if (!r || typeof r !== 'object') return false
   const summary = r.summary
@@ -199,7 +203,31 @@ function SummaryList({ summary }: { summary: unknown }) {
 }
 
 function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number }) {
-  const r = order.raw ?? {}
+  // `raw` no longer ships with the list (it dominated the page payload) — fetch it once
+  // when the drawer first opens. Rows rendered with an inline raw still work as before.
+  const [fetched, setFetched] = useState<VendorOrderRaw | null>(order.raw ?? null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (fetched) return
+    let alive = true
+    getOrderDetailAction(order.id).then(res => {
+      if (!alive) return
+      if (res.ok) setFetched((res.raw as VendorOrderRaw) ?? {})
+      else setFailed(true)
+    }).catch(() => { if (alive) setFailed(true) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once per mount
+  }, [])
+  if (!fetched) {
+    return (
+      <tr className="bg-gray-50">
+        <td colSpan={colSpan} className="px-4 py-4 text-sm text-gray-400">
+          {failed ? 'Could not load details — try again.' : 'Loading details…'}
+        </td>
+      </tr>
+    )
+  }
+  const r = fetched
   const documents = Array.isArray(r.documents) ? r.documents : []
   // Map Clopay documentId → our stored copy's signed URL, so the drawer links to the
   // file on our server (works even when logged out of Clopay) and falls back to the
