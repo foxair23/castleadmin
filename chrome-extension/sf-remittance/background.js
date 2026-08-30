@@ -355,20 +355,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // v0.8.4–0.8.6) and fetches (`mode: cors` → shell, v0.7.x) never do. Session cookies are
 // browser-wide, so the capture tab's navigation is cookie-authenticated.
 //
-// Bodies are read via Fetch-domain interception at the Response stage, streamed with
-// IO.read, then the request is ABORTED — the tab never actually renders anything, which
-// is what makes this geometry stable (no PDF viewer, no process swap, no detach — the
-// exact configuration that ran reliably as v0.8.8/0.8.9).
-//
-// IMPORTANT history note: many GENERATED Clopay PDFs are written by Oracle into a
-// fixed-size buffer and PADDED — hundreds legitimately measure exactly 1,280,000 bytes,
-// with %%EOF sitting above the padding. They open fine. An earlier "trailing %%EOF"
-// check misread them as truncated and set off a chain of unnecessary rewrites — the
-// validation below requires %PDF magic and %%EOF PRESENCE, never position.
+// The Fetch domain is scoped to `*/showdocument/*` at the Response stage: reading the body
+// there gets the full bytes BEFORE Chrome hands them to its PDF plugin, then the request
+// is aborted (nothing renders). One hidden tab is reused for the whole sync.
 const CAPTURE_PATTERN = '*://hdprogram.clopay.com/showdocument/*'
 let captureTabId = null            // the hidden capture tab
 let captureAttached = false
-let pendingCapture = null          // { url, resolve } — capture is serial, at most one
+let pendingCapture = null          // { url, resolve } — capture is serial, so at most one
 
 function dbgSend(target, method, params) {
   return new Promise((resolve, reject) => {
@@ -393,9 +386,8 @@ function headerValue(headers, name) {
 const isFileMime = (ct) => ct === 'application/pdf' || /^image\/(jpeg|jpg|png|heic|heif|webp)$/.test(ct)
 const urlBase = (u) => (u || '').split('?')[0]
 
-// CDP router (Fetch domain, v0.8.8/0.8.9 geometry): on the paused showdocument RESPONSE
-// for the doc we're waiting on, stream its body and abort the request (nothing renders);
-// other showdocument requests just continue.
+// CDP router: on the paused showdocument RESPONSE for the doc we're waiting on, read its
+// body and abort the request; other showdocument requests just continue.
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (captureTabId == null || source.tabId !== captureTabId || method !== 'Fetch.requestPaused') return
   const reqId = params.requestId
@@ -408,67 +400,42 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       const status = params.responseStatusCode || 0
       try {
         if (!isFileMime(ct)) {
-          console.log('[clopay] capture: not a file —', status, ct, url)
+          // Dump the response headers — they say WHO served the shell (cache/SW/server).
+          console.log('[clopay] capture: not a file —', status, ct, url, JSON.stringify(params.responseHeaders || []))
           try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
           p.resolve({ ok: false, error: `not a file (${status}, ${ct || '?'})` }); return
         }
-        const stream = await dbgSend({ tabId: captureTabId }, 'Fetch.takeResponseBodyAsStream', { requestId: reqId })
-        let bin = ''
-        for (;;) {
-          const r = await dbgSend({ tabId: captureTabId }, 'IO.read', { handle: stream.stream, size: 1048576 })
-          bin += r.base64Encoded ? atob(r.data) : r.data
-          if (r.eof) break
-        }
-        try { await dbgSend({ tabId: captureTabId }, 'IO.close', { handle: stream.stream }) } catch { /* ignore */ }
+        const body = await dbgSend({ tabId: captureTabId }, 'Fetch.getResponseBody', { requestId: reqId })
         try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-        // Validation: %PDF magic + %%EOF PRESENCE (anywhere — Oracle pads many generated
-        // PDFs to a fixed size, so %%EOF sits above trailing padding) + a 1KB floor.
-        // Together these reject HTML shells and error blobs but accept padded files.
-        if (ct === 'application/pdf' && !bin.startsWith('%PDF')) { p.resolve({ ok: false, error: `bad pdf magic (${bin.length}b)` }); return }
-        if (ct === 'application/pdf' && !bin.includes('%%EOF')) { p.resolve({ ok: false, error: `incomplete pdf (${bin.length}b, no %%EOF)` }); return }
-        if (bin.length < 1000) { p.resolve({ ok: false, error: `too small (${bin.length}b)` }); return }
-        console.log('[clopay] capture: body', ct, `${bin.length} bytes`)
-        p.resolve({ ok: true, mime: ct, base64: btoa(bin) })
+        const b64 = body && body.base64Encoded ? body.body : null
+        console.log('[clopay] capture: body', ct, b64 ? `${b64.length} b64 chars` : 'EMPTY/not-base64')
+        p.resolve({ ok: true, mime: ct, base64: b64 })
       } catch (e) {
         try { await dbgSend({ tabId: captureTabId }, 'Fetch.failRequest', { requestId: reqId, errorReason: 'Aborted' }) } catch { /* ignore */ }
-        p.resolve({ ok: false, error: 'stream read ' + (e instanceof Error ? e.message : String(e)) })
+        p.resolve({ ok: false, error: 'getResponseBody ' + (e instanceof Error ? e.message : String(e)) })
       }
     } else {
       try { await dbgSend({ tabId: captureTabId }, 'Fetch.continueRequest', { requestId: reqId }) } catch { /* ignore */ }
     }
   })()
 })
-// Keep the tab id on detach — the next capture RE-ATTACHES to the same tab rather than
-// leaking a replacement.
-chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) captureAttached = false })
+chrome.debugger.onDetach.addListener((source) => { if (source.tabId === captureTabId) { captureAttached = false; captureTabId = null } })
 
 // Lazily create the hidden capture tab and attach the debugger, scoping Fetch
-// interception to the document URL only. ONE tab is reused for the whole sync: its id is
-// persisted (MV3 worker restarts wipe in-memory state) so it's adopted, never duplicated.
-// Aborted navigations never commit, so the tab stays a blank, attachable page throughout.
+// interception to the document URL only (nothing else in that tab is touched).
 async function ensureCaptureTab() {
-  if (captureTabId == null) {
-    const { clopayCapTabId } = await chrome.storage.local.get('clopayCapTabId')
-    if (clopayCapTabId != null && await tabExists(clopayCapTabId)) captureTabId = clopayCapTabId
-  }
-  if (captureTabId != null && !(await tabExists(captureTabId))) { captureTabId = null; captureAttached = false }
-  if (captureTabId == null) {
-    const tab = await chrome.tabs.create({ url: 'about:blank', active: false })
-    captureTabId = tab.id
-    captureAttached = false
-    await chrome.storage.local.set({ clopayCapTabId: tab.id })
-  }
-  if (!captureAttached) {
-    await dbgAttach({ tabId: captureTabId })
-    captureAttached = true
-    await dbgSend({ tabId: captureTabId }, 'Fetch.enable', { patterns: [{ urlPattern: CAPTURE_PATTERN, requestStage: 'Response' }] })
-  }
+  if (captureTabId != null && captureAttached && await tabExists(captureTabId)) return
+  await teardownCaptureDebugger()
+  const tab = await chrome.tabs.create({ url: 'about:blank', active: false })
+  captureTabId = tab.id
+  await dbgAttach({ tabId: captureTabId })
+  captureAttached = true
+  await dbgSend({ tabId: captureTabId }, 'Fetch.enable', { patterns: [{ urlPattern: CAPTURE_PATTERN, requestStage: 'Response' }] })
 }
 
 async function teardownCaptureDebugger() {
   const id = captureTabId
   captureTabId = null; captureAttached = false
-  try { await chrome.storage.local.remove('clopayCapTabId') } catch { /* ignore */ }
   if (pendingCapture) { try { pendingCapture.resolve({ ok: false, error: 'torn down' }) } catch { /* ignore */ } pendingCapture = null }
   if (id == null) return
   try { await new Promise(r => chrome.debugger.detach({ tabId: id }, () => { void chrome.runtime.lastError; r() })) } catch { /* ignore */ }
@@ -477,23 +444,22 @@ async function teardownCaptureDebugger() {
 
 // Capture ONE document's bytes: navigate the hidden capture tab to its showdocument URL —
 // a genuine top-level navigation (Sec-Fetch-Dest: document, cookies attached) — and read
-// the intercepted body; the abort means the navigation never commits, so the tab stays
-// blank. Never throws — a failed attach/navigate returns an error result the sync logs.
+// the intercepted PDF/image body before aborting the request.
 async function captureDocBytes(url, timeoutMs = 30000) {
-  try { await ensureCaptureTab() } catch (e) { return { ok: false, error: 'attach ' + (e instanceof Error ? e.message : String(e)) } }
+  await ensureCaptureTab()
   let timer = null
   const done = new Promise((resolve) => {
     pendingCapture = { url, resolve }
     timer = setTimeout(() => { if (pendingCapture && pendingCapture.resolve === resolve) { pendingCapture = null; resolve({ ok: false, error: 'timeout' }) } }, timeoutMs)
   })
-  let res
   try {
     await chrome.tabs.update(captureTabId, { url })
-    res = await done
   } catch (e) {
     if (pendingCapture && pendingCapture.url === url) pendingCapture = null
-    res = { ok: false, error: 'navigate ' + (e instanceof Error ? e.message : String(e)) }
+    clearTimeout(timer)
+    return { ok: false, error: 'navigate ' + (e instanceof Error ? e.message : String(e)) }
   }
+  const res = await done
   clearTimeout(timer)
   return res
 }
