@@ -758,6 +758,7 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Photos</th>
             <SortTh col="appointment_date" label="Appt Date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="kind" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="lead_source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_waiting" label="Age" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
           </tr>
         </thead>
@@ -805,6 +806,11 @@ function OnlineSchedulingTable({ items, notes }: { items: OnlineSchedulingLead[]
                 }`}>
                   {lead.kind === 'synced' ? `Synced${lead.sf_job_id ? ` · Job #${lead.sf_job_id}` : ''}` : 'Partial'}
                 </span>
+              </td>
+              <td className="px-4 py-2 whitespace-nowrap">
+                {lead.lead_source === 'genie'
+                  ? <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700" title="Came in through the Genie / Home Depot install scheduler">Genie</span>
+                  : <span className="text-gray-500 text-xs">{lead.lead_source || '—'}</span>}
               </td>
               <td className="px-4 py-2"><AgingPill days={lead.days_waiting} /></td>
             </tr>

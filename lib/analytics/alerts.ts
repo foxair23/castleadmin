@@ -549,6 +549,9 @@ export interface OnlineSchedulingLead {
   sf_job_id: string | null
   created_at: string
   days_waiting: number
+  /** Which widget the lead came from — 'genie' for the Genie/HD install scheduler,
+   *  'website' etc. for the main scheduler. Lets the tab flag Genie fallout. */
+  lead_source: string | null
   /** Customer-uploaded photos: 7-day signed URLs (also used by the digest emails). */
   photos: string[]
 }
@@ -564,7 +567,7 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
 
   const { data } = await db
     .from('scheduler_leads')
-    .select('id, customer_first_name, customer_last_name, customer_phone, customer_email, service_type, service_category, appointment_date, is_partial, synced_at, service_fusion_job_id, created_at')
+    .select('id, customer_first_name, customer_last_name, customer_phone, customer_email, service_type, service_category, appointment_date, is_partial, synced_at, service_fusion_job_id, created_at, lead_source')
     .is('acknowledged_at', null)
     .neq('status', 'rejected')
     .or('is_partial.eq.true,synced_at.not.is.null')
@@ -587,6 +590,7 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
     synced_at: string | null
     service_fusion_job_id: string | null
     created_at: string
+    lead_source: string | null
   }) => ({
     id: l.id,
     customer_name: [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ') || 'Unknown',
@@ -599,6 +603,7 @@ export async function getOnlineSchedulingLeads(): Promise<OnlineSchedulingResult
     sf_job_id: l.service_fusion_job_id ?? null,
     created_at: l.created_at,
     days_waiting: daysBetween(l.created_at),
+    lead_source: l.lead_source ?? null,
     photos: photoMap.get(l.id) ?? [],
   }))
 

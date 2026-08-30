@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   // Validate the widget key (same gate the rest of the scheduler uses).
   const widgetKey = req.headers.get('x-castle-widget-key')
   if (!widgetKey) return NextResponse.json({ error: 'Missing widget key' }, { status: 401, headers: cors })
-  const { data: widget } = await db.from('scheduler_widget_instances').select('id, is_active').eq('api_key', widgetKey).single()
+  const { data: widget } = await db.from('scheduler_widget_instances').select('id, lead_source, is_active').eq('api_key', widgetKey).single()
   if (!widget || !widget.is_active) return NextResponse.json({ error: 'Invalid or inactive widget key' }, { status: 401, headers: cors })
 
   let body: { phone?: string; email?: string; last_name?: string; postal_code?: string }
@@ -139,6 +139,38 @@ export async function POST(req: NextRequest) {
       raw_matched: matched.length, returned: results.length,
     })
   } catch { /* non-critical */ }
+
+  // A customer who got our schedule nudge but can't find their order used to vanish
+  // silently (the Genie flow wrote no partial lead at all). Capture the failure as a
+  // partial scheduler_lead — labeled with the widget's lead_source ('genie') — so it
+  // surfaces in Action Items → Online Scheduling and the Partial Lead email, with
+  // whatever contact info they typed so the office can call them back. Deduped by
+  // contact so repeated attempts don't spam rows; best-effort, never fails the lookup.
+  if (results.length === 0) {
+    try {
+      const rawPhone = (body.phone ?? '').trim()
+      const rawEmail = (body.email ?? '').trim()
+      const rawLast = (body.last_name ?? '').trim()
+      let dedupe = db.from('scheduler_leads').select('id')
+        .eq('is_partial', true).eq('lead_source', widget.lead_source ?? 'genie').is('acknowledged_at', null)
+      if (hasPhone) dedupe = dedupe.eq('customer_phone', rawPhone)
+      else if (hasEmail) dedupe = dedupe.eq('customer_email', rawEmail)
+      else dedupe = dedupe.eq('customer_last_name', rawLast).eq('address_zip', zip5)
+      const { data: existing } = await dedupe.limit(1).maybeSingle()
+      if (!existing) {
+        await db.from('scheduler_leads').insert({
+          session_id: `genie-lookup-${crypto.randomUUID()}`,
+          is_partial: true,
+          lead_source: widget.lead_source ?? 'genie',
+          widget_instance_id: widget.id,
+          customer_last_name: rawLast || null,
+          customer_phone: hasPhone ? rawPhone : null,
+          customer_email: hasEmail ? rawEmail : null,
+          address_zip: zip5 || null,
+        })
+      }
+    } catch (e) { console.error('[genie-lookup] partial-lead capture failed (non-critical):', e) }
+  }
 
   return NextResponse.json({ matches: results }, { status: 200, headers: cors })
 }
