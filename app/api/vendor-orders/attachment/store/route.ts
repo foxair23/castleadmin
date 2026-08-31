@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
 import { storeVendorDoc } from '@/lib/vendor-orders/attachments'
+import { isIpoDoc } from '@/lib/vendor-orders/clopay-ipo'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,5 +26,18 @@ export async function POST(req: NextRequest) {
   if (!b.vendor || !b.external_id || b.documentId == null) return NextResponse.json({ error: 'vendor, external_id, documentId required' }, { status: 400, headers: cors })
   const bytes = b.dataB64 ? new Uint8Array(Buffer.from(b.dataB64, 'base64')) : null
   const res = await storeVendorDoc(b.vendor, b.external_id, String(b.documentId), b.filename || 'document', b.mime || 'application/pdf', bytes)
+
+  // An IPO carries the line-item detail + what we get paid. Parse it into structured rows
+  // AFTER responding, so the extension's doc sync is never slowed or broken by parsing.
+  if (res.ok && res.stored && isIpoDoc(b.filename)) {
+    after(async () => {
+      try {
+        const { parseAndStoreIpoAttachment } = await import('@/lib/vendor-orders/ipo-ingest')
+        const { findAttachmentId } = await import('@/lib/vendor-orders/attachments')
+        const id = await findAttachmentId(b.vendor!, b.external_id!, String(b.documentId))
+        if (id) await parseAndStoreIpoAttachment(id)
+      } catch (e) { console.error('[attachment/store] IPO parse failed (non-critical):', e) }
+    })
+  }
   return NextResponse.json(res, { status: res.ok ? 200 : 400, headers: cors })
 }

@@ -49,7 +49,20 @@ export interface VendorOrder {
    *  last_status_change_at server-side; carried on the type for the DB row shape. */
   derived_order_date?: string | null
   derived_last_activity_at?: string | null
+  /** TOTAL FEE from the order's current IPO (migration 104), shown in the list. */
+  derived_total_fee?: number | null
+  total_fee?: number | null
   attachments?: StoredAttachment[]
+}
+
+// One line of the order's current Installer Purchase Order, parsed from the stored PDF.
+// Phase 2 maps `item_number` onto the SF services catalog to build SF job line items.
+export interface OrderLineItem {
+  line_no: string | null
+  quantity: number | null
+  item_number: string | null
+  description: string | null
+  line_fee: number | null
 }
 
 // A document file the crawler downloaded to our own storage (signed URL minted
@@ -79,6 +92,8 @@ function hasDrawer(o: VendorOrder): boolean {
 
 const fmtDate = (s: string | null) =>
   s ? new Date(s + (s.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' }) : '—'
+const fmtMoney = (n: number | null | undefined) =>
+  n == null ? null : n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
 const fmtSeen = (s: string) =>
   new Date(s).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
@@ -86,6 +101,7 @@ type SortKey =
   | 'external_id' | 'status' | 'next_step' | 'customer_name' | 'street_address'
   | 'phone' | 'email' | 'scope' | 'order_date' | 'schedule_date' | 'customer_po'
   | 'store_number' | 'sf_job_number' | 'first_seen_at' | 'last_seen_at' | 'last_status_change_at'
+  | 'total_fee'
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'order_date', label: 'Order Date' },
@@ -93,6 +109,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'status', label: 'Status' },
   { key: 'last_status_change_at', label: 'Last Status Change' },
   { key: 'customer_po', label: 'PO' },
+  { key: 'total_fee', label: 'Total Fee' },
   { key: 'sf_job_number', label: 'SF Job #' },
   { key: 'next_step', label: 'Next Step' },
   { key: 'customer_name', label: 'Customer' },
@@ -109,7 +126,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 const uniq = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b))
 
 function sortVal(o: VendorOrder, k: SortKey): string | number | null {
-  return o[k]
+  return o[k] ?? null
 }
 
 function CreateJobButton({ orderId }: { orderId: string }) {
@@ -206,17 +223,75 @@ function SummaryList({ summary }: { summary: unknown }) {
   )
 }
 
+// The order's Installer Purchase Order, parsed from the stored PDF: what the work is and
+// what Clopay pays us. Full width above the Summary/Documents/Notes grid — it's a real table
+// and reads badly squeezed into a narrow column. Product lines are $0.00 (the door, opener,
+// molding); the paid lines are the install/delivery/labor ones, so those are emphasized.
+function LineItemsTable({ items, totalFee }: { items: OrderLineItem[]; totalFee: number | null }) {
+  const sum = items.reduce((a, i) => a + (i.line_fee ?? 0), 0)
+  const mismatch = totalFee != null && Math.abs(sum - totalFee) >= 0.005
+  return (
+    <section className="mb-6">
+      <div className="flex items-baseline gap-2 mb-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Line Items</h4>
+        <span className="text-[11px] text-gray-400">from the Installer Purchase Order</span>
+        {mismatch && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800" title="Line fees don't add up to the PDF's stated total — check the source document">
+            check totals
+          </span>
+        )}
+      </div>
+      <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-16">Line</th>
+              <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-14">Qty</th>
+              <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-40">Item #</th>
+              <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
+              <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Fee</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {items.map((i, n) => {
+              const paid = (i.line_fee ?? 0) > 0
+              return (
+                <tr key={`${i.line_no ?? n}`} className={paid ? 'bg-green-50/40' : undefined}>
+                  <td className="px-3 py-1.5 text-gray-400 whitespace-nowrap">{i.line_no ?? '—'}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">{i.quantity ?? '—'}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs text-gray-800 whitespace-nowrap">{i.item_number ?? '—'}</td>
+                  <td className={`px-3 py-1.5 ${paid ? 'text-gray-900' : 'text-gray-500'}`}>{i.description || '—'}</td>
+                  <td className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap ${paid ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
+                    {fmtMoney(i.line_fee ?? 0)}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+          <tfoot className="border-t border-gray-200 bg-gray-50">
+            <tr>
+              <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Total Fee</td>
+              <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">{fmtMoney(totalFee ?? sum)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number }) {
   // `raw` no longer ships with the list (it dominated the page payload) — fetch it once
   // when the drawer first opens. Rows rendered with an inline raw still work as before.
   const [fetched, setFetched] = useState<VendorOrderRaw | null>(order.raw ?? null)
+  const [lineItems, setLineItems] = useState<OrderLineItem[]>([])
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     if (fetched) return
     let alive = true
     getOrderDetailAction(order.id).then(res => {
       if (!alive) return
-      if (res.ok) setFetched((res.raw as VendorOrderRaw) ?? {})
+      if (res.ok) { setFetched((res.raw as VendorOrderRaw) ?? {}); setLineItems((res.lineItems as OrderLineItem[]) ?? []) }
       else setFailed(true)
     }).catch(() => { if (alive) setFailed(true) })
     return () => { alive = false }
@@ -244,6 +319,7 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
   return (
     <tr className="bg-gray-50">
       <td colSpan={colSpan} className="px-4 py-4">
+        {lineItems.length > 0 && <LineItemsTable items={lineItems} totalFee={order.total_fee ?? null} />}
         <div className="grid gap-6 md:grid-cols-3">
           <section>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Summary</h4>
@@ -446,6 +522,11 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                 <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusChipStyle(o.status)}`}>{o.status || '—'}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.last_status_change_at ? fmtSeen(o.last_status_change_at) : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
+              <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">
+                {o.total_fee != null
+                  ? <span className="font-medium text-gray-900" title="TOTAL FEE from this order's Installer Purchase Order">{fmtMoney(o.total_fee)}</span>
+                  : <span className="text-gray-300">—</span>}
+              </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {enableSf ? (
                     <div className="flex flex-col gap-1">

@@ -38,11 +38,19 @@ export async function sendNudgeNowAction(orderId: string): Promise<{ ok: boolean
 /** One order's captured `raw` detail (Clopay Summary/Documents/Notes) for the HD Orders
  *  drawer. Fetched on demand when a drawer opens — the list payload no longer carries
  *  `raw` (at 5–30KB × 1000 rows it dominated page load). Admin + sales. */
-export async function getOrderDetailAction(orderId: string): Promise<{ ok: boolean; raw?: unknown; error?: string }> {
+export async function getOrderDetailAction(orderId: string): Promise<{ ok: boolean; raw?: unknown; lineItems?: unknown[]; error?: string }> {
   if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
-  const { data } = await stsDb().from('vendor_orders').select('raw').eq('id', orderId).maybeSingle()
+  const db = stsDb()
+  // Both loaded here (not in the list query) so the HD Orders page payload stays small.
+  const [{ data }, { data: lines }] = await Promise.all([
+    db.from('vendor_orders').select('raw').eq('id', orderId).maybeSingle(),
+    db.from('vendor_order_line_items')
+      .select('line_no, quantity, item_number, description, line_fee')
+      .eq('order_id', orderId).eq('is_current', true)
+      .order('sort_order', { ascending: true }),
+  ])
   if (!data) return { ok: false, error: 'order not found' }
-  return { ok: true, raw: data.raw ?? {} }
+  return { ok: true, raw: data.raw ?? {}, lineItems: lines ?? [] }
 }
 
 /** Toggle a vendor's autopilot (admin only). vendor: 'genie_thd' | 'clopay_hd'. */

@@ -1,0 +1,251 @@
+// Fixtures: text extracted from four REAL Clopay IPO PDFs, covering the layout
+// variations that matter — inline fees, fees on their own line after a long wrapped
+// description, and an item number split across three lines (WRAPPED_ITEM_NUMBER).
+// Regenerate by extracting text from the source PDFs if Clopay's layout ever changes.
+
+export const SIMPLE_TWO_LINE = ` 
+ 
+ 
+Clopay Building Products and Clopay Canada Inc. disclaims all liability for any
+installation which is not in compliance with applicable state/province or county building
+codes. Tax and item amounts subject to change on final calculation based on tax law
+changes and changes made to order.
+Order Number: 181194873
+Order Date: 08/03/2026
+Date of Sale: 08/03/2026
+Scheduled Ship Date:
+PO Number: 48510316
+Schedule Arrival Date:
+Warehouse: San Diego DC
+Address1: 8441 Arjons Drive, Suite A
+Address2: San Diego,CA 92126
+Phone: 858-578-4301
+Fax: 252-578-2710
+SHIP TO INSTALLER SOLD TO
+ROY JOSEPH 8589000900 8589000900 HOME DEPOT INC#1848
+1600 NORRAN AVE CASTLE GARAGE INC 2455 PACES FERRY ROAD NORTHWEST
+EL CAJON CA 92019 1291 SIMPSON WAY SUITE D ATLANTA, GA 30339-1834
+United States
+8589000900 8589000900 Escondido CA 92029 Attn:
+LINE
+NO.
+QTY
+ORD.
+ITEM
+NUMBER
+DESCRIPTION TOTAL FEE
+1.1 1 DC13 DC13 - CLOPAY POLYSTYRENE ; URETHANE
+WIDTH X HEIGHT : 15ft X 7ft
+MODEL : HDPL20
+ASSEMBLY : COMPLETE DOOR
+INSULATION : INTELLICORE
+FRAMING :
+WINDOW LOCATIONS :
+SECTION(S) GLAZED :
+GLAZING : SOLID
+COLOR : WHITE
+LOCK : INSIDE SLIDE LOCK
+SPRING : EZSET GALV TORSION 2 SPRINGS
+TRACK SIZE : 2"
+TRACK MOUNT : BRACKET
+TRACK LIFT : STANDARD
+TRACK RADIUS : 12" RADIUS
+HIGH LIFT : 0
+DOOR PACK : DISTRIBUTOR
+ADDITIONAL OPTIONS : NO LOCK HOLE;MEDALLION HARDWARE UPGRADE
+(RETAIL)
+;PRINTED INSTRUCTION MANUAL
+$0.00
+2.1 1 FIR670 DOUBLE CAR DOOR DELIVERY CHARGE $100.00
+TOTAL : $100.00
+Page 1 of 1
+7151173-FD-IP-01-01
+        1400 West Market Street
+    Phone: 877-526-2050
+Troy, OH 45373
+      Fax: 866-865-0173
+    INSTALLER PURCHASE ORDER `
+
+export const WRAPPED_ITEM_NUMBER = ` 
+ 
+ 
+Clopay Building Products and Clopay Canada Inc. disclaims all liability for any
+installation which is not in compliance with applicable state/province or county building
+codes. Tax and item amounts subject to change on final calculation based on tax law
+changes and changes made to order.
+Order Number: 181193343
+Order Date: 05/21/2026
+Date of Sale: 05/21/2026
+Scheduled Ship Date:
+PO Number: 71502492
+Schedule Arrival Date:
+Warehouse: San Diego DC
+Address1: 8441 Arjons Drive, Suite A
+Address2: San Diego,CA 92126
+Phone: 858-578-4301
+Fax: 252-578-2710
+SHIP TO INSTALLER SOLD TO
+DAVID LOZA 6196719556 6196719556 HOME DEPOT INC#0671
+7808 SAINT ANDREWS AVE CASTLE GARAGE INC 2455 PACES FERRY ROAD NORTHWEST
+SAN DIEGO CA 92154 1291 SIMPSON WAY SUITE D ATLANTA, GA 30339-1834
+United States
+6196719556 6196719556 Escondido CA 92029 Attn:
+LINE
+NO.
+QTY
+ORD.
+ITEM
+NUMBER
+DESCRIPTION TOTAL FEE
+1.1 4 CAN212-
+CD*R49892
+0
+CAN212..NC..CD..11.10.10.0.PUR.I.5.SQ23..WF.2.T.2.B..S..15.Z.NLH;MDLN;ETO;WF
+OVL;.SOR-31659....
+$0.00
+2.1 8 0650792 STOP MOLD VINYL UNIFLEX HIGH HEAT WALNUT FINISH 16' $0.00
+3.1 4 0650792 STOP MOLD VINYL UNIFLEX HIGH HEAT WALNUT FINISH 16' $0.00
+4.1 4 FIR930 EXTENDED HEIGHT DELIVERY - BDL $600.00
+TOTAL : $600.00
+Page 1 of 1
+7090501-FD-IP-01-01
+        1400 West Market Street
+    Phone: 877-526-2050
+Troy, OH 45373
+      Fax: 866-865-0173
+    INSTALLER PURCHASE ORDER `
+
+export const OPENER_AND_DOOR = ` 
+ 
+ 
+Clopay Building Products and Clopay Canada Inc. disclaims all liability for any
+installation which is not in compliance with applicable state/province or county building
+codes. Tax and item amounts subject to change on final calculation based on tax law
+changes and changes made to order.
+Order Number: 181194831
+Order Date: 07/31/2026
+Date of Sale: 07/31/2026
+Scheduled Ship Date:
+PO Number: 49472669
+Schedule Arrival Date:
+Warehouse: San Diego DC
+Address1: 8441 Arjons Drive, Suite A
+Address2: San Diego,CA 92126
+Phone: 858-578-4301
+Fax: 252-578-2710
+SHIP TO INSTALLER SOLD TO
+BRUMFIELD JEFF 7605258601 7605258601 HOME DEPOT INC#8949
+20235 EAGLE HILL LN CASTLE GARAGE INC 2455 PACES FERRY ROAD NORTHWEST
+RAMONA CA 92065 1291 SIMPSON WAY SUITE D ATLANTA, GA 30339-1834
+United States
+7605258601 7605258601 Escondido CA 92029 Attn:
+LINE
+NO.
+QTY
+ORD.
+ITEM
+NUMBER
+DESCRIPTION TOTAL FEE
+1.1 1 3553061 OPENER RES 6690L-8 1-1/4HP DC SMART BELT DRIVE WITH VIDEO AND BBU $0.00
+2.1 1 FIR500 GDO INSTALLATION - WITH DOOR AND OPENER PURCHASE $120.00
+3.1 1 DC13 DC13 - CLOPAY POLYSTYRENE ; URETHANE
+WIDTH X HEIGHT : 9ft X 8ft
+MODEL : HDGL
+ASSEMBLY : COMPLETE DOOR
+INSULATION : EPS
+FRAMING :
+WINDOW LOCATIONS :
+SECTION(S) GLAZED :
+GLAZING : SOLID
+COLOR : BLACK
+LOCK : INSIDE SLIDE LOCK
+SPRING : TORSION
+TRACK SIZE : 2" FLAG ; JAMB BRKTS LOOSE
+TRACK MOUNT : BRACKET
+TRACK LIFT : LHR FRONT (TORSION)
+TRACK RADIUS : 3-1/2" LHR
+HIGH LIFT : 0
+DOOR PACK : DISTRIBUTOR
+ADDITIONAL OPTIONS : NO LOCK HOLE;MEDALLION HARDWARE UPGRADE
+(RETAIL)
+$0.00
+4.1 1 FIR010 INSTALL OF DOOR UP TO 10 FT $338.00
+5.1 2 0650833 STOP MOLD VINYL UNIFLEX HIGH HEAT BLACK 8' $0.00
+6.1 1 0650834 STOP MOLD VINYL UNIFLEX HIGH HEAT BLACK 9' $0.00
+7.1 1 FIR1010 RESIDENTIAL ADDITIONAL LABOR $20.00
+TOTAL : $478.00
+Page 1 of 1
+7157911-FR-IP-01-01
+        1400 West Market Street
+    Phone: 877-526-2050
+Troy, OH 45373
+      Fax: 866-865-0173
+    INSTALLER PURCHASE ORDER `
+
+export const MULTI_FEE = ` 
+ 
+ 
+Clopay Building Products and Clopay Canada Inc. disclaims all liability for any
+installation which is not in compliance with applicable state/province or county building
+codes. Tax and item amounts subject to change on final calculation based on tax law
+changes and changes made to order.
+Order Number: 181195368
+Order Date: 08/27/2026
+Date of Sale: 08/27/2026
+Scheduled Ship Date:
+PO Number: 75437080
+Schedule Arrival Date:
+Warehouse: San Diego DC
+Address1: 8441 Arjons Drive, Suite A
+Address2: San Diego,CA 92126
+Phone: 858-578-4301
+Fax: 252-578-2710
+SHIP TO INSTALLER SOLD TO
+MORRISON GEORGE 6193863118 6193862183 HOME DEPOT INC#6875
+26224 FAIRLANE DR CASTLE GARAGE INC 2455 PACES FERRY ROAD NORTHWEST
+MENIFEE CA 92586 1291 SIMPSON WAY SUITE D ATLANTA, GA 30339-1834
+United States
+6193863118 6193862183 Escondido CA 92029 Attn:
+LINE
+NO.
+QTY
+ORD.
+ITEM
+NUMBER
+DESCRIPTION TOTAL FEE
+1.1 1 3553049 OPENER RES RETAIL B3010-7 1/2HP DC SMART BELT DRIVE WITH BBU AND
+DOORBELL
+$0.00
+2.1 1 FIR500 GDO INSTALLATION - WITH DOOR AND OPENER PURCHASE $120.00
+3.1 1 DC13 DC13 - CLOPAY POLYSTYRENE ; URETHANE
+WIDTH X HEIGHT : 15ft X 7ft
+MODEL : HDP13
+ASSEMBLY : COMPLETE DOOR
+INSULATION : INTELLICORE
+FRAMING : PLAIN SHORT 19 1/2 X 12
+WINDOW LOCATIONS :
+SECTION(S) GLAZED : 4TH SECTION
+GLAZING : INSULATED OBSCURE
+COLOR : WHITE
+LOCK : INSIDE SLIDE LOCK
+SPRING : GALV TORSION
+TRACK SIZE : 2" FLAG ; JAMB BRKTS LOOSE
+TRACK MOUNT : BRACKET
+TRACK LIFT : STANDARD
+TRACK RADIUS : 12" RADIUS
+HIGH LIFT : 0
+DOOR PACK : DISTRIBUTOR
+ADDITIONAL OPTIONS : NO LOCK HOLE;MEDALLION HARDWARE UPGRADE
+(RETAIL)
+$0.00
+4.1 2 0650732 STOP MOLD VINYL UNIFLEX WHITE 7' $0.00
+5.1 1 0650738 STOP MOLD VINYL UNIFLEX WHITE 16' $0.00
+6.1 1 FIR020 INSTALL OF DOOR OVER 10 FT $412.00
+TOTAL : $532.00
+Page 1 of 1
+7186054-FR-IP-01-01
+        1400 West Market Street
+    Phone: 877-526-2050
+Troy, OH 45373
+      Fax: 866-865-0173
+    INSTALLER PURCHASE ORDER `
