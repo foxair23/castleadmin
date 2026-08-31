@@ -108,6 +108,24 @@ export async function attachmentsForOrders(orderIds: string[]): Promise<Map<stri
   return map
 }
 
+/** Look up a stored attachment's id by (vendor, external_id, documentId) — lets the store
+ *  route hand the freshly-stored document straight to the IPO parser. */
+export async function findAttachmentId(vendor: string, externalId: string, documentId: string): Promise<string | null> {
+  const orderId = await orderIdFor(vendor, externalId)
+  if (!orderId) return null
+  const { data } = await db().from('vendor_order_attachments')
+    .select('id').eq('order_id', orderId).eq('external_ref', String(documentId)).maybeSingle()
+  return (data?.id as string) ?? null
+}
+
+/** Read a stored document's bytes back out of the bucket (server-side). Used by the IPO
+ *  parser — nothing else needed to download until now. */
+export async function downloadVendorDoc(storagePath: string): Promise<Uint8Array | null> {
+  const { data, error } = await db().storage.from(BUCKET).download(storagePath)
+  if (error || !data) return null
+  return new Uint8Array(await data.arrayBuffer())
+}
+
 export async function signedUrl(storagePath: string, expiresIn = 3600): Promise<string | null> {
   const { data } = await db().storage.from(BUCKET).createSignedUrl(storagePath, expiresIn)
   return data?.signedUrl ?? null
