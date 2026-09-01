@@ -166,3 +166,61 @@ describe('parseIpoDocument (bundled multi-order IPOs)', () => {
     expect(found).toContain('181194841')
   })
 })
+
+describe('customer block (SHIP TO)', () => {
+  it('extracts the end customer from a bundled IPO page', () => {
+    const secs = parseIpoDocument(BUNDLE_3)
+    const c = secs[0].customer
+    expect(c.customerName).toBe('COOREY PETE')
+    expect(c.streetAddress).toBe('38088 AVENIDA BRAVURA')
+    expect(c.city).toBe('TEMECULA')
+    expect(c.stateProv).toBe('CA')
+    expect(c.postalCode).toBe('92592')
+    expect(c.phone).toBe('7148033795')
+  })
+
+  it('does not bleed the installer or sold-to columns into the customer', () => {
+    for (const sec of parseIpoDocument(BUNDLE_3)) {
+      const c = sec.customer
+      expect(c.customerName).not.toMatch(/CASTLE|HOME DEPOT/i)
+      expect(c.streetAddress).not.toMatch(/CASTLE|SIMPSON|PACES FERRY/i)
+      expect(c.city).not.toMatch(/ATLANTA|Escondido/i)
+    }
+  })
+
+  it('extracts the customer from a single-order IPO too', () => {
+    const c = parseIpoText(SIMPLE_TWO_LINE).customer
+    expect(c.customerName).toBeTruthy()
+    expect(c.postalCode).toMatch(/^\d{5}$/)
+    expect(c.stateProv).toMatch(/^[A-Z]{2}$/)
+  })
+})
+
+// One house = one job = one SF job. These assert the facts the grouping logic relies on:
+// a bundle names every door, and the doors' totals sum to what the SF job is worth.
+describe('multi-door job grouping inputs', () => {
+  it('a bundle yields one section per door, all for the same customer', () => {
+    const secs = parseIpoDocument(BUNDLE_3)
+    expect(secs).toHaveLength(3)
+    const names = new Set(secs.map(s => s.customer.customerName))
+    expect(names.size).toBe(1)                       // one house
+    expect([...names][0]).toBe('COOREY PETE')
+    expect(new Set(secs.map(s => s.poNumber)).size).toBe(3)   // three distinct POs
+  })
+
+  it("the group total is the sum of the doors' IPO totals", () => {
+    const three = parseIpoDocument(BUNDLE_3)
+    expect(three.reduce((a, s) => a + (s.totalFee ?? 0), 0)).toBe(1041) // 458 + 458 + 125
+    const two = parseIpoDocument(BUNDLE_2)
+    expect(two.reduce((a, s) => a + (s.totalFee ?? 0), 0)).toBe(990)    // 458 + 532
+  })
+
+  it('every door carries the contact detail needed to stand alone', () => {
+    for (const sec of parseIpoDocument(BUNDLE_2)) {
+      expect(sec.customer.customerName).toBe('EASTMAN KAREN')
+      expect(sec.customer.streetAddress).toBeTruthy()
+      expect(sec.customer.postalCode).toMatch(/^\d{5}$/)
+      expect(sec.poNumber).toBeTruthy()
+    }
+  })
+})

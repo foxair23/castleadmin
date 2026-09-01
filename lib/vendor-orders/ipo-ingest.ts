@@ -86,6 +86,8 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
   let ownerSectionOk: boolean | null = null
   let ownerTotal: number | null = null
   const touchedOrders = new Set<string>()
+  // Every order in this bundle, for the multi-door grouping below.
+  const groupMembers: Array<{ id: string; externalId: string; isPortal: boolean }> = []
 
   for (const sec of sections) {
     if (!sec.orderNumber || sec.items.length === 0) continue
@@ -106,10 +108,19 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
         derived_total_fee: sec.totalFee,
         record_source: 'ipo_document',
         has_detail: false,
+        // The IPO's SHIP TO block is the only contact detail these orders will ever have
+        // (the portal never lists them), so without it they'd be blank rows.
+        customer_name: sec.customer.customerName,
+        street_address: sec.customer.streetAddress,
+        city: sec.customer.city,
+        state_prov: sec.customer.stateProv,
+        postal_code: sec.customer.postalCode,
+        phone: sec.customer.phone,
       }).select('id').maybeSingle()
       if (created) { orderId = created.id as string; recovered.push(sec.orderNumber) }
     }
     if (!orderId) continue
+    groupMembers.push({ id: orderId, externalId: sec.orderNumber, isPortal: !!match })
 
     const rows = sec.items.map((i, n) => ({
       order_id: orderId,
@@ -129,7 +140,11 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
     if (owner && sec.orderNumber === owner.external_id) { ownerSectionOk = sec.ok; ownerTotal = sec.totalFee }
   }
 
+  // A bundle IS the job: link its doors under one primary so the list shows one row per
+  // house and autopilot creates one SF job (migration 106).
+  const parentId = await linkOrderGroup(supabase, groupMembers)
   for (const oid of touchedOrders) await refreshOrderIpoTotals(supabase, oid)
+  if (parentId) await rollUpGroupTotal(supabase, parentId)
 
   // 'mismatch' means a section's fees didn't sum to its stated total, OR this document
   // contains no section for the order it is attached to (an attribution problem, which is
@@ -138,6 +153,46 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
     ownerSectionOk === null ? 'mismatch' : (ownerSectionOk ? 'ok' : 'mismatch')
   await stamp(status, ownerTotal)
   return { ok: true, status, sections: sections.length, lines: storedLines, totalFee: ownerTotal, recovered }
+}
+
+/** Link the doors of one bundled IPO into a single group. The primary is a portal-sourced
+ *  order when there is one (only those carry status/notes/documents/schedule), else the
+ *  lowest order number — a stable choice, so re-parsing never reshuffles the group. If a
+ *  later crawl turns a recovered door into a portal order, the portal row takes over. */
+async function linkOrderGroup(
+  supabase: SupabaseClient,
+  members: Array<{ id: string; externalId: string; isPortal: boolean }>,
+): Promise<string | null> {
+  if (members.length === 0) return null
+  const unique = [...new Map(members.map(m => [m.id, m])).values()]
+  if (unique.length === 1) return unique[0].id // single-door job — nothing to group
+
+  const sorted = [...unique].sort((a, b) =>
+    (b.isPortal ? 1 : 0) - (a.isPortal ? 1 : 0) || a.externalId.localeCompare(b.externalId))
+  const parent = sorted[0]
+  const children = sorted.slice(1).map(m => m.id)
+
+  await supabase.from('vendor_orders').update({ parent_order_id: null }).eq('id', parent.id)
+  if (children.length) {
+    await supabase.from('vendor_orders').update({ parent_order_id: parent.id }).in('id', children)
+  }
+  return parent.id
+}
+
+/** The primary carries the WHOLE job's money — that's what the single SF job is worth —
+ *  while each door keeps its own total for the per-door breakdown. */
+async function rollUpGroupTotal(supabase: SupabaseClient, parentId: string): Promise<void> {
+  const { data: kids } = await supabase
+    .from('vendor_orders').select('derived_total_fee').eq('parent_order_id', parentId)
+  const { data: self } = await supabase
+    .from('vendor_orders').select('derived_total_fee').eq('id', parentId).maybeSingle()
+  const rows = (kids ?? []) as Array<{ derived_total_fee: number | null }>
+  if (!rows.length) return // not a group
+  const total = Number(self?.derived_total_fee ?? 0)
+    + rows.reduce((a, r) => a + Number(r.derived_total_fee ?? 0), 0)
+  await supabase.from('vendor_orders')
+    .update({ derived_total_fee: total, updated_at: new Date().toISOString() })
+    .eq('id', parentId)
 }
 
 /** Point an order at its CURRENT IPO: a change order produces a revised IPO that restates

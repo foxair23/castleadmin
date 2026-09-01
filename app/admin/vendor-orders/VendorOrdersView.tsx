@@ -42,7 +42,7 @@ export default async function VendorOrdersView({
     // the page payload. The drawer fetches it on demand; the Clopay display dates are
     // ingest-computed columns (derived_*, has_detail — migration 103).
     db.from('vendor_orders')
-      .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, derived_order_date, derived_last_activity_at, has_detail, derived_total_fee, record_source')
+      .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, derived_order_date, derived_last_activity_at, has_detail, derived_total_fee, record_source, parent_order_id')
       .eq('vendor', vendor)
       .order('first_seen_at', { ascending: false })
       .limit(1000),
@@ -119,16 +119,30 @@ export default async function VendorOrdersView({
   const sortValue = (o: VendorOrder) => o.last_status_change_at ?? o.first_seen_at
   orders.sort((a, b) => sortValue(b).localeCompare(sortValue(a)))
 
+  // Multi-door jobs (migration 106): a house with several garage doors is several Clopay
+  // orders — one per door, each with its own PO — bundled in one IPO and booked as ONE SF
+  // job. Show one row per house: children fold into their primary, which already carries
+  // the group's rolled-up Total Fee. The drawer lists each door.
+  const doorCounts = new Map<string, number>()
+  for (const o of orders) {
+    if (o.parent_order_id) doorCounts.set(o.parent_order_id, (doorCounts.get(o.parent_order_id) ?? 0) + 1)
+  }
+  const topLevel = orders.filter(o => !o.parent_order_id)
+
   // `raw` never leaves the database now — the client just needs the has_detail flag
   // (the drawer fetches a row's raw on demand via getOrderDetailAction).
-  const clientOrders: VendorOrder[] = orders.map(o => ({ ...o, has_detail: o.has_detail === true }))
+  const clientOrders: VendorOrder[] = topLevel.map(o => ({
+    ...o,
+    has_detail: o.has_detail === true,
+    door_count: 1 + (doorCounts.get(o.id) ?? 0),
+  }))
 
-  const counts = orders.reduce<Record<string, number>>((a, o) => {
+  const counts = topLevel.reduce<Record<string, number>>((a, o) => {
     const k = (o.status || 'unknown').toLowerCase().startsWith('open') ? 'Open' : (o.status || 'Unknown')
     a[k] = (a[k] || 0) + 1
     return a
   }, {})
-  const needDetail = orders.filter(o => !o.detail_scraped_at).length
+  const needDetail = topLevel.filter(o => !o.detail_scraped_at).length
 
   // Last scrape from this vendor's portal — freshness + kind, so a broken scraper
   // (stale time, or an unexpectedly small order count) is obvious at a glance.
@@ -150,7 +164,7 @@ export default async function VendorOrdersView({
         <div className="flex items-center gap-4">
           {isGenie && <NudgeControls on={nudge.enabled} scheduleUrl={nudge.scheduleUrl} canManage={canManage} />}
           {sfEnabled && <AutopilotToggle on={autopilot.enabled} canManage={canManage} vendor={vendor} label={`auto-create new ${shortName} jobs`} />}
-          <span className="text-sm text-gray-500">{orders.length} total</span>
+          <span className="text-sm text-gray-500">{topLevel.length} total</span>
         </div>
       </div>
       <p className="text-sm text-gray-500 mb-3">

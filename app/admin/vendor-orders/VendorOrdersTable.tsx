@@ -55,11 +55,26 @@ export interface VendorOrder {
   /** 'portal' = the crawler saw it; 'ipo_document' = recovered from a bundled IPO PDF
    *  because the HD Program portal never lists it (migration 105). */
   record_source?: string | null
+  /** Multi-door grouping (migration 106): null on a group's primary. Children are folded
+   *  into their primary's row rather than listed separately. */
+  parent_order_id?: string | null
+  /** How many doors this job covers (1 unless it's a grouped multi-door job). */
+  door_count?: number
   attachments?: StoredAttachment[]
 }
 
 // One line of the order's current Installer Purchase Order, parsed from the stored PDF.
 // Phase 2 maps `item_number` onto the SF services catalog to build SF job line items.
+/** One door of a job: its own Clopay order, PO and IPO total, with its line items. */
+export interface OrderDoor {
+  orderId: string
+  external_id: string
+  customer_po: string | null
+  total_fee: number | null
+  record_source: string | null
+  items: OrderLineItem[]
+}
+
 export interface OrderLineItem {
   line_no: string | null
   quantity: number | null
@@ -226,16 +241,61 @@ function SummaryList({ summary }: { summary: unknown }) {
   )
 }
 
+// A job can cover several doors — each its own Clopay order and PO, all bundled in one IPO
+// and booked as ONE Service Fusion job. One door renders as a plain line-item table; several
+// render per-door with a grand total, which is what the SF job is worth.
+function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: number | null }) {
+  const withItems = doors.filter(d => d.items.length > 0)
+  if (withItems.length === 0) return null
+  if (withItems.length === 1) return <LineItemsTable items={withItems[0].items} totalFee={withItems[0].total_fee} />
+
+  const sum = withItems.reduce((a, d) => a + (d.total_fee ?? 0), 0)
+  return (
+    <section className="mb-6">
+      <div className="flex items-baseline gap-2 mb-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          {withItems.length} Doors
+        </h4>
+        <span className="text-[11px] text-gray-400">
+          separate Clopay orders on one job — they roll into a single SF job
+        </span>
+      </div>
+      <div className="space-y-4">
+        {withItems.map((d, i) => (
+          <div key={d.orderId}>
+            <div className="flex items-baseline gap-2 mb-1 text-xs">
+              <span className="font-semibold text-gray-700">Door {i + 1}</span>
+              <span className="text-gray-500">Order {d.external_id}</span>
+              {d.customer_po && <span className="text-gray-500">· PO {d.customer_po}</span>}
+              {d.record_source === 'ipo_document' && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700" title="Not listed in the HD Program portal — recovered from the IPO document">
+                  not in portal
+                </span>
+              )}
+              <span className="ml-auto font-medium text-gray-900 tabular-nums">{fmtMoney(d.total_fee ?? 0)}</span>
+            </div>
+            <LineItemsTable items={d.items} totalFee={d.total_fee} hideTotal />
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex items-baseline justify-end gap-3 border-t border-gray-200 pt-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Job Total</span>
+        <span className="text-base font-semibold text-gray-900 tabular-nums">{fmtMoney(groupTotal ?? sum)}</span>
+      </div>
+    </section>
+  )
+}
+
 // The order's Installer Purchase Order, parsed from the stored PDF: what the work is and
 // what Clopay pays us. Full width above the Summary/Documents/Notes grid — it's a real table
 // and reads badly squeezed into a narrow column. Product lines are $0.00 (the door, opener,
 // molding); the paid lines are the install/delivery/labor ones, so those are emphasized.
-function LineItemsTable({ items, totalFee }: { items: OrderLineItem[]; totalFee: number | null }) {
+function LineItemsTable({ items, totalFee, hideTotal = false }: { items: OrderLineItem[]; totalFee: number | null; hideTotal?: boolean }) {
   const sum = items.reduce((a, i) => a + (i.line_fee ?? 0), 0)
   const mismatch = totalFee != null && Math.abs(sum - totalFee) >= 0.005
   return (
-    <section className="mb-6">
-      <div className="flex items-baseline gap-2 mb-2">
+    <section className={hideTotal ? '' : 'mb-6'}>
+      <div className={`flex items-baseline gap-2 mb-2 ${hideTotal ? 'hidden' : ''}`}>
         <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Line Items</h4>
         <span className="text-[11px] text-gray-400">from the Installer Purchase Order</span>
         {mismatch && (
@@ -271,12 +331,14 @@ function LineItemsTable({ items, totalFee }: { items: OrderLineItem[]; totalFee:
               )
             })}
           </tbody>
-          <tfoot className="border-t border-gray-200 bg-gray-50">
-            <tr>
-              <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Total Fee</td>
-              <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">{fmtMoney(totalFee ?? sum)}</td>
-            </tr>
-          </tfoot>
+          {!hideTotal && (
+            <tfoot className="border-t border-gray-200 bg-gray-50">
+              <tr>
+                <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Total Fee</td>
+                <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">{fmtMoney(totalFee ?? sum)}</td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </section>
@@ -287,14 +349,14 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
   // `raw` no longer ships with the list (it dominated the page payload) — fetch it once
   // when the drawer first opens. Rows rendered with an inline raw still work as before.
   const [fetched, setFetched] = useState<VendorOrderRaw | null>(order.raw ?? null)
-  const [lineItems, setLineItems] = useState<OrderLineItem[]>([])
+  const [doors, setDoors] = useState<OrderDoor[]>([])
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     if (fetched) return
     let alive = true
     getOrderDetailAction(order.id).then(res => {
       if (!alive) return
-      if (res.ok) { setFetched((res.raw as VendorOrderRaw) ?? {}); setLineItems((res.lineItems as OrderLineItem[]) ?? []) }
+      if (res.ok) { setFetched((res.raw as VendorOrderRaw) ?? {}); setDoors((res.doors as OrderDoor[]) ?? []) }
       else setFailed(true)
     }).catch(() => { if (alive) setFailed(true) })
     return () => { alive = false }
@@ -322,7 +384,7 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
   return (
     <tr className="bg-gray-50">
       <td colSpan={colSpan} className="px-4 py-4">
-        {lineItems.length > 0 && <LineItemsTable items={lineItems} totalFee={order.total_fee ?? null} />}
+        {doors.some(d => d.items.length > 0) && <DoorsSection doors={doors} groupTotal={order.total_fee ?? null} />}
         <div className="grid gap-6 md:grid-cols-3">
           <section>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Summary</h4>
@@ -534,7 +596,17 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                 </td>
                 <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusChipStyle(o.status)}`}>{o.status || '—'}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.last_status_change_at ? fmtSeen(o.last_status_change_at) : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-600">
+                {o.customer_po || '—'}
+                {(o.door_count ?? 1) > 1 && (
+                  <span
+                    className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700"
+                    title={`${o.door_count} doors on this job, each its own Clopay order and PO — open the row to see them. Total Fee is the whole job.`}
+                  >
+                    +{(o.door_count ?? 1) - 1} doors
+                  </span>
+                )}
+              </td>
               <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">
                 {o.total_fee != null
                   ? <span className="font-medium text-gray-900" title="TOTAL FEE from this order's Installer Purchase Order">{fmtMoney(o.total_fee)}</span>
