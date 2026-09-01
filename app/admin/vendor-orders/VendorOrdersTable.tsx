@@ -72,6 +72,7 @@ export interface OrderDoor {
   customer_po: string | null
   total_fee: number | null
   record_source: string | null
+  status: string | null
   items: OrderLineItem[]
 }
 
@@ -247,7 +248,9 @@ function SummaryList({ summary }: { summary: unknown }) {
 function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: number | null }) {
   const withItems = doors.filter(d => d.items.length > 0)
   if (withItems.length === 0) return null
-  if (withItems.length === 1) return <LineItemsTable items={withItems[0].items} totalFee={withItems[0].total_fee} />
+  // A real group keeps the per-door framing even when only one door has line items — the job
+  // total and the sibling orders are the point, and a bare table would hide both.
+  if (doors.length === 1) return <LineItemsTable items={withItems[0].items} totalFee={withItems[0].total_fee} />
 
   const sum = withItems.reduce((a, d) => a + (d.total_fee ?? 0), 0)
   return (
@@ -257,7 +260,7 @@ function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: n
           {withItems.length} Doors
         </h4>
         <span className="text-[11px] text-gray-400">
-          separate Clopay orders on one job — they roll into a single SF job
+          separate Clopay orders under one portal line — they roll into a single SF job
         </span>
       </div>
       <div className="space-y-4">
@@ -267,6 +270,7 @@ function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: n
               <span className="font-semibold text-gray-700">Door {i + 1}</span>
               <span className="text-gray-500">Order {d.external_id}</span>
               {d.customer_po && <span className="text-gray-500">· PO {d.customer_po}</span>}
+              {d.status && <span className="text-gray-500">· {d.status}</span>}
               {d.record_source === 'ipo_document' && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700" title="Not listed in the HD Program portal — recovered from the IPO document">
                   not in portal

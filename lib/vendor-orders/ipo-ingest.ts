@@ -10,7 +10,8 @@ import { isIpoDoc, parseIpoDocument, type IpoParseResult } from './clopay-ipo'
 //
 // A document may bundle SEVERAL IPOs — one per page, one per order in a multi-door job —
 // and Clopay attaches the same bundle to every order in the group. So a section is ALWAYS
-// attributed by its own `Order Number`, never by position. Sections for orders that don't
+// attributed by its own `Order Number`, never by position. The portal line a document hangs
+// off owns every order in it: that is the job, and it becomes one SF job. Sections for orders that don't
 // exist in vendor_orders are recovered as `record_source='ipo_document'` rows: those orders
 // are real (real PO, real money, physically at the DC) but never appear in the HD Program
 // portal, so the crawler cannot see them.
@@ -100,8 +101,13 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
   let ownerSectionOk: boolean | null = null
   let ownerTotal: number | null = null
   const touchedOrders = new Set<string>()
-  // Every order in this bundle, for the multi-door grouping below.
-  const groupMembers: Array<{ id: string; externalId: string; isPortal: boolean }> = []
+  // Every order this document ties together. A document sits under ONE portal line, and that
+  // line owns everything in it: the orders named in its sections PLUS the order it hangs off,
+  // even when the document carries no section of its own for that order. Clopay keys its
+  // document list by incident/PO, so an order's IPO can name only its siblings — they are
+  // still the same job on the same portal line.
+  const groupMembers = new Set<string>()
+  if (owner?.vendor === 'clopay_hd') groupMembers.add(owner.id as string)
 
   for (const sec of sections) {
     if (!sec.orderNumber || sec.items.length === 0) continue
@@ -134,11 +140,7 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
       if (created) { orderId = created.id as string; recovered.push(sec.orderNumber) }
     }
     if (!orderId) continue
-    // isPortal must mean "the crawler saw this order in the HD portal", NOT "a row already
-    // existed" — a door recovered by an earlier document has a row too, and treating that as
-    // a portal order let a status-less recovered row become the group's primary while the
-    // real portal order (the only one carrying status, notes, schedule) hung off it as a child.
-    groupMembers.push({ id: orderId, externalId: sec.orderNumber, isPortal: match?.record_source === 'portal' })
+    groupMembers.add(orderId)
 
     const rows = sec.items.map((i, n) => ({
       order_id: orderId,
@@ -160,7 +162,7 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
 
   // A bundle IS the job: link its doors under one primary so the list shows one row per
   // house and autopilot creates one SF job (migration 106).
-  const parentId = await linkOrderGroup(supabase, groupMembers)
+  const parentId = await linkOrderGroup(supabase, [...groupMembers])
   for (const oid of touchedOrders) await refreshOrderIpoTotals(supabase, oid)
   if (parentId) await rollUpGroupTotal(supabase, parentId)
   // A door can be re-parsed without its group's primary being in the same document; roll the
@@ -175,37 +177,64 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
   // Two very different outcomes, kept apart so neither hides the other:
   //   'mismatch'    — a section's fees didn't sum to its own stated TOTAL. A parser problem.
   //   'sibling_doc' — the document parsed fine but carries no section for the order it hangs
-  //                   off. Clopay's document list is keyed by incident/PO, so a customer's
-  //                   order can be served another of THEIR orders' IPOs. Nothing is wrong and
-  //                   nothing is lost: every section was filed against the order it names.
-  //                   These are separate orders, not doors of one job, so they are NOT grouped.
+  //                   off. Clopay's document list is keyed by incident/PO, so an order can be
+  //                   served only its siblings' IPOs. Nothing is wrong and nothing is lost:
+  //                   every section is filed against the order it names, and the whole set is
+  //                   grouped under the portal line the document sits on.
   const status: IpoIngestResult['status'] =
     ownerSectionOk === null ? 'sibling_doc' : (ownerSectionOk ? 'ok' : 'mismatch')
   await stamp(status, ownerTotal)
   return { ok: true, status, sections: sections.length, lines: storedLines, totalFee: ownerTotal, recovered }
 }
 
-/** Link the doors of one bundled IPO into a single group. The primary is a portal-sourced
- *  order when there is one (only those carry status/notes/documents/schedule), else the
- *  lowest order number — a stable choice, so re-parsing never reshuffles the group. If a
- *  later crawl turns a recovered door into a portal order, the portal row takes over. */
-async function linkOrderGroup(
-  supabase: SupabaseClient,
-  members: Array<{ id: string; externalId: string; isPortal: boolean }>,
-): Promise<string | null> {
-  if (members.length === 0) return null
-  const unique = [...new Map(members.map(m => [m.id, m])).values()]
-  if (unique.length === 1) return unique[0].id // single-door job — nothing to group
+/** Link everything one document ties together into a single group — one portal line, one
+ *  job, one SF job. Members are the orders the document names plus the order it hangs off.
+ *
+ *  Groups MERGE rather than being rebuilt from this document alone: an order already in a
+ *  group brings that whole group with it, so a customer whose doors arrive across several
+ *  documents ends up in one group instead of the last document winning.
+ *
+ *  The primary is a portal-sourced order when the group has one — only those carry status,
+ *  notes, documents and schedule — with the lowest order number as a stable tie-break, so
+ *  re-parsing never reshuffles the group. */
+async function linkOrderGroup(supabase: SupabaseClient, memberIds: string[]): Promise<string | null> {
+  const ids = new Set(memberIds.filter(Boolean))
+  if (ids.size === 0) return null
+  if (ids.size === 1) return [...ids][0] // nothing to link; a lone member never reshapes a group
 
-  const sorted = [...unique].sort((a, b) =>
-    (b.isPortal ? 1 : 0) - (a.isPortal ? 1 : 0) || a.externalId.localeCompare(b.externalId))
+  // Pull in the groups these members already belong to (parents and siblings), transitively.
+  let frontier = [...ids]
+  for (let round = 0; round < 3 && frontier.length; round++) {
+    const [{ data: ups }, { data: downs }] = await Promise.all([
+      supabase.from('vendor_orders').select('id, parent_order_id').in('id', frontier),
+      supabase.from('vendor_orders').select('id').in('parent_order_id', frontier),
+    ])
+    const next: string[] = []
+    for (const u of (ups ?? []) as Array<{ parent_order_id: string | null }>) {
+      if (u.parent_order_id && !ids.has(u.parent_order_id)) { ids.add(u.parent_order_id); next.push(u.parent_order_id) }
+    }
+    for (const d of (downs ?? []) as Array<{ id: string }>) {
+      if (!ids.has(d.id)) { ids.add(d.id); next.push(d.id) }
+    }
+    frontier = next
+  }
+
+  const { data: rows } = await supabase
+    .from('vendor_orders').select('id, external_id, record_source').in('id', [...ids])
+  const members = (rows ?? []) as Array<{ id: string; external_id: string | null; record_source: string | null }>
+  if (members.length < 2) return members[0]?.id ?? [...ids][0]
+
+  // record_source, not "a row already existed" — a door recovered by an earlier document has
+  // a row too, and counting that as a portal order let a status-less recovered row become the
+  // primary while the real portal order hung off it as a child.
+  const sorted = [...members].sort((a, b) =>
+    (b.record_source === 'portal' ? 1 : 0) - (a.record_source === 'portal' ? 1 : 0)
+    || (a.external_id ?? '').localeCompare(b.external_id ?? ''))
   const parent = sorted[0]
   const children = sorted.slice(1).map(m => m.id)
 
   await supabase.from('vendor_orders').update({ parent_order_id: null }).eq('id', parent.id)
-  if (children.length) {
-    await supabase.from('vendor_orders').update({ parent_order_id: parent.id }).in('id', children)
-  }
+  await supabase.from('vendor_orders').update({ parent_order_id: parent.id }).in('id', children)
   return parent.id
 }
 
