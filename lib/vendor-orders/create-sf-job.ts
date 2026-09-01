@@ -15,6 +15,7 @@ function db(): SupabaseClient {
 
 interface OrderRow {
   id: string; vendor: string; external_id: string; sf_job_id: string | null
+  parent_order_id: string | null
   customer_name: string | null; customer_po: string | null; store_number: string | null
   order_type: string | null; scope: string | null
   street_address: string | null; city: string | null; state_prov: string | null; postal_code: string | null
@@ -34,7 +35,7 @@ function parseName(name: string | null): { first: string; last: string } {
   return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] }
 }
 
-function buildDescription(o: OrderRow, vendorLabel: string): string {
+function buildDescription(o: OrderRow, vendorLabel: string, doors: GroupDoor[]): string {
   const lines: string[] = []
   if (o.scope) lines.push(o.scope)
   lines.push(`Source: ${vendorLabel}`)
@@ -42,7 +43,39 @@ function buildDescription(o: OrderRow, vendorLabel: string): string {
   if (o.store_number) lines.push(`Home Depot Store #: ${o.store_number}`)
   if (o.customer_po) lines.push(`PO #: ${o.customer_po}`)
   if (o.order_type) lines.push(`Order type: ${o.order_type}`)
+
+  // A house with several doors is several Clopay orders — each its own PO — on ONE job, which
+  // is how the office already builds them. Spell every door out so the crew and the office can
+  // see what the single job covers without opening HD Orders.
+  if (doors.length > 1) {
+    lines.push('', `${doors.length} doors on this job:`)
+    for (const d of doors) {
+      const bits = [`Order ${d.external_id}`]
+      if (d.customer_po) bits.push(`PO ${d.customer_po}`)
+      if (d.derived_total_fee != null) bits.push(fmtUsd(d.derived_total_fee))
+      lines.push(`  · ${bits.join(' · ')}`)
+    }
+    const total = doors.reduce((a, d) => a + Number(d.derived_total_fee ?? 0), 0)
+    if (total > 0) lines.push(`Job total: ${fmtUsd(total)}`)
+  }
   return lines.join('\n')
+}
+
+interface GroupDoor { id: string; external_id: string; customer_po: string | null; derived_total_fee: number | null }
+
+const fmtUsd = (n: number) => `$${Number(n).toFixed(2)}`
+
+/** Every Clopay order on this job — the group's primary plus its doors — in order-number
+ *  order. A single-door job returns just itself, so nothing changes for the common case. */
+async function loadGroupDoors(supabase: SupabaseClient, o: OrderRow): Promise<GroupDoor[]> {
+  const rootId = o.parent_order_id ?? o.id
+  const { data } = await supabase
+    .from('vendor_orders')
+    .select('id, external_id, customer_po, derived_total_fee')
+    .or(`id.eq.${rootId},parent_order_id.eq.${rootId}`)
+    .order('external_id', { ascending: true })
+  const rows = (data ?? []) as GroupDoor[]
+  return rows.length ? rows : [{ id: o.id, external_id: o.external_id, customer_po: o.customer_po, derived_total_fee: null }]
 }
 
 /** Pick an "open/new" job status id+name from SF. */
@@ -61,7 +94,7 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
   const supabase = db()
   const { data: order } = await supabase
     .from('vendor_orders')
-    .select('id, vendor, external_id, sf_job_id, customer_name, customer_po, store_number, order_type, scope, street_address, city, state_prov, postal_code, phone, email')
+    .select('id, vendor, external_id, parent_order_id, sf_job_id, customer_name, customer_po, store_number, order_type, scope, street_address, city, state_prov, postal_code, phone, email')
     .eq('id', orderId).maybeSingle()
   if (!order) return { ok: false, error: 'order not found' }
   const o = order as OrderRow
@@ -102,6 +135,9 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
     // a free-form name; `multiplier` is the quantity.
     const services = (vendor?.sfServiceLines ?? []).map(s => ({ service: s.name, name: s.name, multiplier: s.quantity ?? 1 }))
 
+    const doors = await loadGroupDoors(supabase, o)
+    const poNumber = [...new Set(doors.map(d => d.customer_po || d.external_id).filter(Boolean))].join(', ')
+
     const jobPayload: Record<string, unknown> = {
       customer_name: parseInt(String(sfCustomerId), 10),
       contact_first_name: name.first,
@@ -112,10 +148,13 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       postal_code: o.postal_code,
       status: status.name,
       ...(vendor?.sfJobSource ? { source: vendor.sfJobSource } : {}),
-      // po_number carries the PO for future matching. Genie has customer_po;
-      // Clopay's PO is the external_id, so fall back to it.
-      ...((o.customer_po || o.external_id) ? { po_number: o.customer_po || o.external_id } : {}),
-      description: buildDescription(o, vendor?.label ?? 'Genie'),
+      // po_number carries EVERY PO on the job, comma-separated. SF's po_number is already a
+      // multi-PO field — the matcher splits it on ; / , (lib/matching/sf-job-match.ts) — so
+      // listing all of them means each door matches this one job and no door can later look
+      // unjobbed and spawn a duplicate. Genie has customer_po; Clopay's PO falls back to the
+      // external_id, as before.
+      ...(poNumber ? { po_number: poNumber } : {}),
+      description: buildDescription(o, vendor?.label ?? 'Genie', doors),
       ...(customFields.length ? { custom_fields: customFields } : {}),
       ...(services.length ? { services } : {}),
     }
@@ -161,7 +200,12 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
     }
 
     // 3. Link it back + log.
-    await supabase.from('vendor_orders').update({ sf_job_id: sfJobId, sf_created_job_number: sfJobNumber, updated_at: new Date().toISOString() }).eq('id', orderId)
+    // Stamp EVERY door on the job. All of them are genuinely on this SF job, and a door left
+    // unstamped reads as unjobbed to autopilot — which is how one house ended up with three
+    // SF jobs.
+    await supabase.from('vendor_orders')
+      .update({ sf_job_id: sfJobId, sf_created_job_number: sfJobNumber, updated_at: new Date().toISOString() })
+      .in('id', doors.map(d => d.id))
     await supabase.from('vendor_order_events').insert({ order_id: orderId, event_type: 'sf_job_created', to_value: sfJobId, detail: { customerId: sfCustomerId, warning: warning ?? null } })
     return { ok: true, sfJobId, warning }
   } catch (e) {
