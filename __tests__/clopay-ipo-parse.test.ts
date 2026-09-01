@@ -207,6 +207,17 @@ describe('customer block (SHIP TO)', () => {
     expect(c.postalCode).toMatch(/^\d{5}$/)
     expect(c.stateProv).toMatch(/^[A-Z]{2}$/)
   })
+
+  // Real production row: with no phone on file, the SHIP TO line starts the installer and
+  // sold-to columns with the bare installer number, and the name ran on into them — the order
+  // showed up in HD Orders as "PIERIK, MAGGIE 56505 HOME DEPOT INC#658".
+  it('stops the name at the installer number when the order has no phone', () => {
+    const noPhone = SIMPLE_TWO_LINE.replace(
+      /SHIP TO INSTALLER SOLD TO\n.*\n/,
+      'SHIP TO INSTALLER SOLD TO\nPIERIK, MAGGIE 56505 HOME DEPOT INC#658\n',
+    )
+    expect(parseIpoText(noPhone).customer.customerName).toBe('PIERIK, MAGGIE')
+  })
 })
 
 // One house = one job = one SF job. These assert the facts the grouping logic relies on:

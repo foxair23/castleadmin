@@ -35,7 +35,7 @@ async function extractPdfText(bytes: Uint8Array): Promise<string> {
 
 export interface IpoIngestResult {
   ok: boolean
-  status: 'ok' | 'mismatch' | 'error' | 'not_ipo'
+  status: 'ok' | 'mismatch' | 'sibling_doc' | 'error' | 'not_ipo'
   sections?: number
   lines?: number
   totalFee?: number | null
@@ -108,7 +108,7 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
     // Resolve the section to ITS OWN order — never the document's owner by position.
     let orderId: string | null = null
     const { data: match } = await supabase
-      .from('vendor_orders').select('id').eq('vendor', 'clopay_hd').eq('external_id', sec.orderNumber).maybeSingle()
+      .from('vendor_orders').select('id, record_source').eq('vendor', 'clopay_hd').eq('external_id', sec.orderNumber).maybeSingle()
     if (match) orderId = match.id as string
     else if (owner?.vendor === 'clopay_hd') {
       // An order Clopay bills us for that the portal never shows — recover it so the work
@@ -134,7 +134,11 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
       if (created) { orderId = created.id as string; recovered.push(sec.orderNumber) }
     }
     if (!orderId) continue
-    groupMembers.push({ id: orderId, externalId: sec.orderNumber, isPortal: !!match })
+    // isPortal must mean "the crawler saw this order in the HD portal", NOT "a row already
+    // existed" — a door recovered by an earlier document has a row too, and treating that as
+    // a portal order let a status-less recovered row become the group's primary while the
+    // real portal order (the only one carrying status, notes, schedule) hung off it as a child.
+    groupMembers.push({ id: orderId, externalId: sec.orderNumber, isPortal: match?.record_source === 'portal' })
 
     const rows = sec.items.map((i, n) => ({
       order_id: orderId,
@@ -159,12 +163,24 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
   const parentId = await linkOrderGroup(supabase, groupMembers)
   for (const oid of touchedOrders) await refreshOrderIpoTotals(supabase, oid)
   if (parentId) await rollUpGroupTotal(supabase, parentId)
+  // A door can be re-parsed without its group's primary being in the same document; roll the
+  // primary up again so its headline number never lags a child's revision.
+  for (const oid of touchedOrders) {
+    if (oid === parentId) continue
+    const { data: kid } = await supabase.from('vendor_orders').select('parent_order_id').eq('id', oid).maybeSingle()
+    const pid = kid?.parent_order_id as string | null | undefined
+    if (pid && pid !== parentId) await rollUpGroupTotal(supabase, pid)
+  }
 
-  // 'mismatch' means a section's fees didn't sum to its stated total, OR this document
-  // contains no section for the order it is attached to (an attribution problem, which is
-  // exactly the bug that made a sibling's total show on the wrong order).
+  // Two very different outcomes, kept apart so neither hides the other:
+  //   'mismatch'    — a section's fees didn't sum to its own stated TOTAL. A parser problem.
+  //   'sibling_doc' — the document parsed fine but carries no section for the order it hangs
+  //                   off. Clopay's document list is keyed by incident/PO, so a customer's
+  //                   order can be served another of THEIR orders' IPOs. Nothing is wrong and
+  //                   nothing is lost: every section was filed against the order it names.
+  //                   These are separate orders, not doors of one job, so they are NOT grouped.
   const status: IpoIngestResult['status'] =
-    ownerSectionOk === null ? 'mismatch' : (ownerSectionOk ? 'ok' : 'mismatch')
+    ownerSectionOk === null ? 'sibling_doc' : (ownerSectionOk ? 'ok' : 'mismatch')
   await stamp(status, ownerTotal)
   return { ok: true, status, sections: sections.length, lines: storedLines, totalFee: ownerTotal, recovered }
 }
@@ -198,12 +214,16 @@ async function linkOrderGroup(
 async function rollUpGroupTotal(supabase: SupabaseClient, parentId: string): Promise<void> {
   const { data: kids } = await supabase
     .from('vendor_orders').select('derived_total_fee').eq('parent_order_id', parentId)
-  const { data: self } = await supabase
-    .from('vendor_orders').select('derived_total_fee').eq('id', parentId).maybeSingle()
   const rows = (kids ?? []) as Array<{ derived_total_fee: number | null }>
   if (!rows.length) return // not a group
-  const total = Number(self?.derived_total_fee ?? 0)
-    + rows.reduce((a, r) => a + Number(r.derived_total_fee ?? 0), 0)
+  // Recompute the primary's OWN door from its line items rather than reading back
+  // derived_total_fee — that column already holds a roll-up, so adding the children to it
+  // would compound the group total a little more on every re-parse.
+  const { data: ownLines } = await supabase
+    .from('vendor_order_line_items').select('line_fee').eq('order_id', parentId).eq('is_current', true)
+  const own = ((ownLines ?? []) as Array<{ line_fee: number | null }>)
+    .reduce((a, r) => a + Number(r.line_fee ?? 0), 0)
+  const total = own + rows.reduce((a, r) => a + Number(r.derived_total_fee ?? 0), 0)
   await supabase.from('vendor_orders')
     .update({ derived_total_fee: total, updated_at: new Date().toISOString() })
     .eq('id', parentId)
