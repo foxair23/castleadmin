@@ -15,6 +15,14 @@
 //   TOTAL : $100.00
 // Product lines (door/opener/molding) are $0.00; the money is on FIR* labor/delivery lines.
 // Item numbers occasionally wrap across lines (e.g. "CAN212-" / "CD*R49892" / "0").
+//
+// CRITICAL: one PDF can contain SEVERAL complete IPOs — one per page, each with its own
+// Order Number, PO Number and TOTAL (a multi-door job; the footer numbers them, e.g.
+// "…-IP-01-03" = 1 of 3). Clopay attaches the whole bundle to every order in the group, so
+// the page order does NOT correspond to the order the document hangs off. Parsing only the
+// first TOTAL silently attributed a sibling door's money to the wrong order (real case:
+// EASTMAN KAREN order 181194157 showed $458.00, its sibling's total, instead of $532.00).
+// Always use parseIpoDocument() and match sections by their own orderNumber.
 
 export interface IpoLine {
   line_no: string
@@ -57,7 +65,35 @@ function headerValue(text: string, label: string): string | null {
   return v ? v : null
 }
 
-/** Parse the text of an IPO PDF into structured line items + the document total. */
+/** Split a document into its per-order IPO sections and parse each one. A single-IPO
+ *  document yields one section. Sections are returned in page order; callers must pick the
+ *  one whose `orderNumber` matches the order they are storing against — never index [0]. */
+export function parseIpoDocument(text: string): IpoParseResult[] {
+  const src = text ?? ''
+  // Each embedded IPO starts its own header block with "Order Number:".
+  const starts: number[] = []
+  const re = /Order Number\s*:/gi
+  for (let m = re.exec(src); m; m = re.exec(src)) starts.push(m.index)
+  if (starts.length <= 1) {
+    const one = parseIpoText(src)
+    return one.items.length > 0 || one.orderNumber ? [one] : []
+  }
+  const out: IpoParseResult[] = []
+  for (let i = 0; i < starts.length; i++) {
+    const section = src.slice(starts[i], i + 1 < starts.length ? starts[i + 1] : undefined)
+    const parsed = parseIpoText(section)
+    if (parsed.items.length > 0 || parsed.orderNumber) out.push(parsed)
+  }
+  return out
+}
+
+/** Find the section belonging to one order number (the order a document is attached to). */
+export function sectionForOrder(sections: IpoParseResult[], orderNumber: string): IpoParseResult | null {
+  return sections.find(s => s.orderNumber === orderNumber) ?? null
+}
+
+/** Parse ONE IPO section (a single order's header + line-item table). Use
+ *  parseIpoDocument() for whole PDFs — they may contain several of these. */
 export function parseIpoText(text: string): IpoParseResult {
   const lines = (text ?? '').split('\n').map(l => l.trimEnd())
   const empty: IpoParseResult = {

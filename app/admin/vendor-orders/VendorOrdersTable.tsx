@@ -52,6 +52,9 @@ export interface VendorOrder {
   /** TOTAL FEE from the order's current IPO (migration 104), shown in the list. */
   derived_total_fee?: number | null
   total_fee?: number | null
+  /** 'portal' = the crawler saw it; 'ipo_document' = recovered from a bundled IPO PDF
+   *  because the HD Program portal never lists it (migration 105). */
+  record_source?: string | null
   attachments?: StoredAttachment[]
 }
 
@@ -518,7 +521,17 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                   </td>
                 )}
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtDate(o.order_date)}</td>
-                <td className="px-3 py-2 font-medium whitespace-nowrap">{o.external_id}</td>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">
+                  {o.external_id}
+                  {o.record_source === 'ipo_document' && (
+                    <span
+                      className="ml-1.5 align-middle text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700"
+                      title="Recovered from a bundled IPO document — Clopay bills this order but the HD Program portal never lists it, so the crawler cannot see it. Status and detail stay empty."
+                    >
+                      not in portal
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-xs ${statusChipStyle(o.status)}`}>{o.status || '—'}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.last_status_change_at ? fmtSeen(o.last_status_change_at) : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.customer_po || '—'}</td>
