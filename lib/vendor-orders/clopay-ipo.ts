@@ -54,11 +54,14 @@ export interface IpoParseResult {
   ok: boolean
 }
 
-/** Is this stored document an IPO? `docType` is Clopay's documenT_TYPE ("New IPO"); the
- *  filename convention is the IP_ prefix. Either is sufficient. */
+/** Is this stored document an IPO? Two independent signals, either sufficient:
+ *  `docType` is Clopay's documenT_TYPE ("New IPO"), and the filename convention is the
+ *  document id run STRAIGHT into `IP_` with no separator — `142432482IP_7151173_3753297.pdf`.
+ *  (An earlier version required `^`, `/` or `-` before `IP_`, so it matched none of the real
+ *  filenames and the nightly sweep silently classified every IPO as not-an-IPO.) */
 export function isIpoDoc(filename: string | null | undefined, docType?: string | null): boolean {
   if (docType && /\bIPO\b/i.test(docType)) return true
-  return /(^|[/-])IP_/i.test(filename ?? '')
+  return /(^|[^A-Za-z])IP_/i.test(filename ?? '')
 }
 
 const ITEM_RE = /^(\d+\.\d+)\s+(\d+)\s+(.*)$/
