@@ -44,6 +44,17 @@ export interface IpoIngestResult {
   error?: string
 }
 
+/** Clopay's documenT_TYPE for one stored document, read off the order's crawled detail
+ *  (`raw.documents[]`, keyed by the same id we store as `external_ref`). */
+function docTypeFor(raw: unknown, externalRef: string | null): string | null {
+  if (!raw || typeof raw !== 'object' || !externalRef) return null
+  const docs = (raw as { documents?: unknown }).documents
+  if (!Array.isArray(docs)) return null
+  const hit = docs.find(d => d && typeof d === 'object' && String((d as { id?: unknown }).id ?? '') === externalRef)
+  const t = hit && (hit as { docType?: unknown }).docType
+  return typeof t === 'string' ? t : null
+}
+
 /** Parse one stored attachment and persist every IPO it contains. Never throws — the
  *  outcome is recorded on the attachment so a backfill moves on and problems stay visible. */
 export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<IpoIngestResult> {
@@ -61,11 +72,14 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
       .eq('id', att.id)
   }
 
-  if (!isIpoDoc(att.filename as string | null)) { await stamp('not_ipo', null); return { ok: true, status: 'not_ipo' } }
-
-  // Which order does this document hang off? Its own section is the authoritative one.
+  // Which order does this document hang off? Its own section is the authoritative one —
+  // and its crawled `raw.documents` carries Clopay's documenT_TYPE, a second signal for
+  // "is this an IPO" so classification never rests on the filename convention alone.
   const { data: owner } = await supabase
-    .from('vendor_orders').select('id, external_id, vendor').eq('id', att.order_id).maybeSingle()
+    .from('vendor_orders').select('id, external_id, vendor, raw').eq('id', att.order_id).maybeSingle()
+
+  const docType = docTypeFor(owner?.raw, att.external_ref as string | null)
+  if (!isIpoDoc(att.filename as string | null, docType)) { await stamp('not_ipo', null); return { ok: true, status: 'not_ipo' } }
 
   let sections: IpoParseResult[]
   try {
@@ -235,21 +249,46 @@ export async function refreshOrderIpoTotals(supabase: SupabaseClient, orderId: s
 }
 
 /** Backfill sweep: parse a batch of not-yet-parsed IPO attachments. Idempotent and
- *  resumable — repeated runs drain the backlog, then find nothing to do. */
-export async function parsePendingIpoAttachments(limit = 25): Promise<{ processed: number; ok: number; mismatch: number; error: number; recovered: number }> {
+ *  resumable — repeated runs drain the backlog, then find nothing to do.
+ *
+ *  Reports `candidates` and `skipped` separately from `processed`: a run that finds nothing
+ *  it RECOGNIZES looks identical to a run with nothing to do unless those are distinct, and
+ *  that ambiguity is exactly what hid a broken filename matcher for a day. */
+export interface IpoSweepCounts {
+  candidates: number
+  skipped: number
+  processed: number
+  ok: number
+  mismatch: number
+  error: number
+  recovered: number
+  remaining: number
+}
+
+export async function parsePendingIpoAttachments(limit = 25): Promise<IpoSweepCounts> {
   const supabase = db()
   const { data } = await supabase
     .from('vendor_order_attachments')
-    .select('id, filename')
+    .select('id, order_id, filename, external_ref')
     .eq('source', 'clopay_doc')
     .is('parsed_at', null)
     .order('created_at', { ascending: true })
     .limit(limit * 4) // over-fetch: most stored docs are not IPOs
-  const all = (data ?? []) as Array<{ id: string; filename: string | null }>
-  const targets = all.filter(a => isIpoDoc(a.filename)).slice(0, limit)
+  const all = (data ?? []) as Array<{ id: string; order_id: string; filename: string | null; external_ref: string | null }>
 
-  const counts = { processed: 0, ok: 0, mismatch: 0, error: 0, recovered: 0 }
-  const skipped = all.filter(a => !isIpoDoc(a.filename)).map(a => a.id)
+  const byName = all.filter(a => isIpoDoc(a.filename))
+  const misses = all.filter(a => !isIpoDoc(a.filename))
+  // Second chance on Clopay's own documenT_TYPE before we write anything off.
+  const rescued = await rescueByDocType(supabase, misses)
+
+  const candidates = [...byName, ...misses.filter(m => rescued.has(m.id))]
+  const targets = candidates.slice(0, limit)
+  const skipped = misses.filter(m => !rescued.has(m.id)).map(a => a.id)
+
+  const counts: IpoSweepCounts = {
+    candidates: candidates.length, skipped: skipped.length,
+    processed: 0, ok: 0, mismatch: 0, error: 0, recovered: 0, remaining: 0,
+  }
   if (skipped.length) {
     await supabase.from('vendor_order_attachments')
       .update({ parsed_at: new Date().toISOString(), parse_status: 'not_ipo' })
@@ -264,5 +303,31 @@ export async function parsePendingIpoAttachments(limit = 25): Promise<{ processe
     else if (r.status === 'mismatch') counts.mismatch++
     else if (r.status === 'error') counts.error++
   }
+
+  const { count } = await supabase
+    .from('vendor_order_attachments')
+    .select('id', { count: 'exact', head: true })
+    .eq('source', 'clopay_doc')
+    .is('parsed_at', null)
+  counts.remaining = count ?? 0
   return counts
+}
+
+/** Attachments whose filename didn't look like an IPO but whose order says otherwise.
+ *  Only the misses' orders are loaded (their `raw` is large), so the common case costs
+ *  nothing extra. */
+async function rescueByDocType(
+  supabase: SupabaseClient,
+  misses: Array<{ id: string; order_id: string; filename: string | null; external_ref: string | null }>,
+): Promise<Set<string>> {
+  const hits = new Set<string>()
+  if (!misses.length) return hits
+  const orderIds = [...new Set(misses.map(m => m.order_id).filter(Boolean))]
+  if (!orderIds.length) return hits
+  const { data } = await supabase.from('vendor_orders').select('id, raw').in('id', orderIds)
+  const rawById = new Map((data ?? []).map(o => [String(o.id), (o as { raw?: unknown }).raw]))
+  for (const m of misses) {
+    if (isIpoDoc(m.filename, docTypeFor(rawById.get(m.order_id), m.external_ref))) hits.add(m.id)
+  }
+  return hits
 }

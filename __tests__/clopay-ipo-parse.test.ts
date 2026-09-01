@@ -75,11 +75,24 @@ describe('parseIpoText', () => {
 })
 
 describe('isIpoDoc', () => {
-  it('recognizes IPOs by docType or IP_ filename prefix', () => {
+  // These are the REAL filenames Clopay serves (they are the fixture keys below): the
+  // document id runs straight into "IP_" with no separator. An earlier matcher required a
+  // '-' or '/' first, matched none of them, and the nightly sweep wrote off every IPO as
+  // 'not_ipo'. Assert the genuine shape, not an invented one.
+  it('recognizes every real Clopay IPO filename', () => {
+    for (const name of Object.keys(unpdfTexts as Record<string, string>)) {
+      expect(isIpoDoc(name), name).toBe(true)
+    }
+  })
+
+  it('recognizes IPOs by docType or IP_ filename marker', () => {
+    expect(isIpoDoc('142432482IP_7151173_3753297.pdf')).toBe(true)
     expect(isIpoDoc('IP_7151173_3753297.pdf')).toBe(true)
-    expect(isIpoDoc('142432482-IP_7151173_3753297.pdf')).toBe(true)
+    expect(isIpoDoc('142432482-IP_7151173_3753297.pdf')).toBe(true) // storage-path form
     expect(isIpoDoc('anything.pdf', 'New IPO')).toBe(true)
     expect(isIpoDoc('SC_123.pdf', 'Compltd SC')).toBe(false)
+    expect(isIpoDoc('142432482SO_7151173.pdf')).toBe(false)
+    expect(isIpoDoc('SHIP_manifest.pdf')).toBe(false)
     expect(isIpoDoc(null)).toBe(false)
   })
 })
