@@ -89,8 +89,17 @@ function parseCustomerBlock(lines: string[]): IpoCustomer {
   const l2 = (lines[i + 2] ?? '').trim()
   const l3 = (lines[i + 3] ?? '').trim()
 
+  // The SHIP TO line runs the customer's name straight into the installer and sold-to
+  // columns: "ROY JOSEPH 8589000900 8589000900 HOME DEPOT INC#1848". Cut at whichever
+  // column marker comes first. A 10-digit phone is the usual one, but orders with no phone
+  // on file start those columns with the bare installer number instead
+  // ("PIERIK, MAGGIE 56505 HOME DEPOT INC#658"), which is why the name must not depend on
+  // the phone being present.
   const phoneM = l1.match(/\b(\d{10})\b/)
-  const customerName = (phoneM ? l1.slice(0, phoneM.index) : l1).replace(/\s+/g, ' ').trim() || null
+  const cuts = [phoneM?.index, l1.match(/\b\d{4,6}\b/)?.index, l1.match(/\bHOME\s+DEPOT\b/i)?.index]
+    .filter((n): n is number => typeof n === 'number' && n > 0)
+  const nameEnd = cuts.length ? Math.min(...cuts) : l1.length
+  const customerName = l1.slice(0, nameEnd).replace(/[\s,]+$/, '').replace(/\s+/g, ' ').trim() || null
 
   // Cut the street at the installer's company name (these are Castle's own IPOs); if the
   // marker is absent, fall back to the first INC/LLC company boundary, else the whole line.

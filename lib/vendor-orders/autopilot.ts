@@ -67,9 +67,25 @@ export async function runVendorAutopilot(vendor: string): Promise<AutopilotRunRe
     .order('first_seen_at', { ascending: true })
     .limit(300)
 
-  const candidates = ((data ?? []) as Array<{ id: string; external_id: string | null; status: string | null; customer_po: string | null; customer_name: string | null; email: string | null; phone: string | null; sf_job_id: string | null }>)
+  const active = ((data ?? []) as Array<{ id: string; external_id: string | null; status: string | null; customer_po: string | null; customer_name: string | null; email: string | null; phone: string | null; sf_job_id: string | null }>)
     .filter(o => isActive(o.status))
     .slice(0, LOOKAHEAD)
+
+  // A group is ONE job. If any door in it already has an SF job — whether we created it or
+  // the office did — the primary must not create a second. The primary's own sf_job_id being
+  // null says nothing about its doors, and a door can carry the job (LABYED YASSIN: recovered
+  // order 181192773 already holds SF job 1020259173 while its portal line holds none).
+  let candidates = active
+  if (active.length) {
+    const { data: kids } = await supabase
+      .from('vendor_orders')
+      .select('parent_order_id, sf_job_id, sf_created_job_number')
+      .in('parent_order_id', active.map(o => o.id))
+    const taken = new Set(((kids ?? []) as Array<{ parent_order_id: string | null; sf_job_id: string | null; sf_created_job_number: string | null }>)
+      .filter(k => k.sf_job_id || k.sf_created_job_number)
+      .map(k => String(k.parent_order_id)))
+    if (taken.size) candidates = active.filter(o => !taken.has(o.id))
+  }
   if (candidates.length === 0) return { enabled: true, created: 0, failed: 0, skippedMatched: 0, remaining: 0, errors: [] }
 
   // Never create a job for an order that already matches an existing SF job.

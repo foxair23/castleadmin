@@ -45,15 +45,15 @@ export async function getOrderDetailAction(orderId: string): Promise<{ ok: boole
   // fetch the whole group so the drawer can show every door's line items, which together
   // are what the single SF job is worth.
   const [{ data }, { data: kids }] = await Promise.all([
-    db.from('vendor_orders').select('raw, external_id, customer_po, derived_total_fee, record_source').eq('id', orderId).maybeSingle(),
+    db.from('vendor_orders').select('raw, external_id, customer_po, derived_total_fee, record_source, status').eq('id', orderId).maybeSingle(),
     db.from('vendor_orders')
-      .select('id, external_id, customer_po, derived_total_fee, record_source')
+      .select('id, external_id, customer_po, derived_total_fee, record_source, status')
       .eq('parent_order_id', orderId)
       .order('external_id', { ascending: true }),
   ])
   if (!data) return { ok: false, error: 'order not found' }
 
-  const children = (kids ?? []) as Array<{ id: string; external_id: string; customer_po: string | null; derived_total_fee: number | null; record_source: string | null }>
+  const children = (kids ?? []) as Array<{ id: string; external_id: string; customer_po: string | null; derived_total_fee: number | null; record_source: string | null; status: string | null }>
   const ids = [orderId, ...children.map(c => c.id)]
   const { data: lines } = await db
     .from('vendor_order_line_items')
@@ -73,12 +73,12 @@ export async function getOrderDetailAction(orderId: string): Promise<{ ok: boole
   // The primary door first, then the rest — the order the office reads them in.
   const doors = [
     { orderId, external_id: data.external_id, customer_po: data.customer_po,
-      total_fee: data.derived_total_fee, record_source: data.record_source,
+      total_fee: data.derived_total_fee, record_source: data.record_source, status: data.status,
       items: byOrder.get(orderId) ?? [] },
     ...children.map(c => ({
       orderId: c.id, external_id: c.external_id, customer_po: c.customer_po,
       // a child's stored total is its own door's IPO total (the primary carries the roll-up)
-      total_fee: c.derived_total_fee, record_source: c.record_source,
+      total_fee: c.derived_total_fee, record_source: c.record_source, status: c.status,
       items: byOrder.get(c.id) ?? [],
     })),
   ].filter(d => d.items.length > 0 || d.orderId === orderId)
