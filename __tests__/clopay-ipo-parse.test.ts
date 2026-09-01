@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { parseIpoText, isIpoDoc } from '../lib/vendor-orders/clopay-ipo'
+import { parseIpoText, parseIpoDocument, sectionForOrder, isIpoDoc } from '../lib/vendor-orders/clopay-ipo'
 import { SIMPLE_TWO_LINE, WRAPPED_ITEM_NUMBER, OPENER_AND_DOOR, MULTI_FEE } from './fixtures/clopay-ipo-samples'
 import unpdfTexts from './fixtures/unpdf-texts.json'
+import multipage from './fixtures/clopay-ipo-multipage.json'
 
 // The document's own "TOTAL :" is the checksum: if the parser drops, merges, or
 // misreads a line, sum(line fees) stops matching and `ok` goes false.
@@ -107,5 +108,119 @@ describe('parseIpoText against production (unpdf) extraction', () => {
   it('reassembles the split item number from unpdf output too', () => {
     const r = parseIpoText((unpdfTexts as Record<string, string>)['141639396IP_7090501_3724925.pdf'])
     expect(r.items[0].item_number).toBe('CAN212-CD*R498920')
+  })
+})
+
+// ── Multi-IPO documents ─────────────────────────────────────────────────────
+// A real Clopay PDF can bundle one complete IPO per page (a multi-door job), and Clopay
+// attaches the same bundle to EVERY order in the group. Parsing only the first TOTAL
+// attributed a sibling door's money to the wrong order — e.g. EASTMAN KAREN's order
+// 181194157 reported $458.00 (its sibling's total) instead of its own $532.00.
+const BUNDLE_3 = (multipage as Record<string, string>)['18281413-142732803.pdf'] // COOREY PETE
+const BUNDLE_2 = (multipage as Record<string, string>)['8be248ea-141909760.pdf'] // EASTMAN KAREN
+
+describe('parseIpoDocument (bundled multi-order IPOs)', () => {
+  it('splits a 3-order bundle into three independently-correct IPOs', () => {
+    const secs = parseIpoDocument(BUNDLE_3)
+    expect(secs).toHaveLength(3)
+    expect(secs.map(s => s.orderNumber)).toEqual(['181194840', '181194841', '181195037'])
+    expect(secs.map(s => s.poNumber)).toEqual(['68443644', '68443645', '68443705'])
+    expect(secs.map(s => s.totalFee)).toEqual([458, 458, 125])
+    for (const s of secs) {
+      expect(s.ok).toBe(true) // each page balances against its OWN stated total
+      expect(s.items.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('splits a 2-order bundle and keeps each order distinct', () => {
+    const secs = parseIpoDocument(BUNDLE_2)
+    expect(secs).toHaveLength(2)
+    expect(secs.map(s => s.orderNumber)).toEqual(['181194156', '181194157'])
+    expect(secs.map(s => s.totalFee)).toEqual([458, 532])
+  })
+
+  it('REGRESSION: picks each order its OWN total, not the first page found', () => {
+    // The shipped bug: parseIpoText on the whole document returned page 1 with ok=true,
+    // so the checksum passed while the money belonged to a different order.
+    const whole = parseIpoText(BUNDLE_2)
+    expect(whole.orderNumber).toBe('181194156')
+    expect(whole.totalFee).toBe(458)
+
+    const secs = parseIpoDocument(BUNDLE_2)
+    expect(sectionForOrder(secs, '181194157')?.totalFee).toBe(532) // the correct answer
+    expect(sectionForOrder(secs, '181194156')?.totalFee).toBe(458)
+    expect(sectionForOrder(secs, '181195037')).toBeNull()          // not in this document
+  })
+
+  it('returns a single section for an ordinary one-order IPO', () => {
+    const secs = parseIpoDocument(SIMPLE_TWO_LINE)
+    expect(secs).toHaveLength(1)
+    expect(secs[0].orderNumber).toBe('181194873')
+    expect(secs[0].totalFee).toBe(100)
+  })
+
+  it('exposes the sibling orders that the HD portal never lists', () => {
+    // 181194840 / 181194841 exist only inside this document — the portal shows 181195037.
+    const found = parseIpoDocument(BUNDLE_3).map(s => s.orderNumber)
+    expect(found).toContain('181194840')
+    expect(found).toContain('181194841')
+  })
+})
+
+describe('customer block (SHIP TO)', () => {
+  it('extracts the end customer from a bundled IPO page', () => {
+    const secs = parseIpoDocument(BUNDLE_3)
+    const c = secs[0].customer
+    expect(c.customerName).toBe('COOREY PETE')
+    expect(c.streetAddress).toBe('38088 AVENIDA BRAVURA')
+    expect(c.city).toBe('TEMECULA')
+    expect(c.stateProv).toBe('CA')
+    expect(c.postalCode).toBe('92592')
+    expect(c.phone).toBe('7148033795')
+  })
+
+  it('does not bleed the installer or sold-to columns into the customer', () => {
+    for (const sec of parseIpoDocument(BUNDLE_3)) {
+      const c = sec.customer
+      expect(c.customerName).not.toMatch(/CASTLE|HOME DEPOT/i)
+      expect(c.streetAddress).not.toMatch(/CASTLE|SIMPSON|PACES FERRY/i)
+      expect(c.city).not.toMatch(/ATLANTA|Escondido/i)
+    }
+  })
+
+  it('extracts the customer from a single-order IPO too', () => {
+    const c = parseIpoText(SIMPLE_TWO_LINE).customer
+    expect(c.customerName).toBeTruthy()
+    expect(c.postalCode).toMatch(/^\d{5}$/)
+    expect(c.stateProv).toMatch(/^[A-Z]{2}$/)
+  })
+})
+
+// One house = one job = one SF job. These assert the facts the grouping logic relies on:
+// a bundle names every door, and the doors' totals sum to what the SF job is worth.
+describe('multi-door job grouping inputs', () => {
+  it('a bundle yields one section per door, all for the same customer', () => {
+    const secs = parseIpoDocument(BUNDLE_3)
+    expect(secs).toHaveLength(3)
+    const names = new Set(secs.map(s => s.customer.customerName))
+    expect(names.size).toBe(1)                       // one house
+    expect([...names][0]).toBe('COOREY PETE')
+    expect(new Set(secs.map(s => s.poNumber)).size).toBe(3)   // three distinct POs
+  })
+
+  it("the group total is the sum of the doors' IPO totals", () => {
+    const three = parseIpoDocument(BUNDLE_3)
+    expect(three.reduce((a, s) => a + (s.totalFee ?? 0), 0)).toBe(1041) // 458 + 458 + 125
+    const two = parseIpoDocument(BUNDLE_2)
+    expect(two.reduce((a, s) => a + (s.totalFee ?? 0), 0)).toBe(990)    // 458 + 532
+  })
+
+  it('every door carries the contact detail needed to stand alone', () => {
+    for (const sec of parseIpoDocument(BUNDLE_2)) {
+      expect(sec.customer.customerName).toBe('EASTMAN KAREN')
+      expect(sec.customer.streetAddress).toBeTruthy()
+      expect(sec.customer.postalCode).toMatch(/^\d{5}$/)
+      expect(sec.poNumber).toBeTruthy()
+    }
   })
 })

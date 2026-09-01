@@ -38,19 +38,52 @@ export async function sendNudgeNowAction(orderId: string): Promise<{ ok: boolean
 /** One order's captured `raw` detail (Clopay Summary/Documents/Notes) for the HD Orders
  *  drawer. Fetched on demand when a drawer opens — the list payload no longer carries
  *  `raw` (at 5–30KB × 1000 rows it dominated page load). Admin + sales. */
-export async function getOrderDetailAction(orderId: string): Promise<{ ok: boolean; raw?: unknown; lineItems?: unknown[]; error?: string }> {
+export async function getOrderDetailAction(orderId: string): Promise<{ ok: boolean; raw?: unknown; doors?: unknown[]; error?: string }> {
   if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
   const db = stsDb()
-  // Both loaded here (not in the list query) so the HD Orders page payload stays small.
-  const [{ data }, { data: lines }] = await Promise.all([
-    db.from('vendor_orders').select('raw').eq('id', orderId).maybeSingle(),
-    db.from('vendor_order_line_items')
-      .select('line_no, quantity, item_number, description, line_fee')
-      .eq('order_id', orderId).eq('is_current', true)
-      .order('sort_order', { ascending: true }),
+  // A multi-door job is several Clopay orders (one per door) grouped under one primary —
+  // fetch the whole group so the drawer can show every door's line items, which together
+  // are what the single SF job is worth.
+  const [{ data }, { data: kids }] = await Promise.all([
+    db.from('vendor_orders').select('raw, external_id, customer_po, derived_total_fee, record_source').eq('id', orderId).maybeSingle(),
+    db.from('vendor_orders')
+      .select('id, external_id, customer_po, derived_total_fee, record_source')
+      .eq('parent_order_id', orderId)
+      .order('external_id', { ascending: true }),
   ])
   if (!data) return { ok: false, error: 'order not found' }
-  return { ok: true, raw: data.raw ?? {}, lineItems: lines ?? [] }
+
+  const children = (kids ?? []) as Array<{ id: string; external_id: string; customer_po: string | null; derived_total_fee: number | null; record_source: string | null }>
+  const ids = [orderId, ...children.map(c => c.id)]
+  const { data: lines } = await db
+    .from('vendor_order_line_items')
+    .select('order_id, source_order_number, line_no, quantity, item_number, description, line_fee')
+    .in('order_id', ids)
+    .eq('is_current', true)
+    .order('sort_order', { ascending: true })
+
+  const byOrder = new Map<string, unknown[]>()
+  for (const l of (lines ?? []) as Array<Record<string, unknown>>) {
+    const k = String(l.order_id)
+    const arr = byOrder.get(k) ?? []
+    arr.push({ line_no: l.line_no, quantity: l.quantity, item_number: l.item_number, description: l.description, line_fee: l.line_fee })
+    byOrder.set(k, arr)
+  }
+
+  // The primary door first, then the rest — the order the office reads them in.
+  const doors = [
+    { orderId, external_id: data.external_id, customer_po: data.customer_po,
+      total_fee: data.derived_total_fee, record_source: data.record_source,
+      items: byOrder.get(orderId) ?? [] },
+    ...children.map(c => ({
+      orderId: c.id, external_id: c.external_id, customer_po: c.customer_po,
+      // a child's stored total is its own door's IPO total (the primary carries the roll-up)
+      total_fee: c.derived_total_fee, record_source: c.record_source,
+      items: byOrder.get(c.id) ?? [],
+    })),
+  ].filter(d => d.items.length > 0 || d.orderId === orderId)
+
+  return { ok: true, raw: data.raw ?? {}, doors }
 }
 
 /** Toggle a vendor's autopilot (admin only). vendor: 'genie_thd' | 'clopay_hd'. */
