@@ -115,8 +115,28 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
     let orderId: string | null = null
     const { data: match } = await supabase
       .from('vendor_orders').select('id, record_source').eq('vendor', 'clopay_hd').eq('external_id', sec.orderNumber).maybeSingle()
-    if (match) orderId = match.id as string
-    else if (owner?.vendor === 'clopay_hd') {
+    if (match) {
+      orderId = match.id as string
+      // Refresh a recovered row's details from the document. These fields were written on
+      // insert only, so a parser improvement never reached rows already recovered — the
+      // corrected SHIP TO name had nothing to correct ("PIERIK, MAGGIE 56505 HOME DEPOT
+      // INC#658" survived the re-parse that fixed the parser). Portal rows are never touched:
+      // the crawler's own data is better than anything the IPO carries.
+      if (match.record_source === 'ipo_document') {
+        await supabase.from('vendor_orders').update({
+          customer_po: sec.poNumber,
+          order_date: sec.orderDate,
+          derived_order_date: sec.orderDate,
+          customer_name: sec.customer.customerName,
+          street_address: sec.customer.streetAddress,
+          city: sec.customer.city,
+          state_prov: sec.customer.stateProv,
+          postal_code: sec.customer.postalCode,
+          phone: sec.customer.phone,
+          updated_at: new Date().toISOString(),
+        }).eq('id', orderId)
+      }
+    } else if (owner?.vendor === 'clopay_hd') {
       // An order Clopay bills us for that the portal never shows — recover it so the work
       // (and the money) is visible instead of invisible.
       const { data: created } = await supabase.from('vendor_orders').insert({
