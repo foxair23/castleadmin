@@ -63,6 +63,13 @@ export async function runVendorAutopilot(vendor: string): Promise<AutopilotRunRe
     // already books them as ONE SF job carrying every PO. Without this, a 3-door job
     // would create 3 SF jobs (migration 106).
     .is('parent_order_id', null)
+    // Never auto-create for an order the HD portal has never listed. These rows are recovered
+    // from an IPO document (migration 105) and are usually another door of a job the office
+    // already has; they also arrive with no status, so isActive() waves them through. A
+    // recovered order with no portal sibling is its own group primary, which made it eligible
+    // — that is how RITURBAN EFREN got three SF jobs in the window between the first IPO parse
+    // and the grouping run. A dispatcher creates these by hand from HD Orders instead.
+    .neq('record_source', 'ipo_document')
     .gte('first_seen_at', ap.enabledAt)     // new-only
     .order('first_seen_at', { ascending: true })
     .limit(300)
