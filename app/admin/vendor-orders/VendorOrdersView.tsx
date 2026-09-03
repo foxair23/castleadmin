@@ -9,6 +9,7 @@ import { NudgeControls } from './NudgeControls'
 import HdOrdersNav from './HdOrdersNav'
 import { statusChipStyle, isTerminalStatus } from '@/lib/vendor-orders/status-style'
 import { attachmentsForOrders, signedUrls } from '@/lib/vendor-orders/attachments'
+import { clopayPaymentsByPo } from '@/lib/vendor-orders/payments'
 
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
@@ -128,10 +129,40 @@ export default async function VendorOrdersView({
   // job. Show one row per house: children fold into their primary, which already carries
   // the group's rolled-up Total Fee. The drawer lists each door.
   const doorCounts = new Map<string, number>()
+  const childrenOf = new Map<string, VendorOrder[]>()
   for (const o of orders) {
-    if (o.parent_order_id) doorCounts.set(o.parent_order_id, (doorCounts.get(o.parent_order_id) ?? 0) + 1)
+    if (!o.parent_order_id) continue
+    doorCounts.set(o.parent_order_id, (doorCounts.get(o.parent_order_id) ?? 0) + 1)
+    const arr = childrenOf.get(o.parent_order_id) ?? []
+    arr.push(o)
+    childrenOf.set(o.parent_order_id, arr)
   }
   const topLevel = orders.filter(o => !o.parent_order_id)
+
+  // What Clopay has actually paid, matched on PO. A row can be a whole group, so its figure
+  // sums EVERY door's PO — the same roll-up Total Fee does. POs come from all orders, not
+  // just the top-level ones: a child's PO is where that door's money is.
+  let paidByOrder = new Map<string, number>()
+  let poBreakdown = new Map<string, Array<{ po: string; amount: number }>>()
+  if (vendor === 'clopay_hd') {
+    const { byPo } = await clopayPaymentsByPo(db, orders.map(o => o.customer_po ?? ''))
+    if (byPo.size) {
+      paidByOrder = new Map()
+      poBreakdown = new Map()
+      for (const o of topLevel) {
+        const parts: Array<{ po: string; amount: number }> = []
+        for (const m of [o, ...(childrenOf.get(o.id) ?? [])]) {
+          const po = (m.customer_po ?? '').trim()
+          const amt = po ? byPo.get(po) : undefined
+          if (amt) parts.push({ po, amount: amt })
+        }
+        if (parts.length) {
+          paidByOrder.set(o.id, parts.reduce((a, p) => a + p.amount, 0))
+          poBreakdown.set(o.id, parts)
+        }
+      }
+    }
+  }
 
   // `raw` never leaves the database now — the client just needs the has_detail flag
   // (the drawer fetches a row's raw on demand via getOrderDetailAction).
@@ -139,6 +170,8 @@ export default async function VendorOrdersView({
     ...o,
     has_detail: o.has_detail === true,
     door_count: 1 + (doorCounts.get(o.id) ?? 0),
+    payment_received: paidByOrder.get(o.id) ?? null,
+    payment_pos: poBreakdown.get(o.id) ?? null,
   }))
 
   const counts = topLevel.reduce<Record<string, number>>((a, o) => {

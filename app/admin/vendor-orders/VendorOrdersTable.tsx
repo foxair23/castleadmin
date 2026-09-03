@@ -52,6 +52,9 @@ export interface VendorOrder {
   /** TOTAL FEE from the order's current IPO (migration 104), shown in the list. */
   derived_total_fee?: number | null
   total_fee?: number | null
+  /** Clopay remittance dollars received against this row's PO(s) — a group sums every door. */
+  payment_received?: number | null
+  payment_pos?: Array<{ po: string; amount: number }> | null
   dc_reserved_at?: string | null
   dc_last_seen_at?: string | null
   /** 'portal' = the crawler saw it; 'ipo_document' = recovered from a bundled IPO PDF
@@ -123,6 +126,7 @@ type SortKey =
   | 'phone' | 'email' | 'scope' | 'order_date' | 'schedule_date' | 'customer_po'
   | 'store_number' | 'sf_job_number' | 'first_seen_at' | 'last_seen_at' | 'last_status_change_at'
   | 'total_fee'
+  | 'payment_received'
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'order_date', label: 'Order Date' },
@@ -131,6 +135,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'last_status_change_at', label: 'Last Status Change' },
   { key: 'customer_po', label: 'PO' },
   { key: 'total_fee', label: 'Total Fee' },
+  { key: 'payment_received', label: 'Payment Received' },
   { key: 'sf_job_number', label: 'SF Job #' },
   { key: 'next_step', label: 'Next Step' },
   { key: 'customer_name', label: 'Customer' },
@@ -247,6 +252,22 @@ function SummaryList({ summary }: { summary: unknown }) {
 // A job can cover several doors — each its own Clopay order and PO, all bundled in one IPO
 // and booked as ONE Service Fusion job. One door renders as a plain line-item table; several
 // render per-door with a grand total, which is what the SF job is worth.
+/** What Clopay has paid against this row's PO(s), from the forwarded remittance advices. A
+ *  multi-door row sums every door's PO, so the figure lines up with Total Fee, which is also
+ *  the whole job. Green once it covers the fee, amber while it is short — the comparison is
+ *  the point, a bare number would mean re-reading the row to interpret it. */
+function PaymentReceived({ amount, totalFee, pos }: { amount: number | null; totalFee: number | null; pos: Array<{ po: string; amount: number }> | null }) {
+  if (amount == null || amount === 0) return <span className="text-gray-300">—</span>
+  const covered = totalFee != null && totalFee > 0 && amount + 0.005 >= totalFee
+  const short = totalFee != null && totalFee > 0 && !covered
+  const tone = covered ? 'text-green-700' : short ? 'text-amber-700' : 'text-gray-900'
+  const title = [
+    ...(pos ?? []).map(p => `PO ${p.po}: ${fmtMoney(p.amount)}`),
+    ...(short ? [`Short ${fmtMoney(totalFee! - amount)} of the ${fmtMoney(totalFee!)} total fee`] : []),
+  ].join('\n') || undefined
+  return <span className={`font-medium ${tone}`} title={title}>{fmtMoney(amount)}</span>
+}
+
 /** "At DC 63d" — this order's product is sitting at the San Diego DC, and has been for that
  *  long. Comes from the weekly DC report; the reserved date exists in no other source, so
  *  without it a door can age for months with nothing on screen to say so. */
@@ -636,6 +657,9 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                   ? <span className="font-medium text-gray-900" title="TOTAL FEE from this order's Installer Purchase Order">{fmtMoney(o.total_fee)}</span>
                   : <span className="text-gray-300">—</span>}
                 {o.dc_reserved_at && <AtDcBadge reservedAt={o.dc_reserved_at} lastSeen={o.dc_last_seen_at ?? null} />}
+              </td>
+              <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">
+                <PaymentReceived amount={o.payment_received ?? null} totalFee={o.total_fee ?? null} pos={o.payment_pos ?? null} />
               </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {enableSf ? (
