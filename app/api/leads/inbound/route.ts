@@ -117,6 +117,35 @@ export async function POST(req: NextRequest) {
   const metaFrom = fromToString(data.from)
   const metaSubject = (data.subject as string) ?? null
 
+  // The weekly Clopay DC report ("Fully Received and Reserved") — a PDF listing what is
+  // physically sitting at the DC, the only source of an order's reserved date.
+  //
+  // Routed HERE, before the body is fetched, because this email IS its attachment: there is
+  // little or no body to fetch, and the fetch below returns early when it comes back empty —
+  // which would kill the report before any recipient check ran. Everything this branch needs
+  // is in the webhook metadata (the recipient and the email id); it pulls the PDF itself.
+  //
+  // It must also stay ahead of the vendor-sender net further down: the DC sends from
+  // clopay.com and a Gmail auto-forward preserves that From, so the net would otherwise
+  // claim it and file the report as an unmatched remittance. `clopay@` cannot collide with
+  // `clopay-sts@` — the hyphen breaks the match.
+  const earlyRecipient = recipientToString(data.to)
+  if (/\bclopay@/i.test(earlyRecipient)) {
+    try {
+      const result = await ingestDcReportEmail(emailId, metaSubject)
+      await logInboundEvent({
+        from_addr: metaFrom, subject: metaSubject, resend_email_id: emailId,
+        outcome: result.ok ? 'clopay_dc' : 'clopay_dc_failed',
+        detail: result.ok ? `${result.status}: ${result.rows ?? 0} rows, ${result.newPos ?? 0} new POs` : (result.error ?? 'unknown'),
+      })
+      return NextResponse.json({ route: 'clopay_dc', ...result })
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e)
+      await logInboundEvent({ from_addr: metaFrom, subject: metaSubject, resend_email_id: emailId, outcome: 'clopay_dc_failed', detail })
+      return NextResponse.json({ ok: true, route: 'clopay_dc', error: detail })
+    }
+  }
+
   // Prefer an inline body; otherwise fetch the full email by id.
   let email: RawInboundEmail
   if (data.text || data.html) {
@@ -149,22 +178,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ route: isDcReply ? 'clopay_sts_dc_reply' : 'clopay_sts', ...result })
     } catch (e) {
       return NextResponse.json({ ok: true, route: 'clopay_sts', error: e instanceof Error ? e.message : String(e) })
-    }
-  }
-
-  // The weekly Clopay DC report ("Fully Received and Reserved") — a PDF listing what is
-  // physically sitting at the DC, which is the only source of an order's reserved date.
-  // This MUST come before the vendor-sender net below: the DC sends from clopay.com, and a
-  // Gmail auto-forward preserves that From, so the net would otherwise claim it and file the
-  // report as an unmatched remittance (which is exactly what happened before this branch
-  // existed). `clopay@` cannot collide with `clopay-sts@` — the hyphen breaks the match —
-  // and the STS branch is tested first regardless.
-  if (/\bclopay@/i.test(recipient)) {
-    try {
-      const result = await ingestDcReportEmail(emailId, email.subject)
-      return NextResponse.json({ route: 'clopay_dc', ...result })
-    } catch (e) {
-      return NextResponse.json({ ok: true, route: 'clopay_dc', error: e instanceof Error ? e.message : String(e) })
     }
   }
 
