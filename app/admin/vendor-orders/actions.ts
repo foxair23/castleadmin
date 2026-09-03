@@ -9,6 +9,7 @@ import { sendDcRequest, setStsSettings } from '@/lib/clopay-sts/dc-request'
 import { uploadAttachmentBytes } from '@/lib/clopay-sts/attachments'
 import { CLOPAY_STS_STAGES } from '@/lib/clopay-sts/stages'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { clopayPaymentsByPo } from '@/lib/vendor-orders/payments'
 
 async function isAllowed(): Promise<boolean> {
   const supabase = await createClient()
@@ -70,15 +71,22 @@ export async function getOrderDetailAction(orderId: string): Promise<{ ok: boole
     byOrder.set(k, arr)
   }
 
+  // What has been paid against each door's own PO, so a part-paid job shows WHICH door is
+  // still outstanding rather than just a total that doesn't reach the fee.
+  const { byPo } = await clopayPaymentsByPo(db, [data.customer_po ?? '', ...children.map(c => c.customer_po ?? '')])
+  const paidFor = (po: string | null) => byPo.get((po ?? '').trim()) ?? null
+
   // The primary door first, then the rest — the order the office reads them in.
   const doors = [
     { orderId, external_id: data.external_id, customer_po: data.customer_po,
       total_fee: data.derived_total_fee, record_source: data.record_source, status: data.status,
+      payment_received: paidFor(data.customer_po),
       items: byOrder.get(orderId) ?? [] },
     ...children.map(c => ({
       orderId: c.id, external_id: c.external_id, customer_po: c.customer_po,
       // a child's stored total is its own door's IPO total (the primary carries the roll-up)
       total_fee: c.derived_total_fee, record_source: c.record_source, status: c.status,
+      payment_received: paidFor(c.customer_po),
       items: byOrder.get(c.id) ?? [],
     })),
   ].filter(d => d.items.length > 0 || d.orderId === orderId)

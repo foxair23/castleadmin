@@ -78,6 +78,8 @@ export interface OrderDoor {
   total_fee: number | null
   record_source: string | null
   status: string | null
+  /** Clopay remittance dollars received against THIS door's PO. */
+  payment_received?: number | null
   items: OrderLineItem[]
 }
 
@@ -252,6 +254,24 @@ function SummaryList({ summary }: { summary: unknown }) {
 // A job can cover several doors — each its own Clopay order and PO, all bundled in one IPO
 // and booked as ONE Service Fusion job. One door renders as a plain line-item table; several
 // render per-door with a grand total, which is what the SF job is worth.
+/** One door's payment state. A door with no payment says so explicitly — in a part-paid job
+ *  the useful question is which PO is still outstanding, and an absent number cannot answer
+ *  it. */
+function DoorPayment({ paid, fee }: { paid: number | null; fee: number | null }) {
+  if (paid == null || paid === 0) {
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" title="No Clopay remittance received for this PO yet">awaiting payment</span>
+  }
+  const covered = fee != null && fee > 0 && paid + 0.005 >= fee
+  return (
+    <span
+      className={`text-[10px] px-1.5 py-0.5 rounded ${covered ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}
+      title={covered ? 'Paid in full' : `Paid ${fmtMoney(paid)}${fee ? ` of ${fmtMoney(fee)}` : ''}`}
+    >
+      {covered ? `paid ${fmtMoney(paid)}` : `paid ${fmtMoney(paid)} of ${fmtMoney(fee ?? 0)}`}
+    </span>
+  )
+}
+
 /** What Clopay has paid against this row's PO(s), from the forwarded remittance advices. A
  *  multi-door row sums every door's PO, so the figure lines up with Total Fee, which is also
  *  the whole job. Green once it covers the fee, amber while it is short — the comparison is
@@ -262,7 +282,7 @@ function PaymentReceived({ amount, totalFee, pos }: { amount: number | null; tot
   const short = totalFee != null && totalFee > 0 && !covered
   const tone = covered ? 'text-green-700' : short ? 'text-amber-700' : 'text-gray-900'
   const title = [
-    ...(pos ?? []).map(p => `PO ${p.po}: ${fmtMoney(p.amount)}`),
+    ...(pos ?? []).map(p => `PO ${p.po}: ${p.amount > 0 ? fmtMoney(p.amount) : 'awaiting payment'}`),
     ...(short ? [`Short ${fmtMoney(totalFee! - amount)} of the ${fmtMoney(totalFee!)} total fee`] : []),
   ].join('\n') || undefined
   return <span className={`font-medium ${tone}`} title={title}>{fmtMoney(amount)}</span>
@@ -294,6 +314,8 @@ function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: n
   if (doors.length === 1) return <LineItemsTable items={withItems[0].items} totalFee={withItems[0].total_fee} />
 
   const sum = withItems.reduce((a, d) => a + (d.total_fee ?? 0), 0)
+  const paidSum = doors.reduce((a, d) => a + (d.payment_received ?? 0), 0)
+  const outstanding = (groupTotal ?? sum) - paidSum
   return (
     <section className="mb-6">
       <div className="flex items-baseline gap-2 mb-2">
@@ -318,12 +340,26 @@ function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: n
                 </span>
               )}
               <span className="ml-auto font-medium text-gray-900 tabular-nums">{fmtMoney(d.total_fee ?? 0)}</span>
+              <DoorPayment paid={d.payment_received ?? null} fee={d.total_fee ?? null} />
             </div>
             <LineItemsTable items={d.items} totalFee={d.total_fee} hideTotal />
           </div>
         ))}
       </div>
       <div className="mt-3 flex items-baseline justify-end gap-3 border-t border-gray-200 pt-2">
+        {paidSum > 0 && (
+          <span className="mr-auto text-xs">
+            <span className="text-gray-500">Paid </span>
+            <span className="font-medium text-gray-900 tabular-nums">{fmtMoney(paidSum)}</span>
+            {outstanding > 0.005 && (
+              <>
+                <span className="text-gray-400"> · </span>
+                <span className="text-gray-500">Outstanding </span>
+                <span className="font-medium text-amber-700 tabular-nums">{fmtMoney(outstanding)}</span>
+              </>
+            )}
+          </span>
+        )}
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Job Total</span>
         <span className="text-base font-semibold text-gray-900 tabular-nums">{fmtMoney(groupTotal ?? sum)}</span>
       </div>
