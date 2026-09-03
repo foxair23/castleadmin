@@ -66,8 +66,8 @@ export async function POST(req: NextRequest) {
   try {
     const result = await ingestDcReport({ text, resendEmailId: resendId, source: 'email' })
     // Keep the PDF itself for audit, but never let a storage hiccup lose the ingest.
-    if (result.ok && result.status === 'ingested') {
-      await storeDcPdf(result.reportDate ?? 'unknown', pdf.filename, bytes).catch(() => {})
+    if (result.ok && result.status === 'ingested' && result.reportId) {
+      await storeDcPdf(result.reportId, result.reportDate ?? 'unknown', pdf.filename, bytes).catch(() => {})
     }
     return NextResponse.json(result)
   } catch (e) {
@@ -75,11 +75,14 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Park the PDF next to the vendor documents, keyed by report date. Best effort. */
-async function storeDcPdf(reportDate: string, filename: string | null, bytes: Uint8Array): Promise<void> {
+/** Park the PDF next to the vendor documents. Keyed by the report ROW, not the date — one
+ *  Monday run can arrive as several files, and keying on the date would have them overwrite
+ *  each other in storage and stamp the wrong row. Best effort. */
+async function storeDcPdf(reportId: string, reportDate: string, filename: string | null, bytes: Uint8Array): Promise<void> {
   const { createClient } = await import('@supabase/supabase-js')
   const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
-  const path = `clopay-dc-reports/${reportDate}-${(filename || 'report.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')}`
+  const safe = (filename || 'report.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')
+  const path = `clopay-dc-reports/${reportDate}-${reportId.slice(0, 8)}-${safe}`
   await db.storage.from('vendor-order-attachments').upload(path, bytes, { contentType: 'application/pdf', upsert: true })
-  await db.from('clopay_dc_reports').update({ storage_path: path }).eq('report_date', reportDate)
+  await db.from('clopay_dc_reports').update({ storage_path: path }).eq('id', reportId)
 }

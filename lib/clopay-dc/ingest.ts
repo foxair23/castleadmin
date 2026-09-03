@@ -20,6 +20,7 @@ export interface DcIngestResult {
   ok: boolean
   status: 'ingested' | 'duplicate' | 'parse_failed'
   reportDate?: string
+  reportId?: string
   rows?: number
   linked?: number
   newPos?: number
@@ -45,9 +46,19 @@ export async function ingestDcReport(opts: {
   const parsed = parseDcReport(opts.text)
   const reportDate = opts.reportDate ?? parsed.reportDate ?? new Date().toISOString().slice(0, 10)
 
+  // One EMAIL is one report row, not one report_date: a single Monday run arrives split
+  // across several files (the 31-Aug run came as two PDFs, HD and Castle-direct), and keying
+  // on the date alone meant the second file replaced the first file's rows and left half the
+  // run recorded. Each file stands on its own; the POs from all of them accumulate in
+  // clopay_dc_po_state, which is what the worklist actually reads.
+  const { data: prior } = opts.resendEmailId
+    ? await supabase.from('clopay_dc_reports').select('id').eq('resend_email_id', opts.resendEmailId).maybeSingle()
+    // A manual re-run of the same file should update in place rather than pile up.
+    : await supabase.from('clopay_dc_reports').select('id').eq('report_date', reportDate).is('resend_email_id', null).maybeSingle()
+
   // Store the report even when the parse is poor: raw_text means a parser fix can be re-run
   // later without asking for the email again.
-  const { data: report, error: repErr } = await supabase.from('clopay_dc_reports').upsert({
+  const fields = {
     report_date: reportDate,
     source: opts.source ?? 'email',
     resend_email_id: opts.resendEmailId ?? null,
@@ -55,7 +66,10 @@ export async function ingestDcReport(opts: {
     raw_text: opts.text,
     row_count: parsed.rows.length,
     parse_ok: parsed.ok,
-  }, { onConflict: 'report_date' }).select('id').maybeSingle()
+  }
+  const { data: report, error: repErr } = prior
+    ? await supabase.from('clopay_dc_reports').update(fields).eq('id', prior.id).select('id').maybeSingle()
+    : await supabase.from('clopay_dc_reports').insert(fields).select('id').maybeSingle()
   if (repErr || !report) return { ok: false, status: 'parse_failed', error: repErr?.message ?? 'report insert failed' }
 
   if (parsed.rows.length === 0) {
@@ -63,7 +77,8 @@ export async function ingestDcReport(opts: {
   }
 
   const reportId = report.id as string
-  // Re-ingesting the same report_date replaces its rows rather than doubling them.
+  // Re-ingesting the SAME FILE replaces its own rows rather than doubling them. Rows from a
+  // sibling file of the same run hang off their own report and are untouched.
   await supabase.from('clopay_dc_report_rows').delete().eq('report_id', reportId)
 
   const linkedIds = await resolveOrders(supabase, parsed.rows)
@@ -81,7 +96,7 @@ export async function ingestDcReport(opts: {
   await refreshOrderDcFields(supabase, parsed.rows, linkedIds, reportDate)
 
   return {
-    ok: true, status: 'ingested', reportDate,
+    ok: true, status: 'ingested', reportDate, reportId,
     rows: parsed.rows.length, linked: linkedIds.size, newPos,
   }
 }
