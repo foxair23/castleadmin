@@ -4,6 +4,7 @@ import { ingestLead, logInboundEvent } from '@/lib/leadgen/engine'
 import { aiExtractLead, isAiExtractConfigured } from '@/lib/leadgen/ai-extract'
 import { ingestRemittance } from '@/lib/remittance/engine'
 import { ingestStsEmail, ingestDcReply } from '@/lib/clopay-sts/engine'
+import { ingestDcReportEmail } from '@/lib/clopay-dc/from-email'
 
 export const maxDuration = 60
 
@@ -148,6 +149,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ route: isDcReply ? 'clopay_sts_dc_reply' : 'clopay_sts', ...result })
     } catch (e) {
       return NextResponse.json({ ok: true, route: 'clopay_sts', error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  // The weekly Clopay DC report ("Fully Received and Reserved") — a PDF listing what is
+  // physically sitting at the DC, which is the only source of an order's reserved date.
+  // This MUST come before the vendor-sender net below: the DC sends from clopay.com, and a
+  // Gmail auto-forward preserves that From, so the net would otherwise claim it and file the
+  // report as an unmatched remittance (which is exactly what happened before this branch
+  // existed). `clopay@` cannot collide with `clopay-sts@` — the hyphen breaks the match —
+  // and the STS branch is tested first regardless.
+  if (/\bclopay@/i.test(recipient)) {
+    try {
+      const result = await ingestDcReportEmail(emailId, email.subject)
+      return NextResponse.json({ route: 'clopay_dc', ...result })
+    } catch (e) {
+      return NextResponse.json({ ok: true, route: 'clopay_dc', error: e instanceof Error ? e.message : String(e) })
     }
   }
 
