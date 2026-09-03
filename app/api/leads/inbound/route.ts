@@ -129,14 +129,21 @@ export async function POST(req: NextRequest) {
   // clopay.com and a Gmail auto-forward preserves that From, so the net would otherwise
   // claim it and file the report as an unmatched remittance. `clopay@` cannot collide with
   // `clopay-sts@` — the hyphen breaks the match.
+  //
+  // Matched on the SUBJECT as well as the address. Six forwarded reports reached this webhook
+  // and fell through to leadgen as 'not_lead' because the recipient did not match `clopay@` —
+  // a forwarded message does not always present the address you sent it to. The DC's subject
+  // is unmistakable ("… Fully Received and Reserved Report31-AUG-2026"), so it identifies the
+  // report on its own and does not care which address the forward landed on.
   const earlyRecipient = recipientToString(data.to)
-  if (/\bclopay@/i.test(earlyRecipient)) {
+  const looksLikeDcReport = /fully\s+received\s+and\s+reserved/i.test(metaSubject ?? '')
+  if (/\bclopay@/i.test(earlyRecipient) || looksLikeDcReport) {
     try {
       const result = await ingestDcReportEmail(emailId, metaSubject)
       await logInboundEvent({
         from_addr: metaFrom, subject: metaSubject, resend_email_id: emailId,
         outcome: result.ok ? 'clopay_dc' : 'clopay_dc_failed',
-        detail: result.ok ? `${result.status}: ${result.rows ?? 0} rows, ${result.newPos ?? 0} new POs` : (result.error ?? 'unknown'),
+        detail: `to=${earlyRecipient || '?'} · ${result.ok ? `${result.status}: ${result.rows ?? 0} rows, ${result.newPos ?? 0} new POs` : (result.error ?? 'unknown')}`,
       })
       return NextResponse.json({ route: 'clopay_dc', ...result })
     } catch (e) {
@@ -207,7 +214,7 @@ export async function POST(req: NextRequest) {
     }
   }
   if (!parsed) {
-    await logInboundEvent({ from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, outcome: 'not_lead', detail: 'no recognized provider / no contact info' })
+    await logInboundEvent({ from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, outcome: 'not_lead', detail: `no recognized provider / no contact info (to=${recipient || '?'})` })
     return NextResponse.json({ ok: true, ignored: 'not a recognized lead' })
   }
 
