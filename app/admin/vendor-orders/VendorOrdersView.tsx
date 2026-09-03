@@ -42,7 +42,7 @@ export default async function VendorOrdersView({
     // the page payload. The drawer fetches it on demand; the Clopay display dates are
     // ingest-computed columns (derived_*, has_detail — migration 103).
     db.from('vendor_orders')
-      .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, derived_order_date, derived_last_activity_at, has_detail, derived_total_fee, record_source, parent_order_id')
+      .select('id, external_id, status, next_step, order_type, customer_name, customer_po, store_number, order_date, schedule_date, street_address, city, state_prov, postal_code, phone, email, scope, sf_job_id, sf_created_job_number, detail_scraped_at, first_seen_at, last_seen_at, schedule_nudge_sent_at, derived_order_date, derived_last_activity_at, has_detail, derived_total_fee, record_source, parent_order_id, dc_reserved_at, dc_last_seen_at')
       .eq('vendor', vendor)
       .order('first_seen_at', { ascending: false })
       .limit(1000),
@@ -92,6 +92,10 @@ export default async function VendorOrdersView({
       if (o.derived_last_activity_at) withLsc.last_status_change_at = o.derived_last_activity_at
       // Total Fee from the current IPO (parsed from the stored PDF).
       withLsc.total_fee = o.derived_total_fee != null ? Number(o.derived_total_fee) : null
+      // How long this order's product has sat at the DC, from the weekly DC report. The
+      // reserved date exists in no other source, so without it the aging is invisible.
+      withLsc.dc_reserved_at = o.dc_reserved_at ?? null
+      withLsc.dc_last_seen_at = o.dc_last_seen_at ?? null
     }
     const m = matches.get(o.id)
     if (m?.sfJobNumber) return { ...withLsc, sf_job_number: m.sfJobNumber, sf_match_method: m.method ?? null }
