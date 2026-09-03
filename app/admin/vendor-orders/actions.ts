@@ -76,16 +76,34 @@ export async function getOrderDetailAction(orderId: string): Promise<{ ok: boole
   const { byPo } = await clopayPaymentsByPo(db, [data.customer_po ?? '', ...children.map(c => c.customer_po ?? '')])
   const paidFor = (po: string | null) => byPo.get((po ?? '').trim()) ?? null
 
+  // A door's fee is the sum of ITS OWN current line items.
+  //
+  // derived_total_fee cannot be used here: it means two different things depending on the row
+  // — a child's is its own door, but the PRIMARY's is the whole group's roll-up
+  // (rollUpGroupTotal in lib/vendor-orders/ipo-ingest.ts). Reading it for the primary made the
+  // first door claim the entire job's fee, so a door paid in full showed as short by the other
+  // doors' fees. Summing line items is self-consistent by construction: the doors always add
+  // up to the Job Total, and neither branch has to know which rows carry a roll-up.
+  const ownFee = (id: string): number | null => {
+    const items = (byOrder.get(id) ?? []) as Array<{ line_fee: number | null }>
+    return items.length ? items.reduce((a, l) => a + Number(l.line_fee ?? 0), 0) : null
+  }
+  // No line items yet (no IPO parsed): a child's stored total is already its own door, while
+  // the primary's has to have the children backed out of it.
+  const childTotal = children.reduce((a, c) => a + Number(c.derived_total_fee ?? 0), 0)
+  const primaryFallback = Math.max(0, Number(data.derived_total_fee ?? 0) - childTotal)
+
   // The primary door first, then the rest — the order the office reads them in.
   const doors = [
     { orderId, external_id: data.external_id, customer_po: data.customer_po,
-      total_fee: data.derived_total_fee, record_source: data.record_source, status: data.status,
+      total_fee: ownFee(orderId) ?? (data.derived_total_fee == null ? null : primaryFallback),
+      record_source: data.record_source, status: data.status,
       payment_received: paidFor(data.customer_po),
       items: byOrder.get(orderId) ?? [] },
     ...children.map(c => ({
       orderId: c.id, external_id: c.external_id, customer_po: c.customer_po,
-      // a child's stored total is its own door's IPO total (the primary carries the roll-up)
-      total_fee: c.derived_total_fee, record_source: c.record_source, status: c.status,
+      total_fee: ownFee(c.id) ?? c.derived_total_fee,
+      record_source: c.record_source, status: c.status,
       payment_received: paidFor(c.customer_po),
       items: byOrder.get(c.id) ?? [],
     })),
