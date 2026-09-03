@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { parseStsOrders } from './parse'
 import { uploadAttachmentBytes } from './attachments'
+import { STS_DETAIL_RECEIVED, advancedStatus } from './stages'
 // Shared with the DC-report route: one implementation of "get this email's attachments".
 import { fetchReceivedAttachments as fetchAttachments } from '@/lib/inbound/resend'
 import type { RawInboundEmail } from '@/lib/inbound/resend'
@@ -82,13 +83,23 @@ export async function ingestDcReply(email: RawInboundEmail, resendId: string | n
     return { ok: true, outcome: 'no_match' }
   }
 
-  // Save the raw reply text (DC sometimes adds extra notes) + stamp received.
+  // Save the raw reply text (DC sometimes adds extra notes), stamp received, and advance the
+  // pipeline: the DC answering IS the status change, so nobody should have to set it by hand
+  // after the fact. `advancedStatus` never moves an order backwards, so a late reply cannot
+  // drag one the office has already Staged or Delivered back to 'Detail Received'.
   const nowIso = new Date().toISOString()
   const rawText = email.text || (email.html ? stripHtml(email.html) : '')
-  const { data: cur } = await supabase.from('vendor_orders').select('raw').eq('id', orderId).maybeSingle()
+  const { data: cur } = await supabase.from('vendor_orders').select('raw, status').eq('id', orderId).maybeSingle()
   const raw = { ...((cur?.raw as Record<string, unknown>) ?? {}), dc_reply_text: rawText, dc_reply_subject: email.subject }
-  await supabase.from('vendor_orders').update({ raw, details_received_at: nowIso, updated_at: nowIso }).eq('id', orderId)
-  await supabase.from('vendor_order_events').insert({ order_id: orderId, event_type: 'dc_reply', detail: { subject: email.subject } })
+  const prevStatus = (cur?.status as string | null) ?? null
+  const nextStatus = advancedStatus(prevStatus, STS_DETAIL_RECEIVED)
+  await supabase.from('vendor_orders').update({ raw, details_received_at: nowIso, status: nextStatus, updated_at: nowIso }).eq('id', orderId)
+  await supabase.from('vendor_order_events').insert({ order_id: orderId, event_type: 'dc_reply', to_value: nextStatus, detail: { subject: email.subject } })
+  if (nextStatus !== prevStatus) {
+    await supabase.from('vendor_order_events').insert({
+      order_id: orderId, event_type: 'status_change', from_value: prevStatus, to_value: nextStatus,
+    })
+  }
 
   // Attach any PDF(s) from the reply.
   let attached = 0
