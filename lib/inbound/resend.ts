@@ -69,31 +69,90 @@ export function extractAttachments(d: Record<string, unknown>): InboundAttachmen
   })
 }
 
-/** Attachments (base64) straight off Resend's received-email record. The webhook payload is
- *  metadata only, so anything that needs the bytes fetches them here. Proven by the Clopay
- *  STS DC-reply flow, which has been storing PDFs this way. */
-export async function fetchReceivedAttachments(
-  resendId: string,
-): Promise<Array<{ filename: string; contentType: string; base64: string }>> {
+export interface FetchedAttachment { filename: string; contentType: string; base64: string }
+export interface AttachmentFetchResult {
+  attachments: FetchedAttachment[]
+  /** Short, loggable account of what the API actually did — this path has failed silently
+   *  more than once, and "no attachment" without a reason costs a round trip to diagnose. */
+  diag: string
+}
+
+/** Attachments for a received email.
+ *
+ *  Resend does NOT put attachment bytes on the email record. There is a separate Attachments
+ *  API returning metadata plus a signed `download_url`, and the content is fetched from that:
+ *  https://resend.com/docs/api-reference/emails/list-received-email-attachments
+ *
+ *  The earlier version read `attachments[].content` off the email record, which is always
+ *  empty — so inbound PDFs never arrived, for the DC report or for Clopay STS DC replies.
+ *  The inline read is kept as a first attempt (free if a payload ever does carry bytes),
+ *  then the list-and-download path runs. */
+export async function fetchReceivedAttachmentsDetailed(resendId: string): Promise<AttachmentFetchResult> {
   const key = process.env.RESEND_INBOUND_API_KEY || process.env.RESEND_API_KEY
-  if (!key) return []
+  if (!key) return { attachments: [], diag: 'no Resend API key' }
+  const auth = { Authorization: `Bearer ${key}` }
+  const notes: string[] = []
+
+  // 1. Inline content, if this payload happens to carry it.
   try {
-    const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(resendId)}`, {
-      headers: { Authorization: `Bearer ${key}` },
-    })
-    if (!res.ok) return []
-    const body = await res.json()
-    const d = (body?.data ?? body) as Record<string, unknown>
-    const atts = Array.isArray(d?.attachments) ? d.attachments : []
-    return atts.map(a => {
-      const o = (a ?? {}) as Record<string, unknown>
-      return {
-        filename: String(o.filename ?? o.name ?? 'attachment.pdf'),
-        contentType: String(o.content_type ?? o.contentType ?? o.type ?? ''),
-        base64: String(o.content ?? o.data ?? ''),
-      }
-    }).filter(a => a.base64)
-  } catch { return [] }
+    const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(resendId)}`, { headers: auth })
+    notes.push(`record ${res.status}`)
+    if (res.ok) {
+      const body = await res.json()
+      const d = (body?.data ?? body) as Record<string, unknown>
+      const inline = (Array.isArray(d?.attachments) ? d.attachments : []).map(a => {
+        const o = (a ?? {}) as Record<string, unknown>
+        return {
+          filename: String(o.filename ?? o.name ?? 'attachment.pdf'),
+          contentType: String(o.content_type ?? o.contentType ?? o.type ?? ''),
+          base64: String(o.content ?? o.data ?? ''),
+        }
+      }).filter(a => a.base64)
+      if (inline.length) return { attachments: inline, diag: `${notes.join(', ')}, inline ${inline.length}` }
+    }
+  } catch (e) { notes.push(`record error ${e instanceof Error ? e.message : String(e)}`) }
+
+  // 2. List the attachments, then download each signed URL. The exact path is not certain
+  //    from the docs available here, so try the documented shape and a plausible alternative,
+  //    and report which one answered.
+  const paths = [
+    `https://api.resend.com/emails/receiving/${encodeURIComponent(resendId)}/attachments`,
+    `https://api.resend.com/emails/${encodeURIComponent(resendId)}/attachments`,
+  ]
+  let listed: Array<Record<string, unknown>> = []
+  for (const url of paths) {
+    try {
+      const res = await fetch(url, { headers: auth })
+      notes.push(`${url.replace('https://api.resend.com', '')} ${res.status}`)
+      if (!res.ok) continue
+      const body = await res.json()
+      const arr = Array.isArray(body?.data) ? body.data : (Array.isArray(body) ? body : [])
+      if (arr.length) { listed = arr as Array<Record<string, unknown>>; break }
+      notes.push('listed 0')
+    } catch (e) { notes.push(`list error ${e instanceof Error ? e.message : String(e)}`) }
+  }
+  if (!listed.length) return { attachments: [], diag: notes.join(' · ') }
+
+  const out: FetchedAttachment[] = []
+  for (const a of listed) {
+    const url = String(a.download_url ?? a.url ?? '')
+    const filename = String(a.filename ?? a.name ?? 'attachment.pdf')
+    const contentType = String(a.content_type ?? a.contentType ?? a.type ?? '')
+    if (!url) { notes.push(`${filename}: no download_url`); continue }
+    try {
+      // The URL is pre-signed — sending the API key too can trip signature checks.
+      const res = await fetch(url)
+      if (!res.ok) { notes.push(`${filename}: download ${res.status}`); continue }
+      const buf = Buffer.from(await res.arrayBuffer())
+      if (buf.byteLength) out.push({ filename, contentType, base64: buf.toString('base64') })
+    } catch (e) { notes.push(`${filename}: download error ${e instanceof Error ? e.message : String(e)}`) }
+  }
+  return { attachments: out, diag: `${notes.join(' · ')} · downloaded ${out.length}/${listed.length}` }
+}
+
+/** Back-compat wrapper — callers that only want the attachments. */
+export async function fetchReceivedAttachments(resendId: string): Promise<FetchedAttachment[]> {
+  return (await fetchReceivedAttachmentsDetailed(resendId)).attachments
 }
 
 /** Download an attachment Resend gave us by URL rather than inline. */

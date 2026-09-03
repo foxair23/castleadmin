@@ -1,4 +1,4 @@
-import { fetchReceivedAttachments } from '@/lib/inbound/resend'
+import { fetchReceivedAttachmentsDetailed } from '@/lib/inbound/resend'
 import { ingestDcReport, type DcIngestResult } from './ingest'
 
 // Turn one forwarded DC-report email into an ingest. Kept out of the webhook route so the
@@ -19,10 +19,17 @@ export async function ingestDcReportEmail(
 ): Promise<DcIngestResult & { attachments?: number; files?: Array<{ filename: string; status: string; rows?: number; error?: string }> }> {
   if (!resendId) return { ok: false, status: 'parse_failed', error: 'no email id' }
 
-  const atts = await fetchReceivedAttachments(resendId)
+  const { attachments: atts, diag } = await fetchReceivedAttachmentsDetailed(resendId)
   const pdfs = atts.filter(a => /pdf/i.test(a.contentType) || /\.pdf$/i.test(a.filename))
   if (!pdfs.length) {
-    return { ok: false, status: 'parse_failed', attachments: atts.length, error: `no PDF attachment (subject: ${subject ?? '—'})` }
+    // Say what the API actually did. "No PDF attachment" alone cannot distinguish no
+    // attachments at all from attachments we failed to download, and that ambiguity has
+    // already cost more than one round of guessing.
+    const names = atts.map(a => `${a.filename}(${a.contentType || '?'})`).join(', ')
+    return {
+      ok: false, status: 'parse_failed', attachments: atts.length,
+      error: `no PDF attachment — ${diag}${names ? ` · saw: ${names}` : ''}`,
+    }
   }
 
   const files: Array<{ filename: string; status: string; rows?: number; error?: string }> = []
