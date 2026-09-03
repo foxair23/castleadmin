@@ -150,14 +150,17 @@ export default async function VendorOrdersView({
       paidByOrder = new Map()
       poBreakdown = new Map()
       for (const o of topLevel) {
+        // EVERY PO on the job, paid or not. Listing only the paid ones would make an
+        // unpaid door vanish from the breakdown, which is the opposite of what someone
+        // reading a part-paid job needs to know.
         const parts: Array<{ po: string; amount: number }> = []
         for (const m of [o, ...(childrenOf.get(o.id) ?? [])]) {
           const po = (m.customer_po ?? '').trim()
-          const amt = po ? byPo.get(po) : undefined
-          if (amt) parts.push({ po, amount: amt })
+          if (po) parts.push({ po, amount: byPo.get(po) ?? 0 })
         }
-        if (parts.length) {
-          paidByOrder.set(o.id, parts.reduce((a, p) => a + p.amount, 0))
+        const total = parts.reduce((a, p) => a + p.amount, 0)
+        if (total > 0) {
+          paidByOrder.set(o.id, total)
           poBreakdown.set(o.id, parts)
         }
       }
