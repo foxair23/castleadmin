@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkInboundSecret } from '@/lib/inbound/resend'
 import { ingestDcReport } from '@/lib/clopay-dc/ingest'
+import { ingestDcReportEmail } from '@/lib/clopay-dc/from-email'
 
 export const maxDuration = 120
 
@@ -12,15 +13,25 @@ export const maxDuration = 120
 // re-ingesting a stored PDF after a parser fix, and exercising the ingest without sending
 // mail. Guarded by the same shared secret (?token= or x-clopay-dc-secret).
 //
-// POST { dataB64 } — a PDF, or { text } — already-extracted text (what clopay_dc_reports
-// keeps in raw_text, so a parser fix can be replayed against past reports).
+// POST one of:
+//   { resendEmailId } — replay an email Resend already received, pulling its PDF back out of
+//                       the Received Emails API. This is how reports that reached the webhook
+//                       but were mis-routed get ingested without asking anyone to forward
+//                       them again.
+//   { dataB64 }       — a PDF.
+//   { text }          — already-extracted text (what clopay_dc_reports keeps in raw_text, so
+//                       a parser fix can be replayed against past reports).
 export async function POST(req: NextRequest) {
   if (!checkInboundSecret(req, 'CLOPAY_DC_INBOUND_SECRET', 'x-clopay-dc-secret')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { dataB64?: string; text?: string; reportDate?: string }
+  let body: { resendEmailId?: string; dataB64?: string; text?: string; reportDate?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400 }) }
+
+  if (body.resendEmailId) {
+    return NextResponse.json(await ingestDcReportEmail(body.resendEmailId, null))
+  }
 
   let text = body.text ?? ''
   if (!text && body.dataB64) {
