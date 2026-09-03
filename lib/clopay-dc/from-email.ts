@@ -11,32 +11,57 @@ async function pdfText(bytes: Uint8Array): Promise<string> {
   return typeof text === 'string' ? text : String(text ?? '')
 }
 
-/** Fetch the email's PDF, extract its text, ingest it. A Monday run can arrive as several
- *  emails (the 31-Aug run came as two PDFs), and each is ingested on its own. */
+/** Fetch EVERY PDF on the email and ingest each one. A Monday run arrives as several files —
+ *  the 31-Aug run was two PDFs — and they can land as separate forwards or as one forward
+ *  carrying both. Reading only the first attachment would silently ingest half a run. */
 export async function ingestDcReportEmail(
   resendId: string | null, subject: string | null,
-): Promise<DcIngestResult & { attachments?: number }> {
+): Promise<DcIngestResult & { attachments?: number; files?: Array<{ filename: string; status: string; rows?: number; error?: string }> }> {
   if (!resendId) return { ok: false, status: 'parse_failed', error: 'no email id' }
 
   const atts = await fetchReceivedAttachments(resendId)
-  const pdf = atts.find(a => /pdf/i.test(a.contentType) || /\.pdf$/i.test(a.filename))
-  if (!pdf) {
+  const pdfs = atts.filter(a => /pdf/i.test(a.contentType) || /\.pdf$/i.test(a.filename))
+  if (!pdfs.length) {
     return { ok: false, status: 'parse_failed', attachments: atts.length, error: `no PDF attachment (subject: ${subject ?? '—'})` }
   }
 
-  const bytes = new Uint8Array(Buffer.from(pdf.base64, 'base64'))
-  let text: string
-  try {
-    text = await pdfText(bytes)
-  } catch (e) {
-    return { ok: false, status: 'parse_failed', error: `pdf extract: ${e instanceof Error ? e.message : String(e)}` }
+  const files: Array<{ filename: string; status: string; rows?: number; error?: string }> = []
+  let rows = 0, newPos = 0, linked = 0, anyOk = false, reportDate: string | undefined
+
+  for (const pdf of pdfs) {
+    const bytes = new Uint8Array(Buffer.from(pdf.base64, 'base64'))
+    let text: string
+    try {
+      text = await pdfText(bytes)
+    } catch (e) {
+      files.push({ filename: pdf.filename, status: 'extract_failed', error: e instanceof Error ? e.message : String(e) })
+      continue
+    }
+
+    // Key each ATTACHMENT, not each email: two files on one forward are two reports, and
+    // keying both on the email id would make the second overwrite the first.
+    const result = await ingestDcReport({ text, resendEmailId: `${resendId}#${pdf.filename}`, source: 'email' })
+    files.push({ filename: pdf.filename, status: result.status, rows: result.rows, error: result.error })
+    if (result.ok) {
+      anyOk = true
+      rows += result.rows ?? 0
+      newPos += result.newPos ?? 0
+      linked += result.linked ?? 0
+      reportDate = result.reportDate ?? reportDate
+      if (result.status === 'ingested' && result.reportId) {
+        await storePdf(result.reportId, result.reportDate ?? 'unknown', pdf.filename, bytes).catch(() => {})
+      }
+    }
   }
 
-  const result = await ingestDcReport({ text, resendEmailId: resendId, source: 'email' })
-  if (result.ok && result.status === 'ingested' && result.reportId) {
-    await storePdf(result.reportId, result.reportDate ?? 'unknown', pdf.filename, bytes).catch(() => {})
+  return {
+    ok: anyOk,
+    status: anyOk ? 'ingested' : 'parse_failed',
+    reportDate, rows, linked, newPos,
+    attachments: atts.length,
+    files,
+    ...(anyOk ? {} : { error: files.map(f => `${f.filename}: ${f.error ?? f.status}`).join('; ') }),
   }
-  return { ...result, attachments: atts.length }
 }
 
 /** Park the PDF for audit, keyed by the report ROW — one run can be several files, so a
