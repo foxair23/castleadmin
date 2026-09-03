@@ -103,8 +103,12 @@ function AllClear() {
 
 type SortDir = 'asc' | 'desc'
 
-function useSortable<T>(items: T[], defaultKey: keyof T) {
-  const [sortKey, setSortKey] = useState<keyof T>(defaultKey)
+// `defaultKey` may be null: the list then keeps the order it arrived in until a header is
+// clicked. Some tables are ordered deliberately server-side — the Clopay tab puts DC arrivals
+// oldest-first so the longest-waiting product surfaces — and a default sort column would
+// overwrite that the moment the page loaded.
+function useSortable<T>(items: T[], defaultKey: keyof T | null) {
+  const [sortKey, setSortKey] = useState<keyof T | null>(defaultKey)
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   function handleSort(key: keyof T) {
@@ -116,7 +120,7 @@ function useSortable<T>(items: T[], defaultKey: keyof T) {
     }
   }
 
-  const sorted = [...items].sort((a, b) => {
+  const sorted = sortKey == null ? items : [...items].sort((a, b) => {
     const av = a[sortKey]
     const bv = b[sortKey]
     if (av == null && bv == null) return 0
@@ -143,7 +147,8 @@ function SortTh<T>({
 }: {
   col: keyof T
   label: string
-  sortKey: keyof T
+  /** null while a table is still in its server-given order — no header shows an arrow. */
+  sortKey: keyof T | null
   sortDir: SortDir
   onSort: (k: keyof T) => void
   className?: string
@@ -1778,25 +1783,30 @@ function GenieTable({ items }: { items: GenieActionItem[] }) {
 // columns (Clopay orders don't self-schedule or get nudges). Done clears the row via the
 // shared vendor-orders ack endpoint.
 function ClopayTable({ items }: { items: ClopayActionItem[] }) {
+  // No default sort key: the list arrives deliberately ordered (new jobs first, then DC
+  // arrivals oldest-first so the longest-waiting product is at the top). Sorting is something
+  // the user opts into by clicking a header.
+  const { sorted, sortKey, sortDir, handleSort } = useSortable<ClopayActionItem>(items, null)
+  const th = { sortKey, sortDir, onSort: handleSort }
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-y border-gray-200">
           <tr>
             <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Done</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order #</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">PO</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">SF Job #</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">At DC</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Scheduled</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order Date</th>
-            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+            <SortTh<ClopayActionItem> col="external_id" label="Order #" {...th} />
+            <SortTh<ClopayActionItem> col="po" label="PO" {...th} />
+            <SortTh<ClopayActionItem> col="customer_name" label="Customer" {...th} />
+            <SortTh<ClopayActionItem> col="sf_job_number" label="SF Job #" {...th} />
+            <SortTh<ClopayActionItem> col="address" label="Address" {...th} />
+            <SortTh<ClopayActionItem> col="days_at_dc" label="At DC" {...th} />
+            <SortTh<ClopayActionItem> col="appointment_date" label="Scheduled" {...th} />
+            <SortTh<ClopayActionItem> col="order_date" label="Order Date" {...th} />
+            <SortTh<ClopayActionItem> col="status" label="Status" {...th} />
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {items.map(c => (
+          {sorted.map(c => (
             <tr key={c.id} className="hover:bg-gray-50">
               <td className="px-4 py-2 whitespace-nowrap">
                 <DoneButton
