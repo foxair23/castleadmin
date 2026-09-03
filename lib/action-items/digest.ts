@@ -32,7 +32,8 @@ export interface TodoDigest {
   /** SFI Leads + Genie tabs — Done-cleared lists, sit between Online Scheduling and the buckets. */
   sfiLines: Line[]
   genieLines: Line[]
-  /** Clopay tab — new SF jobs we created for Clopay HD orders, awaiting scheduling. */
+  /** Clopay tab — new SF jobs awaiting scheduling, plus product now at the DC ready to
+   *  install (from the weekly DC report, one line per PO). */
   clopayLines: Line[]
   /** Clopay STS tab — open delivery orders (status ≠ Closed). */
   stsLines: Line[]
@@ -154,9 +155,16 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
       text: `${g.customer_name ?? '—'} — HD #${g.external_id}${g.sf_job_number ? ` — SF Job ${g.sf_job_number}` : ''} — ${sched} · ${reminded}`,
     }
   })
-  const clopayLines: Line[] = clopay.items.map(c => ({
-    text: `${c.customer_name ?? '—'} — Order #${c.external_id}${c.sf_job_number ? ` — SF Job ${c.sf_job_number}` : ''}${c.status ? ` — ${c.status}` : ''}`,
-  }))
+  const clopayLines: Line[] = clopay.items.map(c => {
+    if (c.kind === 'at_dc') {
+      // Aging is the reason this line exists — lead with it.
+      const age = c.days_at_dc == null ? 'at DC' : `at DC ${c.days_at_dc}d`
+      const who = c.customer_name ?? (c.unknown_order ? 'no record on our side' : '—')
+      const appt = c.appointment_date ? ` · scheduled ${c.appointment_date}` : ''
+      return { text: `${who} — Order #${c.external_id}${c.po ? ` — PO ${c.po}` : ''} — ${age}${appt}` }
+    }
+    return { text: `${c.customer_name ?? '—'} — Order #${c.external_id}${c.sf_job_number ? ` — SF Job ${c.sf_job_number}` : ''}${c.status ? ` — ${c.status}` : ''}` }
+  })
   const stsLines: Line[] = sts.items.map(o => {
     const dc = o.details_received_at ? 'DC replied' : (o.details_requested_at ? 'DC requested' : 'DC not requested')
     return { text: `Order ${o.external_id}${o.customer_po ? ` — ${o.customer_po}` : ''} — ${o.status} · ${dc}` }
@@ -427,7 +435,7 @@ export function renderTodoEmail(d: TodoDigest, opts: {
     { label: 'Online Estimates (review photos, send price)', lines: d.onlineEstimateLines, tab: 'online-estimates' },
     { label: 'SFI Leads', lines: d.sfiLines, tab: 'leads-to-call' },
     { label: 'Genie (press Done after handling)', lines: d.genieLines, tab: 'genie' },
-    { label: 'Clopay (new SF jobs to schedule)', lines: d.clopayLines, tab: 'clopay' },
+    { label: 'Clopay (jobs to schedule + product at the DC)', lines: d.clopayLines, tab: 'clopay' },
     { label: 'Clopay STS (delivery orders)', lines: d.stsLines, tab: 'sts' },
     ...d.buckets.map(b => ({ label: b.label, lines: b.newLines, tab: b.tab })),
   ]

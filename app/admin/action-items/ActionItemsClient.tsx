@@ -26,7 +26,7 @@ import type {
   ArHoldResult,
 } from '@/lib/analytics/alerts'
 import { ACTION_TAB_CONFIG, ACQUISITION_CUTOFF, todayPT, type ActionRecord } from '@/lib/action-items/config'
-import type { GenieActionItem, GenieActionItemsResult, ClopayActionItemsResult, StsActionItem, StsActionItemsResult } from '@/lib/vendor-orders/action-items'
+import type { GenieActionItem, GenieActionItemsResult, ClopayActionItem, ClopayActionItemsResult, StsActionItem, StsActionItemsResult } from '@/lib/vendor-orders/action-items'
 import type { OnlineEstimateItem, OnlineEstimateItemsResult } from '@/lib/scheduler/online-estimate-items'
 import { CLOPAY_STS_STAGES } from '@/lib/clopay-sts/stages'
 import { setStsStatusAction } from '@/app/admin/vendor-orders/actions'
@@ -698,7 +698,7 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
 }
 
 // "Done" button — acknowledges an Online Scheduling lead (requires login).
-function DoneButton({ leadId, endpoint = '/api/leads/ack' }: { leadId: string; endpoint?: string }) {
+function DoneButton({ leadId, endpoint = '/api/leads/ack', kind, label = 'Done' }: { leadId: string; endpoint?: string; kind?: string; label?: string }) {
   // Optimistic: flip to the acknowledged chip immediately; the row clears on
   // the next page load. Rolls back if the request fails.
   const [done, setDone] = useState(false)
@@ -710,7 +710,7 @@ function DoneButton({ leadId, endpoint = '/api/leads/ack' }: { leadId: string; e
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId }),
+        body: JSON.stringify({ leadId, ...(kind ? { kind } : {}) }),
       })
       if (!res.ok) setDone(false)
     } catch {
@@ -721,7 +721,7 @@ function DoneButton({ leadId, endpoint = '/api/leads/ack' }: { leadId: string; e
   if (done) {
     return (
       <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 whitespace-nowrap">
-        ✓ Done
+        ✓ {label === 'Done' ? 'Done' : 'Scheduled'}
       </span>
     )
   }
@@ -730,7 +730,7 @@ function DoneButton({ leadId, endpoint = '/api/leads/ack' }: { leadId: string; e
       onClick={handleDone}
       className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-green-600 hover:bg-green-700 text-white text-xs font-medium whitespace-nowrap"
     >
-      ✓ Done
+      ✓ {label}
     </button>
   )
 }
@@ -1626,10 +1626,10 @@ export default function ActionItemsClient({
 
       {activeTab === 'clopay' && (
         <AlertSection
-          title="Clopay — New SF Jobs to Schedule"
+          title="Clopay — To Schedule"
           count={clopayItems.length}
         >
-          <p className="text-xs text-gray-400 mb-2">A row is added when our service creates an SF job from a Clopay HD order. Dispatch needs to schedule it — press Done once it&apos;s been scheduled.</p>
+          <p className="text-xs text-gray-400 mb-2">Two kinds of work. <strong>New Job to Schedule</strong> — our service created an SF job from a Clopay HD order. <strong>Schedule Install/Delivery</strong> — the product has landed at the DC and is ready to install, from the weekly DC report; these are listed per PO, oldest arrival first, and once pressed a PO never comes back even though it stays on the DC report until it ships.</p>
           {clopayItems.length === 0 ? <AllClear /> : <ClopayTable items={clopayItems} />}
         </AlertSection>
       )}
@@ -1777,7 +1777,7 @@ function GenieTable({ items }: { items: GenieActionItem[] }) {
 // Clopay HD "new SF jobs to schedule" — same as GenieTable minus the Scheduled/Outreach
 // columns (Clopay orders don't self-schedule or get nudges). Done clears the row via the
 // shared vendor-orders ack endpoint.
-function ClopayTable({ items }: { items: GenieActionItem[] }) {
+function ClopayTable({ items }: { items: ClopayActionItem[] }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -1785,9 +1785,12 @@ function ClopayTable({ items }: { items: GenieActionItem[] }) {
           <tr>
             <th className="px-4 py-2 text-left text-xs font-semibold text-red-600 uppercase tracking-wide whitespace-nowrap">Done</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order #</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">PO</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">SF Job #</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">At DC</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Scheduled</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Order Date</th>
             <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
           </tr>
@@ -1795,11 +1798,28 @@ function ClopayTable({ items }: { items: GenieActionItem[] }) {
         <tbody className="divide-y divide-gray-100">
           {items.map(c => (
             <tr key={c.id} className="hover:bg-gray-50">
-              <td className="px-4 py-2 whitespace-nowrap"><DoneButton leadId={c.id} endpoint="/api/vendor-orders/ack" /></td>
-              <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">{c.external_id}</td>
+              <td className="px-4 py-2 whitespace-nowrap">
+                <DoneButton
+                  leadId={c.id}
+                  endpoint="/api/vendor-orders/ack"
+                  kind={c.kind}
+                  label={c.kind === 'at_dc' ? 'Schedule Install/Delivery' : 'New Job to Schedule'}
+                />
+              </td>
+              <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">
+                {c.external_id}
+                {c.unknown_order && (
+                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700" title="On the DC report but in none of our systems — a Castle-direct Clopay order">
+                    no record
+                  </span>
+                )}
+              </td>
+              <td className="px-4 py-2 font-mono text-xs text-gray-600 whitespace-nowrap">{c.po ?? '—'}</td>
               <td className="px-4 py-2 text-gray-900">{c.customer_name ?? '—'}</td>
               <td className="px-4 py-2 font-mono text-xs text-gray-600 whitespace-nowrap">{c.sf_job_number ?? '—'}</td>
               <td className="px-4 py-2 text-gray-500"><div className="max-w-[220px] truncate" title={c.address ?? undefined}>{c.address ?? '—'}</div></td>
+              <td className="px-4 py-2 whitespace-nowrap">{c.days_at_dc == null ? <span className="text-gray-400">—</span> : <DcAge days={c.days_at_dc} reserved={c.reserved_date ?? null} />}</td>
+              <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{c.appointment_date ? fmtDate(c.appointment_date) : <span className="text-gray-400">—</span>}</td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(c.order_date)}</td>
               <td className="px-4 py-2 text-gray-600">{c.status ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{c.status}</span> : <span className="text-gray-400">—</span>}</td>
             </tr>
@@ -1807,6 +1827,19 @@ function ClopayTable({ items }: { items: GenieActionItem[] }) {
         </tbody>
       </table>
     </div>
+  )
+}
+
+/** How long a PO's product has sat at the DC. The colour is the point: a door reserved months
+ *  ago is money parked in a warehouse, and on the first report 28 of 73 were past 30 days. */
+function DcAge({ days, reserved }: { days: number; reserved: string | null }) {
+  const tone = days >= 60 ? 'bg-red-100 text-red-700'
+    : days >= 30 ? 'bg-amber-100 text-amber-700'
+    : 'bg-gray-100 text-gray-700'
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${tone}`} title={reserved ? `Reserved at the DC ${fmtDate(reserved)}` : undefined}>
+      {days}d
+    </span>
   )
 }
 

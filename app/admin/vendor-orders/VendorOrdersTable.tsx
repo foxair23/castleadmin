@@ -52,6 +52,8 @@ export interface VendorOrder {
   /** TOTAL FEE from the order's current IPO (migration 104), shown in the list. */
   derived_total_fee?: number | null
   total_fee?: number | null
+  dc_reserved_at?: string | null
+  dc_last_seen_at?: string | null
   /** 'portal' = the crawler saw it; 'ipo_document' = recovered from a bundled IPO PDF
    *  because the HD Program portal never lists it (migration 105). */
   record_source?: string | null
@@ -245,6 +247,24 @@ function SummaryList({ summary }: { summary: unknown }) {
 // A job can cover several doors — each its own Clopay order and PO, all bundled in one IPO
 // and booked as ONE Service Fusion job. One door renders as a plain line-item table; several
 // render per-door with a grand total, which is what the SF job is worth.
+/** "At DC 63d" — this order's product is sitting at the San Diego DC, and has been for that
+ *  long. Comes from the weekly DC report; the reserved date exists in no other source, so
+ *  without it a door can age for months with nothing on screen to say so. */
+function AtDcBadge({ reservedAt, lastSeen }: { reservedAt: string; lastSeen: string | null }) {
+  const days = Math.floor((Date.now() - new Date(`${reservedAt}T00:00:00Z`).getTime()) / 86400000)
+  const tone = days >= 60 ? 'bg-red-100 text-red-700' : days >= 30 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+  return (
+    <div className="mt-0.5">
+      <span
+        className={`text-[10px] px-1.5 py-0.5 rounded ${tone}`}
+        title={`Reserved at the DC ${reservedAt}${lastSeen ? ` · last DC report ${lastSeen}` : ''}`}
+      >
+        At DC {days}d
+      </span>
+    </div>
+  )
+}
+
 function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: number | null }) {
   const withItems = doors.filter(d => d.items.length > 0)
   if (withItems.length === 0) return null
@@ -615,6 +635,7 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                 {o.total_fee != null
                   ? <span className="font-medium text-gray-900" title="TOTAL FEE from this order's Installer Purchase Order">{fmtMoney(o.total_fee)}</span>
                   : <span className="text-gray-300">—</span>}
+                {o.dc_reserved_at && <AtDcBadge reservedAt={o.dc_reserved_at} lastSeen={o.dc_last_seen_at ?? null} />}
               </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {enableSf ? (

@@ -5,7 +5,21 @@ import type { NextRequest } from 'next/server'
 // the Received Emails API with a full-access key). Mirrors the mechanics the
 // LeadGen inbound route established.
 
-export interface RawInboundEmail { from: string | null; subject: string | null; text: string | null; html: string | null }
+export interface InboundAttachment {
+  filename: string | null
+  contentType: string | null
+  /** base64 — null when the payload gave us only a URL. */
+  content: string | null
+  /** Set when the attachment must be downloaded rather than read inline. */
+  url?: string | null
+}
+export interface RawInboundEmail {
+  from: string | null; subject: string | null; text: string | null; html: string | null
+  /** Optional so the body-parsing callers (remittance, leadgen) and their own local
+   *  RawInboundEmail shapes are unaffected; populated for senders whose payload IS an
+   *  attachment, like the weekly Clopay DC report PDF. */
+  attachments?: InboundAttachment[]
+}
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -33,7 +47,36 @@ export function extractEmail(d: Record<string, unknown>): RawInboundEmail {
     subject: (d.subject as string) ?? null,
     text: (d.text as string) ?? (d.plain as string) ?? null,
     html: (d.html as string) ?? null,
+    attachments: extractAttachments(d),
   }
+}
+
+/** Attachments off a received-email payload. Resend has used more than one spelling for the
+ *  content field across payload shapes, so accept the ones seen rather than guessing one;
+ *  a URL-only attachment comes back with content null and is fetched separately. */
+export function extractAttachments(d: Record<string, unknown>): InboundAttachment[] {
+  const raw = d.attachments
+  if (!Array.isArray(raw)) return []
+  return raw.map(a => {
+    const o = (a ?? {}) as Record<string, unknown>
+    const content = o.content ?? o.content_base64 ?? o.data ?? null
+    return {
+      filename: (o.filename as string) ?? (o.name as string) ?? null,
+      contentType: (o.content_type as string) ?? (o.contentType as string) ?? (o.type as string) ?? null,
+      content: typeof content === 'string' && content ? content : null,
+      url: (o.url as string) ?? (o.download_url as string) ?? null,
+    } as InboundAttachment
+  })
+}
+
+/** Download an attachment Resend gave us by URL rather than inline. */
+export async function fetchAttachmentBytes(url: string): Promise<Uint8Array | null> {
+  const key = process.env.RESEND_INBOUND_API_KEY || process.env.RESEND_API_KEY
+  try {
+    const res = await fetch(url, key ? { headers: { Authorization: `Bearer ${key}` } } : undefined)
+    if (!res.ok) return null
+    return new Uint8Array(await res.arrayBuffer())
+  } catch { return null }
 }
 
 /** Fetch the full received email by id (retries while the body lags the webhook). */
