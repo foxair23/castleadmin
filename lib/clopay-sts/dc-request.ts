@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sendEmail } from '@/lib/notifications/resend'
-import { CLOPAY_STS_STAGES, STS_REQUESTED, STS_CLOSED } from './stages'
+import { CLOPAY_STS_STAGES, STS_REQUESTED, STS_CLOSED, advancedStatus } from './stages'
 
 // Clopay STS "request details from the DC" email. For each STS order we ask the
 // San Diego Distribution Center for the delivery details; the DC replies with a
@@ -42,13 +42,6 @@ export async function setStsSettings(enabled: boolean, dcEmail: string, userId: 
   // Stamp the cutoff whenever it's turned ON so enabling never sweeps the backlog.
   if (enabled) patch.auto_request_enabled_at = new Date().toISOString()
   await db().from('clopay_sts_settings').upsert(patch, { onConflict: 'id' })
-}
-
-// Advance status to at least `target` (never move backwards through the pipeline).
-function advancedStatus(current: string | null, target: string): string {
-  const ci = CLOPAY_STS_STAGES.indexOf((current ?? '') as (typeof CLOPAY_STS_STAGES)[number])
-  const ti = CLOPAY_STS_STAGES.indexOf(target as (typeof CLOPAY_STS_STAGES)[number])
-  return ci > ti ? (current as string) : target
 }
 
 export interface DcRequestResult { ok: boolean; error?: string }
