@@ -69,6 +69,33 @@ export function extractAttachments(d: Record<string, unknown>): InboundAttachmen
   })
 }
 
+/** Attachments (base64) straight off Resend's received-email record. The webhook payload is
+ *  metadata only, so anything that needs the bytes fetches them here. Proven by the Clopay
+ *  STS DC-reply flow, which has been storing PDFs this way. */
+export async function fetchReceivedAttachments(
+  resendId: string,
+): Promise<Array<{ filename: string; contentType: string; base64: string }>> {
+  const key = process.env.RESEND_INBOUND_API_KEY || process.env.RESEND_API_KEY
+  if (!key) return []
+  try {
+    const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(resendId)}`, {
+      headers: { Authorization: `Bearer ${key}` },
+    })
+    if (!res.ok) return []
+    const body = await res.json()
+    const d = (body?.data ?? body) as Record<string, unknown>
+    const atts = Array.isArray(d?.attachments) ? d.attachments : []
+    return atts.map(a => {
+      const o = (a ?? {}) as Record<string, unknown>
+      return {
+        filename: String(o.filename ?? o.name ?? 'attachment.pdf'),
+        contentType: String(o.content_type ?? o.contentType ?? o.type ?? ''),
+        base64: String(o.content ?? o.data ?? ''),
+      }
+    }).filter(a => a.base64)
+  } catch { return [] }
+}
+
 /** Download an attachment Resend gave us by URL rather than inline. */
 export async function fetchAttachmentBytes(url: string): Promise<Uint8Array | null> {
   const key = process.env.RESEND_INBOUND_API_KEY || process.env.RESEND_API_KEY

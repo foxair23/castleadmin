@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { parseStsOrders } from './parse'
 import { uploadAttachmentBytes } from './attachments'
+// Shared with the DC-report route: one implementation of "get this email's attachments".
+import { fetchReceivedAttachments as fetchAttachments } from '@/lib/inbound/resend'
 import type { RawInboundEmail } from '@/lib/inbound/resend'
 
 // Clopay STS ingest: two inbound flows on the STS forwarded address —
@@ -61,27 +63,6 @@ export async function ingestStsEmail(email: RawInboundEmail, resendId: string | 
   const outcome = lines.length === 0 ? 'no_sts' : 'ingested'
   await logInbound(supabase, resendId, email, 'orders', outcome, `${lines.length} STS line(s), ${inserted} new`)
   return { ok: true, outcome, orders: inserted }
-}
-
-// Pull attachments (base64) from the Resend received-email record. Resend's shape
-// isn't guaranteed to include bytes; if it doesn't, manual upload covers it.
-async function fetchAttachments(resendId: string): Promise<Array<{ filename: string; contentType: string; base64: string }>> {
-  const key = process.env.RESEND_INBOUND_API_KEY || process.env.RESEND_API_KEY
-  if (!key) return []
-  try {
-    const res = await fetch(`https://api.resend.com/emails/receiving/${encodeURIComponent(resendId)}`, { headers: { Authorization: `Bearer ${key}` } })
-    if (!res.ok) return []
-    const body = await res.json()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const d = (body?.data ?? body) as any
-    const atts = Array.isArray(d?.attachments) ? d.attachments : []
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return atts.map((a: any) => ({
-      filename: String(a.filename ?? a.name ?? 'attachment.pdf'),
-      contentType: String(a.content_type ?? a.contentType ?? a.type ?? ''),
-      base64: String(a.content ?? a.data ?? ''),
-    })).filter((a: { base64: string }) => a.base64)
-  } catch { return [] }
 }
 
 /** The DC's acknowledgement reply → match to the order, save text, attach PDF(s). */
