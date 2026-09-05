@@ -90,7 +90,7 @@ async function sfPost(path: string, body: unknown): Promise<unknown> {
       signal: controller.signal,
     })
     if (resp.status === 429) throw new Error('Service Fusion is busy — please try again in a moment.')
-    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
+    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}) on POST ${path}: ${await resp.text()}`)
     return resp.json()
   } finally {
     clearTimeout(timeout)
@@ -113,7 +113,7 @@ async function sfPut(path: string, body: unknown): Promise<unknown> {
       signal: controller.signal,
     })
     if (resp.status === 429) throw new Error('Service Fusion is busy — please try again in a moment.')
-    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
+    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}) on PUT ${path}: ${await resp.text()}`)
     return resp.json()
   } finally {
     clearTimeout(timeout)
@@ -138,7 +138,7 @@ async function sfGet(path: string, params?: Record<string, string>): Promise<unk
       signal: controller.signal,
     })
     if (resp.status === 429) throw new Error('Service Fusion is busy — please try again in a moment.')
-    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}): ${await resp.text()}`)
+    if (!resp.ok) throw new Error(`Service Fusion API error (${resp.status}) on GET ${url.pathname}${url.search}: ${await resp.text()}`)
     return resp.json()
   } finally {
     clearTimeout(timeout)
