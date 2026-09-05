@@ -10,7 +10,7 @@ import { uploadAttachmentBytes } from '@/lib/clopay-sts/attachments'
 import { CLOPAY_STS_STAGES } from '@/lib/clopay-sts/stages'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { clopayPaymentsByPo } from '@/lib/vendor-orders/payments'
-import { syncIpoLinesToSfJob } from '@/lib/vendor-orders/sf-job-lines'
+import { enqueueSfJobLines } from '@/lib/vendor-orders/sf-lines-queue'
 
 async function isAllowed(): Promise<boolean> {
   const supabase = await createClient()
@@ -114,14 +114,17 @@ export async function getOrderDetailAction(orderId: string): Promise<{ ok: boole
   return { ok: true, raw: data.raw ?? {}, doors }
 }
 
-/** Push this order's IPO line items onto its existing SF job — the manual counterpart to the
- *  automatic sweep, for a job someone wants filled in now. Refuses to overwrite a job that
- *  already carries line items; it reports what is there and what it would add instead. */
+/** Queue this order's IPO line items for its existing SF job — the manual counterpart to the
+ *  automatic sweep, for a job someone wants filled in now.
+ *
+ *  Queued, not posted: Service Fusion's API cannot modify an existing job (PUT /jobs → 405),
+ *  so the extension posts it through SF's web session on its next run — the same arrangement
+ *  the remittance flow uses. Refuses outright when the job already carries line items. */
 export async function addIpoLinesToSfJobAction(orderId: string): Promise<{ ok: boolean; status: string; added?: number; existing?: number; note?: string; error?: string }> {
   if (!(await isAllowed())) return { ok: false, status: 'error', error: 'not authorized' }
-  const r = await syncIpoLinesToSfJob(orderId)
+  const r = await enqueueSfJobLines(orderId)
   if (r.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
-  return { ok: r.ok, status: r.status, added: r.added, existing: r.existing, note: r.note, error: r.error }
+  return { ok: r.ok, status: r.status, added: r.lines, existing: r.existing, note: r.note, error: r.error }
 }
 
 /** Toggle a vendor's autopilot (admin only). vendor: 'genie_thd' | 'clopay_hd'. */
