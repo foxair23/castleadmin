@@ -114,6 +114,10 @@
     {
       "path": "/api/cron/clopay-ipo-parse",
       "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/cron/clopay-rate-digest",
+      "schedule": "20 15 * * 1-6"
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { downloadVendorDoc } from './attachments'
 import { isIpoDoc, parseIpoDocument, type IpoParseResult } from './clopay-ipo'
+import { loadRateSchedule, variancePatch } from './clopay-rates'
 
 // Turn a stored Clopay IPO PDF into structured line items.
 //
@@ -96,6 +97,9 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
   // Replace everything this document previously produced (re-parsing must not duplicate).
   await supabase.from('vendor_order_line_items').delete().eq('attachment_id', att.id)
 
+  // Clopay's agreed rates, so each line is stored knowing whether it was paid correctly.
+  const rateSchedule = await loadRateSchedule(supabase)
+
   const recovered: string[] = []
   let storedLines = 0
   let ownerSectionOk: boolean | null = null
@@ -173,6 +177,7 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
       description: i.description,
       line_fee: i.line_fee,
       sort_order: n,
+      ...variancePatch(rateSchedule, i.item_number, i.line_fee, i.quantity),
     }))
     const { error: insErr } = await supabase.from('vendor_order_line_items').insert(rows)
     if (!insErr) { storedLines += rows.length; touchedOrders.add(orderId) }
