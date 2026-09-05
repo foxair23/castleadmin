@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parsePendingIpoAttachments } from '@/lib/vendor-orders/ipo-ingest'
+import { syncPendingSfJobLines } from '@/lib/vendor-orders/sf-job-lines'
 
 export const maxDuration = 300
 
@@ -39,7 +40,14 @@ export async function GET(req: NextRequest) {
     if (Date.now() - started > BUDGET_MS) break
   }
 
+  // Now that parsing is done, push the new lines onto jobs that already exist. The IPO almost
+  // always arrives AFTER the job was created — the order is crawled and autopilot books the
+  // job within 15 minutes, while the document is only captured on the next extension doc sync
+  // — so attaching at creation alone would leave most jobs empty. Only jobs carrying no
+  // services are written to; anything with hand-entered lines is reported, never overwritten.
+  const sfLines = await syncPendingSfJobLines(50)
+
   // `candidates` vs `skipped` matters: "nothing to do" and "nothing recognized" are very
   // different outcomes and used to be indistinguishable here.
-  return NextResponse.json({ ...total, remaining, batches, elapsed_ms: Date.now() - started, ok_run: true, done: remaining === 0 })
+  return NextResponse.json({ ...total, remaining, batches, sf_lines: sfLines, elapsed_ms: Date.now() - started, ok_run: true, done: remaining === 0 })
 }
