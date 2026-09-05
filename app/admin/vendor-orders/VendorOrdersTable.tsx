@@ -168,17 +168,29 @@ function sortVal(o: VendorOrder, k: SortKey): string | number | null {
 function CreateJobButton({ orderId }: { orderId: string }) {
   const [pending, start] = useTransition()
   const [err, setErr] = useState<string | null>(null)
+  // A WARNING means the job was created but SF rejected part of it — most often the line
+  // items. That is a success as far as `ok` is concerned, so showing only errors made the
+  // job look perfect while its line items had been silently dropped.
+  const [warn, setWarn] = useState<string | null>(null)
   return (
     <span className="inline-flex flex-col gap-0.5">
       <button
         type="button"
         disabled={pending}
-        onClick={() => { setErr(null); start(async () => { const r = await createSfJobAction(orderId); if (!r.ok) setErr(r.error ?? 'failed') }) }}
+        onClick={() => {
+          setErr(null); setWarn(null)
+          start(async () => {
+            const r = await createSfJobAction(orderId)
+            if (!r.ok) setErr(r.error ?? 'failed')
+            else if (r.warning) setWarn(r.warning)
+          })
+        }}
         className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50 disabled:cursor-progress"
       >
         {pending ? 'creating…' : '+ Create SF Job'}
       </button>
       {err && <span className="text-[10px] text-red-600 max-w-[180px] whitespace-normal">{err}</span>}
+      {warn && <span className="text-[10px] text-amber-700 max-w-[220px] whitespace-normal">{warn}</span>}
     </span>
   )
 }

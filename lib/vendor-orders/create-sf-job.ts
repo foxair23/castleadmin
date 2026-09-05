@@ -146,6 +146,12 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       new Map(doors.map(d => [d.id, d.customer_po])),
     )
     const services = [...baseServices, ...ipoServices]
+    // Say what is being sent. "No line items appeared" has several very different causes —
+    // the order had no revenue lines, SF rejected the array, or the write never happened —
+    // and without this line they are indistinguishable after the fact.
+    console.log(`[create-sf-job] ${o.vendor} ${o.external_id}: ${doors.length} door(s), `
+      + `${ipoServices.length} IPO service line(s)${baseServices.length ? ` + ${baseServices.length} standing` : ''}`
+      + (ipoServices.length ? ` — ${ipoServices.map(x => `${x.service}×${x.multiplier}@${x.rate}`).join(', ')}` : ''))
 
     const poNumber = [...new Set(doors.map(d => d.customer_po || d.external_id).filter(Boolean))].join(', ')
 
@@ -195,6 +201,7 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       if (dropped.length === 0) throw postErr // a 4xx we don't know how to recover from
       jobResp = await sfPost('/jobs', retry)
       warning = `job created, but SF rejected ${dropped.join(' + ')}: ${msg.slice(0, 200)}`
+      console.error(`[create-sf-job] ${o.external_id}: ${warning}`)
     }
     const sfJobId = String(jobResp?.id ?? jobResp?.job?.id ?? jobResp?.data?.id ?? '')
     if (!sfJobId || sfJobId === 'undefined') return { ok: false, error: `no job id returned from SF: ${JSON.stringify(jobResp).slice(0, 200)}` }
