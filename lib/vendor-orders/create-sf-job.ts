@@ -36,7 +36,7 @@ function parseName(name: string | null): { first: string; last: string } {
   return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] }
 }
 
-function buildDescription(o: OrderRow, vendorLabel: string, doors: GroupDoor[]): string {
+function buildDescription(o: OrderRow, vendorLabel: string, doors: GroupDoor[], feeByOrder: Map<string, number>): string {
   const lines: string[] = []
   if (o.scope) lines.push(o.scope)
   lines.push(`Source: ${vendorLabel}`)
@@ -53,10 +53,11 @@ function buildDescription(o: OrderRow, vendorLabel: string, doors: GroupDoor[]):
     for (const d of doors) {
       const bits = [`Order ${d.external_id}`]
       if (d.customer_po) bits.push(`PO ${d.customer_po}`)
-      if (d.derived_total_fee != null) bits.push(fmtUsd(d.derived_total_fee))
+      const fee = feeByOrder.get(d.id)
+      if (fee != null) bits.push(fmtUsd(fee))
       lines.push(`  · ${bits.join(' · ')}`)
     }
-    const total = doors.reduce((a, d) => a + Number(d.derived_total_fee ?? 0), 0)
+    const total = doors.reduce((a, d) => a + (feeByOrder.get(d.id) ?? 0), 0)
     if (total > 0) lines.push(`Job total: ${fmtUsd(total)}`)
   }
   return lines.join('\n')
@@ -141,10 +142,20 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
     // multi-door job that is EVERY door's lines, so the SF job carries the whole house's work
     // and revenue rather than just the primary door's.
     const baseServices = (vendor?.sfServiceLines ?? []).map(s => ({ service: s.name, name: s.name, multiplier: s.quantity ?? 1 }))
-    const ipoServices = toSfServices(
-      await loadIpoLines(supabase, doors.map(d => d.id)),
-      new Map(doors.map(d => [d.id, d.customer_po])),
-    )
+    const ipoLines = await loadIpoLines(supabase, doors.map(d => d.id))
+    const ipoServices = toSfServices(ipoLines, new Map(doors.map(d => [d.id, d.customer_po])))
+
+    // Each door's OWN fee, summed from its own IPO lines.
+    //
+    // NOT derived_total_fee: that column means two different things by row — a child's is its
+    // own door, but the PRIMARY's is the whole group's roll-up. Printing it per door and then
+    // summing double-counted every child. Job 1020259225 read "Job total: $1,957.00" when the
+    // job was worth $1,041, because the primary's $1,041 roll-up was listed as its own door
+    // fee and added to the $916 child already inside it.
+    const feeByOrder = new Map<string, number>()
+    for (const l of ipoLines) {
+      feeByOrder.set(l.order_id, Math.round(((feeByOrder.get(l.order_id) ?? 0) + Number(l.line_fee ?? 0)) * 100) / 100)
+    }
     const services = [...baseServices, ...ipoServices]
     // Say what is being sent. "No line items appeared" has several very different causes —
     // the order had no revenue lines, SF rejected the array, or the write never happened —
@@ -171,7 +182,7 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
       // unjobbed and spawn a duplicate. Genie has customer_po; Clopay's PO falls back to the
       // external_id, as before.
       ...(poNumber ? { po_number: poNumber } : {}),
-      description: buildDescription(o, vendor?.label ?? 'Genie', doors),
+      description: buildDescription(o, vendor?.label ?? 'Genie', doors, feeByOrder),
       ...(customFields.length ? { custom_fields: customFields } : {}),
       ...(services.length ? { services } : {}),
     }
