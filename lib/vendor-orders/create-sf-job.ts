@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sfPost, sfGet } from '@/lib/crm/service-fusion'
 import { findExistingSfCustomer } from '@/lib/scheduler/sf-customer-match'
 import { getVendor } from './config'
+import { loadIpoLines, toSfServices } from './ipo-services'
 
 // Phase 2: create the Service Fusion job for a vendor order, reusing the same
 // SF API write path the scheduler uses (POST /customers, POST /jobs). No browser
@@ -130,12 +131,22 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
     const customFields = (vendor?.sfCustomFields ?? [])
       .map(cf => ({ name: cf.sfFieldName, value: (o as unknown as Record<string, unknown>)[cf.from] }))
       .filter(cf => cf.value != null && cf.value !== '')
-    // Service line items every job of this vendor gets. SF requires `service` — a
-    // header matching an existing catalog service (the service list's name) — not
-    // a free-form name; `multiplier` is the quantity.
-    const services = (vendor?.sfServiceLines ?? []).map(s => ({ service: s.name, name: s.name, multiplier: s.quantity ?? 1 }))
-
     const doors = await loadGroupDoors(supabase, o)
+
+    // Service lines on the job. SF requires `service` — a header matching an existing catalog
+    // service (the service list's name) — not a free-form name; `multiplier` is the quantity.
+    //
+    // Two sources: the vendor's standing line (Genie and OHD each have one; Clopay has none —
+    // it was always "priced/added in SF"), plus this job's own IPO line items. For a
+    // multi-door job that is EVERY door's lines, so the SF job carries the whole house's work
+    // and revenue rather than just the primary door's.
+    const baseServices = (vendor?.sfServiceLines ?? []).map(s => ({ service: s.name, name: s.name, multiplier: s.quantity ?? 1 }))
+    const ipoServices = toSfServices(
+      await loadIpoLines(supabase, doors.map(d => d.id)),
+      new Map(doors.map(d => [d.id, d.customer_po])),
+    )
+    const services = [...baseServices, ...ipoServices]
+
     const poNumber = [...new Set(doors.map(d => d.customer_po || d.external_id).filter(Boolean))].join(', ')
 
     const jobPayload: Record<string, unknown> = {

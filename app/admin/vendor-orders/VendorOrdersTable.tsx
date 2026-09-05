@@ -423,7 +423,7 @@ function LineItemsTable({ items, totalFee, hideTotal = false }: { items: OrderLi
               <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-40">Item #</th>
               <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
               <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-32">Agreed Rate</th>
-              <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Fee</th>
+              <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">IPO Fee</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -448,7 +448,7 @@ function LineItemsTable({ items, totalFee, hideTotal = false }: { items: OrderLi
           {!hideTotal && (
             <tfoot className="border-t border-gray-200 bg-gray-50">
               <tr>
-                <td colSpan={5} className="px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Total Fee</td>
+                <td colSpan={5} className="px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">IPO Total Fee</td>
                 <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">{fmtMoney(totalFee ?? sum)}</td>
               </tr>
             </tfoot>
