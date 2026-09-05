@@ -55,6 +55,8 @@ export interface VendorOrder {
   /** Clopay remittance dollars received against this row's PO(s) — a group sums every door. */
   payment_received?: number | null
   payment_pos?: Array<{ po: string; amount: number }> | null
+  /** Total $ this job's IPO differs from Clopay's agreed labor rates. Negative = underpaid. */
+  rate_variance_total?: number | null
   dc_reserved_at?: string | null
   dc_last_seen_at?: string | null
   /** 'portal' = the crawler saw it; 'ipo_document' = recovered from a bundled IPO PDF
@@ -89,6 +91,12 @@ export interface OrderLineItem {
   item_number: string | null
   description: string | null
   line_fee: number | null
+  /** line_fee / quantity — what the schedule is comparable against. */
+  unit_fee?: number | null
+  /** Clopay's agreed unit rate for this code, when it is a labor code. */
+  schedule_rate?: number | null
+  /** unit_fee − schedule_rate. Negative = paid less than agreed. */
+  rate_variance?: number | null
 }
 
 // A document file the crawler downloaded to our own storage (signed URL minted
@@ -371,6 +379,27 @@ function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: n
 // what Clopay pays us. Full width above the Summary/Documents/Notes grid — it's a real table
 // and reads badly squeezed into a narrow column. Product lines are $0.00 (the door, opener,
 // molding); the paid lines are the install/delivery/labor ones, so those are emphasized.
+/** Clopay's agreed unit rate for this line, and how the IPO's unit fee compares.
+ *  Only labor codes have an agreed rate — doors, openers and parts show a dash rather than a
+ *  variance, since there is nothing they were promised to pay. */
+function AgreedRate({ item }: { item: OrderLineItem }) {
+  if (item.schedule_rate == null) return <span className="text-gray-300">—</span>
+  const v = item.rate_variance ?? 0
+  if (Math.abs(v) < 0.005) {
+    return <span className="text-gray-500" title="Paid at the agreed rate">{fmtMoney(item.schedule_rate)}</span>
+  }
+  const short = v < 0
+  return (
+    <span
+      className={short ? 'text-red-700' : 'text-blue-700'}
+      title={`Agreed ${fmtMoney(item.schedule_rate)} per unit, IPO pays ${fmtMoney(item.unit_fee ?? 0)}${item.quantity && item.quantity > 1 ? ` × ${item.quantity}` : ''} — ${short ? 'short' : 'over'} ${fmtMoney(Math.abs(v))} per unit`}
+    >
+      {fmtMoney(item.schedule_rate)}
+      <span className="ml-1 text-[10px] font-medium">{short ? '−' : '+'}{fmtMoney(Math.abs(v))}</span>
+    </span>
+  )
+}
+
 function LineItemsTable({ items, totalFee, hideTotal = false }: { items: OrderLineItem[]; totalFee: number | null; hideTotal?: boolean }) {
   const sum = items.reduce((a, i) => a + (i.line_fee ?? 0), 0)
   const mismatch = totalFee != null && Math.abs(sum - totalFee) >= 0.005
@@ -393,6 +422,7 @@ function LineItemsTable({ items, totalFee, hideTotal = false }: { items: OrderLi
               <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-14">Qty</th>
               <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-40">Item #</th>
               <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
+              <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-32">Agreed Rate</th>
               <th className="px-3 py-1.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Fee</th>
             </tr>
           </thead>
@@ -405,6 +435,9 @@ function LineItemsTable({ items, totalFee, hideTotal = false }: { items: OrderLi
                   <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">{i.quantity ?? '—'}</td>
                   <td className="px-3 py-1.5 font-mono text-xs text-gray-800 whitespace-nowrap">{i.item_number ?? '—'}</td>
                   <td className={`px-3 py-1.5 ${paid ? 'text-gray-900' : 'text-gray-500'}`}>{i.description || '—'}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
+                    <AgreedRate item={i} />
+                  </td>
                   <td className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap ${paid ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
                     {fmtMoney(i.line_fee ?? 0)}
                   </td>
@@ -415,7 +448,7 @@ function LineItemsTable({ items, totalFee, hideTotal = false }: { items: OrderLi
           {!hideTotal && (
             <tfoot className="border-t border-gray-200 bg-gray-50">
               <tr>
-                <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Total Fee</td>
+                <td colSpan={5} className="px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Total Fee</td>
                 <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">{fmtMoney(totalFee ?? sum)}</td>
               </tr>
             </tfoot>
@@ -692,6 +725,16 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                 {o.total_fee != null
                   ? <span className="font-medium text-gray-900" title="TOTAL FEE from this order's Installer Purchase Order">{fmtMoney(o.total_fee)}</span>
                   : <span className="text-gray-300">—</span>}
+                {o.rate_variance_total != null && (
+                  <div className="mt-0.5">
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded ${o.rate_variance_total < 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}
+                      title={`${o.rate_variance_total < 0 ? 'Clopay paid LESS than' : 'Clopay paid MORE than'} the agreed labor rate on this job by ${fmtMoney(Math.abs(o.rate_variance_total))} — open the row to see which lines`}
+                    >
+                      rate {o.rate_variance_total < 0 ? '−' : '+'}{fmtMoney(Math.abs(o.rate_variance_total))}
+                    </span>
+                  </div>
+                )}
                 {o.dc_reserved_at && <AtDcBadge reservedAt={o.dc_reserved_at} lastSeen={o.dc_last_seen_at ?? null} />}
               </td>
               <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">

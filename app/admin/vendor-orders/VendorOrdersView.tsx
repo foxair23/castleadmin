@@ -10,6 +10,7 @@ import HdOrdersNav from './HdOrdersNav'
 import { statusChipStyle, isTerminalStatus } from '@/lib/vendor-orders/status-style'
 import { attachmentsForOrders, signedUrls } from '@/lib/vendor-orders/attachments'
 import { clopayPaymentsByPo } from '@/lib/vendor-orders/payments'
+import { varianceByOrder } from '@/lib/vendor-orders/clopay-rates'
 
 // Shared HD Orders view — rendered by both /admin/vendor-orders (admin) and
 // /sales/hd-orders (sales), once per portal vendor. `vendor` selects which
@@ -142,6 +143,20 @@ export default async function VendorOrdersView({
   // What Clopay has actually paid, matched on PO. A row can be a whole group, so its figure
   // sums EVERY door's PO — the same roll-up Total Fee does. POs come from all orders, not
   // just the top-level ones: a child's PO is where that door's money is.
+  // Where Clopay paid something other than the agreed labor rate (Exhibit B). Rolled up per
+  // group like the money is, so a job's badge covers every door on it.
+  const varianceRollup = new Map<string, number>()
+  if (vendor === 'clopay_hd') {
+    const byOrder = await varianceByOrder(db, orders.map(o => o.id))
+    if (byOrder.size) {
+      for (const o of topLevel) {
+        const total = [o, ...(childrenOf.get(o.id) ?? [])]
+          .reduce((a, m) => a + (byOrder.get(m.id) ?? 0), 0)
+        if (Math.abs(total) >= 0.005) varianceRollup.set(o.id, Math.round(total * 100) / 100)
+      }
+    }
+  }
+
   let paidByOrder = new Map<string, number>()
   let poBreakdown = new Map<string, Array<{ po: string; amount: number }>>()
   if (vendor === 'clopay_hd') {
@@ -175,6 +190,7 @@ export default async function VendorOrdersView({
     door_count: 1 + (doorCounts.get(o.id) ?? 0),
     payment_received: paidByOrder.get(o.id) ?? null,
     payment_pos: poBreakdown.get(o.id) ?? null,
+    rate_variance_total: varianceRollup.get(o.id) ?? null,
   }))
 
   const counts = topLevel.reduce<Record<string, number>>((a, o) => {

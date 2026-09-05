@@ -58,7 +58,7 @@ export async function getOrderDetailAction(orderId: string): Promise<{ ok: boole
   const ids = [orderId, ...children.map(c => c.id)]
   const { data: lines } = await db
     .from('vendor_order_line_items')
-    .select('order_id, source_order_number, line_no, quantity, item_number, description, line_fee')
+    .select('order_id, source_order_number, line_no, quantity, item_number, description, line_fee, unit_fee, schedule_rate, rate_variance')
     .in('order_id', ids)
     .eq('is_current', true)
     .order('sort_order', { ascending: true })
@@ -67,7 +67,8 @@ export async function getOrderDetailAction(orderId: string): Promise<{ ok: boole
   for (const l of (lines ?? []) as Array<Record<string, unknown>>) {
     const k = String(l.order_id)
     const arr = byOrder.get(k) ?? []
-    arr.push({ line_no: l.line_no, quantity: l.quantity, item_number: l.item_number, description: l.description, line_fee: l.line_fee })
+    arr.push({ line_no: l.line_no, quantity: l.quantity, item_number: l.item_number, description: l.description, line_fee: l.line_fee,
+      unit_fee: l.unit_fee, schedule_rate: l.schedule_rate, rate_variance: l.rate_variance })
     byOrder.set(k, arr)
   }
 
