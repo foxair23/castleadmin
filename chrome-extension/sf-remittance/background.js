@@ -1,6 +1,7 @@
 import { getConfig, setStatus } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert } from './app-api.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult } from './app-api.js'
 import { applyOne } from './sf.js'
+import { addLinesToJob } from './sf-lines.js'
 import { postNote } from './sf-note.js'
 
 const ALARM = 'sf-remittance-poll'
@@ -549,6 +550,50 @@ async function runNotes(cfg, log) {
 
 let running = false
 
+/** Put queued Clopay IPO line items on their SF jobs.
+ *
+ *  addLinesToJob refuses any job that already carries service lines, so this can never
+ *  compete with hand-entered work. In dry-run nothing is posted and nothing is reported
+ *  back — the trace shows what WOULD have been sent. */
+async function runJobLines(cfg, log) {
+  let posted = 0, failed = 0
+  let items = []
+  try {
+    ({ items } = await fetchLinesQueue(cfg.baseUrl, cfg.token))
+  } catch (e) {
+    log.push({ linesQueueError: String(e) })
+    return { posted, failed }
+  }
+  if (!items.length) return { posted, failed }
+  console.log('[sf-remittance] job lines queue', { items: items.length })
+
+  for (const item of items) {
+    let res
+    try {
+      res = await addLinesToJob({ jobNumber: item.jobNumber, lines: item.lines, dryRun: cfg.dryRun })
+    } catch (e) {
+      res = { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, lines: item.lines.length, ...res })
+
+    // A skip is a decision, not a failure: the job already has lines and we left it alone.
+    // Report it so the order stops being re-queued every run.
+    if (!cfg.dryRun) {
+      try {
+        await postLinesResult(cfg.baseUrl, cfg.token, {
+          orderId: item.orderId,
+          ok: !!res.ok,
+          posted: res.posted ?? 0,
+          error: res.ok ? undefined : (res.reason ?? res.error),
+        })
+      } catch (e) { log.push({ orderId: item.orderId, callbackError: String(e) }) }
+    }
+    res.ok ? posted++ : failed++
+    await sleep(1500) // be gentle on SF
+  }
+  return { posted, failed }
+}
+
 export async function run(source) {
   if (running) return { ok: false, error: 'already running' }
   const cfg = await getConfig()
@@ -594,7 +639,11 @@ export async function run(source) {
       res.ok ? applied++ : failed++
       await sleep(1500) // be gentle on SF
     }
-    // Second pass: post any queued SF job notes (invoice-reminder audit trail,
+    // Second pass: put queued Clopay IPO line items on their SF jobs. Independent of the
+    // payment pass — a failure here never affects it, and vice versa.
+    const lines = await runJobLines(cfg, log)
+
+    // Third pass: post any queued SF job notes (invoice-reminder audit trail,
     // etc.). Independent of the payment pass — a failure here never affects it.
     const notes = await runNotes(cfg, log)
 

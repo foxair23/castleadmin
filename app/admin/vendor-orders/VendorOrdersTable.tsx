@@ -391,12 +391,13 @@ function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: n
 // what Clopay pays us. Full width above the Summary/Documents/Notes grid — it's a real table
 // and reads badly squeezed into a narrow column. Product lines are $0.00 (the door, opener,
 // molding); the paid lines are the install/delivery/labor ones, so those are emphasized.
-/** Push this job's IPO line items to Service Fusion by hand.
+/** Queue this job's IPO line items for Service Fusion.
  *
- *  The sweep does this automatically after an IPO parses, so this is for the cases it cannot
- *  cover — a job that already carried line items, or one somebody wants filled in now rather
- *  than on the next run. It never overwrites: a job with existing lines is reported back, not
- *  replaced, because SF's `services` is a REPLACE and hand-entered work would be lost. */
+ *  Nothing is posted from here: SF's API cannot modify an existing job (PUT /jobs → 405), so
+ *  the extension posts through SF's web session on its next run, as it already does for
+ *  remittance payments. The sweep queues these automatically after an IPO parses; this is for
+ *  a job someone wants done now. A job that already carries line items is refused outright —
+ *  we never compete with hand-entered work. */
 function AddLinesToSfJob({ orderId, jobNumber }: { orderId: string; jobNumber: string }) {
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<{ tone: 'ok' | 'warn' | 'err'; text: string } | null>(null)
@@ -410,14 +411,14 @@ function AddLinesToSfJob({ orderId, jobNumber }: { orderId: string; jobNumber: s
           start(async () => {
             const r = await addIpoLinesToSfJobAction(orderId)
             if (!r.ok) setMsg({ tone: 'err', text: r.error ?? 'failed' })
-            else if (r.status === 'added' && (r.added ?? 0) > 0) setMsg({ tone: 'ok', text: `Added ${r.added} line item(s) to SF job ${jobNumber}.` })
+            else if (r.status === 'queued') setMsg({ tone: 'ok', text: `${r.added} line item(s) queued for SF job ${jobNumber} — the extension posts them on its next run.` })
             else if (r.status === 'already_has_lines') setMsg({ tone: 'warn', text: `SF job ${jobNumber} already has ${r.existing} line item(s) — left untouched so nothing hand-entered is lost.` })
             else setMsg({ tone: 'warn', text: r.note ?? r.status })
           })
         }}
         className="text-xs px-2.5 py-1 rounded border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-progress"
       >
-        {pending ? 'adding…' : `Add line items to SF job ${jobNumber}`}
+        {pending ? 'queueing…' : `Add line items to SF job ${jobNumber}`}
       </button>
       {msg && (
         <span className={`text-xs ${msg.tone === 'ok' ? 'text-green-700' : msg.tone === 'warn' ? 'text-amber-700' : 'text-red-600'}`}>
