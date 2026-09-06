@@ -39,6 +39,30 @@ export async function postNoteResult(baseUrl, token, payload) {
   return res.json()
 }
 
+// ── Clopay IPO line items → SF jobs ─────────────────────────────────────────
+//
+// Service Fusion's API cannot modify a job that already exists (PUT /jobs → 405), so the app
+// queues the line items and the extension posts them through SF's web session — the same
+// arrangement as remittance payments above.
+
+export async function fetchLinesQueue(baseUrl, token) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-lines-queue`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error(`lines queue ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json() // { items: [{ orderId, sfJobId, jobNumber, lines: [...] }] }
+}
+
+export async function postLinesResult(baseUrl, token, payload) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-lines-callback`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`lines callback ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
 // ── Vendor portal orders (Genie / Home Depot, etc.) ─────────────────────────
 
 export async function postVendorOrders(baseUrl, token, vendor, orders, { kind, mode } = {}) {
