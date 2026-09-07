@@ -104,7 +104,6 @@ export default async function MediaPage({ params }: Props) {
           </div>
         )}
 
-        <p className="mt-6 text-xs text-gray-400">Links expire after 1 hour — reload this page to refresh them.</p>
       </div>
     </div>
   )
