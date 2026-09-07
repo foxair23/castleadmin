@@ -90,3 +90,23 @@ export async function pinStyleExample(id: string, pinned: boolean): Promise<void
 export async function removeStyleExample(id: string): Promise<void> {
   await assertAdmin(); await deleteStyleExample(agentDb(), id); revalidatePath(PATH)
 }
+
+// ── Replay (testing without a mailbox) ──────────────────────────────────────
+// Runs a pasted email through the exact pipeline Gmail messages will use. The
+// Processing switch is bypassed for a replay so filters can be exercised before
+// launch; every other rule applies. Nothing is ever sent from a replay.
+export async function replayPastedEmail(input: { from: string; to: string; cc: string; subject: string; body: string; autoReply: boolean; threadId: string }): Promise<{ outcome: string; detail?: string }> {
+  await assertAdmin()
+  const { ingestEmail, replayEmail } = await import('@/lib/agent/email/pipeline')
+  const { loadAgentSettings } = await import('@/lib/agent/settings')
+  const db = agentDb()
+  const settings = { ...(await loadAgentSettings(db)), processing_enabled: true }
+  const email = replayEmail({
+    from: input.from, to: input.to, cc: input.cc, subject: input.subject, body: input.body,
+    headers: input.autoReply ? { 'Auto-Submitted': 'auto-replied' } : {},
+    threadId: input.threadId.trim() ? `replay:${input.threadId.trim()}` : null,
+  })
+  const res = await ingestEmail(db, email, { settings })
+  revalidatePath(PATH)
+  return { outcome: res.outcome, detail: res.detail }
+}

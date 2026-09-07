@@ -25,6 +25,9 @@ export default async function CassiePage() {
   ])
 
   const gmailConfigured = !!process.env.GMAIL_REFRESH_TOKEN
+  const { data: activity } = await db.from('agent_email_messages')
+    .select('id, received_at, from_addr, from_name, subject, snippet, delivery_path, outcome, outcome_detail, gmail_thread_id')
+    .order('received_at', { ascending: false }).limit(100)
 
   return (
     <CassieClient
@@ -35,6 +38,7 @@ export default async function CassiePage() {
       answers={answers}
       styles={styles}
       gmailConfigured={gmailConfigured}
+      activity={(activity ?? []) as never}
     />
   )
 }

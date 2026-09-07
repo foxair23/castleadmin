@@ -8,8 +8,13 @@ import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
   saveAnswer, setAnswerActiveAction,
-  createStyleExample, pinStyleExample, removeStyleExample,
+  createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail,
 } from './actions'
+
+export interface ActivityRow {
+  id: string; received_at: string | null; from_addr: string | null; from_name: string | null; subject: string | null
+  snippet: string | null; delivery_path: string | null; outcome: string | null; outcome_detail: string | null; gmail_thread_id: string | null
+}
 
 // Admin → Cassie. The shared agent knowledge (charter, standing instructions, answer
 // library, style corpus) plus the settings row. The review queue, sent log and
@@ -39,7 +44,7 @@ function fmt(s: string | null | undefined): string {
 const lines = (arr: string[]) => arr.join('\n')
 const parseLines = (s: string) => s.split(/[\n,;]+/).map(x => x.trim()).filter(Boolean)
 
-type Tab = 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
+type Tab = 'activity' | 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
 
 export default function CassieClient(props: {
   settings: AgentSettings
@@ -49,9 +54,11 @@ export default function CassieClient(props: {
   answers: AnswerEntry[]
   styles: StyleExample[]
   gmailConfigured: boolean
+  activity: ActivityRow[]
 }) {
-  const [tab, setTab] = useState<Tab>('settings')
+  const [tab, setTab] = useState<Tab>('activity')
   const tabs: { key: Tab; label: string; count?: number }[] = [
+    { key: 'activity', label: 'Activity', count: props.activity.length },
     { key: 'settings', label: 'Settings' },
     { key: 'charter', label: 'Charter' },
     { key: 'instructions', label: 'Standing Instructions', count: props.instructions.filter(i => i.is_active).length },
@@ -72,11 +79,96 @@ export default function CassieClient(props: {
           </button>
         ))}
       </div>
+      {tab === 'activity' && <ActivityTab rows={props.activity} />}
       {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}
       {tab === 'instructions' && <InstructionsTab rows={props.instructions} />}
       {tab === 'answers' && <AnswersTab rows={props.answers} />}
       {tab === 'style' && <StyleTab rows={props.styles} />}
+    </div>
+  )
+}
+
+// ── Activity + replay ───────────────────────────────────────────────────────
+
+const OUTCOME_LABEL: Record<string, { label: string; cls: string }> = {
+  accepted: { label: 'Accepted — awaiting composer', cls: 'bg-blue-50 text-blue-700' },
+  drafted: { label: 'Draft — not sent', cls: 'bg-amber-100 text-amber-800' },
+  queued: { label: 'Queued', cls: 'bg-purple-100 text-purple-800' },
+  sent: { label: 'Sent', cls: 'bg-green-100 text-green-800' },
+  human_reply: { label: 'Castle staff wrote', cls: 'bg-gray-100 text-gray-700' },
+  partner_reply: { label: 'Partner follow-up', cls: 'bg-indigo-50 text-indigo-700' },
+  error: { label: 'Error', cls: 'bg-red-100 text-red-800' },
+}
+function outcomeBadge(o: string | null) {
+  if (!o) return { label: '—', cls: 'bg-gray-100 text-gray-500' }
+  if (o.startsWith('dropped_')) return { label: `Dropped — ${o.slice(8).replace(/_/g, ' ')}`, cls: 'bg-gray-100 text-gray-600' }
+  return OUTCOME_LABEL[o] ?? { label: o, cls: 'bg-gray-100 text-gray-600' }
+}
+
+const SAMPLE_BODY = `Hi Castle,
+
+Can you give me a status on PO 1020259181? Customer is asking when the install is scheduled.
+
+Thanks,
+Store 6614`
+
+function ActivityTab({ rows }: { rows: ActivityRow[] }) {
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [open, setOpen] = useState(false)
+  const [f, setF] = useState({ from: 'store.manager@homedepot.com', to: 'info@castlegarage.com', cc: '', subject: 'PO 1020259181 status', body: SAMPLE_BODY, autoReply: false, threadId: '' })
+  const [result, setResult] = useState<{ outcome: string; detail?: string } | null>(null)
+  return (
+    <div className="space-y-4">
+      <div className={card}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Replay a pasted email</h2>
+            <p className="text-xs text-gray-500">Runs a message through the same pipeline real mail will use — allowlist, auto-reply detection, loop protection, thread rules — and logs the outcome below. Nothing is sent. Use it to check your allowlist and, once the composer is live, to preview drafts before any mailbox is connected.</p>
+          </div>
+          <button className={btnGhost} onClick={() => setOpen(v => !v)}>{open ? 'Close' : 'Open'}</button>
+        </div>
+        {open && (
+          <div className="mt-3 grid sm:grid-cols-2 gap-3">
+            <Field label="From"><input className={input} value={f.from} onChange={e => setF(x => ({ ...x, from: e.target.value }))} /></Field>
+            <Field label="Subject"><input className={input} value={f.subject} onChange={e => setF(x => ({ ...x, subject: e.target.value }))} /></Field>
+            <Field label="To"><input className={input} value={f.to} onChange={e => setF(x => ({ ...x, to: e.target.value }))} /></Field>
+            <Field label="CC"><input className={input} value={f.cc} onChange={e => setF(x => ({ ...x, cc: e.target.value }))} /></Field>
+            <div className="sm:col-span-2"><Field label="Body"><textarea rows={7} className={input} value={f.body} onChange={e => setF(x => ({ ...x, body: e.target.value }))} /></Field></div>
+            <label className="flex items-center gap-2 text-sm text-gray-800"><input type="checkbox" checked={f.autoReply} onChange={e => setF(x => ({ ...x, autoReply: e.target.checked }))} /> Mark as an auto-reply (Auto-Submitted header)</label>
+            <Field label="Thread key" hint="reuse the same key to simulate a second message in one thread"><input className={input} value={f.threadId} onChange={e => setF(x => ({ ...x, threadId: e.target.value }))} placeholder="optional, e.g. test-1" /></Field>
+            <div className="sm:col-span-2 flex items-center gap-3">
+              <button className={btn} disabled={pending} onClick={() => start(async () => {
+                setResult(null)
+                try { setResult(await replayPastedEmail(f)); router.refresh() } catch (e) { setResult({ outcome: 'error', detail: e instanceof Error ? e.message : String(e) }) }
+              })}>Run through pipeline</button>
+              {result && (() => { const b = outcomeBadge(result.outcome); return (
+                <span className="text-sm"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${b.cls}`}>{b.label}</span>{result.detail && <span className="ml-2 text-gray-600">{result.detail}</span>}</span>
+              ) })()}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="overflow-x-auto border border-gray-200 rounded-lg bg-white">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-left text-xs text-gray-500">
+            <tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">From</th><th className="px-3 py-2">Subject</th><th className="px-3 py-2">Path</th><th className="px-3 py-2">Outcome</th></tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">No messages yet. Use the replay form above, or connect the mailbox.</td></tr>}
+            {rows.map(r => { const b = outcomeBadge(r.outcome); return (
+              <tr key={r.id} className="border-t border-gray-100 align-top">
+                <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmt(r.received_at)}</td>
+                <td className="px-3 py-2 text-gray-900">{r.from_name ? <>{r.from_name}<br /><span className="text-xs text-gray-500">{r.from_addr}</span></> : r.from_addr}</td>
+                <td className="px-3 py-2 text-gray-900 max-w-md"><div className="truncate">{r.subject ?? '—'}</div>{r.snippet && <div className="text-xs text-gray-500 truncate">{r.snippet}</div>}</td>
+                <td className="px-3 py-2 text-xs text-gray-500">{r.delivery_path ?? '—'}</td>
+                <td className="px-3 py-2"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${b.cls}`}>{b.label}</span>{r.outcome_detail && <div className="text-xs text-gray-500 mt-0.5 max-w-xs">{r.outcome_detail}</div>}</td>
+              </tr>
+            ) })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
