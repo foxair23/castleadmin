@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 
 // Step 1 of the direct-to-storage upload flow. Vercel caps request bodies at
@@ -9,8 +10,7 @@ import { createClient } from '@supabase/supabase-js'
 // /api/scheduler/uploads/complete to record the attachment.
 
 const ALLOWED_ORIGINS = [
-  'https://schedule.castlegaragedoors.com',
-  'https://foxair23.github.io',
+  ...schedulerOrigins(),
   /^http:\/\/localhost:\d+$/,
 ]
 

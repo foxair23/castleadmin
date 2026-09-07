@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sendEmail } from '@/lib/notifications/resend'
+import { officeEmail, clopayStsInboundAddress } from '@/lib/config/domains'
 import { CLOPAY_STS_STAGES, STS_REQUESTED, STS_CLOSED, advancedStatus } from './stages'
 
 // Clopay STS "request details from the DC" email. For each STS order we ask the
@@ -9,13 +10,13 @@ import { CLOPAY_STS_STAGES, STS_REQUESTED, STS_CLOSED, advancedStatus } from './
 //   • sendDcRequest(orderId)        — one email (cron + manual button share it)
 //   • runClopayStsAutoRequest()     — cron sweep of new, not-yet-requested orders
 //   • getStsSettings / setStsSettings — the settings singleton
-// Every DC email cc's info@castlegaragedoors.com and, on success, stamps
+// Every DC email cc's the office inbox (lib/config/domains) and, on success, stamps
 // details_requested_at and advances the status to 'Requested from DC'.
 
 const VENDOR = 'clopay_sts'
-const CC_ADDRESS = 'info@castlegaragedoors.com'
+const CC_ADDRESS = officeEmail()
 // The DC replies here so its PDF comes back into the STS inbound pipeline.
-const STS_INBOUND_ADDRESS = process.env.CLOPAY_STS_INBOUND_ADDRESS || 'clopay-sts@updates.castlegaragedoors.com'
+const STS_INBOUND_ADDRESS = clopayStsInboundAddress()
 const SEND_CAP = 25
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 

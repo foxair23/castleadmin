@@ -8,7 +8,7 @@ export const maxDuration = 120
 // Direct-post route for the weekly Clopay DC report.
 //
 // NOTE: this is NOT the path forwarded email takes. One Resend webhook serves the whole
-// @updates.castlegaragedoors.com domain — app/api/leads/inbound/route.ts — and it routes
+// @updates.castlegarage.com domain — app/api/leads/inbound/route.ts — and it routes
 // clopay@ to the same ingest. This route exists for the cases that route cannot serve:
 // re-ingesting a stored PDF after a parser fix, and exercising the ingest without sending
 // mail. Guarded by the same shared secret (?token= or x-clopay-dc-secret).

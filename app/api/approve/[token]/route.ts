@@ -4,7 +4,11 @@ import { renderItemsTableHtml, renderDescriptionHtml, type ApprovalLineItem } fr
 import { renderApprovalConfirmationEmail } from '@/lib/notifications/templates/approval-email'
 import { sendEmail } from '@/lib/notifications/resend'
 
-const COMPLIANCE_BCC = 'info@castlegaragedoors.com'
+import { complianceBcc } from '@/lib/config/domains'
+
+// Record-keeping copy. Env-driven: the old domain was sold, and a hardcoded address here
+// would deliver every approval to whoever owns it now.
+const COMPLIANCE_BCC = complianceBcc()
 
 function db() {
   return createAdminClient(

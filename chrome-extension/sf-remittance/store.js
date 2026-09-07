@@ -3,7 +3,7 @@
 export const DEFAULTS = {
   enabled: false,          // master switch for the background poll
   dryRun: true,            // do everything EXCEPT the final SF submit
-  baseUrl: '',             // Castle Admin origin, e.g. https://castleadmin.vercel.app
+  baseUrl: '',             // Castle Admin origin, e.g. https://hq.castlegarage.com (set in Options on the office PC)
   token: '',               // matches REMITTANCE_APPLY_TOKEN on the server
   pollMinutes: 10,
   receivedBy: 'RA',        // Payment[received_by] value in SF

@@ -1,4 +1,8 @@
-const FROM = 'Castle Garage Doors <noreply@updates.castlegaragedoors.com>'
+import { emailFrom } from '@/lib/config/domains'
+
+// Env-driven (EMAIL_FROM). Keep on the OLD verified domain until Resend shows the new one
+// Verified — an unverified sender fails every outbound email.
+const FROM = emailFrom()
 
 export async function sendEmail(params: {
   to: string

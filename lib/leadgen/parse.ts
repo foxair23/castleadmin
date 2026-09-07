@@ -95,7 +95,9 @@ function fieldAfter(text: string, label: string, stopLabels: string[]): string |
 function firstEmailIn(text: string): string | null {
   // Skip our own / the provider's addresses; take the first customer-looking one.
   const matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []
-  const skip = /(castlegaragedoors|homedepot|home-?services|no-?reply|donotreply)/i
+  // Our own domains (old and new — old mail still arrives during the move) plus the usual
+  // no-reply senders are never treated as a lead contact.
+  const skip = /(castlegarage\.com|castlegaragedoors|homedepot|home-?services|no-?reply|donotreply)/i
   for (const e of matches) if (!skip.test(e)) return e.toLowerCase()
   return null
 }

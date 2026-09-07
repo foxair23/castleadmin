@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 
 // Genie self-scheduler funnel tracking. The client POSTs a lightweight event at
@@ -9,8 +10,7 @@ import { createClient } from '@supabase/supabase-js'
 export const dynamic = 'force-dynamic'
 
 const ALLOWED_ORIGINS = [
-  'https://schedule.castlegaragedoors.com',
-  'https://foxair23.github.io',
+  ...schedulerOrigins(),
   /^http:\/\/localhost:\d+$/,
 ]
 

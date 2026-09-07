@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server'
+import { officeEmail, schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 import { sendEmail } from '@/lib/notifications/resend'
@@ -13,8 +14,7 @@ import { createOnlineEstimateInSf } from '@/lib/scheduler/online-estimate'
 // appointment/capacity machinery.
 
 const ALLOWED_ORIGINS = [
-  'https://schedule.castlegaragedoors.com',
-  'https://foxair23.github.io',
+  ...schedulerOrigins(),
   /^http:\/\/localhost:\d+$/,
 ]
 
@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Customer confirmation ("we'll email your estimate").
     const conf = renderOnlineEstimateConfirmation({ customerFirstName: body.first_name.trim(), serviceLabel })
-    await sendEmail({ to: customerEmail, subject: conf.subject, html: conf.bodyHtml, text: conf.bodyText, replyTo: 'info@castlegaragedoors.com' }).catch(() => {})
+    await sendEmail({ to: customerEmail, subject: conf.subject, html: conf.bodyHtml, text: conf.bodyText, replyTo: officeEmail() }).catch(() => {})
 
     // 3. Team alert.
     const alert = renderOnlineEstimateAlert({

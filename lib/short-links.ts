@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { appUrl } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 
 // Short links — turn long SF pay URLs into cstle.co/p/<code> for SMS/email.
@@ -20,14 +21,14 @@ export function shortBase(): string {
   return (process.env.SHORT_LINK_BASE || '').replace(/\/+$/, '')
 }
 function appBase(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || 'https://hq.castlegaragedoors.com').replace(/\/+$/, '')
+  return appUrl()
 }
 
 /**
  * Full short URL for a code. On the dedicated short domain the code sits at the
  * root (go.cstle.co/<code>) — the middleware rewrites that host's requests to
  * the /p/[code] resolver. Without SHORT_LINK_BASE we fall back to the app domain
- * with the /p/ prefix (hq.castlegaragedoors.com/p/<code>), which routes normally.
+ * with the /p/ prefix (<app>/p/<code>), which routes normally.
  */
 export function shortUrl(code: string): string {
   const base = shortBase()

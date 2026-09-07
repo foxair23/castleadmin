@@ -1,9 +1,11 @@
+import { emailLogoUrl, emailFooterDomain } from '@/lib/config/domains'
 // Branded email nudging a Genie / Home Depot customer to schedule their garage
 // door opener install. Same Castle design-system shell as the invoice-reminder /
 // lead-outreach emails (white logo header, Castle Red rule, black footer) with a
 // "Schedule My Installation" CTA.
 
-const LOGO_URL = 'https://www.castlegaragedoors.com/logo.png'
+// Served from our own origin — the old marketing host is no longer ours.
+const LOGO_URL = emailLogoUrl()
 const FONTS = 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700&family=Source+Sans+3:wght@400;600&display=swap'
 const DISPLAY = "'DM Sans',system-ui,-apple-system,sans-serif"
 const BODY = "'Source Sans 3',system-ui,-apple-system,sans-serif"
@@ -59,7 +61,7 @@ Questions? Call us at (800) 576-1397 or just reply to this email.
     </div>
     <div style="background:#0F0F0F; padding:20px 28px;">
       <p style="font-family:${DISPLAY}; font-weight:700; font-size:13px; color:#FFFFFF; margin:0 0 4px; letter-spacing:0.3px;">Castle Team</p>
-      <p style="font-size:12px; color:#8A8A94; margin:0; line-height:1.5;">Family-owned &amp; operated since 1981 &mdash; serving San Diego to Riverside County &middot; CSLB #1154002<br>(800) 576-1397 &middot; castlegaragedoors.com</p>
+      <p style="font-size:12px; color:#8A8A94; margin:0; line-height:1.5;">Family-owned &amp; operated since 1981 &mdash; serving San Diego to Riverside County &middot; CSLB #1154002<br>(800) 576-1397 &middot; ${emailFooterDomain()}</p>
     </div>
   </div>
 </body>

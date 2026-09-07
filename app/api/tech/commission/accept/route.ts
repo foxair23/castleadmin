@@ -7,7 +7,11 @@ import { LEGAL_VERSION } from '@/lib/commission/legal-agreement'
 import { renderCommissionAcceptanceEmail } from '@/lib/notifications/templates/commission'
 import { sendEmail } from '@/lib/notifications/resend'
 
-const COMPLIANCE_BCC = 'john@castlegaragedoors.com'
+import { complianceBcc } from '@/lib/config/domains'
+
+// Record-keeping copy. Env-driven: the old domain was sold, and a hardcoded address here
+// would deliver every acceptance to whoever owns it now.
+const COMPLIANCE_BCC = complianceBcc()
 
 // POST — the LOGGED-IN tech accepts their commission plan for a period.
 // Body: { period_start, period_end, typed_name, agree }
