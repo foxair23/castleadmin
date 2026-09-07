@@ -25,9 +25,14 @@ export default async function CassiePage() {
   ])
 
   const gmailConfigured = !!process.env.GMAIL_REFRESH_TOKEN
-  const { data: activity } = await db.from('agent_email_messages')
-    .select('id, received_at, from_addr, from_name, subject, snippet, delivery_path, outcome, outcome_detail, gmail_thread_id')
-    .order('received_at', { ascending: false }).limit(100)
+  const [{ data: activity }, { data: draftRows }] = await Promise.all([
+    db.from('agent_email_messages')
+      .select('id, received_at, from_addr, from_name, subject, snippet, delivery_path, outcome, outcome_detail, gmail_thread_id')
+      .order('received_at', { ascending: false }).limit(100),
+    db.from('agent_email_replies')
+      .select('id, message_id, status, question_type, question_summary, resolve_status, resolve_tier, sf_job_number, composed_subject, composed_text, unsourced_claims, hard_fail_reasons, claims, error, created_at')
+      .order('created_at', { ascending: false }).limit(100),
+  ])
 
   return (
     <CassieClient
@@ -39,6 +44,7 @@ export default async function CassiePage() {
       styles={styles}
       gmailConfigured={gmailConfigured}
       activity={(activity ?? []) as never}
+      drafts={(draftRows ?? []) as never}
     />
   )
 }

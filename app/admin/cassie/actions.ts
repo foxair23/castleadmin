@@ -98,6 +98,7 @@ export async function removeStyleExample(id: string): Promise<void> {
 export async function replayPastedEmail(input: { from: string; to: string; cc: string; subject: string; body: string; autoReply: boolean; threadId: string }): Promise<{ outcome: string; detail?: string }> {
   await assertAdmin()
   const { ingestEmail, replayEmail } = await import('@/lib/agent/email/pipeline')
+  const { makeComposerStage } = await import('@/lib/agent/email/composer-stage')
   const { loadAgentSettings } = await import('@/lib/agent/settings')
   const db = agentDb()
   const settings = { ...(await loadAgentSettings(db)), processing_enabled: true }
@@ -106,7 +107,7 @@ export async function replayPastedEmail(input: { from: string; to: string; cc: s
     headers: input.autoReply ? { 'Auto-Submitted': 'auto-replied' } : {},
     threadId: input.threadId.trim() ? `replay:${input.threadId.trim()}` : null,
   })
-  const res = await ingestEmail(db, email, { settings })
+  const res = await ingestEmail(db, email, { settings, composer: makeComposerStage() })
   revalidatePath(PATH)
   return { outcome: res.outcome, detail: res.detail }
 }

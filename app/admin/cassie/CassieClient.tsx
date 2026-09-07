@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { Fragment, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { AgentSettings, QuestionType } from '@/lib/agent/settings'
 import type { Charter, Instruction, AnswerEntry, StyleExample } from '@/lib/agent/knowledge'
@@ -10,6 +10,13 @@ import {
   saveAnswer, setAnswerActiveAction,
   createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail,
 } from './actions'
+
+export interface DraftRow {
+  id: string; message_id: string; status: string; question_type: string | null; question_summary: string | null
+  resolve_status: string | null; resolve_tier: string | null; sf_job_number: string | null
+  composed_subject: string | null; composed_text: string | null; unsourced_claims: string[]; hard_fail_reasons: string[]
+  claims: Array<{ text: string; factIds: string[]; grounded: boolean; unsupported: string[] }>; error: string | null; created_at: string
+}
 
 export interface ActivityRow {
   id: string; received_at: string | null; from_addr: string | null; from_name: string | null; subject: string | null
@@ -55,6 +62,7 @@ export default function CassieClient(props: {
   styles: StyleExample[]
   gmailConfigured: boolean
   activity: ActivityRow[]
+  drafts: DraftRow[]
 }) {
   const [tab, setTab] = useState<Tab>('activity')
   const tabs: { key: Tab; label: string; count?: number }[] = [
@@ -79,7 +87,7 @@ export default function CassieClient(props: {
           </button>
         ))}
       </div>
-      {tab === 'activity' && <ActivityTab rows={props.activity} />}
+      {tab === 'activity' && <ActivityTab rows={props.activity} drafts={props.drafts} />}
       {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}
       {tab === 'instructions' && <InstructionsTab rows={props.instructions} />}
@@ -113,7 +121,9 @@ Can you give me a status on PO 1020259181? Customer is asking when the install i
 Thanks,
 Store 6614`
 
-function ActivityTab({ rows }: { rows: ActivityRow[] }) {
+function ActivityTab({ rows, drafts }: { rows: ActivityRow[]; drafts: DraftRow[] }) {
+  const draftByMessage = new Map(drafts.map(d => [d.message_id, d]))
+  const [openDraft, setOpenDraft] = useState<string | null>(null)
   const router = useRouter()
   const [pending, start] = useTransition()
   const [open, setOpen] = useState(false)
@@ -157,17 +167,81 @@ function ActivityTab({ rows }: { rows: ActivityRow[] }) {
           </thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">No messages yet. Use the replay form above, or connect the mailbox.</td></tr>}
-            {rows.map(r => { const b = outcomeBadge(r.outcome); return (
-              <tr key={r.id} className="border-t border-gray-100 align-top">
+            {rows.map(r => { const b = outcomeBadge(r.outcome); const d = draftByMessage.get(r.id); const isOpen = openDraft === r.id; return (
+              <Fragment key={r.id}>
+              <tr className={`border-t border-gray-100 align-top ${d ? 'cursor-pointer hover:bg-gray-50' : ''}`} onClick={() => d && setOpenDraft(isOpen ? null : r.id)}>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmt(r.received_at)}</td>
                 <td className="px-3 py-2 text-gray-900">{r.from_name ? <>{r.from_name}<br /><span className="text-xs text-gray-500">{r.from_addr}</span></> : r.from_addr}</td>
                 <td className="px-3 py-2 text-gray-900 max-w-md"><div className="truncate">{r.subject ?? '—'}</div>{r.snippet && <div className="text-xs text-gray-500 truncate">{r.snippet}</div>}</td>
                 <td className="px-3 py-2 text-xs text-gray-500">{r.delivery_path ?? '—'}</td>
-                <td className="px-3 py-2"><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${b.cls}`}>{b.label}</span>{r.outcome_detail && <div className="text-xs text-gray-500 mt-0.5 max-w-xs">{r.outcome_detail}</div>}</td>
+                <td className="px-3 py-2">
+                  <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${b.cls}`}>{b.label}</span>
+                  {d && d.unsourced_claims.length > 0 && <span className="ml-1 inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800">{d.unsourced_claims.length} unsourced</span>}
+                  {r.outcome_detail && <div className="text-xs text-gray-500 mt-0.5 max-w-xs">{r.outcome_detail}</div>}
+                  {d && <div className="text-[11px] text-gray-400 mt-0.5">{isOpen ? 'click to hide draft' : 'click to view draft'}</div>}
+                </td>
               </tr>
+              {d && isOpen && (
+                <tr className="bg-gray-50"><td colSpan={5} className="px-4 py-3"><DraftDetail d={d} /></td></tr>
+              )}
+              </Fragment>
             ) })}
           </tbody>
         </table>
+      </div>
+    </div>
+  )
+}
+
+const REASON_LABEL: Record<string, string> = {
+  ungrounded: 'contains unsourced claims', multi_match: 'more than one job matched', no_match: 'no job matched', refresh_failed: 'live Service Fusion read failed',
+  multi_part: 'several questions in one email', asks_for_human: 'sender asked for a person', could_not_answer: 'Cassie could not answer from the facts',
+  auto_off: 'Auto-Respond is off', type_not_auto: 'question type not in the auto-send focus area', tier_not_auto: 'match tier not enabled for auto-send', tier_paused: 'tier paused by confusion rate',
+}
+
+function DraftDetail({ d }: { d: DraftRow }) {
+  const status = d.status === 'draft' ? { label: 'Draft — not sent', cls: 'bg-amber-100 text-amber-800' } : d.status === 'failed' ? { label: 'Failed', cls: 'bg-red-100 text-red-800' } : outcomeBadge(d.status)
+  return (
+    <div className="grid lg:grid-cols-2 gap-4 text-sm">
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${status.cls}`}>{status.label}</span>
+          {d.question_type && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{d.question_type}</span>}
+          {d.sf_job_number && <span className="text-xs text-gray-600">Job {d.sf_job_number} <span className="text-gray-400">via {d.resolve_tier}</span></span>}
+          {d.resolve_status && d.resolve_status !== 'matched' && <span className="text-xs text-red-700">{d.resolve_status === 'ambiguous' ? 'ambiguous match' : 'no match'}</span>}
+        </div>
+        {d.question_summary && <p className="text-xs text-gray-500 mb-2">Asked: {d.question_summary}</p>}
+        {d.error && <p className="text-xs text-red-700 mb-2">{d.error}</p>}
+        {d.composed_text && (
+          <div className="rounded border border-gray-200 bg-white p-3">
+            <div className="text-xs text-gray-400 mb-1">{d.composed_subject}</div>
+            <pre className="whitespace-pre-wrap font-sans text-sm text-gray-900">{d.composed_text}</pre>
+          </div>
+        )}
+      </div>
+      <div className="space-y-3">
+        <div>
+          <div className="text-xs font-semibold text-gray-700 mb-1">Unsourced claims {d.unsourced_claims.length === 0 ? <span className="text-green-700 font-normal">— none</span> : <span className="text-red-700">({d.unsourced_claims.length})</span>}</div>
+          {d.unsourced_claims.length > 0 && <ul className="list-disc pl-5 text-xs text-red-800 space-y-0.5">{d.unsourced_claims.map((u, i) => <li key={i}>{u}</li>)}</ul>}
+        </div>
+        {d.hard_fail_reasons.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-gray-700 mb-1">Would not auto-send because</div>
+            <ul className="list-disc pl-5 text-xs text-gray-700 space-y-0.5">{d.hard_fail_reasons.map(r => <li key={r}>{REASON_LABEL[r] ?? r}</li>)}</ul>
+          </div>
+        )}
+        {Array.isArray(d.claims) && d.claims.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-gray-700 mb-1">Sentence by sentence</div>
+            <ul className="space-y-1">
+              {d.claims.map((c, i) => (
+                <li key={i} className={`text-xs rounded px-2 py-1 ${c.grounded ? 'bg-green-50 text-green-900' : 'bg-red-50 text-red-900'}`}>
+                  {c.text.trim()} <span className="text-[10px] text-gray-500">{c.factIds.length ? c.factIds.join(', ') : 'no facts cited'}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   )
