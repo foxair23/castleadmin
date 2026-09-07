@@ -20,6 +20,11 @@ export interface DraftRow {
   claims: Array<{ text: string; factIds: string[]; grounded: boolean; unsupported: string[] }>; error: string | null; created_at: string
 }
 
+export interface GmailStatus {
+  connected: boolean; email: string | null; grantedAt: string | null; source: 'db' | 'env' | null; oauthReady: boolean; redirectUri: string
+  lastOkAt: string | null; lastError: string | null; lastErrorAt: string | null
+}
+
 export interface ActivityRow {
   id: string; received_at: string | null; from_addr: string | null; from_name: string | null; subject: string | null
   snippet: string | null; delivery_path: string | null; outcome: string | null; outcome_detail: string | null; gmail_thread_id: string | null
@@ -67,6 +72,8 @@ export default function CassieClient(props: {
   drafts: DraftRow[]
   reviewItems: ReviewItem[]
   initialReply: string | null
+  gmail: GmailStatus
+  gmailFlash: { ok: boolean; msg: string } | null
 }) {
   const [tab, setTab] = useState<Tab>('review')
   const needsReview = props.reviewItems.filter(i => i.status === 'draft').length
@@ -95,7 +102,7 @@ export default function CassieClient(props: {
       </div>
       {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} />}
       {tab === 'activity' && <ActivityTab rows={props.activity} drafts={props.drafts} />}
-      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} />}
+      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}
       {tab === 'instructions' && <InstructionsTab rows={props.instructions} />}
       {tab === 'answers' && <AnswersTab rows={props.answers} />}
@@ -256,7 +263,7 @@ function DraftDetail({ d }: { d: DraftRow }) {
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-function SettingsTab({ settings: s, gmailConfigured }: { settings: AgentSettings; gmailConfigured: boolean }) {
+function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash }: { settings: AgentSettings; gmailConfigured: boolean; gmail: GmailStatus; gmailFlash: { ok: boolean; msg: string } | null }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
@@ -290,10 +297,37 @@ function SettingsTab({ settings: s, gmailConfigured }: { settings: AgentSettings
   return (
     <div className="space-y-4">
       <div className={card}>
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">Mailbox connection</h2>
+        {gmailFlash && <p className={`mb-2 rounded-md px-3 py-2 text-xs ${gmailFlash.ok ? 'border border-green-200 bg-green-50 text-green-800' : 'border border-red-200 bg-red-50 text-red-800'}`}>{gmailFlash.msg}</p>}
+        {gmail.connected ? (
+          <div className="text-sm text-gray-800">
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-green-500" /> Connected as <b>{gmail.email}</b>{gmail.source === 'env' && <span className="text-xs text-gray-500">(from environment variable)</span>}</span>
+            <div className="text-xs text-gray-500 mt-1">Granted {fmt(gmail.grantedAt)} · last successful check {fmt(gmail.lastOkAt)}</div>
+            {gmail.lastError && <div className="mt-1 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800">Last error {fmt(gmail.lastErrorAt)}: {gmail.lastError}</div>}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-700">No mailbox connected. Cassie cannot read or send anything until this is done.</p>
+        )}
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <a href="/api/cassie/gmail/authorize" className={`${btn} ${!gmail.oauthReady ? 'pointer-events-none opacity-50' : ''}`}>{gmail.connected ? 'Reconnect Gmail' : 'Connect Gmail'}</a>
+          <span className="text-xs text-gray-500">Sign in as <b>{s.mailbox_address}</b> when Google asks. Any other account is refused.</span>
+        </div>
+        {!gmail.oauthReady && <p className="mt-2 text-xs text-red-700">GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set in Vercel.</p>}
+        <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">One-time Google Cloud setup</summary>
+          <ol className="list-decimal pl-5 mt-1 space-y-0.5">
+            <li>In the Google Cloud project that owns the existing OAuth client, enable the <b>Gmail API</b>.</li>
+            <li>On that OAuth client (Credentials → OAuth 2.0 Client IDs), add this authorized redirect URI: <code className="rounded bg-gray-100 px-1">{gmail.redirectUri}</code></li>
+            <li>If the consent screen is in Testing mode, add {s.mailbox_address} as a test user (or publish it for the Workspace).</li>
+            <li>Come back here, click Connect Gmail, and sign in as {s.mailbox_address}.</li>
+          </ol>
+        </details>
+      </div>
+
+      <div className={card}>
         <h2 className="text-sm font-semibold text-gray-900 mb-2">Switches</h2>
         {!gmailConfigured && (
           <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            No mailbox is connected yet, so these switches have no effect. They become live once Gmail is authorized under Integrations.
+            No mailbox is connected yet, so these switches have no effect. Connect Gmail above first.
           </p>
         )}
         <div className="flex flex-wrap gap-6">

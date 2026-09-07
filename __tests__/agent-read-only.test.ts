@@ -27,9 +27,18 @@ function walk(dir: string): string[] {
 describe('lib/agent is read-only against Service Fusion', () => {
   const files = walk(join(ROOT, 'lib/agent'))
   it('has files to check', () => expect(files.length).toBeGreaterThan(0))
+  // Files that legitimately POST to OTHER services (Gmail, Anthropic). They must not so
+  // much as mention Service Fusion, so a write verb there cannot be aimed at it.
+  const NON_SF_WRITERS = new Set(['lib/agent/email/gmail.ts'])
   for (const f of files) {
-    it(`${f.replace(ROOT + '/', '')} imports no write-capable SF client and issues no write verbs`, () => {
+    const rel = f.replace(ROOT + '/', '')
+    it(`${rel} imports no write-capable SF client and issues no write verbs`, () => {
       const src = readFileSync(f, 'utf8')
+      if (NON_SF_WRITERS.has(rel)) {
+        expect(src, 'a non-SF writer must not reference Service Fusion at all').not.toMatch(/servicefusion|sf-mirror|sfGet|\/jobs\//i)
+        for (const re of FORBIDDEN.slice(0, 4)) expect(src, `matched ${re}`).not.toMatch(re)
+        return
+      }
       for (const re of FORBIDDEN) expect(src, `matched ${re}`).not.toMatch(re)
     })
   }

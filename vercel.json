@@ -118,6 +118,10 @@
     {
       "path": "/api/cron/clopay-rate-digest",
       "schedule": "20 15 * * 1-6"
+    },
+    {
+      "path": "/api/cron/cassie-poll",
+      "schedule": "* * * * *"
     }
   ]
 }

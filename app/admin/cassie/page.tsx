@@ -4,11 +4,12 @@ import { agentDb, loadAgentSettings } from '@/lib/agent/settings'
 import { getActiveCharter, listCharterVersions, listInstructions, listAnswers, listStyleExamples } from '@/lib/agent/knowledge'
 import CassieClient from './CassieClient'
 import { loadReviewItems } from '@/lib/agent/email/review'
+import { loadGmailCredential, isGoogleOAuthConfigured, gmailRedirectUri } from '@/lib/agent/email/gmail'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Cassie' }
 
-export default async function CassiePage({ searchParams }: { searchParams: Promise<{ reply?: string }> }) {
+export default async function CassiePage({ searchParams }: { searchParams: Promise<{ reply?: string; gmail?: string; msg?: string }> }) {
   const sp = await searchParams
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -26,7 +27,10 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
     listStyleExamples(db),
   ])
 
-  const gmailConfigured = !!process.env.GMAIL_REFRESH_TOKEN
+  const gmailCred = await loadGmailCredential(db)
+  const gmailConfigured = !!gmailCred
+  const gmail = { connected: !!gmailCred, email: gmailCred?.email ?? null, grantedAt: gmailCred?.granted_at ?? null, source: gmailCred?.source ?? null, oauthReady: isGoogleOAuthConfigured(), redirectUri: gmailRedirectUri(), lastOkAt: settings.gmail_last_ok_at, lastError: settings.gmail_last_error, lastErrorAt: settings.gmail_last_error_at }
+  const gmailFlash = sp.gmail ? { ok: sp.gmail === 'connected', msg: sp.msg ?? '' } : null
   const reviewItems = await loadReviewItems(db, { statuses: ['draft', 'queued', 'sent', 'rejected', 'escalated', 'cancelled', 'superseded', 'failed'], limit: 300 })
   const [{ data: activity }, { data: draftRows }] = await Promise.all([
     db.from('agent_email_messages')
@@ -50,6 +54,8 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
       drafts={(draftRows ?? []) as never}
       reviewItems={reviewItems}
       initialReply={sp.reply ?? null}
+      gmail={gmail}
+      gmailFlash={gmailFlash}
     />
   )
 }

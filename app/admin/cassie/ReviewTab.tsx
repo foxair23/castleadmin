@@ -65,7 +65,7 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen }: { ite
   return (
     <div className="space-y-4">
       {!gmailConfigured && byView.queued.length > 0 && (
-        <p className="rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900">{byView.queued.length} approved repl{byView.queued.length === 1 ? 'y is' : 'ies are'} queued but no mailbox is connected yet, so nothing has been sent. They will go out once Gmail is authorized under Integrations.</p>
+        <p className="rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900">{byView.queued.length} approved repl{byView.queued.length === 1 ? 'y is' : 'ies are'} queued but no mailbox is connected yet, so nothing has been sent. They will go out once Gmail is connected under Settings.</p>
       )}
       <div className="flex gap-1 text-sm">
         {([['queue', 'Needs review'], ['queued', 'Queued'], ['sent', 'Sent'], ['closed', 'Closed']] as [View, string][]).map(([k, label]) => (
