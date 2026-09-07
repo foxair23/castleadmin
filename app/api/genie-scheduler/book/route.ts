@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server'
+import { officeEmail, schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 import { sfPut } from '@/lib/crm/service-fusion'
 import { enqueueNote } from '@/lib/sf-notes/queue'
@@ -21,8 +22,7 @@ import { renderGenieBookingConfirmation, renderGenieBookingAlert } from '@/lib/n
 export const dynamic = 'force-dynamic'
 
 const ALLOWED_ORIGINS = [
-  'https://schedule.castlegaragedoors.com',
-  'https://foxair23.github.io',
+  ...schedulerOrigins(),
   /^http:\/\/localhost:\d+$/,
 ]
 function corsHeaders(origin: string | null): Record<string, string> {
@@ -284,7 +284,7 @@ export async function POST(req: NextRequest) {
   after(async () => {
     if (customerEmail) {
       const { subject, html, text } = renderGenieBookingConfirmation({ greetingName, dateLabel, windowLabel: windowText, address: addressText })
-      await sendEmail({ to: customerEmail, subject, html, text, replyTo: 'info@castlegaragedoors.com' }).catch(() => { /* non-critical */ })
+      await sendEmail({ to: customerEmail, subject, html, text, replyTo: officeEmail() }).catch(() => { /* non-critical */ })
     }
     const alert = renderGenieBookingAlert({
       customerName: order.customer_name, phone: order.phone, email: customerEmail,

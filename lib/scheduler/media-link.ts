@@ -1,4 +1,5 @@
 import { type SupabaseClient } from '@supabase/supabase-js'
+import { appUrl } from '@/lib/config/domains'
 import { ensureShortLink } from '@/lib/short-links'
 
 // A single short, login-gated link to a scheduler lead's customer photos/videos,
@@ -7,7 +8,7 @@ import { ensureShortLink } from '@/lib/short-links'
 // any Castle Admin role), which signs the media fresh on each view.
 
 function appBase(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || 'https://hq.castlegaragedoors.com').replace(/\/+$/, '')
+  return appUrl()
 }
 
 /** How many attachments a lead has (photos + video). */

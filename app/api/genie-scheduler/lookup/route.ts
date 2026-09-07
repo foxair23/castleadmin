@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
 
@@ -11,8 +12,7 @@ import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
 export const dynamic = 'force-dynamic'
 
 const ALLOWED_ORIGINS = [
-  'https://schedule.castlegaragedoors.com',
-  'https://foxair23.github.io',
+  ...schedulerOrigins(),
   /^http:\/\/localhost:\d+$/,
 ]
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 
 // Step 2 of the direct-to-storage upload flow (see ../sign/route.ts): after
@@ -8,8 +9,7 @@ import { createClient } from '@supabase/supabase-js'
 // so a caller can't register phantom files.
 
 const ALLOWED_ORIGINS = [
-  'https://schedule.castlegaragedoors.com',
-  'https://foxair23.github.io',
+  ...schedulerOrigins(),
   /^http:\/\/localhost:\d+$/,
 ]
 

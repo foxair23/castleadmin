@@ -27,7 +27,7 @@
   <input id="token" type="text" placeholder="matches REMITTANCE_APPLY_TOKEN on the server" />
 
   <label>Castle Admin username <span style="font-weight:400;color:#888;">(optional)</span></label>
-  <input id="castleUser" type="text" autocomplete="off" placeholder="you@castlegaragedoors.com" />
+  <input id="castleUser" type="text" autocomplete="off" placeholder="you@castlegarage.com" />
   <label>Castle Admin password <span style="font-weight:400;color:#888;">(optional)</span></label>
   <input id="castlePass" type="password" autocomplete="new-password" placeholder="•••••••••" />
   <div class="hint">Usually not needed — the extension talks to Castle Admin with the apply token above, not a browser login. Fill these only if you also want the extension to sign you into the Castle Admin site when you land on its login page.</div>
@@ -44,7 +44,7 @@
   <label>Service Fusion Company ID</label>
   <input id="sfCompany" type="text" autocomplete="off" placeholder="castlegaragedoors" />
   <label>Service Fusion username</label>
-  <input id="sfUser" type="text" autocomplete="off" placeholder="you@castlegaragedoors.com" />
+  <input id="sfUser" type="text" autocomplete="off" placeholder="you@castlegarage.com" />
   <label>Service Fusion password</label>
   <input id="sfPass" type="password" autocomplete="new-password" placeholder="•••••••••" />
   <div class="hint">Used to sign back into admin.servicefusion.com when the session drops so note/payment posting keeps working. Leave blank to skip auto-login (you'll just get an alert).</div>
@@ -62,7 +62,7 @@
   <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, crawls, closes it. Needs Chrome running and logged into the Genie portal; if it finds you logged out, it signs back in with the credentials below, then badges the icon and emails whoever you pick in Notifications.</div>
 
   <label>Genie username</label>
-  <input id="genieUser" type="text" autocomplete="off" placeholder="john@castlegaragedoors.com" />
+  <input id="genieUser" type="text" autocomplete="off" placeholder="john@castlegarage.com" />
   <label>Genie password</label>
   <input id="geniePass" type="password" autocomplete="new-password" placeholder="•••••••••" />
   <div class="warn">Chrome blocks scripts from submitting its <em>own</em> autofilled password (anti-phishing), so unattended re-login needs the extension to hold these. They're stored only in this browser's local extension storage on this machine — never synced, never sent anywhere, never in the code. Leave blank to skip auto-login (badge + email only).</div>
@@ -83,7 +83,7 @@
   <div class="hint">Office PC only. Hourly 7am–6pm Mon–Sat (new/changed orders) + a nightly full backfill. Opens a background tab, reads the API, closes it. Needs Chrome running and logged into the Clopay portal; if it finds you logged out, it signs back in with the credentials below, then badges the icon and emails whoever you pick in Notifications.</div>
 
   <label>Clopay username</label>
-  <input id="clopayUser" type="text" autocomplete="off" placeholder="you@castlegaragedoors.com" />
+  <input id="clopayUser" type="text" autocomplete="off" placeholder="you@castlegarage.com" />
   <label>Clopay password</label>
   <input id="clopayPass" type="password" autocomplete="new-password" placeholder="•••••••••" />
   <div class="warn">Same as Genie: Chrome won't submit its <em>own</em> autofilled password, so unattended re-login needs the extension to hold these. Stored only in this browser's local extension storage on this machine — never synced, never sent anywhere, never in the code. Leave blank to skip auto-login (badge + email only).</div>

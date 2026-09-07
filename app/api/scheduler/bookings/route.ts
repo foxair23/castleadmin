@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server'
+import { officeEmail, schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
 import { syncLeadToServiceFusion } from '@/lib/scheduler/sf-sync'
 import { isMondayMorningLockedOut } from '@/lib/scheduler/weekend-cutoff'
@@ -8,8 +9,7 @@ import { renderBookingConfirmation, formatTimeWindow } from '@/lib/notifications
 import { sendEmail } from '@/lib/notifications/resend'
 
 const ALLOWED_ORIGINS = [
-  'https://schedule.castlegaragedoors.com',
-  'https://foxair23.github.io',
+  ...schedulerOrigins(),
   /^http:\/\/localhost:\d+$/,
 ]
 
@@ -442,7 +442,7 @@ export async function POST(req: NextRequest) {
         address: addressLabel,
         quotedFee,
       })
-      await sendEmail({ to: customerEmail, subject, html: bodyHtml, text: bodyText, replyTo: 'info@castlegaragedoors.com' }).catch(() => { /* non-critical */ })
+      await sendEmail({ to: customerEmail, subject, html: bodyHtml, text: bodyText, replyTo: officeEmail() }).catch(() => { /* non-critical */ })
     }
 
     if (autoSync) {

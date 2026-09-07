@@ -1,6 +1,7 @@
 'use server'
 
 import { createServiceClient } from '@/lib/supabase/server'
+import { appUrl } from '@/lib/config/domains'
 import { requireAdminOrSales } from '@/lib/approvals/auth'
 import { loadJobApprovalContext, type JobApprovalContext } from '@/lib/approvals/contact'
 import {
@@ -19,7 +20,7 @@ import { ensureShortLink } from '@/lib/short-links'
 import { syncSingleJob, runIncrementalSyncForEntity } from '@/lib/sf-mirror/sync-engine'
 
 function appBase(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || 'https://hq.castlegaragedoors.com').replace(/\/+$/, '')
+  return appUrl()
 }
 
 export type LookupResult =

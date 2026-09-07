@@ -173,14 +173,14 @@ export default function LeadGenClient({ leads, enabled, replyTo, inbound, canCon
                 type="email"
                 value={replyToInput}
                 onChange={e => setReplyToInput(e.target.value)}
-                placeholder="e.g. vanessa@castlegaragedoors.com"
+                placeholder="e.g. vanessa@castlegarage.com"
                 className="flex-1 min-w-[220px] rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
               />
               <button onClick={saveReplyTo} disabled={pending} className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50">Save</button>
               {replySaved && <span className="text-sm text-green-700">Saved</span>}
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              The outreach email invites customers to reply. Set a monitored inbox here — <strong>not</strong> an <code>@updates.castlegaragedoors.com</code> address, or replies loop back into the inbound webhook.
+              The outreach email invites customers to reply. Set a monitored inbox here — <strong>not</strong> an <code>@updates.castlegarage.com</code> address, or replies loop back into the inbound webhook.
             </p>
           </>
         ) : (

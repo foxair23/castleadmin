@@ -27,7 +27,7 @@
     // actually present, so it's a no-op on the dashboard/order pages.
     { host: /(^|\.)clopay\.com$/, user: 'clopayUser', pass: 'clopayPass', label: 'Clopay', flag: 'clopay-login-detected' },
     { host: /(^|\.)servicefusion\.com$/, user: 'sfUser', pass: 'sfPass', company: 'sfCompany', label: 'Service Fusion', flag: 'sf-login-detected' },
-    { host: /(^|\.)castlegaragedoors\.com$/, user: 'castleUser', pass: 'castlePass', label: 'Castle Admin', flag: 'castle-login-detected' },
+    { host: /(^|\.)castlegarage(doors)?\.com$/, user: 'castleUser', pass: 'castlePass', label: 'Castle Admin', flag: 'castle-login-detected' },
   ]
   const site = SITES.find(s => s.host.test(location.hostname))
   if (!site) return

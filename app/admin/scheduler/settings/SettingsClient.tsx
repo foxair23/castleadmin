@@ -621,7 +621,7 @@ export default function SettingsClient({ initialSettings: s }: Props) {
             type="url"
             value={legalUrl.value}
             onChange={e => legalUrl.setValue(e.target.value)}
-            placeholder="https://castlegaragedoors.com/legal"
+            placeholder="https://castlegarage.com/legal"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500 mb-2"
           />
           <SaveButton

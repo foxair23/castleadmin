@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   tcpa_copy:
     "We'll send appointment reminders, updates, and the occasional offer from Castle Garage Inc. Reply STOP to opt out or HELP for help anytime. Message frequency varies; msg & data rates may apply.",
   marketing_sms_copy: "I'd like to receive promotions and tips by SMS.",
-  legal_url: 'https://castlegaragedoors.com/legal',
+  legal_url: 'https://castlegarage.com/legal',
   scheduling_enabled: true,
   scheduling_disabled_message:
     'Online scheduling is temporarily unavailable. Please call us to book.',

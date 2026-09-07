@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { marketingUrl } from '@/lib/config/domains'
 
 export async function proxy(request: NextRequest) {
   // Short-link host (e.g. go.cstle.co): treat any root path as a short code and
@@ -12,7 +13,7 @@ export async function proxy(request: NextRequest) {
     try { shortHost = new URL(shortBase).hostname } catch { /* ignore bad value */ }
     if (shortHost && request.nextUrl.hostname === shortHost) {
       const seg = request.nextUrl.pathname.replace(/^\/+/, '').split('/')[0]
-      if (!seg) return NextResponse.redirect('https://castlegaragedoors.com')
+      if (!seg) return NextResponse.redirect(marketingUrl())
       const url = request.nextUrl.clone()
       url.pathname = `/p/${seg}`
       return NextResponse.rewrite(url)

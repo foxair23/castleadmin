@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react'
 import { setStsSettingsAction } from './actions'
 
 // Clopay STS auto-request: when ON, a cron emails the DC once for each NEW STS
-// order (cc info@castlegaragedoors.com) asking for delivery details. Admin-only
+// order (cc the office inbox) asking for delivery details. Admin-only
 // to change; sales sees a read-only pill. Turning it ON stamps a cutoff so the
 // historical backlog is never emailed.
 export function StsControls({ on, dcEmail, canManage }: { on: boolean; dcEmail: string; canManage: boolean }) {
