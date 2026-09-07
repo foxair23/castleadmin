@@ -14,7 +14,7 @@
 //     new domain as Verified.
 //   • Self-links follow NEXT_PUBLIC_APP_URL, with castleadmin.vercel.app as the fallback that
 //     always works.
-//   • Inbound (CORS) accepts old AND new scheduler origins during the transition.
+//   • CORS lists only genuine cross-origin callers; the scheduler embed is same-origin.
 
 const strip = (s: string) => s.replace(/\/+$/, '')
 
@@ -42,12 +42,17 @@ export const complianceBcc = (): string =>
 export const clopayStsInboundAddress = (): string =>
   process.env.CLOPAY_STS_INBOUND_ADDRESS || 'clopay-sts@updates.castlegarage.com'
 
-/** Origins allowed to call the public scheduler APIs. Old + new during the move, plus the
- *  GitHub Pages host the Genie scheduler is served from. Comma-separated override. */
+/** CROSS-origin callers of the public scheduler APIs.
+ *
+ *  The consumer scheduler is served by this app itself (/embed/scheduler inside an iframe on
+ *  the marketing site), so its API calls are same-origin and need no entry here. A
+ *  `schedule.` subdomain was planned in the original PRD but never created — it lived on only
+ *  in these allow-lists. The one real cross-origin caller is the Genie self-scheduler hosted
+ *  on GitHub Pages. Add more via SCHEDULER_ORIGINS (comma-separated) if another host ever
+ *  embeds a copy. */
 export const schedulerOrigins = (): string[] => {
   const env = (process.env.SCHEDULER_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
-  const defaults = ['https://schedule.castlegarage.com', 'https://schedule.castlegaragedoors.com']
-  return [...new Set([...(env.length ? env : defaults), 'https://foxair23.github.io'])]
+  return [...new Set([...env, 'https://foxair23.github.io'])]
 }
 
 /** Sender domains that are OURS, so the lead parser never treats our own mail as a lead. */
