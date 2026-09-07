@@ -3,11 +3,13 @@ import { redirect } from 'next/navigation'
 import { agentDb, loadAgentSettings } from '@/lib/agent/settings'
 import { getActiveCharter, listCharterVersions, listInstructions, listAnswers, listStyleExamples } from '@/lib/agent/knowledge'
 import CassieClient from './CassieClient'
+import { loadReviewItems } from '@/lib/agent/email/review'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Cassie' }
 
-export default async function CassiePage() {
+export default async function CassiePage({ searchParams }: { searchParams: Promise<{ reply?: string }> }) {
+  const sp = await searchParams
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -25,6 +27,7 @@ export default async function CassiePage() {
   ])
 
   const gmailConfigured = !!process.env.GMAIL_REFRESH_TOKEN
+  const reviewItems = await loadReviewItems(db, { statuses: ['draft', 'queued', 'sent', 'rejected', 'escalated', 'cancelled', 'superseded', 'failed'], limit: 300 })
   const [{ data: activity }, { data: draftRows }] = await Promise.all([
     db.from('agent_email_messages')
       .select('id, received_at, from_addr, from_name, subject, snippet, delivery_path, outcome, outcome_detail, gmail_thread_id')
@@ -45,6 +48,8 @@ export default async function CassiePage() {
       gmailConfigured={gmailConfigured}
       activity={(activity ?? []) as never}
       drafts={(draftRows ?? []) as never}
+      reviewItems={reviewItems}
+      initialReply={sp.reply ?? null}
     />
   )
 }

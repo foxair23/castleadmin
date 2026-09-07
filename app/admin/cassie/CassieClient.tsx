@@ -4,6 +4,8 @@ import { Fragment, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { AgentSettings, QuestionType } from '@/lib/agent/settings'
 import type { Charter, Instruction, AnswerEntry, StyleExample } from '@/lib/agent/knowledge'
+import type { ReviewItem } from '@/lib/agent/email/review'
+import ReviewTab from './ReviewTab'
 import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
@@ -51,7 +53,7 @@ function fmt(s: string | null | undefined): string {
 const lines = (arr: string[]) => arr.join('\n')
 const parseLines = (s: string) => s.split(/[\n,;]+/).map(x => x.trim()).filter(Boolean)
 
-type Tab = 'activity' | 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
+type Tab = 'review' | 'activity' | 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
 
 export default function CassieClient(props: {
   settings: AgentSettings
@@ -63,9 +65,13 @@ export default function CassieClient(props: {
   gmailConfigured: boolean
   activity: ActivityRow[]
   drafts: DraftRow[]
+  reviewItems: ReviewItem[]
+  initialReply: string | null
 }) {
-  const [tab, setTab] = useState<Tab>('activity')
+  const [tab, setTab] = useState<Tab>('review')
+  const needsReview = props.reviewItems.filter(i => i.status === 'draft').length
   const tabs: { key: Tab; label: string; count?: number }[] = [
+    { key: 'review', label: 'Review', count: needsReview },
     { key: 'activity', label: 'Activity', count: props.activity.length },
     { key: 'settings', label: 'Settings' },
     { key: 'charter', label: 'Charter' },
@@ -87,6 +93,7 @@ export default function CassieClient(props: {
           </button>
         ))}
       </div>
+      {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} />}
       {tab === 'activity' && <ActivityTab rows={props.activity} drafts={props.drafts} />}
       {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}

@@ -111,3 +111,38 @@ export async function replayPastedEmail(input: { from: string; to: string; cc: s
   revalidatePath(PATH)
   return { outcome: res.outcome, detail: res.detail }
 }
+
+// ── Review panel (PRD §12) ──────────────────────────────────────────────────
+async function reviewer(): Promise<{ userId: string; userName: string | null }> {
+  const userId = await assertAdmin()
+  const { data } = await agentDb().from('profiles').select('full_name, email').eq('id', userId).maybeSingle()
+  return { userId, userName: (data?.full_name as string | null) ?? (data?.email as string | null) ?? null }
+}
+export async function approveReplyAction(id: string, text: string, note: string): Promise<void> {
+  const { userId } = await reviewer()
+  const { approveReply } = await import('@/lib/agent/email/review')
+  await approveReply(agentDb(), id, { text, note: note || null, userId }); revalidatePath(PATH)
+}
+export async function rejectReplyAction(id: string, note: string): Promise<void> {
+  const { userId } = await reviewer()
+  const { rejectReply } = await import('@/lib/agent/email/review')
+  await rejectReply(agentDb(), id, { note: note || null, userId }); revalidatePath(PATH)
+}
+export async function escalateReplyAction(id: string, note: string): Promise<{ notified: number }> {
+  const { userId, userName } = await reviewer()
+  const { escalateReply } = await import('@/lib/agent/email/review')
+  const { loadAgentSettings } = await import('@/lib/agent/settings')
+  const db = agentDb()
+  const res = await escalateReply(db, id, { note: note || null, userId, userName, settings: await loadAgentSettings(db) })
+  revalidatePath(PATH); return res
+}
+export async function replyFeedbackAction(id: string, kind: 'post_send' | 'confused' | 'note', note: string): Promise<void> {
+  const { userId } = await reviewer()
+  const { addReplyFeedback } = await import('@/lib/agent/email/review')
+  await addReplyFeedback(agentDb(), id, { kind, note, userId }); revalidatePath(PATH)
+}
+export async function unqueueReplyAction(id: string): Promise<void> {
+  const { userId } = await reviewer()
+  const { cancelQueuedReply } = await import('@/lib/agent/email/review')
+  await cancelQueuedReply(agentDb(), id, userId); revalidatePath(PATH)
+}

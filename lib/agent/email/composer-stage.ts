@@ -7,6 +7,7 @@ import { classifyInquiry } from './classify'
 import { buildGrounding, type GroundingPack } from './grounding'
 import { composeReply, renderBody, renderEmail } from './compose'
 import { checkGrounding } from './grounding-check'
+import { computeConfidence } from './confidence'
 import type { AcceptedMessage, ComposerStage } from './pipeline'
 
 // Stages 3–4 + the draft record (PRD §5). Every accepted message ends here as a
@@ -113,6 +114,11 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
   if (asksHuman) hardFail.push('asks_for_human')
   if (composed.couldNotAnswer) hardFail.push('could_not_answer')
 
+  const { score: confidence, breakdown } = computeConfidence({
+    resolveStatus: pack.resolve.status, resolveTier: 'tier' in pack.resolve ? pack.resolve.tier : null, questionType,
+    fullyGrounded: report.fullyGrounded, unsourcedCount: report.unsourced.length, liveFresh: pack.live?.status === 'fresh', hardFailReasons: hardFail,
+  }, settings)
+
   const subject = /^re:/i.test(a.email.subject) ? a.email.subject : `Re: ${a.email.subject}`
   const { data: reply, error } = await db.from('agent_email_replies').insert({
     ...base,
@@ -127,6 +133,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     answer_library_ids: pack.answers.map(x => x.id),
     charter_version: charter.version, model: composed.model,
     hard_fail_reasons: hardFail,
+    confidence, confidence_breakdown: breakdown,
     status: 'draft',
   }).select('id').single()
   if (error) return { outcome: 'error', detail: `reply insert: ${error.message}` }
@@ -150,7 +157,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     await db.from('agent_coverage_log').insert({ message_id: a.messageId, question_type: questionType, missing: composed.missing ?? pack.gaps[0] ?? 'unspecified' })
   }
 
-  const detail = hardFail.length ? `draft; needs review: ${hardFail.join(', ')}` : 'draft; fully grounded'
+  const detail = `draft · confidence ${Math.round(confidence * 100)}%` + (hardFail.length ? `; needs review: ${hardFail.join(', ')}` : '; fully grounded')
   return { outcome: 'drafted', detail }
 }
 
