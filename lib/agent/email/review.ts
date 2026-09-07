@@ -35,6 +35,7 @@ export interface ReviewItem {
   claims: Array<{ text: string; factIds: string[]; grounded: boolean; unsupported: string[] }>
   unsourced_claims: string[]
   hard_fail_reasons: string[]
+  auto_send_blockers: string[]
   confidence: number | null
   confidence_breakdown: Record<string, unknown>
   send_after: string | null
@@ -51,7 +52,7 @@ export interface ReviewItem {
   feedback: Array<{ kind: string; note: string; created_at: string }>
 }
 
-const REPLY_COLS = 'id, message_id, status, created_at, question_type, question_summary, resolve_status, resolve_tier, sf_job_id, sf_job_number, live_fetched_at, composed_subject, composed_text, sent_text, was_edited, claims, unsourced_claims, hard_fail_reasons, confidence, confidence_breakdown, send_after, sent_at, approval_path, cancel_reason, error, applied_instruction_ids, charter_version, model'
+const REPLY_COLS = 'id, message_id, status, created_at, question_type, question_summary, resolve_status, resolve_tier, sf_job_id, sf_job_number, live_fetched_at, composed_subject, composed_text, sent_text, was_edited, claims, unsourced_claims, hard_fail_reasons, auto_send_blockers, confidence, confidence_breakdown, send_after, sent_at, approval_path, cancel_reason, error, applied_instruction_ids, charter_version, model'
 
 export async function loadReviewItems(db: SupabaseClient, opts: { statuses: ReplyStatus[]; limit?: number }): Promise<ReviewItem[]> {
   const { data: replies } = await db.from('agent_email_replies').select(REPLY_COLS).in('status', opts.statuses).order('created_at', { ascending: false }).limit(opts.limit ?? 200)

@@ -4,6 +4,8 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ReviewItem } from '@/lib/agent/email/review'
 import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction } from './actions'
+import type { AgentSettings } from '@/lib/agent/settings'
+import { AutoRespondSwitch } from './AutoSendControls'
 
 // Review panel (PRD §12). Rules this UI enforces on purpose:
 //  • Every item carries an unambiguous state label with distinct colour: a draft can
@@ -52,7 +54,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type View = 'queue' | 'queued' | 'sent' | 'closed'
 
-export default function ReviewTab({ items, gmailConfigured, initialOpen }: { items: ReviewItem[]; gmailConfigured: boolean; initialOpen: string | null }) {
+export default function ReviewTab({ items, gmailConfigured, initialOpen, settings }: { items: ReviewItem[]; gmailConfigured: boolean; initialOpen: string | null; settings: AgentSettings }) {
   const [view, setView] = useState<View>('queue')
   const [openId, setOpenId] = useState<string | null>(initialOpen)
   const byView: Record<View, ReviewItem[]> = {
@@ -64,6 +66,7 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen }: { ite
   const list = byView[view]
   return (
     <div className="space-y-4">
+      <AutoRespondSwitch settings={settings} canEnable={gmailConfigured && settings.processing_enabled} />
       {!gmailConfigured && byView.queued.length > 0 && (
         <p className="rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900">{byView.queued.length} approved repl{byView.queued.length === 1 ? 'y is' : 'ies are'} queued but no mailbox is connected yet, so nothing has been sent. They will go out once Gmail is connected under Settings.</p>
       )}
@@ -194,12 +197,13 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
           {bd && <div className="grid grid-cols-4 gap-1 text-[11px] text-gray-600">
             {(['match', 'coverage', 'grounding', 'freshness'] as const).map(k => <div key={k} className="rounded bg-gray-50 px-2 py-1"><div className="uppercase tracking-wide text-[9px] text-gray-400">{k}</div><div className="font-medium text-gray-800">{bd[k] == null ? '—' : Math.round((bd[k] as number) * 100)}%</div></div>)}
           </div>}
-          {item.hard_fail_reasons.length > 0 && (
+          {(item.hard_fail_reasons.length > 0 || (item.auto_send_blockers ?? []).length > 0) && (
             <ul className="mt-2 list-disc pl-5 text-xs text-gray-700 space-y-0.5">
-              <li className="list-none -ml-5 text-[11px] uppercase tracking-wide text-gray-400">Would not auto-send because</li>
-              {item.hard_fail_reasons.map(r => <li key={r}>{REASON_LABEL[r] ?? r}</li>)}
+              <li className="list-none -ml-5 text-[11px] uppercase tracking-wide text-gray-400">{item.approval_path === 'auto' ? 'Auto-sent — checks at compose time' : 'Would not auto-send because'}</li>
+              {[...new Set([...item.hard_fail_reasons, ...(item.auto_send_blockers ?? [])])].map(r => <li key={r}>{REASON_LABEL[r] ?? r}</li>)}
             </ul>
           )}
+          {item.approval_path === 'auto' && item.status === 'queued' && <p className="mt-1 text-xs text-purple-800">Auto-approved. Sends {fmt(item.send_after)} unless a person replies first or the job changes.</p>}
         </div>
         {Array.isArray(item.claims) && item.claims.length > 0 && (
           <div>

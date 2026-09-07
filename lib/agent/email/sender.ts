@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { agentReplyTo, type AgentSettings } from '@/lib/agent/settings'
+import { agentReplyTo, type AgentSettings, type QuestionType, type MatchTier } from '@/lib/agent/settings'
+import { recomposeReply } from './composer-stage'
 import { officeEmail } from '@/lib/config/domains'
 import { refreshJob, changedFacts, isMaterialChange, type LiveJobFacts } from '@/lib/agent/live-refresh'
 import { loadThreadState } from './pipeline'
@@ -17,18 +18,19 @@ import { sendMessage, type GmailCredential, getAccessToken } from './gmail'
 //      state sees it, and the message outcome.
 // Failures increment send_attempts and keep the row queued (up to 5), then fail.
 
-export interface SendReport { sent: number; superseded: number; heldForReview: number; failed: number; skipped: number; errors: string[] }
+export interface SendReport { sent: number; superseded: number; heldForReview: number; recomposed: number; failed: number; skipped: number; errors: string[] }
 
 interface QueuedReply {
   id: string; message_id: string; gmail_thread_id: string | null; sf_job_id: string | null; live_facts: LiveJobFacts | null
   composed_subject: string | null; sent_text: string | null; composed_text: string | null; send_attempts: number; approval_path: string | null
+  question_type: string | null; resolve_tier: string | null
 }
 
 export async function sendQueuedReplies(db: SupabaseClient, settings: AgentSettings, cred: GmailCredential, opts: { now?: Date; max?: number } = {}): Promise<SendReport> {
   const now = opts.now ?? new Date()
-  const report: SendReport = { sent: 0, superseded: 0, heldForReview: 0, failed: 0, skipped: 0, errors: [] }
+  const report: SendReport = { sent: 0, superseded: 0, heldForReview: 0, recomposed: 0, failed: 0, skipped: 0, errors: [] }
   const { data } = await db.from('agent_email_replies')
-    .select('id, message_id, gmail_thread_id, sf_job_id, live_facts, composed_subject, sent_text, composed_text, send_attempts, approval_path')
+    .select('id, message_id, gmail_thread_id, sf_job_id, live_facts, composed_subject, sent_text, composed_text, send_attempts, approval_path, question_type, resolve_tier')
     .eq('status', 'queued').lte('send_after', now.toISOString()).order('send_after', { ascending: true }).limit(opts.max ?? 10)
   const rows = (data ?? []) as unknown as QueuedReply[]
   if (!rows.length) return report
@@ -36,6 +38,16 @@ export async function sendQueuedReplies(db: SupabaseClient, settings: AgentSetti
   let token: string | null = null
   for (const r of rows) {
     try {
+      // 0. Auto-sent replies re-check the switches at send time — the master switch or a
+      //    tier pause may have flipped during the hold window.
+      if (r.approval_path === 'auto') {
+        const tier = r.resolve_tier as MatchTier | null
+        const pausedKey = `${r.question_type}:${tier}`
+        const block = !settings.auto_respond_enabled ? 'Auto-Respond was turned off during the hold window'
+          : (tier && settings.paused_tiers[pausedKey]) ? 'this question type + match tier was paused during the hold window'
+          : (!settings.auto_question_types.includes(r.question_type as QuestionType) || !tier || !settings.auto_match_tiers.includes(tier)) ? 'auto-send settings changed during the hold window' : null
+        if (block) { await hold(db, r.id, `${block}. Returned for review.`, now); report.heldForReview++; continue }
+      }
       // 1. Human in the thread?
       const thread = await loadThreadState(db, r.gmail_thread_id)
       if (thread.humanRepliedAfterInquiry) {
@@ -52,14 +64,29 @@ export async function sendQueuedReplies(db: SupabaseClient, settings: AgentSetti
         }
         const changed = changedFacts(r.live_facts, fresh.facts)
         if (changed.length) {
-          const note = `Job changed between drafting and sending: ${changed.join(', ')}. ${isMaterialChange(changed) ? 'Draft returned for review.' : 'Wording may be stale; please re-check.'}`
-          await hold(db, r.id, note, now, fresh.facts)
-          report.heldForReview++; continue
+          if (isMaterialChange(changed) || r.approval_path !== 'auto') {
+            // Material change, or a human approved specific wording → a person decides.
+            await hold(db, r.id, `Job changed between drafting and sending: ${changed.join(', ')}. Draft returned for review.`, now, fresh.facts)
+            report.heldForReview++; continue
+          }
+          // Minor change on an auto reply → recompose against fresh facts; the new draft
+          // routes itself and restarts the hold window (PRD §6.4).
+          const rc = await recomposeReply(db, settings, r.id, `${changed.join(', ')} changed before sending`)
+          report.recomposed++
+          report.errors.push(...(rc.outcome === 'error' ? [`${r.id}: recompose ${rc.detail}`] : []))
+          continue
         }
       }
       // 3. Send.
-      const { data: msg } = await db.from('agent_email_messages').select('from_addr, from_name, subject, internet_message_id, references_ids, gmail_thread_id').eq('id', r.message_id).single()
+      const { data: msg } = await db.from('agent_email_messages').select('from_addr, from_name, subject, internet_message_id, references_ids, gmail_thread_id, delivery_path').eq('id', r.message_id).single()
       if (!msg?.from_addr) throw new Error('inbound message missing sender')
+      if (msg.delivery_path === 'replay') {
+        // A pasted test email is never a real conversation. Approving it exercises the
+        // flow; it must not email the address someone typed into the replay form.
+        await db.from('agent_email_replies').update({ status: 'cancelled', cancel_reason: 'replay_never_sends', updated_at: now.toISOString() }).eq('id', r.id)
+        await db.from('agent_email_feedback').insert({ reply_id: r.id, kind: 'note', note: 'Replayed test email — approved, but replays are never sent.' })
+        report.skipped++; continue
+      }
       const text = (r.sent_text ?? r.composed_text ?? '').trim()
       if (!text) throw new Error('reply text is empty')
       token ??= await getAccessToken(cred)

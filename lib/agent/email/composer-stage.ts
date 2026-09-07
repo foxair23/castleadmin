@@ -8,6 +8,7 @@ import { buildGrounding, type GroundingPack } from './grounding'
 import { composeReply, renderBody, renderEmail } from './compose'
 import { checkGrounding } from './grounding-check'
 import { computeConfidence } from './confidence'
+import { decideRoute } from './routing'
 import type { AcceptedMessage, ComposerStage } from './pipeline'
 
 // Stages 3–4 + the draft record (PRD §5). Every accepted message ends here as a
@@ -32,6 +33,8 @@ const firstName = (name: string | null, addr: string): string | null => {
 export interface ComposerOptions {
   /** Test hook: inject live facts instead of reading Service Fusion. */
   liveOverride?: LiveJobFacts | null
+  /** Set when this run replaces an earlier reply whose facts changed before sending. */
+  recomposedFrom?: string
 }
 
 export function makeComposerStage(opts: ComposerOptions = {}): ComposerStage {
@@ -119,6 +122,12 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     fullyGrounded: report.fullyGrounded, unsourcedCount: report.unsourced.length, liveFresh: pack.live?.status === 'fresh', hardFailReasons: hardFail,
   }, settings)
 
+  // Stage 5 — route. Auto-send only when every hard rule AND every setting agrees.
+  const route = decideRoute({
+    resolveStatus: pack.resolve.status, resolveTier: 'tier' in pack.resolve ? pack.resolve.tier : null, questionType,
+    fullyGrounded: report.fullyGrounded, unsourcedCount: report.unsourced.length, liveFresh: pack.live?.status === 'fresh', hardFailReasons: hardFail,
+  }, confidence, settings)
+
   const subject = /^re:/i.test(a.email.subject) ? a.email.subject : `Re: ${a.email.subject}`
   const { data: reply, error } = await db.from('agent_email_replies').insert({
     ...base,
@@ -134,7 +143,10 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     charter_version: charter.version, model: composed.model,
     hard_fail_reasons: hardFail,
     confidence, confidence_breakdown: breakdown,
-    status: 'draft',
+    auto_send_blockers: route.blockers, auto_evaluated_at: new Date().toISOString(),
+    status: route.status, approval_path: route.approval_path, send_after: route.send_after,
+    ...(route.status === 'queued' ? { sent_text: text } : {}),
+    ...(opts.recomposedFrom ? { recomposed_from: opts.recomposedFrom } : {}),
   }).select('id').single()
   if (error) return { outcome: 'error', detail: `reply insert: ${error.message}` }
   const replyId = reply.id as string
@@ -157,7 +169,10 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     await db.from('agent_coverage_log').insert({ message_id: a.messageId, question_type: questionType, missing: composed.missing ?? pack.gaps[0] ?? 'unspecified' })
   }
 
-  const detail = `draft · confidence ${Math.round(confidence * 100)}%` + (hardFail.length ? `; needs review: ${hardFail.join(', ')}` : '; fully grounded')
+  if (route.status === 'queued') {
+    return { outcome: 'queued', detail: `auto-send queued · confidence ${Math.round(confidence * 100)}% · sends after ${route.send_after}` }
+  }
+  const detail = `draft · confidence ${Math.round(confidence * 100)}%` + (route.blockers.length ? `; held for review: ${route.blockers.join(', ')}` : '')
   return { outcome: 'drafted', detail }
 }
 
@@ -169,4 +184,31 @@ async function loadThreadText(db: SupabaseClient, threadId: string | null, exclu
     from: m.from_name ? `${m.from_name} <${m.from_addr}>` : (m.from_addr ?? 'unknown'),
     text: stripQuotedHistory(m.body_text ?? '').slice(0, 1500),
   }))
+}
+
+
+/** Re-run the composer for an existing reply's message (facts changed before send). The
+ *  old reply is marked superseded; the new one routes fresh (and restarts the hold). */
+export async function recomposeReply(db: SupabaseClient, settings: AgentSettings, replyId: string, reason: string): Promise<{ outcome: string; detail?: string }> {
+  const { data: old } = await db.from('agent_email_replies').select('id, message_id, gmail_thread_id').eq('id', replyId).single()
+  if (!old) return { outcome: 'error', detail: 'reply not found' }
+  const { data: m } = await db.from('agent_email_messages').select('*').eq('id', old.message_id as string).single()
+  if (!m) return { outcome: 'error', detail: 'message not found' }
+  const { stripQuotedHistory } = await import('./filters')
+  const { extractIdentifiers } = await import('./identifiers')
+  const { loadThreadState } = await import('./pipeline')
+  const email = {
+    source: (m.delivery_path === 'replay' ? 'replay' : 'gmail') as 'replay' | 'gmail',
+    gmailMessageId: m.gmail_message_id as string | null, gmailThreadId: m.gmail_thread_id as string | null,
+    internetMessageId: m.internet_message_id as string | null, inReplyTo: m.in_reply_to as string | null, references: (m.references_ids as string[]) ?? [],
+    from: { addr: m.from_addr as string, name: m.from_name as string | null },
+    to: ((m.to_addrs as string[]) ?? []).map(addr => ({ addr, name: null })), cc: ((m.cc_addrs as string[]) ?? []).map(addr => ({ addr, name: null })),
+    subject: (m.subject as string) ?? '', bodyText: (m.body_text as string) ?? '', headers: (m.headers as Record<string, string>) ?? {}, receivedAt: (m.received_at as string) ?? new Date().toISOString(),
+  }
+  const cleanBody = stripQuotedHistory(email.bodyText)
+  const identifiers = extractIdentifiers(cleanBody, { excludeEmails: [email.from.addr, settings.mailbox_address, ...email.to.map(a => a.addr), ...email.cc.map(a => a.addr)] })
+  const thread = await loadThreadState(db, email.gmailThreadId)
+  await db.from('agent_email_replies').update({ status: 'superseded', cancel_reason: 'facts_changed', updated_at: new Date().toISOString() }).eq('id', replyId)
+  await db.from('agent_email_feedback').insert({ reply_id: replyId, kind: 'note', note: `Recomposed: ${reason}` })
+  return runComposer(db, settings, { messageId: old.message_id as string, email, cleanBody, identifiers, deliveryPath: (m.delivery_path === 'direct' ? 'direct' : 'distribution'), thread }, { recomposedFrom: replyId })
 }

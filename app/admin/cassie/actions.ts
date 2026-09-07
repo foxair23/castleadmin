@@ -31,15 +31,23 @@ const EDITABLE: ReadonlyArray<keyof AgentSettings> = [
   'allowlist_domains', 'allowlist_addresses', 'blocklist_addresses',
   'confidence_threshold', 'auto_question_types', 'auto_match_tiers', 'hold_minutes', 'staleness_minutes', 'closed_window_days',
   'confusion_threshold', 'confusion_min_sample', 'chat_space_name', 'chat_timeout_minutes', 'chat_max_asks_per_hour',
-  'escalation_extra_emails',
+  'escalation_extra_emails', 'paused_tiers',
 ]
 
 export async function saveAgentSettings(patch: Partial<AgentSettings>): Promise<void> {
   const userId = await assertAdmin()
   const row: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: userId }
   for (const k of EDITABLE) if (k in patch) row[k] = patch[k]
-  const { error } = await agentDb().from('agent_settings').update(row).eq('id', 1)
+  const db = agentDb()
+  const { error } = await db.from('agent_settings').update(row).eq('id', 1)
   if (error) throw new Error(error.message)
+  // Panic button semantics (PRD §6.3): turning Auto-Respond off pulls back anything Cassie
+  // queued on her own that has not sent yet. Human-approved sends are unaffected.
+  if (patch.auto_respond_enabled === false || patch.processing_enabled === false) {
+    const { data: pulled } = await db.from('agent_email_replies').update({ status: 'draft', send_after: null, approval_path: null, cancel_reason: 'auto_switched_off', updated_at: new Date().toISOString() })
+      .eq('status', 'queued').eq('approval_path', 'auto').select('id')
+    for (const r of pulled ?? []) await db.from('agent_email_feedback').insert({ reply_id: r.id, kind: 'note', note: 'Auto-Respond turned off; returned to review before sending.', user_id: userId })
+  }
   revalidatePath(PATH)
 }
 
@@ -101,7 +109,8 @@ export async function replayPastedEmail(input: { from: string; to: string; cc: s
   const { makeComposerStage } = await import('@/lib/agent/email/composer-stage')
   const { loadAgentSettings } = await import('@/lib/agent/settings')
   const db = agentDb()
-  const settings = { ...(await loadAgentSettings(db)), processing_enabled: true }
+  // Replays exercise the pipeline only: processing forced on, auto-send forced off.
+  const settings = { ...(await loadAgentSettings(db)), processing_enabled: true, auto_respond_enabled: false }
   const email = replayEmail({
     from: input.from, to: input.to, cc: input.cc, subject: input.subject, body: input.body,
     headers: input.autoReply ? { 'Auto-Submitted': 'auto-replied' } : {},

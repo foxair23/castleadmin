@@ -6,6 +6,7 @@ import type { AgentSettings, QuestionType } from '@/lib/agent/settings'
 import type { Charter, Instruction, AnswerEntry, StyleExample } from '@/lib/agent/knowledge'
 import type { ReviewItem } from '@/lib/agent/email/review'
 import ReviewTab from './ReviewTab'
+import { AutoSendCard } from './AutoSendControls'
 import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
@@ -100,9 +101,9 @@ export default function CassieClient(props: {
           </button>
         ))}
       </div>
-      {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} />}
+      {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} settings={props.settings} />}
       {tab === 'activity' && <ActivityTab rows={props.activity} drafts={props.drafts} />}
-      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} />}
+      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} reviewItems={props.reviewItems} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}
       {tab === 'instructions' && <InstructionsTab rows={props.instructions} />}
       {tab === 'answers' && <AnswersTab rows={props.answers} />}
@@ -263,7 +264,7 @@ function DraftDetail({ d }: { d: DraftRow }) {
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash }: { settings: AgentSettings; gmailConfigured: boolean; gmail: GmailStatus; gmailFlash: { ok: boolean; msg: string } | null }) {
+function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewItems }: { settings: AgentSettings; gmailConfigured: boolean; gmail: GmailStatus; gmailFlash: { ok: boolean; msg: string } | null; reviewItems: ReviewItem[] }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
@@ -272,7 +273,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash }: { sett
     cc_office: s.cc_office, signature_text: s.signature_text, escape_hatch_text: s.escape_hatch_text,
     allowlist_domains: lines(s.allowlist_domains), allowlist_addresses: lines(s.allowlist_addresses), blocklist_addresses: lines(s.blocklist_addresses),
     escalation_extra_emails: lines(s.escalation_extra_emails),
-    hold_minutes: s.hold_minutes, staleness_minutes: s.staleness_minutes, closed_window_days: s.closed_window_days,
+    staleness_minutes: s.staleness_minutes, closed_window_days: s.closed_window_days,
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF(x => ({ ...x, [k]: v }))
 
@@ -285,7 +286,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash }: { sett
         signature_text: f.signature_text.trim(), escape_hatch_text: f.escape_hatch_text.trim(),
         allowlist_domains: parseLines(f.allowlist_domains), allowlist_addresses: parseLines(f.allowlist_addresses),
         blocklist_addresses: parseLines(f.blocklist_addresses), escalation_extra_emails: parseLines(f.escalation_extra_emails),
-        hold_minutes: Number(f.hold_minutes), staleness_minutes: Number(f.staleness_minutes), closed_window_days: Number(f.closed_window_days),
+        staleness_minutes: Number(f.staleness_minutes), closed_window_days: Number(f.closed_window_days),
       })
       setMsg('Saved.'); router.refresh()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
@@ -332,7 +333,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash }: { sett
         )}
         <div className="flex flex-wrap gap-6">
           <Switch label="Processing" hint="Off = Cassie reads nothing and drafts nothing (global kill switch)." on={s.processing_enabled} disabled={pending} onChange={v => toggle('processing_enabled', v)} />
-          <Switch label="Auto-Respond" hint="Off = every reply is a draft for human approval. Launch state." on={s.auto_respond_enabled} disabled={pending || !s.processing_enabled} onChange={v => toggle('auto_respond_enabled', v)} />
+          <Switch label="Auto-Respond" hint="Off = every reply is a draft for human approval. Launch state. Also one click away at the top of Review." on={s.auto_respond_enabled} disabled={pending || !s.processing_enabled || !gmailConfigured} onChange={v => toggle('auto_respond_enabled', v)} />
         </div>
       </div>
 
@@ -358,12 +359,13 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash }: { sett
         </div>
       </div>
 
+      <AutoSendCard settings={s} items={reviewItems} />
+
       <div className={card}>
         <h2 className="text-sm font-semibold text-gray-900 mb-3">Escalation and timing</h2>
         <div className="grid sm:grid-cols-2 gap-4">
           <Field label="Extra escalation emails" hint="app users subscribe under Notifications → Cassie: Thread Escalated; add non-user inboxes here"><textarea rows={3} className={input} value={f.escalation_extra_emails} onChange={e => set('escalation_extra_emails', e.target.value)} /></Field>
-          <div className="grid grid-cols-3 gap-3">
-            <Field label="Hold (min)" hint="before an auto-send goes out"><input type="number" min={0} className={input} value={f.hold_minutes} onChange={e => set('hold_minutes', Number(e.target.value))} /></Field>
+          <div className="grid grid-cols-2 gap-3">
             <Field label="Staleness (min)" hint="max age of SF data"><input type="number" min={1} className={input} value={f.staleness_minutes} onChange={e => set('staleness_minutes', Number(e.target.value))} /></Field>
             <Field label="Closed window (days)" hint="how long a finished job stays findable"><input type="number" min={1} className={input} value={f.closed_window_days} onChange={e => set('closed_window_days', Number(e.target.value))} /></Field>
           </div>
