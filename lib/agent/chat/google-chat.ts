@@ -126,7 +126,7 @@ function serviceAccount(): ServiceAccount {
   const json = stored_as === 'raw JSON' ? raw : Buffer.from(raw, 'base64').toString('utf8')
   let sa: ServiceAccount
   try { sa = JSON.parse(json) as ServiceAccount }
-  catch { throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not valid JSON — paste the whole key file, or its base64') }
+  catch { throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not valid JSON — paste the whole key file exactly as Google Cloud gives it to you') }
   if (!sa.client_email || !sa.private_key) throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is missing client_email or private_key')
   const private_key = normalizePrivateKey(sa.private_key)
   if (!/^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(private_key)) {
@@ -326,6 +326,6 @@ export function checkKeyFile(pasted: string): { ok: boolean; message: string } {
     message: `This key file signs correctly${account ? ` (${account})` : ''}. `
       + (same
         ? 'It also matches what is deployed, so the environment variable is intact and the fault is elsewhere.'
-        : 'It does NOT match the value currently deployed — so the environment variable is either a different key or is being altered in storage. Re-paste this file into GOOGLE_CHAT_SERVICE_ACCOUNT_JSON, base64-encoded, and redeploy.'),
+        : 'It does NOT match the value currently deployed — so the environment variable holds either a different key or a mangled one. Paste this file into GOOGLE_CHAT_SERVICE_ACCOUNT_JSON exactly as Google Cloud gives it to you, unaltered, and redeploy.'),
   }
 }

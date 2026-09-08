@@ -421,7 +421,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
         </details>
         <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">One-time Google Cloud setup for the Chat app</summary>
           <ol className="list-decimal pl-5 mt-1 space-y-0.5">
-            <li>In the same Google Cloud project, enable the <b>Google Chat API</b> and create a <b>service account</b> with a JSON key. Put the key in Vercel as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_SERVICE_ACCOUNT_JSON</code> and the project number as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_PROJECT_NUMBER</code>.</li>
+            <li>In the same Google Cloud project, enable the <b>Google Chat API</b> and create a <b>service account</b> with a JSON key. Put the key in Vercel as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_SERVICE_ACCOUNT_JSON</code>, pasted exactly as downloaded — do not base64-encode or reformat it and the project number as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_PROJECT_NUMBER</code>.</li>
             <li>Under Google Chat API → Configuration: app name &ldquo;Cassie&rdquo;, enable interactive features, connection type HTTP endpoint URL: <code className="rounded bg-gray-100 px-1">{typeof window !== 'undefined' ? `${window.location.origin}/api/cassie/chat/events` : '/api/cassie/chat/events'}</code>. Visibility: make it available to your Workspace domain.</li>
             <li>Create a space (e.g. &ldquo;Cassie asks&rdquo;), add the people who should answer, and add the Cassie app to it. Copy the space id from the URL (spaces/…) into the field above.</li>
             <li>Tell the team: reply in Cassie&apos;s thread and mention @Cassie so she sees it.</li>
