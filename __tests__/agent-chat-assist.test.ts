@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { planForAsk, normalizeChatEvent, describeLookup } from '@/lib/agent/email/chat-assist'
-import { chatAnswerPos } from '@/lib/agent/email/composer-stage'
+import { chatAnswerPos, humanAnswerMeta } from '@/lib/agent/email/composer-stage'
 
 // Silence is the worst answer in a chat thread: someone who writes to Cassie and gets
 // nothing cannot tell whether she is broken, ignoring them, or slow. Every status either
@@ -125,5 +125,26 @@ describe('describeLookup', () => {
   it('says nothing when there was nothing to look up', () => {
     expect(describeLookup({ resolve_status: 'none', identifiers: { pos: [] } })).toBeNull()
     expect(describeLookup(null)).toBeNull()
+  })
+})
+
+// A human answer reaches the composer from two doors — Google Chat, or the reviewer typing
+// in the Review tab. Whichever door, it must block auto-send; and what it is called in the
+// sources, the blocker and the supersede reason must agree.
+describe('humanAnswerMeta', () => {
+  it('records a Chat answer as chat-sourced', () => {
+    expect(humanAnswerMeta({ askId: 'a1', text: 'x', responder: 'John' })).toEqual({
+      source: 'chat_answer', label: 'Team answer · John', hardFail: 'chat_sourced', cancelReason: 'chat_answered',
+    })
+  })
+  it("records a reviewer's instruction as reviewer-sourced", () => {
+    expect(humanAnswerMeta({ text: 'x', responder: 'John', channel: 'review' })).toEqual({
+      source: 'reviewer_note', label: 'Reviewer · John', hardFail: 'reviewer_sourced', cancelReason: 'revised_in_review',
+    })
+  })
+  it('never lets a human-fed draft auto-send, from either door', () => {
+    for (const channel of ['chat', 'review'] as const) {
+      expect(humanAnswerMeta({ text: 'x', responder: 'J', channel }).hardFail).toMatch(/_sourced$/)
+    }
   })
 })

@@ -158,6 +158,29 @@ export async function escalateReplyAction(id: string, note: string): Promise<{ n
   const db = agentDb()
   return attempt(async () => escalateReply(db, id, { note: note || null, userId, userName, settings: await loadAgentSettings(db) }))
 }
+/** The reviewer tells Cassie something and she writes the draft again from it — the same
+ *  path a Google Chat answer takes, with the reviewer as the human. The old draft is
+ *  superseded, the note is kept as feedback so the learning loop sees it, and the new
+ *  draft still needs a person to approve: a human-fed reply never auto-sends. */
+export async function reviseReplyAction(id: string, instruction: string): Promise<ActionResult & { replyId?: string }> {
+  const text = instruction.trim()
+  if (!text) return { error: 'Tell Cassie what to change first.' }
+  return attempt(async () => {
+    const { userId, userName } = await reviewer()
+    const db = agentDb()
+    const { data: r } = await db.from('agent_email_replies').select('status').eq('id', id).single()
+    if (r?.status !== 'draft') throw new Error(`This reply is already ${r?.status ?? 'gone'}; it cannot be revised.`)
+    await db.from('agent_email_feedback').insert({ reply_id: id, kind: 'revise', note: text, user_id: userId })
+    const { recomposeReply } = await import('@/lib/agent/email/composer-stage')
+    const { loadAgentSettings } = await import('@/lib/agent/settings')
+    const rc = await recomposeReply(db, await loadAgentSettings(db), id, `revised in review by ${userName ?? 'a reviewer'}`, {
+      chatAnswer: { text, responder: userName ?? 'Reviewer', channel: 'review' }, noChatAsk: true,
+    })
+    if (rc.outcome === 'error' || !rc.replyId) throw new Error(rc.detail ?? 'Cassie could not write the revised draft.')
+    revalidatePath(PATH)
+    return { replyId: rc.replyId }
+  })
+}
 export async function replyFeedbackAction(id: string, kind: 'post_send' | 'confused' | 'note', note: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { addReplyFeedback } = await import('@/lib/agent/email/review')

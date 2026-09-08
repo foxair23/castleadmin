@@ -36,11 +36,22 @@ export interface ComposerOptions {
   liveOverride?: LiveJobFacts | null
   /** Set when this run replaces an earlier reply whose facts changed before sending. */
   recomposedFrom?: string
-  /** A team member's answer from Google Chat (PRD §11). Never forwarded verbatim: it becomes
-   *  a fact the composer must write FROM, and it marks the reply chat-sourced (no auto-send). */
-  chatAnswer?: { askId: string; text: string; responder: string }
+  /** A person's answer — from Google Chat (PRD §11) or typed by the reviewer in the Review
+   *  tab. Never forwarded verbatim: it becomes a fact the composer must write FROM, and it
+   *  marks the reply human-sourced, which rules out auto-send whichever way it arrived. */
+  chatAnswer?: HumanAnswer
   /** Skip posting a Chat ask even if the reply cannot be answered (used when recomposing from one). */
   noChatAsk?: boolean
+}
+
+export interface HumanAnswer { askId?: string | null; text: string; responder: string; channel?: 'chat' | 'review' }
+
+/** How a human answer is recorded, by where it came from. One place, so the fact source,
+ *  the auto-send blocker and the supersede reason can never disagree with each other. */
+export function humanAnswerMeta(a: HumanAnswer): { source: 'chat_answer' | 'reviewer_note'; label: string; hardFail: string; cancelReason: string } {
+  return a.channel === 'review'
+    ? { source: 'reviewer_note', label: `Reviewer · ${a.responder}`, hardFail: 'reviewer_sourced', cancelReason: 'revised_in_review' }
+    : { source: 'chat_answer', label: `Team answer · ${a.responder}`, hardFail: 'chat_sourced', cancelReason: 'chat_answered' }
 }
 
 /** Reference numbers a team member typed into Chat, for the resolver to try. */
@@ -92,7 +103,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
       ...(partnerPos.length ? [{ source: 'inquiry' as const, refId: null, label: 'Reference numbers in the partner\'s message', text: `The partner's message quotes: ${partnerPos.map(p => `PO ${p}`).join(', ')}.`, values: partnerPos }] : []),
       // A team member's answer is written FROM, never quoted — so it carries no values the
       // reply may repeat. A number they mention reaches the partner only via a job it matched.
-      ...(opts.chatAnswer ? [{ source: 'chat_answer' as const, refId: opts.chatAnswer.askId, label: `Team answer · ${opts.chatAnswer.responder}`, text: opts.chatAnswer.text, values: [] }] : []),
+      ...(opts.chatAnswer ? [{ source: humanAnswerMeta(opts.chatAnswer).source, refId: opts.chatAnswer.askId ?? null, label: humanAnswerMeta(opts.chatAnswer).label, text: opts.chatAnswer.text, values: [] }] : []),
     ] })
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
@@ -138,7 +149,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
   if (multi) hardFail.push('multi_part')
   if (asksHuman) hardFail.push('asks_for_human')
   if (composed.couldNotAnswer) hardFail.push('could_not_answer')
-  if (opts.chatAnswer) hardFail.push('chat_sourced')   // a Chat answer authorises one reply with approval, never auto-send (PRD §11)
+  if (opts.chatAnswer) hardFail.push(humanAnswerMeta(opts.chatAnswer).hardFail)   // a human answer authorises one reply with approval, never auto-send (PRD §11)
 
   const { score: confidence, breakdown } = computeConfidence({
     resolveStatus: pack.resolve.status, resolveTier: 'tier' in pack.resolve ? pack.resolve.tier : null, questionType,
@@ -170,7 +181,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     status: route.status, approval_path: route.approval_path, send_after: route.send_after,
     ...(route.status === 'queued' ? { sent_text: text } : {}),
     ...(opts.recomposedFrom ? { recomposed_from: opts.recomposedFrom } : {}),
-    ...(opts.chatAnswer ? { chat_ask_id: opts.chatAnswer.askId } : {}),
+    ...(opts.chatAnswer?.askId ? { chat_ask_id: opts.chatAnswer.askId } : {}),
   }).select('id').single()
   if (error) return { outcome: 'error', detail: `reply insert: ${error.message}` }
   const replyId = reply.id as string
@@ -252,7 +263,7 @@ export async function recomposeReply(db: SupabaseClient, settings: AgentSettings
   const cleanBody = stripQuotedHistory(email.bodyText)
   const identifiers = extractIdentifiers(cleanBody, { excludeEmails: [email.from.addr, settings.mailbox_address, ...email.to.map(a => a.addr), ...email.cc.map(a => a.addr)] })
   const thread = await loadThreadState(db, email.gmailThreadId)
-  await db.from('agent_email_replies').update({ status: 'superseded', cancel_reason: extra.chatAnswer ? 'chat_answered' : 'facts_changed', updated_at: new Date().toISOString() }).eq('id', replyId)
+  await db.from('agent_email_replies').update({ status: 'superseded', cancel_reason: extra.chatAnswer ? humanAnswerMeta(extra.chatAnswer).cancelReason : 'facts_changed', updated_at: new Date().toISOString() }).eq('id', replyId)
   await db.from('agent_email_feedback').insert({ reply_id: replyId, kind: 'note', note: `Recomposed: ${reason}` })
   return runComposer(db, settings, { messageId: old.message_id as string, email, cleanBody, identifiers, deliveryPath: (m.delivery_path === 'direct' ? 'direct' : 'distribution'), thread }, { recomposedFrom: replyId, ...extra })
 }

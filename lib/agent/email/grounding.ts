@@ -11,7 +11,7 @@ import { listAnswers, type AnswerEntry } from '@/lib/agent/knowledge'
 
 export interface Fact {
   id: string                       // F1, F2, ...
-  source: 'sf_job' | 'vendor_order' | 'answer_library' | 'resolver' | 'chat_answer' | 'inquiry'
+  source: 'sf_job' | 'vendor_order' | 'answer_library' | 'resolver' | 'chat_answer' | 'reviewer_note' | 'inquiry'
   refId: string | null
   label: string                    // "Job 1020259225 · schedule"
   /** The text the composer sees. Written as plain statements. */
