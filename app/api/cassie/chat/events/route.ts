@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { verifyEventToken, allowedIssuers, allowedAudiences } from '@/lib/agent/chat/google-chat'
 import { agentDb, loadAgentSettings } from '@/lib/agent/settings'
-import { handleChatMessage, handleCardClick, type ChatEvent } from '@/lib/agent/email/chat-assist'
+import { handleChatMessage, handleCardClick, normalizeChatEvent, type ChatEvent } from '@/lib/agent/email/chat-assist'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -20,10 +20,14 @@ export async function POST(req: NextRequest) {
   }
 
   let ev: ChatEvent
-  try { ev = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400 }) }
+  try { ev = normalizeChatEvent(await req.json() as Record<string, unknown>) }
+  catch { return NextResponse.json({ error: 'bad json' }, { status: 400 }) }
   const db = agentDb()
 
   if (ev.type === 'ADDED_TO_SPACE') {
+    // The add-on envelope wants a different response shape for a synchronous message, and
+    // a greeting is not worth a second format to get wrong. Stay quiet there.
+    if (ev.addon) return NextResponse.json({})
     return NextResponse.json({ text: "Hi, I'm Cassie. When I can't answer a partner email from our records I'll ask here. Reply in the thread (mention @Cassie) and I'll write the partner reply for you to approve." })
   }
   if (ev.type === 'MESSAGE') {
@@ -38,8 +42,13 @@ export async function POST(req: NextRequest) {
       try { const settings = await loadAgentSettings(db); const r = await handleCardClick(db, settings, ev); console.log('[cassie chat] click:', r) }
       catch (e) { console.error('[cassie chat] click failed:', e instanceof Error ? e.message : e) }
     })
-    // Immediate feedback on the card so the tap never looks broken.
+    // Immediate feedback on the card so the tap never looks broken — classic envelope
+    // only; the add-on form uses a different action shape, and the work still lands.
+    if (ev.addon) return NextResponse.json({})
     return NextResponse.json({ actionResponse: { type: 'UPDATE_MESSAGE' }, text: 'Working on it…' })
   }
+  // Anything we do not recognise is logged with its shape. Returning 200 and saying
+  // nothing is what made the add-on envelope invisible for a day.
+  console.warn(`[cassie chat] unhandled event type: ${ev.type}`)
   return NextResponse.json({})
 }

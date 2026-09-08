@@ -91,9 +91,49 @@ export interface ChatEvent {
   type: 'MESSAGE' | 'CARD_CLICKED' | 'ADDED_TO_SPACE' | 'REMOVED_FROM_SPACE' | string
   space?: { name?: string }
   user?: ChatUser
-  message?: { name?: string; text?: string; argumentText?: string; thread?: { name?: string; threadKey?: string }; sender?: ChatUser }
+  message?: { name?: string; text?: string; argumentText?: string; thread?: { name?: string; threadKey?: string }; sender?: ChatUser; space?: { name?: string } }
   common?: { invokedFunction?: string; parameters?: Record<string, string> }
   action?: { actionMethodName?: string; parameters?: Array<{ key: string; value: string }> }
+  /** True when the event arrived in the Workspace add-on envelope. The synchronous reply
+   *  formats differ between the two, so the route needs to know which it is answering. */
+  addon?: boolean
+}
+
+/** The same event arrives in two different envelopes, and which one you get depends on a
+ *  checkbox in the Chat API config rather than on anything in the message.
+ *
+ *  A classic Chat app posts { type, message, user, space } at the top level. A Chat app
+ *  built as a Workspace add-on wraps it: { chat: { messagePayload | buttonClickedPayload |
+ *  addedToSpacePayload, user, space }, commonEventObject: { parameters } } — with no `type`
+ *  field at all, so a handler that switches on `type` silently does nothing and answers 200.
+ *  That is exactly how this sat: no error in Chat, no reply, nothing in our logs.
+ *
+ *  So normalise to the classic shape and work from that. Unknown envelopes return their top
+ *  level keys as the type, so the log names the shape instead of swallowing it. */
+export function normalizeChatEvent(raw: Record<string, unknown>): ChatEvent {
+  const chat = raw.chat as Record<string, unknown> | undefined
+  if (!chat) return raw as unknown as ChatEvent
+
+  const common = raw.commonEventObject as { parameters?: Record<string, string>; invokedFunction?: string } | undefined
+  const payload = (chat.messagePayload ?? chat.buttonClickedPayload ?? chat.addedToSpacePayload) as Record<string, unknown> | undefined
+  const type = chat.messagePayload ? 'MESSAGE'
+    : chat.buttonClickedPayload ? 'CARD_CLICKED'
+      : chat.addedToSpacePayload ? 'ADDED_TO_SPACE'
+        : `unknown chat payload: ${Object.keys(chat).join(', ')}`
+
+  const message = (payload?.message ?? chat.message) as ChatEvent['message'] | undefined
+  // The space is on the payload, on the chat object, or on the message itself, depending
+  // on which payload it is. Take the first one that is actually there.
+  const space = (payload?.space ?? chat.space ?? message?.space) as { name?: string } | undefined
+
+  return {
+    addon: true,
+    type,
+    space,
+    user: (chat.user ?? raw.user) as ChatUser | undefined,
+    message,
+    common: { invokedFunction: common?.invokedFunction ?? (chat.buttonClickedPayload as { invokedFunction?: string } | undefined)?.invokedFunction, parameters: common?.parameters },
+  }
 }
 
 /** Which ask is this Chat message a reply to?
