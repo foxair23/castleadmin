@@ -16,6 +16,10 @@ export function isPublicPath(pathname: string): boolean {
     pathname.startsWith('/approve/') ||
     pathname.startsWith('/api/approve/') ||
     pathname.startsWith('/api/scheduler/') ||
+    // The Genie booking widget's API: widget-key gated with a CORS allowlist, called by
+    // customers on the public embed page who have no login and never will. Was never on
+    // this list — every lookup and booking POST was 307'd to /login and died there.
+    pathname.startsWith('/api/genie-scheduler/') ||
     pathname.startsWith('/api/cron/') ||
     // Inbound webhooks: authenticated by their own shared secret / signature,
     // so they must bypass the login redirect (otherwise the provider's POST is

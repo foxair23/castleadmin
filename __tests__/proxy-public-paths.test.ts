@@ -19,6 +19,9 @@ describe('isPublicPath', () => {
       '/api/ops/session-alert',
       '/api/approve/accept',
       '/api/scheduler/slots',
+      '/api/genie-scheduler/lookup',   // widget key + CORS; a customer on the embed, no login
+      '/api/genie-scheduler/track',
+      '/api/genie-scheduler/book',
     ]) expect(isPublicPath(p), p).toBe(true)
   })
 
@@ -32,6 +35,17 @@ describe('isPublicPath', () => {
     // /api/cassie/* is otherwise session-authed; only the events endpoint is public.
     expect(isPublicPath('/api/cassie/chat/events/../../gmail/callback')).toBe(false)
     expect(isPublicPath('/api/leads/inbound/anything')).toBe(false)
+  })
+
+  it('exempts every route under app/api that the public embeds call', () => {
+    // The embed pages are public; an API they call that is not is a silent outage — the
+    // customer sees a spinner, we see a 307 to /login. Pin each embed-facing API family.
+    for (const dir of ['app/api/genie-scheduler', 'app/api/scheduler']) {
+      for (const e of readdirSync(join(process.cwd(), dir))) {
+        const url = `/${dir.replace(/^app\//, '')}/${e}`
+        if (statSync(join(process.cwd(), dir, e)).isDirectory()) expect(isPublicPath(url), url).toBe(true)
+      }
+    }
   })
 
   it('lists every route the Chat app posts to', () => {
