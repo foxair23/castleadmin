@@ -36,7 +36,22 @@ export function isChatConfigured(): boolean {
 /** Where Google Chat posts events. Also a valid `aud` value — see allowedAudiences(). */
 export function chatEventsUrl(): string { return `${appUrl()}/api/cassie/chat/events` }
 
-interface ServiceAccount { client_email: string; private_key: string }
+interface ServiceAccount { client_email: string; private_key: string; raw_private_key: string }
+
+const PEM_RE = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/
+
+// The first bytes of a DER key say which encoding it is. PKCS#8 wraps the key in an
+// AlgorithmIdentifier carrying the RSA OID; PKCS#1 is the bare RSAPrivateKey. OpenSSL
+// decodes by the PEM label, so a PKCS#1 key mislabelled "PRIVATE KEY" — which is what
+// some re-wrapping tools emit — fails with exactly the DECODER error we are chasing.
+const RSA_OID = Buffer.from([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01])
+function derLabel(der: Buffer): string | null {
+  if (der.length < 32 || der[0] !== 0x30) return null
+  if (der.subarray(0, 40).includes(RSA_OID)) return 'PRIVATE KEY'          // PKCS#8
+  // PKCS#1: SEQUENCE, version 0, then the modulus INTEGER straight away.
+  if (der[4] === 0x02 && der[5] === 0x01 && der[6] === 0x00 && der[7] === 0x02) return 'RSA PRIVATE KEY'
+  return null
+}
 
 /** A service-account private key rarely survives an environment variable intact, and
  *  OpenSSL reports every one of the ways it breaks as the same opaque
@@ -45,11 +60,13 @@ interface ServiceAccount { client_email: string; private_key: string }
  *      escaped a second time between the key file and the env store;
  *    • the whole value is wrapped in quotes the store did not strip;
  *    • its line breaks were collapsed to spaces, or lost altogether, by a UI that
- *      treated the value as a single line of text.
+ *      treated the value as a single line of text;
+ *    • its base64 was rewritten URL-safe, so + and / arrive as - and _;
+ *    • the bytes are a PKCS#1 key under a PKCS#8 label.
  *  None of that is the operator's doing and all of it is repairable, so rather than
- *  patching the symptoms we rebuild the PEM: take the base64 body between the markers,
- *  discard everything that is not base64, and re-wrap it at 64 characters. Whatever
- *  mangled the whitespace, the result is the canonical key file again. */
+ *  patching the symptoms we rebuild the PEM from the bytes: take the body between the
+ *  markers, restore URL-safe substitutions, discard what is still not base64, and
+ *  re-wrap at 64 characters under whichever label the decoded DER actually calls for. */
 export function normalizePrivateKey(raw: string): string {
   let key = (raw ?? '').trim()
   if (key.length > 1 && ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'")))) key = key.slice(1, -1)
@@ -57,25 +74,38 @@ export function normalizePrivateKey(raw: string): string {
   // the letter n, quietly corrupting the base64 instead of being dropped.
   key = key.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\r\n/g, '\n').trim()
 
-  const m = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/.exec(key)
+  const m = PEM_RE.exec(key)
   if (!m) return key.endsWith('\n') ? key : `${key}\n`
-  const body = m[2].replace(/[^A-Za-z0-9+/=]/g, '')
+  const body = m[2].replace(/-/g, '+').replace(/_/g, '/').replace(/[^A-Za-z0-9+/=]/g, '')
+  const label = derLabel(Buffer.from(body, 'base64')) ?? m[1]
   const lines = body.match(/.{1,64}/g) ?? []
-  return `-----BEGIN ${m[1]}-----\n${lines.join('\n')}\n-----END ${m[1]}-----\n`
+  return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----\n`
 }
 
-/** What is wrong with a key, in terms an operator can act on, without ever printing the
- *  key itself. Appended to a signing failure so the next step is obvious rather than
- *  another round of re-pasting. */
-export function describePrivateKey(key: string): string {
-  const m = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/.exec(key)
-  if (!m) return 'it has no matching BEGIN/END PRIVATE KEY markers'
-  const body = m[2].replace(/\s/g, '')
-  const stray = body.replace(/[A-Za-z0-9+/=]/g, '')
-  const parts: string[] = [`type ${m[1]}`, `${body.length} base64 characters`]
-  if (stray.length) parts.push(`${stray.length} characters that are not base64`)
-  if (body.length % 4 !== 0) parts.push('a body length that is not a multiple of 4, so it is truncated')
-  else if (body.length < 1000) parts.push('a body far shorter than a real 2048-bit key, so it is truncated')
+/** What is wrong with a key, in terms an operator can act on, without ever printing it or
+ *  any of its secret bytes. Reads the RAW value, not the repaired one: the interesting
+ *  evidence is what the repair had to throw away. */
+export function describePrivateKey(raw: string): string {
+  const m = PEM_RE.exec(raw ?? '')
+  if (!m) return 'no matching BEGIN/END PRIVATE KEY markers — the value is not a PEM key at all'
+  const inner = m[2].replace(/\\[rn]/g, '').replace(/\s/g, '')
+  const dropped = inner.replace(/[A-Za-z0-9+/=]/g, '')
+  const body = inner.replace(/-/g, '+').replace(/_/g, '/').replace(/[^A-Za-z0-9+/=]/g, '')
+  const parts = [`label ${m[1]}`, `${body.length} base64 characters`]
+  if (dropped.length) parts.push(`${dropped.length} characters outside the base64 alphabet`)
+
+  const der = Buffer.from(body, 'base64')
+  parts.push(`${der.length} decoded bytes`)
+  if (der.length < 16 || der[0] !== 0x30) { parts.push('which are not an ASN.1 SEQUENCE, so the base64 is not a key'); return parts.join(', ') }
+  // A key's outer SEQUENCE declares its own length; if that disagrees with what we have,
+  // bytes were lost or added and we can say which.
+  if (der[1] === 0x82) {
+    const declared = der.readUInt16BE(2) + 4
+    if (declared !== der.length) parts.push(`an ASN.1 length declaring ${declared} bytes, so ${declared > der.length ? `${declared - der.length} are missing` : `${der.length - declared} are extra`}`)
+  }
+  const label = derLabel(der)
+  if (!label) parts.push('and a structure matching neither PKCS#8 nor PKCS#1, so the bytes are corrupt')
+  else if (label !== m[1]) parts.push(`bytes that are actually ${label}`)
   return parts.join(', ')
 }
 
@@ -91,7 +121,7 @@ function serviceAccount(): ServiceAccount {
   if (!/^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(private_key)) {
     throw new Error('The private_key in GOOGLE_CHAT_SERVICE_ACCOUNT_JSON does not begin with a PEM header — re-copy the key file from Google Cloud')
   }
-  return { client_email: sa.client_email, private_key }
+  return { client_email: sa.client_email, private_key, raw_private_key: sa.private_key }
 }
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -108,7 +138,7 @@ export async function chatAccessToken(): Promise<string> {
   try { signature = signer.sign(sa.private_key) }
   catch (e) {
     // OpenSSL's DECODER error names neither the key nor the reason. Say both.
-    throw new Error(`Could not sign with the service-account private key (${e instanceof Error ? e.message : e}). The key we read from GOOGLE_CHAT_SERVICE_ACCOUNT_JSON has ${describePrivateKey(sa.private_key)} — download a fresh key from Google Cloud (IAM → Service Accounts → Keys → Add key → JSON) and paste it base64-encoded.`)
+    throw new Error(`Could not sign with the service-account private key (${e instanceof Error ? e.message : e}). The key we read from GOOGLE_CHAT_SERVICE_ACCOUNT_JSON has ${describePrivateKey(sa.raw_private_key)} — download a fresh key from Google Cloud (IAM → Service Accounts → Keys → Add key → JSON) and paste it base64-encoded.`)
   }
   const jwt = `${header}.${claims}.${b64url(signature)}`
   const res = await fetch(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }) })
