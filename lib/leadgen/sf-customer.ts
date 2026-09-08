@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sfPost } from '@/lib/crm/service-fusion'
+import { sfPhones } from '@/lib/crm/phone'
 import { findExistingSfCustomer, updateExistingCustomerContactInfo, type LeadContactInfo } from '@/lib/scheduler/sf-customer-match'
 import { loadLeadGenSettings } from './engine'
 
@@ -99,7 +100,7 @@ export async function ensureLeadCustomer(supabase: SupabaseClient, lead: LeadFor
     customer_name: name,
     contacts: [{
       fname: first, lname: last || '.', is_primary: 1,
-      ...(phone ? { phones: [{ phone, type: 'Mobile' }] } : {}),
+      ...sfPhones(phone),
       ...(lead.email ? { emails: [{ email: lead.email }] } : {}),
     }],
     ...(lead.address_street ? {

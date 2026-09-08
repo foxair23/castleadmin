@@ -1,5 +1,6 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { sfPost, sfGet } from '@/lib/crm/service-fusion'
+import { sfPhones } from '@/lib/crm/phone'
 import { findExistingSfCustomer, updateExistingCustomerContactInfo } from '@/lib/scheduler/sf-customer-match'
 import { enqueueForSubscribers, hasRecentNotification } from '@/lib/notifications/enqueue'
 import { renderSchedulerLeadSynced } from '@/lib/notifications/templates/scheduler-lead-synced'
@@ -102,7 +103,7 @@ export async function syncLeadToServiceFusion(leadId: string): Promise<void> {
             fname: l.customer_first_name,
             lname: l.customer_last_name || '.',
             is_primary: 1,
-            phones: [{ phone: l.customer_phone, type: 'Mobile' }],
+            ...sfPhones(l.customer_phone),
             ...(l.customer_email ? { emails: [{ email: l.customer_email }] } : {}),
           },
         ],
