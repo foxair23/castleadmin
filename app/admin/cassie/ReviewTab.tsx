@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ReviewItem } from '@/lib/agent/email/review'
-import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase } from './actions'
+import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase, deleteReplayAction, reviseReplyAction, type ActionResult } from './actions'
 import type { AgentSettings } from '@/lib/agent/settings'
 import { AutoRespondSwitch } from './AutoSendControls'
 
@@ -45,11 +45,12 @@ export const REASON_LABEL: Record<string, string> = {
   multi_part: 'several questions in one email', asks_for_human: 'sender asked for a person', could_not_answer: 'Cassie could not answer from the facts',
   auto_off: 'Auto-Respond is off', type_not_auto: 'question type not in the auto-send focus area', tier_not_auto: 'match tier not enabled for auto-send',
   tier_paused: 'tier paused by confusion rate', below_threshold: 'confidence below the threshold', chat_sourced: 'written from a team answer in Google Chat (needs a person to approve)',
+  reviewer_sourced: 'revised from a reviewer\'s instruction (needs a person to approve)',
 }
 
 const SOURCE_LABEL: Record<string, string> = {
   sf_job: 'Service Fusion job', vendor_order: 'Vendor order', answer_library: 'Answer library', instruction: 'Standing instruction', style_example: 'Style example',
-  charter: 'Charter', thread_message: 'Thread message', chat_answer: 'Google Chat answer', model: 'Model', resolver: 'Job match',
+  charter: 'Charter', thread_message: 'Thread message', chat_answer: 'Google Chat answer', reviewer_note: 'Reviewer\'s instruction', model: 'Model', resolver: 'Job match', inquiry: 'The partner\'s own message',
 }
 
 type View = 'queue' | 'followups' | 'queued' | 'sent' | 'closed'
@@ -114,7 +115,7 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
                   <div className="text-xs text-gray-500 truncate">{m?.from_name ? `${m.from_name} · ` : ''}{m?.from_addr} · {fmt(m?.received_at ?? item.created_at)}{item.question_summary ? ` · ${item.question_summary}` : ''}</div>
                 </div>
               </button>
-              {open && <ReviewDetail item={item} onDone={() => setOpenId(null)} />}
+              {open && <ReviewDetail item={item} onDone={() => setOpenId(null)} onOpen={id => setOpenId(id)} />}
             </div>
           )
         })}
@@ -132,7 +133,7 @@ const OutcomeBadge = ({ c }: { c: string }) => { const o = OUTCOME[c] ?? { label
 
 const confColor = (c: number | null) => c == null ? 'text-gray-400' : c >= 0.9 ? 'text-green-700' : c >= 0.6 ? 'text-amber-700' : 'text-red-700'
 
-function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }) {
+function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () => void; onOpen: (id: string) => void }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [text, setText] = useState(item.sent_text ?? item.composed_text ?? '')
@@ -142,9 +143,18 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
   const m = item.message
   const actionable = item.status === 'draft'
   const edited = text.trim() !== (item.composed_text ?? '').trim()
-  const run = (fn: () => Promise<unknown>, done = true) => start(async () => {
+  // Actions report failure by returning { error } rather than throwing: a thrown message is
+  // replaced by Next.js in production with a generic render error the reviewer cannot act on.
+  const run = (fn: () => Promise<ActionResult | unknown>, opts: { done?: boolean; ok?: string; onOk?: (r: ActionResult & Record<string, unknown>) => void } = {}) => start(async () => {
     setMsg(null)
-    try { await fn(); router.refresh(); if (done) onDone() } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
+    try {
+      const r = ((await fn()) ?? {}) as ActionResult & Record<string, unknown>
+      if (r.error) { setMsg(r.error); return }
+      router.refresh()
+      opts.onOk?.(r)
+      if (opts.ok) setMsg(opts.ok)
+      if (opts.done ?? true) onDone()
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   })
   const bd = item.confidence_breakdown as { match?: number; coverage?: number; grounding?: number; freshness?: number } | null
 
@@ -175,8 +185,11 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
         </div>
         {actionable && (
           <div className="space-y-2">
-            <input className={input} placeholder="Optional note — “too formal”, “don’t promise dates”, “he wanted the tech’s name”. Travels with this example." value={note} onChange={e => setNote(e.target.value)} />
+            <input className={input} placeholder="Optional note — “too formal”, “don’t promise dates”, “the PO is probably 74491444, look that up”. Travels with this example." value={note} onChange={e => setNote(e.target.value)} />
             <div className="flex flex-wrap gap-2 items-center">
+              <button className={btnGhost} disabled={pending || !note.trim()} title="Cassie writes the draft again from your note. The note is kept as feedback; the new draft still needs your approval."
+                onClick={() => run(() => reviseReplyAction(item.id, note), { done: false, onOk: r => { if (typeof r.replyId === 'string') onOpen(r.replyId) } })}>Revise with this</button>
+              <span className="text-gray-300">|</span>
               <button className={btn} disabled={pending || !text.trim() || item.unsourced_claims.length > 0 && !edited} onClick={() => run(() => approveReplyAction(item.id, text, note))}>{edited ? 'Approve edited version' : 'Approve'}</button>
               <button className={btnGhost} disabled={pending} onClick={() => run(() => escalateReplyAction(item.id, note))}>Escalate to a person</button>
               <button className={btnDanger} disabled={pending} onClick={() => run(() => rejectReplyAction(item.id, note))}>Reject</button>
@@ -192,14 +205,20 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
         )}
         {item.status === 'sent' && item.approval_path !== 'auto' && (
           <div className="flex items-center gap-2">
-            <button className={btnGhost} disabled={pending} onClick={() => run(() => saveAsRegressionCase(item.id).then(() => setMsg('Saved as a regression test case (Dashboard → Regression set).')), false)}>Save as test case</button>
+            <button className={btnGhost} disabled={pending} onClick={() => run(() => saveAsRegressionCase(item.id), { done: false, ok: 'Saved as a regression test case (Dashboard → Regression set).' })}>Save as test case</button>
             <span className="text-xs text-gray-500">Freezes this inquiry, the job facts, and the reply a person approved as a known-good example.</span>
+          </div>
+        )}
+        {m?.delivery_path === 'replay' && (
+          <div className="flex items-center gap-3">
+            <button className={btnDanger} disabled={pending} onClick={() => { if (confirm('Delete this replayed email and everything Cassie composed from it?')) run(() => deleteReplayAction(item.message_id)) }}>Delete replay</button>
+            <span className="text-xs text-gray-500">This was pasted in as a test. Real partner emails cannot be deleted — close them with Reject or Escalate.</span>
           </div>
         )}
         {['sent', 'rejected', 'escalated', 'cancelled', 'superseded'].includes(item.status) && (
           <div className="flex gap-2">
             <input className={input} placeholder="Add a note about this reply (kept with it for review)" value={note} onChange={e => setNote(e.target.value)} />
-            <button className={btnGhost} disabled={pending || !note.trim()} onClick={() => run(() => replyFeedbackAction(item.id, item.status === 'sent' ? 'post_send' : 'note', note).then(() => setNote('')), false)}>Save note</button>
+            <button className={btnGhost} disabled={pending || !note.trim()} onClick={() => run(() => replyFeedbackAction(item.id, item.status === 'sent' ? 'post_send' : 'note', note), { done: false, ok: 'Note saved.', onOk: () => setNote('') })}>Save note</button>
           </div>
         )}
         {msg && <p className={`text-sm ${/^Saved/.test(msg) ? 'text-green-700' : 'text-red-700'}`}>{msg}</p>}

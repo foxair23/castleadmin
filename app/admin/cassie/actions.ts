@@ -132,41 +132,86 @@ async function reviewer(): Promise<{ userId: string; userName: string | null }> 
   const { data } = await agentDb().from('profiles').select('full_name, email').eq('id', userId).maybeSingle()
   return { userId, userName: (data?.full_name as string | null) ?? (data?.email as string | null) ?? null }
 }
-export async function approveReplyAction(id: string, text: string, note: string): Promise<void> {
+/** Server actions cannot throw usefully: in production Next.js replaces the message with
+ *  "An error occurred in the Server Components render", so a reviewer who clicks Reject on
+ *  a reply that was superseded a minute ago learns nothing. Return the message instead. */
+export type ActionResult = { error?: string }
+async function attempt<T extends object = Record<never, never>>(fn: () => Promise<T | void>): Promise<T & ActionResult> {
+  try { const r = await fn(); revalidatePath(PATH); return (r ?? {}) as T & ActionResult }
+  catch (e) { return { error: e instanceof Error ? e.message : String(e) } as T & ActionResult }
+}
+
+export async function approveReplyAction(id: string, text: string, note: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { approveReply } = await import('@/lib/agent/email/review')
-  await approveReply(agentDb(), id, { text, note: note || null, userId }); revalidatePath(PATH)
+  return attempt(() => approveReply(agentDb(), id, { text, note: note || null, userId }))
 }
-export async function rejectReplyAction(id: string, note: string): Promise<void> {
+export async function rejectReplyAction(id: string, note: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { rejectReply } = await import('@/lib/agent/email/review')
-  await rejectReply(agentDb(), id, { note: note || null, userId }); revalidatePath(PATH)
+  return attempt(() => rejectReply(agentDb(), id, { note: note || null, userId }))
 }
-export async function escalateReplyAction(id: string, note: string): Promise<{ notified: number }> {
+export async function escalateReplyAction(id: string, note: string): Promise<{ notified?: number } & ActionResult> {
   const { userId, userName } = await reviewer()
   const { escalateReply } = await import('@/lib/agent/email/review')
   const { loadAgentSettings } = await import('@/lib/agent/settings')
   const db = agentDb()
-  const res = await escalateReply(db, id, { note: note || null, userId, userName, settings: await loadAgentSettings(db) })
-  revalidatePath(PATH); return res
+  return attempt(async () => escalateReply(db, id, { note: note || null, userId, userName, settings: await loadAgentSettings(db) }))
 }
-export async function replyFeedbackAction(id: string, kind: 'post_send' | 'confused' | 'note', note: string): Promise<void> {
+/** The reviewer tells Cassie something and she writes the draft again from it — the same
+ *  path a Google Chat answer takes, with the reviewer as the human. The old draft is
+ *  superseded, the note is kept as feedback so the learning loop sees it, and the new
+ *  draft still needs a person to approve: a human-fed reply never auto-sends. */
+export async function reviseReplyAction(id: string, instruction: string): Promise<ActionResult & { replyId?: string }> {
+  const text = instruction.trim()
+  if (!text) return { error: 'Tell Cassie what to change first.' }
+  return attempt(async () => {
+    const { userId, userName } = await reviewer()
+    const db = agentDb()
+    const { data: r } = await db.from('agent_email_replies').select('status').eq('id', id).single()
+    if (r?.status !== 'draft') throw new Error(`This reply is already ${r?.status ?? 'gone'}; it cannot be revised.`)
+    await db.from('agent_email_feedback').insert({ reply_id: id, kind: 'revise', note: text, user_id: userId })
+    const { recomposeReply } = await import('@/lib/agent/email/composer-stage')
+    const { loadAgentSettings } = await import('@/lib/agent/settings')
+    const rc = await recomposeReply(db, await loadAgentSettings(db), id, `revised in review by ${userName ?? 'a reviewer'}`, {
+      chatAnswer: { text, responder: userName ?? 'Reviewer', channel: 'review' }, noChatAsk: true,
+    })
+    if (rc.outcome === 'error' || !rc.replyId) throw new Error(rc.detail ?? 'Cassie could not write the revised draft.')
+    revalidatePath(PATH)
+    return { replyId: rc.replyId }
+  })
+}
+export async function replyFeedbackAction(id: string, kind: 'post_send' | 'confused' | 'note', note: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { addReplyFeedback } = await import('@/lib/agent/email/review')
-  await addReplyFeedback(agentDb(), id, { kind, note, userId }); revalidatePath(PATH)
+  return attempt(() => addReplyFeedback(agentDb(), id, { kind, note, userId }))
 }
-export async function unqueueReplyAction(id: string): Promise<void> {
+export async function unqueueReplyAction(id: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { cancelQueuedReply } = await import('@/lib/agent/email/review')
-  await cancelQueuedReply(agentDb(), id, userId); revalidatePath(PATH)
+  return attempt(() => cancelQueuedReply(agentDb(), id, userId))
 }
 
+/** Remove a replayed email and everything composed from it. Replays are test input pasted by
+ *  an admin, so they can simply go; a real partner email is a record and is never deleted
+ *  from here — close it with Reject or Escalate instead. */
+export async function deleteReplayAction(messageId: string): Promise<ActionResult> {
+  await assertAdmin()
+  return attempt(async () => {
+    const db = agentDb()
+    const { data: m } = await db.from('agent_email_messages').select('id, delivery_path').eq('id', messageId).maybeSingle()
+    if (!m) throw new Error('That message is already gone.')
+    if (m.delivery_path !== 'replay') throw new Error('Only replayed emails can be deleted. This one came from the mailbox — reject or escalate it instead.')
+    const { error } = await db.from('agent_email_messages').delete().eq('id', messageId)
+    if (error) throw new Error(error.message)
+  })
+}
 
 // ── Regression set (PRD §10, §14) ───────────────────────────────────────────
-export async function saveAsRegressionCase(replyId: string): Promise<void> {
+export async function saveAsRegressionCase(replyId: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { createCaseFromReply } = await import('@/lib/agent/email/regression')
-  await createCaseFromReply(agentDb(), replyId, userId); revalidatePath(PATH)
+  return attempt(() => createCaseFromReply(agentDb(), replyId, userId))
 }
 export async function runRegressionAction(): Promise<{ cases: number; passed: number; mean_score: number | null }> {
   const { userId } = await reviewer()

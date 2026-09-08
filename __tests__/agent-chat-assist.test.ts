@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { planForAsk, normalizeChatEvent } from '@/lib/agent/email/chat-assist'
+import { planForAsk, normalizeChatEvent, describeLookup } from '@/lib/agent/email/chat-assist'
+import { chatAnswerPos, humanAnswerMeta } from '@/lib/agent/email/composer-stage'
 
 // Silence is the worst answer in a chat thread: someone who writes to Cassie and gets
 // nothing cannot tell whether she is broken, ignoring them, or slow. Every status either
@@ -20,8 +21,14 @@ describe('planForAsk', () => {
     expect(planForAsk('sent', true)).toEqual({ act: 'edit' })
   })
 
+  it('treats a message after the draft as a revised answer, not a status request', () => {
+    // "Don't send that — look up the other PO first" must recompose, not be told the draft
+    // is waiting on the card above.
+    expect(planForAsk('composed', false)).toEqual({ act: 'answer' })
+  })
+
   it('explains itself instead of going quiet once the question is closed', () => {
-    for (const s of ['composed', 'approved', 'sent', 'reviewed', 'something_new']) {
+    for (const s of ['approved', 'sent', 'reviewed', 'something_new']) {
       const p = planForAsk(s, false)
       expect(p.act).toBe('explain')
       expect((p as { text: string }).text.length).toBeGreaterThan(20)
@@ -88,5 +95,56 @@ describe('normalizeChatEvent', () => {
 
   it('names an envelope it does not recognise instead of swallowing it', () => {
     expect(normalizeChatEvent({ chat: { somethingNewPayload: {} } }).type).toMatch(/unknown chat payload: somethingNewPayload/)
+  })
+})
+
+// The team's answer often contains the thing to look up. Those numbers go to the resolver;
+// the card then says what the lookup found, so "no job under that PO" is a result.
+describe('chatAnswerPos', () => {
+  it('pulls reference numbers out of a team answer', () => {
+    expect(chatAnswerPos('I think that number belongs to a different order — possibly PO 74491444')).toEqual(['74491444'])
+    expect(chatAnswerPos('try 1020259181, that is the SF job')).toEqual(['1020259181'])
+  })
+  it('finds nothing in an instruction with no number in it', () => {
+    expect(chatAnswerPos("don't send that. can you look up that new PO first?")).toEqual([])
+    expect(chatAnswerPos(null)).toEqual([])
+  })
+})
+
+describe('describeLookup', () => {
+  it('reports a match by job number', () => {
+    expect(describeLookup({ resolve_status: 'matched', sf_job_number: '1020259225', identifiers: { pos: ['74491444'] } })).toBe('Looked up PO 74491444 — matched Job 1020259225.')
+  })
+  it('reports no match across every number tried', () => {
+    expect(describeLookup({ resolve_status: 'none', identifiers: { pos: ['74233491444', '74491444'] } })).toBe('Looked up PO 74233491444, PO 74491444 — no job found under any of them.')
+    expect(describeLookup({ resolve_status: 'none', identifiers: { pos: ['74491444'] } })).toMatch(/no job found under it/)
+  })
+  it('says when it deliberately did not pick between candidates', () => {
+    expect(describeLookup({ resolve_status: 'ambiguous', identifiers: { pos: ['74491444'] } })).toMatch(/did not pick one/)
+  })
+  it('says nothing when there was nothing to look up', () => {
+    expect(describeLookup({ resolve_status: 'none', identifiers: { pos: [] } })).toBeNull()
+    expect(describeLookup(null)).toBeNull()
+  })
+})
+
+// A human answer reaches the composer from two doors — Google Chat, or the reviewer typing
+// in the Review tab. Whichever door, it must block auto-send; and what it is called in the
+// sources, the blocker and the supersede reason must agree.
+describe('humanAnswerMeta', () => {
+  it('records a Chat answer as chat-sourced', () => {
+    expect(humanAnswerMeta({ askId: 'a1', text: 'x', responder: 'John' })).toEqual({
+      source: 'chat_answer', label: 'Team answer · John', hardFail: 'chat_sourced', cancelReason: 'chat_answered',
+    })
+  })
+  it("records a reviewer's instruction as reviewer-sourced", () => {
+    expect(humanAnswerMeta({ text: 'x', responder: 'John', channel: 'review' })).toEqual({
+      source: 'reviewer_note', label: 'Reviewer · John', hardFail: 'reviewer_sourced', cancelReason: 'revised_in_review',
+    })
+  })
+  it('never lets a human-fed draft auto-send, from either door', () => {
+    for (const channel of ['chat', 'review'] as const) {
+      expect(humanAnswerMeta({ text: 'x', responder: 'J', channel }).hardFail).toMatch(/_sourced$/)
+    }
   })
 })
