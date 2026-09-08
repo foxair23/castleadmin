@@ -158,3 +158,30 @@ export async function verifyEventToken(authorization: string | null, audiences: 
   const ok = v.verify(new X509Certificate(pem).publicKey, Buffer.from(sig.replace(/-/g, '+').replace(/_/g, '/'), 'base64'))
   return ok ? { ok: true } : { ok: false, reason: 'bad signature' }
 }
+
+// ── Connection test ─────────────────────────────────────────────────────────
+
+/** Post a throwaway message to the space and report what happened, in plain English.
+ *  Exercises exactly the outbound path an ask uses: service-account JWT → token → post.
+ *  Used by the "Test connection" button so a misconfiguration names itself in one click
+ *  instead of being inferred from a card that never appeared. */
+export async function testChatConnection(space: string): Promise<{ ok: boolean; message: string }> {
+  if (!space.trim()) return { ok: false, message: 'No space is set. Paste the space resource name (spaces/AAAA…) above and save first.' }
+  if (!/^spaces\//.test(space.trim())) return { ok: false, message: `"${space}" does not look like a space resource name. It should start with "spaces/".` }
+  if (!isChatConfigured()) return { ok: false, message: 'GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not set in Vercel (or the deploy predates it).' }
+  try {
+    await chatAccessToken()
+  } catch (e) {
+    return { ok: false, message: `Could not authenticate as the service account: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  try {
+    const posted = await postText(space.trim(), `cassie-test-${Date.now()}`, 'Connection test from Castle Admin — Cassie can post here. You can ignore this message.')
+    return { ok: true, message: `Posted to the space (${posted.name}). Check Google Chat.` }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const hint = /403/.test(msg) ? ' — a 403 usually means the Cassie app has not been added to that space, or the service account is in a different Cloud project from the Chat app.'
+      : /404/.test(msg) ? ' — a 404 usually means the space resource name is wrong.'
+      : ''
+    return { ok: false, message: `${msg}${hint}` }
+  }
+}
