@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ReviewItem } from '@/lib/agent/email/review'
-import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase } from './actions'
+import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase, deleteReplayAction, type ActionResult } from './actions'
 import type { AgentSettings } from '@/lib/agent/settings'
 import { AutoRespondSwitch } from './AutoSendControls'
 
@@ -142,9 +142,18 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
   const m = item.message
   const actionable = item.status === 'draft'
   const edited = text.trim() !== (item.composed_text ?? '').trim()
-  const run = (fn: () => Promise<unknown>, done = true) => start(async () => {
+  // Actions report failure by returning { error } rather than throwing: a thrown message is
+  // replaced by Next.js in production with a generic render error the reviewer cannot act on.
+  const run = (fn: () => Promise<ActionResult | unknown>, opts: { done?: boolean; ok?: string; onOk?: () => void } = {}) => start(async () => {
     setMsg(null)
-    try { await fn(); router.refresh(); if (done) onDone() } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
+    try {
+      const r = (await fn()) as ActionResult | undefined
+      if (r?.error) { setMsg(r.error); return }
+      router.refresh()
+      opts.onOk?.()
+      if (opts.ok) setMsg(opts.ok)
+      if (opts.done ?? true) onDone()
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   })
   const bd = item.confidence_breakdown as { match?: number; coverage?: number; grounding?: number; freshness?: number } | null
 
@@ -192,14 +201,20 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
         )}
         {item.status === 'sent' && item.approval_path !== 'auto' && (
           <div className="flex items-center gap-2">
-            <button className={btnGhost} disabled={pending} onClick={() => run(() => saveAsRegressionCase(item.id).then(() => setMsg('Saved as a regression test case (Dashboard → Regression set).')), false)}>Save as test case</button>
+            <button className={btnGhost} disabled={pending} onClick={() => run(() => saveAsRegressionCase(item.id), { done: false, ok: 'Saved as a regression test case (Dashboard → Regression set).' })}>Save as test case</button>
             <span className="text-xs text-gray-500">Freezes this inquiry, the job facts, and the reply a person approved as a known-good example.</span>
+          </div>
+        )}
+        {m?.delivery_path === 'replay' && (
+          <div className="flex items-center gap-3">
+            <button className={btnDanger} disabled={pending} onClick={() => { if (confirm('Delete this replayed email and everything Cassie composed from it?')) run(() => deleteReplayAction(item.message_id)) }}>Delete replay</button>
+            <span className="text-xs text-gray-500">This was pasted in as a test. Real partner emails cannot be deleted — close them with Reject or Escalate.</span>
           </div>
         )}
         {['sent', 'rejected', 'escalated', 'cancelled', 'superseded'].includes(item.status) && (
           <div className="flex gap-2">
             <input className={input} placeholder="Add a note about this reply (kept with it for review)" value={note} onChange={e => setNote(e.target.value)} />
-            <button className={btnGhost} disabled={pending || !note.trim()} onClick={() => run(() => replyFeedbackAction(item.id, item.status === 'sent' ? 'post_send' : 'note', note).then(() => setNote('')), false)}>Save note</button>
+            <button className={btnGhost} disabled={pending || !note.trim()} onClick={() => run(() => replyFeedbackAction(item.id, item.status === 'sent' ? 'post_send' : 'note', note), { done: false, ok: 'Note saved.', onOk: () => setNote('') })}>Save note</button>
           </div>
         )}
         {msg && <p className={`text-sm ${/^Saved/.test(msg) ? 'text-green-700' : 'text-red-700'}`}>{msg}</p>}
