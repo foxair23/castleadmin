@@ -109,6 +109,18 @@ describe('a real key, mangled every way an env store mangles one', () => {
       const junk = Buffer.from('not a key, just some bytes that base64 cleanly').toString('base64')
       expect(describePrivateKey(`-----BEGIN PRIVATE KEY-----\n${junk}\n-----END PRIVATE KEY-----\n`)).toMatch(/not an ASN.1 SEQUENCE|corrupt/)
     })
+    it('distinguishes corrupt key material from a corrupt wrapper', () => {
+      // A PKCS#8 header — right SEQUENCE, right declared length, right RSA OID — wrapped
+      // around bytes that are not a key. Every envelope check passes; only OpenSSL knows.
+      const good = Buffer.from(PEM.replace(/-----[A-Z ]+-----/g, '').replace(/\s/g, ''), 'base64')
+      const der = Buffer.concat([good.subarray(0, 40), Buffer.alloc(good.length - 40, 0x41)])
+      const d = describePrivateKey(`-----BEGIN PRIVATE KEY-----\n${der.toString('base64')}\n-----END PRIVATE KEY-----\n`)
+      expect(d).not.toMatch(/outside the base64 alphabet|are missing|are extra/)
+      expect(d).toMatch(/key material that is NOT intact/)
+    })
+    it('says nothing about the material when the key is healthy', () => {
+      expect(describePrivateKey(PEM)).not.toMatch(/NOT intact/)
+    })
     it('says so when there are no markers at all', () => {
       expect(describePrivateKey('not a key at all')).toMatch(/not a PEM key at all/)
     })

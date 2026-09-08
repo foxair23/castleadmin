@@ -1,4 +1,4 @@
-import { createSign, createVerify, X509Certificate } from 'crypto'
+import { createPrivateKey, createSign, createVerify, X509Certificate } from 'crypto'
 import { appUrl } from '@/lib/config/domains'
 
 // Google Chat, app-authenticated (PRD §11 "Technical implementation"). Raw REST + a
@@ -36,7 +36,7 @@ export function isChatConfigured(): boolean {
 /** Where Google Chat posts events. Also a valid `aud` value — see allowedAudiences(). */
 export function chatEventsUrl(): string { return `${appUrl()}/api/cassie/chat/events` }
 
-interface ServiceAccount { client_email: string; private_key: string; raw_private_key: string }
+interface ServiceAccount { client_email: string; private_key: string; raw_private_key: string; stored_as: 'raw JSON' | 'base64' }
 
 const PEM_RE = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/
 
@@ -51,6 +51,15 @@ function derLabel(der: Buffer): string | null {
   // PKCS#1: SEQUENCE, version 0, then the modulus INTEGER straight away.
   if (der[4] === 0x02 && der[5] === 0x01 && der[6] === 0x00 && der[7] === 0x02) return 'RSA PRIVATE KEY'
   return null
+}
+
+const derOf = (pem: string) => Buffer.from(pem.replace(/-----[A-Z -]+-----/g, '').replace(/\s/g, ''), 'base64')
+
+// Everything else checks the envelope; this checks the contents, and OpenSSL is the only
+// authority worth asking. A wrapper that parses around material that does not means the
+// bytes were altered in transit rather than lost — which points at the store, not the file.
+function keyMaterialIntact(der: Buffer): boolean {
+  try { createPrivateKey({ key: der, format: 'der', type: 'pkcs8' }); return true } catch { return false }
 }
 
 /** A service-account private key rarely survives an environment variable intact, and
@@ -106,13 +115,15 @@ export function describePrivateKey(raw: string): string {
   const label = derLabel(der)
   if (!label) parts.push('and a structure matching neither PKCS#8 nor PKCS#1, so the bytes are corrupt')
   else if (label !== m[1]) parts.push(`bytes that are actually ${label}`)
+  else if (label === 'PRIVATE KEY' && !keyMaterialIntact(der)) parts.push('an intact PKCS#8 wrapper around key material that is NOT intact, so the bytes were altered rather than lost — something is rewriting the value where it is stored')
   return parts.join(', ')
 }
 
 function serviceAccount(): ServiceAccount {
   const raw = process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON ?? ''
   if (!raw.trim()) throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not set')
-  const json = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8')
+  const stored_as = raw.trim().startsWith('{') ? 'raw JSON' as const : 'base64' as const
+  const json = stored_as === 'raw JSON' ? raw : Buffer.from(raw, 'base64').toString('utf8')
   let sa: ServiceAccount
   try { sa = JSON.parse(json) as ServiceAccount }
   catch { throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not valid JSON — paste the whole key file, or its base64') }
@@ -121,7 +132,7 @@ function serviceAccount(): ServiceAccount {
   if (!/^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(private_key)) {
     throw new Error('The private_key in GOOGLE_CHAT_SERVICE_ACCOUNT_JSON does not begin with a PEM header — re-copy the key file from Google Cloud')
   }
-  return { client_email: sa.client_email, private_key, raw_private_key: sa.private_key }
+  return { client_email: sa.client_email, private_key, raw_private_key: sa.private_key, stored_as }
 }
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -136,9 +147,15 @@ export async function chatAccessToken(): Promise<string> {
   const signer = createSign('RSA-SHA256'); signer.update(`${header}.${claims}`)
   let signature: Buffer
   try { signature = signer.sign(sa.private_key) }
-  catch (e) {
-    // OpenSSL's DECODER error names neither the key nor the reason. Say both.
-    throw new Error(`Could not sign with the service-account private key (${e instanceof Error ? e.message : e}). The key we read from GOOGLE_CHAT_SERVICE_ACCOUNT_JSON has ${describePrivateKey(sa.raw_private_key)} — download a fresh key from Google Cloud (IAM → Service Accounts → Keys → Add key → JSON) and paste it base64-encoded.`)
+  catch (pemError) {
+    // The PEM wrapper is ours, rebuilt from the bytes, so it is almost certainly not the
+    // problem — but signing straight from the DER costs nothing and rules it out entirely.
+    try { signature = signer.sign(createPrivateKey({ key: derOf(sa.private_key), format: 'der', type: 'pkcs8' })) }
+    catch {
+      // OpenSSL's DECODER error names neither the key nor the reason. Say both, and say
+      // how the value is stored — the two facts that decide what to do next.
+      throw new Error(`Could not sign with the service-account private key (${pemError instanceof Error ? pemError.message : pemError}). It is stored as ${sa.stored_as} in GOOGLE_CHAT_SERVICE_ACCOUNT_JSON, and has ${describePrivateKey(sa.raw_private_key)}.`)
+    }
   }
   const jwt = `${header}.${claims}.${b64url(signature)}`
   const res = await fetch(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }) })
