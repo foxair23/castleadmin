@@ -63,9 +63,25 @@ export async function postChatAsk(db: SupabaseClient, settings: AgentSettings, a
       { text: 'Open in Castle Admin', fn: 'open', url: reviewUrl(a.replyId) },
     ],
   })
-  const posted = await postCard(settings.chat_space_name, `cassie-${a.replyId}`, card, `Cassie needs a hand — ${who}: ${a.missing}`)
-  await db.from('agent_chat_asks').update({ chat_message_name: posted.name, chat_thread_name: posted.thread?.name ?? null }).eq('id', askId)
-  return { posted: true, askId }
+  try {
+    const posted = await postCard(settings.chat_space_name, `cassie-${a.replyId}`, card, `Cassie needs a hand — ${who}: ${a.missing}`)
+    await db.from('agent_chat_asks').update({ chat_message_name: posted.name, chat_thread_name: posted.thread?.name ?? null }).eq('id', askId)
+    return { posted: true, askId }
+  } catch (e) {
+    // The ask row is written before the post so the card can carry its id. If the post
+    // then fails, leaving the row 'open' would make the dedup check above swallow every
+    // retry — the feature would look permanently broken after one bad attempt. Close it.
+    await db.from('agent_chat_asks').update({ status: 'cancelled', resolved_at: new Date().toISOString() }).eq('id', askId)
+    throw e
+  }
+}
+
+/** Plain-English version of why an ask did not go out, for the reviewer. */
+export const ASK_SKIP_REASON: Record<string, string> = {
+  no_space: 'no Chat space is set (Cassie → Settings → Google Chat assist)',
+  chat_not_configured: 'GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not set in Vercel',
+  duplicate_open_ask: 'an ask for this thread is already open in the space',
+  rate_capped: 'the per-hour ask cap was reached',
 }
 
 // ── Inbound events ──────────────────────────────────────────────────────────

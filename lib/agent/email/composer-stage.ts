@@ -181,11 +181,22 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     return { replyId, outcome: 'queued', detail: `auto-send queued · confidence ${Math.round(confidence * 100)}% · sends after ${route.send_after}` }
   }
   // Ask the team in Google Chat when Cassie could not ground the answer (PRD §11).
-  if (!opts.noChatAsk && !opts.chatAnswer && settings.chat_space_name && (composed.couldNotAnswer || pack.resolve.status !== 'matched')) {
+  // The outcome is recorded as a note on the reply either way: a Chat ask that silently
+  // fails to post is indistinguishable from one that was never attempted, and the whole
+  // point of the assist is that the partner is not left waiting.
+  if (!opts.noChatAsk && !opts.chatAnswer && (composed.couldNotAnswer || pack.resolve.status !== 'matched')) {
+    let note: string
     try {
-      const { postChatAsk } = await import('./chat-assist')
-      await postChatAsk(db, settings, { replyId, messageId: a.messageId, email: a.email, questionSummary: summary, missing: composed.missing ?? pack.gaps[0] ?? 'the answer to this question', sfJobNumber: matched?.job.number ?? null, sfJobId: matched?.job.id ?? null })
-    } catch (e) { console.error('[cassie] chat ask failed (non-critical):', e instanceof Error ? e.message : e) }
+      const { postChatAsk, ASK_SKIP_REASON } = await import('./chat-assist')
+      const r = await postChatAsk(db, settings, { replyId, messageId: a.messageId, email: a.email, questionSummary: summary, missing: composed.missing ?? pack.gaps[0] ?? 'the answer to this question', sfJobNumber: matched?.job.number ?? null, sfJobId: matched?.job.id ?? null })
+      note = r.posted
+        ? 'Asked the team in Google Chat. Their answer there becomes a draft for approval.'
+        : `Google Chat ask not sent: ${ASK_SKIP_REASON[r.reason ?? ''] ?? r.reason}.`
+    } catch (e) {
+      note = `Google Chat ask failed: ${e instanceof Error ? e.message : String(e)}`
+      console.error('[cassie]', note)
+    }
+    await db.from('agent_email_feedback').insert({ reply_id: replyId, kind: 'note', note }).then(() => {}, () => {})
   }
 
   const detail = `draft · confidence ${Math.round(confidence * 100)}%` + (route.blockers.length ? `; held for review: ${route.blockers.join(', ')}` : '')

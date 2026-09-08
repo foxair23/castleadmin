@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
-import { verifyEventToken } from '@/lib/agent/chat/google-chat'
+import { verifyEventToken, allowedIssuers, allowedAudiences } from '@/lib/agent/chat/google-chat'
 import { agentDb, loadAgentSettings } from '@/lib/agent/settings'
 import { handleChatMessage, handleCardClick, type ChatEvent } from '@/lib/agent/email/chat-assist'
 
@@ -12,7 +12,12 @@ export const maxDuration = 60
 // "Working…" card update), and do the real work after the response (PRD §11).
 export async function POST(req: NextRequest) {
   const v = await verifyEventToken(req.headers.get('authorization'))
-  if (!v.ok) return NextResponse.json({ error: `unauthorized: ${v.reason}` }, { status: 401 })
+  if (!v.ok) {
+    // Google shows the user "Cassie not responding" for any non-2xx, with no hint as to
+    // why. Log the reason so the cause is one look at the Vercel logs rather than a guess.
+    console.error(`[cassie chat] rejected an event: ${v.reason}. Accepted issuers: ${allowedIssuers().join(', ')} · accepted audiences: ${allowedAudiences().join(', ')}`)
+    return NextResponse.json({ error: `unauthorized: ${v.reason}` }, { status: 401 })
+  }
 
   let ev: ChatEvent
   try { ev = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400 }) }
