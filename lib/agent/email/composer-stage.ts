@@ -35,13 +35,18 @@ export interface ComposerOptions {
   liveOverride?: LiveJobFacts | null
   /** Set when this run replaces an earlier reply whose facts changed before sending. */
   recomposedFrom?: string
+  /** A team member's answer from Google Chat (PRD §11). Never forwarded verbatim: it becomes
+   *  a fact the composer must write FROM, and it marks the reply chat-sourced (no auto-send). */
+  chatAnswer?: { askId: string; text: string; responder: string }
+  /** Skip posting a Chat ask even if the reply cannot be answered (used when recomposing from one). */
+  noChatAsk?: boolean
 }
 
 export function makeComposerStage(opts: ComposerOptions = {}): ComposerStage {
   return async (db, settings, accepted) => runComposer(db, settings, accepted, opts)
 }
 
-export async function runComposer(db: SupabaseClient, settings: AgentSettings, a: AcceptedMessage, opts: ComposerOptions = {}): Promise<{ outcome: string; detail?: string }> {
+export async function runComposer(db: SupabaseClient, settings: AgentSettings, a: AcceptedMessage, opts: ComposerOptions = {}): Promise<{ outcome: string; detail?: string; replyId?: string }> {
   const fromDomain = a.email.from.addr.toLowerCase().split('@')[1] ?? ''
   const base = {
     message_id: a.messageId,
@@ -72,7 +77,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
   // 3b. Ground.
   let pack: GroundingPack
   try {
-    pack = await buildGrounding(db, { identifiers, questionType, questionText: `${a.email.subject}\n${a.cleanBody}`, settings, liveOverride: opts.liveOverride })
+    pack = await buildGrounding(db, { identifiers, questionType, questionText: `${a.email.subject}\n${a.cleanBody}`, settings, liveOverride: opts.liveOverride, extraFacts: opts.chatAnswer ? [{ source: 'chat_answer', refId: opts.chatAnswer.askId, label: `Team answer · ${opts.chatAnswer.responder}`, text: opts.chatAnswer.text, values: [] }] : [] })
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
     await db.from('agent_email_replies').insert({ ...base, question_type: questionType, question_summary: summary, identifiers, status: 'failed', error: `grounding: ${err}` })
@@ -116,6 +121,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
   if (multi) hardFail.push('multi_part')
   if (asksHuman) hardFail.push('asks_for_human')
   if (composed.couldNotAnswer) hardFail.push('could_not_answer')
+  if (opts.chatAnswer) hardFail.push('chat_sourced')   // a Chat answer authorises one reply with approval, never auto-send (PRD §11)
 
   const { score: confidence, breakdown } = computeConfidence({
     resolveStatus: pack.resolve.status, resolveTier: 'tier' in pack.resolve ? pack.resolve.tier : null, questionType,
@@ -147,6 +153,7 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     status: route.status, approval_path: route.approval_path, send_after: route.send_after,
     ...(route.status === 'queued' ? { sent_text: text } : {}),
     ...(opts.recomposedFrom ? { recomposed_from: opts.recomposedFrom } : {}),
+    ...(opts.chatAnswer ? { chat_ask_id: opts.chatAnswer.askId } : {}),
   }).select('id').single()
   if (error) return { outcome: 'error', detail: `reply insert: ${error.message}` }
   const replyId = reply.id as string
@@ -170,10 +177,18 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
   }
 
   if (route.status === 'queued') {
-    return { outcome: 'queued', detail: `auto-send queued · confidence ${Math.round(confidence * 100)}% · sends after ${route.send_after}` }
+    return { replyId, outcome: 'queued', detail: `auto-send queued · confidence ${Math.round(confidence * 100)}% · sends after ${route.send_after}` }
   }
+  // Ask the team in Google Chat when Cassie could not ground the answer (PRD §11).
+  if (!opts.noChatAsk && !opts.chatAnswer && settings.chat_space_name && (composed.couldNotAnswer || pack.resolve.status !== 'matched')) {
+    try {
+      const { postChatAsk } = await import('./chat-assist')
+      await postChatAsk(db, settings, { replyId, messageId: a.messageId, email: a.email, questionSummary: summary, missing: composed.missing ?? pack.gaps[0] ?? 'the answer to this question', sfJobNumber: matched?.job.number ?? null, sfJobId: matched?.job.id ?? null })
+    } catch (e) { console.error('[cassie] chat ask failed (non-critical):', e instanceof Error ? e.message : e) }
+  }
+
   const detail = `draft · confidence ${Math.round(confidence * 100)}%` + (route.blockers.length ? `; held for review: ${route.blockers.join(', ')}` : '')
-  return { outcome: 'drafted', detail }
+  return { replyId, outcome: 'drafted', detail }
 }
 
 async function loadThreadText(db: SupabaseClient, threadId: string | null, excludeMessageId: string): Promise<Array<{ from: string; text: string }>> {
@@ -189,7 +204,7 @@ async function loadThreadText(db: SupabaseClient, threadId: string | null, exclu
 
 /** Re-run the composer for an existing reply's message (facts changed before send). The
  *  old reply is marked superseded; the new one routes fresh (and restarts the hold). */
-export async function recomposeReply(db: SupabaseClient, settings: AgentSettings, replyId: string, reason: string): Promise<{ outcome: string; detail?: string }> {
+export async function recomposeReply(db: SupabaseClient, settings: AgentSettings, replyId: string, reason: string, extra: Pick<ComposerOptions, 'chatAnswer' | 'noChatAsk'> = {}): Promise<{ outcome: string; detail?: string; replyId?: string }> {
   const { data: old } = await db.from('agent_email_replies').select('id, message_id, gmail_thread_id').eq('id', replyId).single()
   if (!old) return { outcome: 'error', detail: 'reply not found' }
   const { data: m } = await db.from('agent_email_messages').select('*').eq('id', old.message_id as string).single()
@@ -208,7 +223,7 @@ export async function recomposeReply(db: SupabaseClient, settings: AgentSettings
   const cleanBody = stripQuotedHistory(email.bodyText)
   const identifiers = extractIdentifiers(cleanBody, { excludeEmails: [email.from.addr, settings.mailbox_address, ...email.to.map(a => a.addr), ...email.cc.map(a => a.addr)] })
   const thread = await loadThreadState(db, email.gmailThreadId)
-  await db.from('agent_email_replies').update({ status: 'superseded', cancel_reason: 'facts_changed', updated_at: new Date().toISOString() }).eq('id', replyId)
+  await db.from('agent_email_replies').update({ status: 'superseded', cancel_reason: extra.chatAnswer ? 'chat_answered' : 'facts_changed', updated_at: new Date().toISOString() }).eq('id', replyId)
   await db.from('agent_email_feedback').insert({ reply_id: replyId, kind: 'note', note: `Recomposed: ${reason}` })
-  return runComposer(db, settings, { messageId: old.message_id as string, email, cleanBody, identifiers, deliveryPath: (m.delivery_path === 'direct' ? 'direct' : 'distribution'), thread }, { recomposedFrom: replyId })
+  return runComposer(db, settings, { messageId: old.message_id as string, email, cleanBody, identifiers, deliveryPath: (m.delivery_path === 'direct' ? 'direct' : 'distribution'), thread }, { recomposedFrom: replyId, ...extra })
 }

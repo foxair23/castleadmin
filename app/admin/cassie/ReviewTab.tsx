@@ -44,7 +44,7 @@ export const REASON_LABEL: Record<string, string> = {
   ungrounded: 'contains unsourced claims', multi_match: 'more than one job matched', no_match: 'no job matched', refresh_failed: 'live Service Fusion read failed',
   multi_part: 'several questions in one email', asks_for_human: 'sender asked for a person', could_not_answer: 'Cassie could not answer from the facts',
   auto_off: 'Auto-Respond is off', type_not_auto: 'question type not in the auto-send focus area', tier_not_auto: 'match tier not enabled for auto-send',
-  tier_paused: 'tier paused by confusion rate', below_threshold: 'confidence below the threshold',
+  tier_paused: 'tier paused by confusion rate', below_threshold: 'confidence below the threshold', chat_sourced: 'written from a team answer in Google Chat (needs a person to approve)',
 }
 
 const SOURCE_LABEL: Record<string, string> = {

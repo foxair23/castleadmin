@@ -11,7 +11,7 @@ import { listAnswers, type AnswerEntry } from '@/lib/agent/knowledge'
 
 export interface Fact {
   id: string                       // F1, F2, ...
-  source: 'sf_job' | 'vendor_order' | 'answer_library' | 'resolver'
+  source: 'sf_job' | 'vendor_order' | 'answer_library' | 'resolver' | 'chat_answer'
   refId: string | null
   label: string                    // "Job 1020259225 · schedule"
   /** The text the composer sees. Written as plain statements. */
@@ -136,6 +136,8 @@ export interface BuildGroundingInput {
   settings: AgentSettings
   /** Test hook: skip Service Fusion and use these facts as the live read. */
   liveOverride?: LiveJobFacts | null
+  /** Extra facts supplied by a person (Google Chat answer). Authorise THIS reply only. */
+  extraFacts?: Array<Pick<Fact, 'source' | 'refId' | 'label' | 'text' | 'values'>>
 }
 
 export async function buildGrounding(db: SupabaseClient, input: BuildGroundingInput): Promise<GroundingPack> {
@@ -164,6 +166,7 @@ export async function buildGrounding(db: SupabaseClient, input: BuildGroundingIn
     gaps.push(`No job found (searched by ${tried}).${resolve.outOfScope.length ? ` ${resolve.outOfScope.length} older closed job(s) matched but are outside the ${input.settings.closed_window_days}-day window.` : ''}`)
   }
   facts.push(...factsFromAnswers(answers))
+  for (const x of input.extraFacts ?? []) facts.push({ id: '', ...x })
   facts.forEach((f, i) => { f.id = `F${i + 1}` })
   return { resolve, live, facts, answers, vendor, gaps }
 }

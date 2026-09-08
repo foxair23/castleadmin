@@ -6,6 +6,7 @@ import { loadGmailCredential, getAccessToken, fetchNewMessages, GmailAuthError }
 import { ingestEmail } from './pipeline'
 import { makeComposerStage } from './composer-stage'
 import { sendQueuedReplies, type SendReport } from './sender'
+import { runChatTimeouts } from './chat-assist'
 
 // The one-minute poll (PRD §5). Fetch new mail → run the pipeline → send what is
 // queued → record credential health. Every failure mode leaves a trace: a Gmail auth
@@ -19,6 +20,7 @@ export interface PollReport {
   mode?: 'history' | 'search'
   outcomes: Record<string, number>
   send: SendReport | null
+  chat?: { reminded: number; escalated: number }
   error?: string
 }
 
@@ -48,6 +50,7 @@ export async function runPoll(db: SupabaseClient, opts: { settings?: AgentSettin
     if (cred.source === 'db') await db.from('agent_gmail_credentials').update({ last_used_at: new Date().toISOString() }).eq('id', 1)
 
     report.send = await sendQueuedReplies(db, settings, cred)
+    try { report.chat = await runChatTimeouts(db, settings) } catch (e) { console.error('[cassie] chat timeouts:', e instanceof Error ? e.message : e) }
     return report
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)

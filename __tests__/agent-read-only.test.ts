@@ -29,7 +29,7 @@ describe('lib/agent is read-only against Service Fusion', () => {
   it('has files to check', () => expect(files.length).toBeGreaterThan(0))
   // Files that legitimately POST to OTHER services (Gmail, Anthropic). They must not so
   // much as mention Service Fusion, so a write verb there cannot be aimed at it.
-  const NON_SF_WRITERS = new Set(['lib/agent/email/gmail.ts'])
+  const NON_SF_WRITERS = new Set(['lib/agent/email/gmail.ts', 'lib/agent/chat/google-chat.ts'])
   for (const f of files) {
     const rel = f.replace(ROOT + '/', '')
     it(`${rel} imports no write-capable SF client and issues no write verbs`, () => {

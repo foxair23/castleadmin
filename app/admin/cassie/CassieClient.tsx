@@ -273,6 +273,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
     cc_office: s.cc_office, signature_text: s.signature_text, escape_hatch_text: s.escape_hatch_text,
     allowlist_domains: lines(s.allowlist_domains), allowlist_addresses: lines(s.allowlist_addresses), blocklist_addresses: lines(s.blocklist_addresses),
     escalation_extra_emails: lines(s.escalation_extra_emails),
+    chat_space_name: s.chat_space_name ?? '', chat_timeout_minutes: s.chat_timeout_minutes, chat_max_asks_per_hour: s.chat_max_asks_per_hour,
     staleness_minutes: s.staleness_minutes, closed_window_days: s.closed_window_days,
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF(x => ({ ...x, [k]: v }))
@@ -286,6 +287,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
         signature_text: f.signature_text.trim(), escape_hatch_text: f.escape_hatch_text.trim(),
         allowlist_domains: parseLines(f.allowlist_domains), allowlist_addresses: parseLines(f.allowlist_addresses),
         blocklist_addresses: parseLines(f.blocklist_addresses), escalation_extra_emails: parseLines(f.escalation_extra_emails),
+        chat_space_name: f.chat_space_name.trim() || null, chat_timeout_minutes: Number(f.chat_timeout_minutes), chat_max_asks_per_hour: Number(f.chat_max_asks_per_hour),
         staleness_minutes: Number(f.staleness_minutes), closed_window_days: Number(f.closed_window_days),
       })
       setMsg('Saved.'); router.refresh()
@@ -370,6 +372,24 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
             <Field label="Closed window (days)" hint="how long a finished job stays findable"><input type="number" min={1} className={input} value={f.closed_window_days} onChange={e => set('closed_window_days', Number(e.target.value))} /></Field>
           </div>
         </div>
+      </div>
+
+      <div className={card}>
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">Google Chat assist</h2>
+        <p className="text-xs text-gray-500 mb-3">When Cassie cannot answer from our records she asks the team in a Chat space instead of leaving the partner waiting. A person replies in the thread; Cassie writes the partner reply from that answer and posts it back with Approve / Edit / Send-to-review buttons. Team answers are never forwarded word for word, and they never let a reply auto-send.</p>
+        <div className="grid sm:grid-cols-3 gap-4">
+          <Field label="Space" hint="the space resource name, e.g. spaces/AAAAxxxxxxx — blank turns the assist off"><input className={input} value={f.chat_space_name} onChange={e => set('chat_space_name', e.target.value)} placeholder="spaces/…" /></Field>
+          <Field label="Reminder after (min)" hint="one nudge, then escalation by email at double this"><input type="number" min={5} className={input} value={f.chat_timeout_minutes} onChange={e => set('chat_timeout_minutes', Number(e.target.value))} /></Field>
+          <Field label="Max asks per hour" hint="noise control"><input type="number" min={1} className={input} value={f.chat_max_asks_per_hour} onChange={e => set('chat_max_asks_per_hour', Number(e.target.value))} /></Field>
+        </div>
+        <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">One-time Google Cloud setup for the Chat app</summary>
+          <ol className="list-decimal pl-5 mt-1 space-y-0.5">
+            <li>In the same Google Cloud project, enable the <b>Google Chat API</b> and create a <b>service account</b> with a JSON key. Put the key in Vercel as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_SERVICE_ACCOUNT_JSON</code> and the project number as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_PROJECT_NUMBER</code>.</li>
+            <li>Under Google Chat API → Configuration: app name &ldquo;Cassie&rdquo;, enable interactive features, connection type HTTP endpoint URL: <code className="rounded bg-gray-100 px-1">{typeof window !== 'undefined' ? `${window.location.origin}/api/cassie/chat/events` : '/api/cassie/chat/events'}</code>. Visibility: make it available to your Workspace domain.</li>
+            <li>Create a space (e.g. &ldquo;Cassie asks&rdquo;), add the people who should answer, and add the Cassie app to it. Copy the space id from the URL (spaces/…) into the field above.</li>
+            <li>Tell the team: reply in Cassie&apos;s thread and mention @Cassie so she sees it.</li>
+          </ol>
+        </details>
       </div>
 
       <div className="flex items-center gap-3">
