@@ -4,9 +4,13 @@ import { agentDb, loadAgentSettings } from '@/lib/agent/settings'
 import { getActiveCharter, listCharterVersions, listInstructions, listAnswers, listStyleExamples } from '@/lib/agent/knowledge'
 import CassieClient from './CassieClient'
 import { loadReviewItems } from '@/lib/agent/email/review'
+import { loadRecentOutcomes, computeConfusionRates } from '@/lib/agent/email/outcomes'
+import { loadCoverageLog, groupCoverageLog, editRateByType, loadEditRateRows } from '@/lib/agent/email/learning'
+import { loadDashboard } from '@/lib/agent/email/dashboard'
 import { loadGmailCredential, isGoogleOAuthConfigured, gmailRedirectUri } from '@/lib/agent/email/gmail'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300   // the regression run action composes every case in one request
 export const metadata = { title: 'Cassie' }
 
 export default async function CassiePage({ searchParams }: { searchParams: Promise<{ reply?: string; gmail?: string; msg?: string }> }) {
@@ -31,6 +35,15 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
   const gmailConfigured = !!gmailCred
   const gmail = { connected: !!gmailCred, email: gmailCred?.email ?? null, grantedAt: gmailCred?.granted_at ?? null, source: gmailCred?.source ?? null, oauthReady: isGoogleOAuthConfigured(), redirectUri: gmailRedirectUri(), lastOkAt: settings.gmail_last_ok_at, lastError: settings.gmail_last_error, lastErrorAt: settings.gmail_last_error_at }
   const gmailFlash = sp.gmail ? { ok: sp.gmail === 'connected', msg: sp.msg ?? '' } : null
+  const confusionRates = computeConfusionRates(await loadRecentOutcomes(db))
+  const coverageRows = await loadCoverageLog(db, 90)
+  const clusters = groupCoverageLog(coverageRows)
+  const weekOf = (iso: string) => { const d = new Date(iso); const day = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - day); return d.toISOString().slice(0, 10) }
+  const weeklyMap = new Map<string, number>()
+  for (const r of coverageRows) weeklyMap.set(weekOf(r.created_at), (weeklyMap.get(weekOf(r.created_at)) ?? 0) + 1)
+  const weeklyAsks = [...weeklyMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-12).map(([week, count]) => ({ week, count }))
+  const editRates = editRateByType(await loadEditRateRows(db, 30))
+  const dashboard = await loadDashboard(db)
   const reviewItems = await loadReviewItems(db, { statuses: ['draft', 'queued', 'sent', 'rejected', 'escalated', 'cancelled', 'superseded', 'failed'], limit: 300 })
   const [{ data: activity }, { data: draftRows }] = await Promise.all([
     db.from('agent_email_messages')
@@ -56,6 +69,10 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
       initialReply={sp.reply ?? null}
       gmail={gmail}
       gmailFlash={gmailFlash}
+      confusionRates={confusionRates}
+      learning={{ clusters, editRates, weeklyAsks }}
+      dashboard={dashboard}
+      autoBaselineOk={dashboard.runs.some(r => r.cases >= 30)}
     />
   )
 }

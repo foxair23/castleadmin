@@ -7,6 +7,7 @@ import type { ReviewItem } from '@/lib/agent/email/review'
 import { estimateAutoShare } from '@/lib/agent/email/routing'
 import { saveAgentSettings } from './actions'
 import { REASON_LABEL } from './ReviewTab'
+import type { TierRate } from '@/lib/agent/email/outcomes'
 
 // Auto-send controls (PRD §6.3, §12 Settings). Two placements share this code:
 //   • compact — the one-click Auto-Respond switch at the top of the Review queue
@@ -28,7 +29,7 @@ const TIERS: { key: MatchTier; label: string; hint: string }[] = [
   { key: 'name', label: 'Customer name → exactly one active or recent job', hint: 'weaker; enable after PO sends prove clean' },
 ]
 
-export function AutoRespondSwitch({ settings, canEnable }: { settings: AgentSettings; canEnable: boolean }) {
+export function AutoRespondSwitch({ settings, canEnable, baselineOk = true }: { settings: AgentSettings; canEnable: boolean; baselineOk?: boolean }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [err, setErr] = useState<string | null>(null)
@@ -45,14 +46,14 @@ export function AutoRespondSwitch({ settings, canEnable }: { settings: AgentSett
       <span className="text-xs text-gray-600">
         {on
           ? <>Cassie sends replies that pass every check at or above <b>{Math.round(settings.confidence_threshold * 100)}%</b> confidence after a <b>{settings.hold_minutes}-minute</b> hold. Everything else still comes here. Turning this off pulls back anything queued.</>
-          : canEnable ? 'Every reply is a draft for a person to approve. Turn on only after the regression set exists and the unedited rate is above 95%.' : 'Every reply is a draft. Connect the mailbox and turn Processing on before this can be enabled.'}
+          : canEnable ? 'Every reply is a draft for a person to approve. Turn on only once the unedited rate on a tier is above 95%.' : !baselineOk ? 'Every reply is a draft. Locked until the regression set has 30 cases and has been run once (Dashboard → Regression set).' : 'Every reply is a draft. Connect the mailbox and turn Processing on before this can be enabled.'}
       </span>
       {err && <span className="text-xs text-red-700">{err}</span>}
     </div>
   )
 }
 
-export function AutoSendCard({ settings: s, items }: { settings: AgentSettings; items: ReviewItem[] }) {
+export function AutoSendCard({ settings: s, items, confusionRates }: { settings: AgentSettings; items: ReviewItem[]; confusionRates: TierRate[] }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
@@ -60,6 +61,8 @@ export function AutoSendCard({ settings: s, items }: { settings: AgentSettings; 
   const [types, setTypes] = useState<QuestionType[]>(s.auto_question_types)
   const [tiers, setTiers] = useState<MatchTier[]>(s.auto_match_tiers)
   const [hold, setHold] = useState(s.hold_minutes)
+  const [confThreshold, setConfThreshold] = useState(s.confusion_threshold)
+  const [confMin, setConfMin] = useState(s.confusion_min_sample)
 
   // The 30 days of composed replies (any status) leading up to the newest one — what the
   // current knobs would have done. Anchored on the data, not the clock, so it is pure.
@@ -69,7 +72,7 @@ export function AutoSendCard({ settings: s, items }: { settings: AgentSettings; 
     return items.filter(i => i.confidence != null && Date.parse(i.created_at) >= cutoff)
   }, [items])
   const est = useMemo(() => estimateAutoShare(recent, { ...s, confidence_threshold: threshold, auto_question_types: types, auto_match_tiers: tiers }), [recent, s, threshold, types, tiers])
-  const dirty = threshold !== s.confidence_threshold || hold !== s.hold_minutes || types.join() !== s.auto_question_types.join() || tiers.join() !== s.auto_match_tiers.join()
+  const dirty = threshold !== s.confidence_threshold || hold !== s.hold_minutes || types.join() !== s.auto_question_types.join() || tiers.join() !== s.auto_match_tiers.join() || confThreshold !== s.confusion_threshold || confMin !== s.confusion_min_sample
   const paused = Object.entries(s.paused_tiers)
 
   return (
@@ -111,6 +114,27 @@ export function AutoSendCard({ settings: s, items }: { settings: AgentSettings; 
               <li key={t.key}><label className="flex items-start gap-2 text-sm text-gray-800"><input type="checkbox" className="mt-1" checked={tiers.includes(t.key)} onChange={e => setTiers(x => e.target.checked ? [...x, t.key] : x.filter(y => y !== t.key))} /><span>{t.label} <span className="text-xs text-gray-400">{t.hint}</span></span></label></li>
             ))}</ul>
           </div>
+          <div>
+            <div className="text-sm text-gray-700 font-medium mb-1">Confusion safety valve</div>
+            <p className="text-xs text-gray-500 mb-2">When a partner writes back confused, it counts against that question type + match tier. A tier at or above the rate below, with at least the minimum sample in the last 30 days, pauses itself and alerts you.</p>
+            <div className="flex items-center gap-3 text-sm text-gray-800">
+              <label className="flex items-center gap-1">Pause at <input type="number" min={0} max={100} value={Math.round(confThreshold * 100)} onChange={e => setConfThreshold(Number(e.target.value) / 100)} className="w-16 border border-gray-300 rounded px-2 py-1 text-sm text-gray-900" />%</label>
+              <label className="flex items-center gap-1">after at least <input type="number" min={1} value={confMin} onChange={e => setConfMin(Number(e.target.value))} className="w-16 border border-gray-300 rounded px-2 py-1 text-sm text-gray-900" /> replies</label>
+            </div>
+            {confusionRates.length > 0 ? (
+              <table className="mt-2 w-full text-xs">
+                <thead><tr className="text-left text-gray-500"><th className="py-1">Question · tier</th><th className="py-1 text-right">Replies</th><th className="py-1 text-right">Confused</th><th className="py-1 text-right">Rate</th></tr></thead>
+                <tbody>{confusionRates.map(r => (
+                  <tr key={r.key} className={`border-t border-gray-100 ${r.rate >= confThreshold && r.sample >= confMin ? 'text-red-800' : 'text-gray-800'}`}>
+                    <td className="py-1">{r.questionType} · {r.tier}{s.paused_tiers[r.key] ? <span className="ml-1 text-[10px] text-amber-700">paused</span> : null}</td>
+                    <td className="py-1 text-right">{r.sample}{r.autoSample ? <span className="text-gray-400"> ({r.autoSample} auto)</span> : null}</td>
+                    <td className="py-1 text-right">{r.confused}</td>
+                    <td className="py-1 text-right font-medium">{Math.round(r.rate * 100)}%</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            ) : <p className="mt-2 text-xs text-gray-400">No partner replies classified in the last 30 days yet.</p>}
+          </div>
           {paused.length > 0 && (
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <div className="font-semibold mb-1">Paused by confusion rate</div>
@@ -124,7 +148,7 @@ export function AutoSendCard({ settings: s, items }: { settings: AgentSettings; 
       <div className="mt-4 flex items-center gap-3">
         <button className={btn} disabled={pending || !dirty} onClick={() => start(async () => {
           setMsg(null)
-          try { await saveAgentSettings({ confidence_threshold: threshold, auto_question_types: types, auto_match_tiers: tiers, hold_minutes: hold }); setMsg('Saved.'); router.refresh() } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
+          try { await saveAgentSettings({ confidence_threshold: threshold, auto_question_types: types, auto_match_tiers: tiers, hold_minutes: hold, confusion_threshold: confThreshold, confusion_min_sample: confMin }); setMsg('Saved.'); router.refresh() } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
         })}>Save auto-send settings</button>
         {msg && <span className={`text-sm ${msg === 'Saved.' ? 'text-green-700' : 'text-red-700'}`}>{msg}</span>}
       </div>

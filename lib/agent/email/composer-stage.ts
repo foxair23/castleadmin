@@ -88,7 +88,8 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
 
   // 4. Compose.
   const [charter, instructions, styles] = await Promise.all([getActiveCharter(db), listInstructions(db), listStyleExamples(db)])
-  const styleExamples = [...styles.filter(s => s.is_pinned), ...styles.filter(s => !s.is_pinned && s.question_type === questionType)].slice(0, 8)
+  const { pickStyleExamples } = await import('./learning')
+  const styleExamples = pickStyleExamples(styles, questionType, `${a.email.subject}\n${a.cleanBody}`, 8)
   const thread = await loadThreadText(db, a.email.gmailThreadId, a.messageId)
   let composed
   try {

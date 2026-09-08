@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AgentSettings, QuestionType } from '@/lib/agent/settings'
-import { resolveJob, type ResolveResult, type ResolverIdentifiers } from '@/lib/agent/job-resolver'
+import { resolveJob, type ResolveResult, type ResolverIdentifiers, type CandidateJob, type ResolveTier } from '@/lib/agent/job-resolver'
 import { refreshJob, type LiveJobFacts, type LiveRefreshResult } from '@/lib/agent/live-refresh'
 import { listAnswers, type AnswerEntry } from '@/lib/agent/knowledge'
 
@@ -138,11 +138,15 @@ export interface BuildGroundingInput {
   liveOverride?: LiveJobFacts | null
   /** Extra facts supplied by a person (Google Chat answer). Authorise THIS reply only. */
   extraFacts?: Array<Pick<Fact, 'source' | 'refId' | 'label' | 'text' | 'values'>>
+  /** Regression runs: treat the case as matched to this job without touching the mirror. */
+  matchOverride?: { job: CandidateJob; tier: ResolveTier; matchedPo?: string } | null
 }
 
 export async function buildGrounding(db: SupabaseClient, input: BuildGroundingInput): Promise<GroundingPack> {
   const gaps: string[] = []
-  const resolve = await resolveJob(db, input.identifiers, { windowDays: input.settings.closed_window_days })
+  const resolve: ResolveResult = input.matchOverride
+    ? { status: 'matched', tier: input.matchOverride.tier, job: input.matchOverride.job, matchedPo: input.matchOverride.matchedPo }
+    : await resolveJob(db, input.identifiers, { windowDays: input.settings.closed_window_days })
   const allAnswers = await listAnswers(db)
   const answers = pickAnswers(allAnswers, input.questionType, input.questionText)
   let live: LiveRefreshResult | null = null
@@ -156,7 +160,7 @@ export async function buildGrounding(db: SupabaseClient, input: BuildGroundingIn
       : await refreshJob(resolve.job.id, { stalenessMs: input.settings.staleness_minutes * 60_000 })
     if (live.status === 'fresh') facts.push(...factsFromLive(live.facts, jobLabel))
     else gaps.push(`Live Service Fusion read failed (${live.error}); no job facts available.`)
-    vendor = await loadVendorContext(db, resolve.job.id, input.identifiers.pos ?? [])
+    vendor = input.matchOverride ? null : await loadVendorContext(db, resolve.job.id, input.identifiers.pos ?? [])
     if (vendor) facts.push(...factsFromVendor(vendor))
     facts.push({ id: '', source: 'resolver', refId: resolve.job.id, label: 'Match', text: `This inquiry was matched to ${jobLabel} by ${resolve.tier === 'po' ? `PO ${resolve.matchedPo}` : resolve.tier}.`, values: [resolve.matchedPo ?? ''].filter(Boolean) })
   } else if (resolve.status === 'ambiguous') {

@@ -7,6 +7,11 @@ import type { Charter, Instruction, AnswerEntry, StyleExample } from '@/lib/agen
 import type { ReviewItem } from '@/lib/agent/email/review'
 import ReviewTab from './ReviewTab'
 import { AutoSendCard } from './AutoSendControls'
+import type { TierRate } from '@/lib/agent/email/outcomes'
+import type { CoverageCluster, EditRate } from '@/lib/agent/email/learning'
+import LearningTab from './LearningTab'
+import DashboardTab from './DashboardTab'
+import type { DashboardData } from '@/lib/agent/email/dashboard'
 import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
@@ -59,7 +64,7 @@ function fmt(s: string | null | undefined): string {
 const lines = (arr: string[]) => arr.join('\n')
 const parseLines = (s: string) => s.split(/[\n,;]+/).map(x => x.trim()).filter(Boolean)
 
-type Tab = 'review' | 'activity' | 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
+type Tab = 'review' | 'dashboard' | 'activity' | 'learning' | 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
 
 export default function CassieClient(props: {
   settings: AgentSettings
@@ -75,12 +80,18 @@ export default function CassieClient(props: {
   initialReply: string | null
   gmail: GmailStatus
   gmailFlash: { ok: boolean; msg: string } | null
+  confusionRates: TierRate[]
+  learning: { clusters: CoverageCluster[]; editRates: EditRate[]; weeklyAsks: Array<{ week: string; count: number }> }
+  dashboard: DashboardData
+  autoBaselineOk: boolean
 }) {
   const [tab, setTab] = useState<Tab>('review')
   const needsReview = props.reviewItems.filter(i => i.status === 'draft').length
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: 'review', label: 'Review', count: needsReview },
     { key: 'activity', label: 'Activity', count: props.activity.length },
+    { key: 'dashboard', label: 'Dashboard' },
+    { key: 'learning', label: 'Learning', count: props.learning.clusters.length },
     { key: 'settings', label: 'Settings' },
     { key: 'charter', label: 'Charter' },
     { key: 'instructions', label: 'Standing Instructions', count: props.instructions.filter(i => i.is_active).length },
@@ -101,9 +112,11 @@ export default function CassieClient(props: {
           </button>
         ))}
       </div>
-      {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} settings={props.settings} />}
+      {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} settings={props.settings} autoBaselineOk={props.autoBaselineOk} />}
       {tab === 'activity' && <ActivityTab rows={props.activity} drafts={props.drafts} />}
-      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} reviewItems={props.reviewItems} />}
+      {tab === 'dashboard' && <DashboardTab volume={props.dashboard.volume} cases={props.dashboard.cases} runs={props.dashboard.runs} trend={props.dashboard.trend} gmailOk={props.gmail.connected && !props.gmail.lastError} />}
+      {tab === 'learning' && <LearningTab clusters={props.learning.clusters} editRates={props.learning.editRates} answers={props.answers} weeklyAsks={props.learning.weeklyAsks} />}
+      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} reviewItems={props.reviewItems} confusionRates={props.confusionRates} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}
       {tab === 'instructions' && <InstructionsTab rows={props.instructions} />}
       {tab === 'answers' && <AnswersTab rows={props.answers} />}
@@ -264,7 +277,7 @@ function DraftDetail({ d }: { d: DraftRow }) {
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewItems }: { settings: AgentSettings; gmailConfigured: boolean; gmail: GmailStatus; gmailFlash: { ok: boolean; msg: string } | null; reviewItems: ReviewItem[] }) {
+function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewItems, confusionRates }: { settings: AgentSettings; gmailConfigured: boolean; gmail: GmailStatus; gmailFlash: { ok: boolean; msg: string } | null; reviewItems: ReviewItem[]; confusionRates: TierRate[] }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
@@ -361,7 +374,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
         </div>
       </div>
 
-      <AutoSendCard settings={s} items={reviewItems} />
+      <AutoSendCard settings={s} items={reviewItems} confusionRates={confusionRates} />
 
       <div className={card}>
         <h2 className="text-sm font-semibold text-gray-900 mb-3">Escalation and timing</h2>

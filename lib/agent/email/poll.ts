@@ -7,6 +7,7 @@ import { ingestEmail } from './pipeline'
 import { makeComposerStage } from './composer-stage'
 import { sendQueuedReplies, type SendReport } from './sender'
 import { runChatTimeouts } from './chat-assist'
+import { recordPartnerReply, runConfusionCheck } from './outcomes'
 
 // The one-minute poll (PRD §5). Fetch new mail → run the pipeline → send what is
 // queued → record credential health. Every failure mode leaves a trace: a Gmail auth
@@ -21,6 +22,7 @@ export interface PollReport {
   outcomes: Record<string, number>
   send: SendReport | null
   chat?: { reminded: number; escalated: number }
+  confusion?: { paused: string[] }
   error?: string
 }
 
@@ -41,7 +43,7 @@ export async function runPoll(db: SupabaseClient, opts: { settings?: AgentSettin
 
     const composer = makeComposerStage()
     for (const email of fetched.emails) {
-      const res = await ingestEmail(db, email, { settings, composer })
+      const res = await ingestEmail(db, email, { settings, composer, partnerReply: recordPartnerReply })
       const k = res.duplicate ? 'duplicate' : res.outcome
       report.outcomes[k] = (report.outcomes[k] ?? 0) + 1
     }
@@ -51,6 +53,7 @@ export async function runPoll(db: SupabaseClient, opts: { settings?: AgentSettin
 
     report.send = await sendQueuedReplies(db, settings, cred)
     try { report.chat = await runChatTimeouts(db, settings) } catch (e) { console.error('[cassie] chat timeouts:', e instanceof Error ? e.message : e) }
+    if (report.outcomes.partner_reply) { try { const c = await runConfusionCheck(db, settings); report.confusion = { paused: c.paused } } catch (e) { console.error('[cassie] confusion check:', e instanceof Error ? e.message : e) } }
     return report
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)

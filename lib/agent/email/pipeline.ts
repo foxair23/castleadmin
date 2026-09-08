@@ -20,6 +20,8 @@ export interface AcceptedMessage {
 }
 
 export type ComposerStage = (db: SupabaseClient, settings: AgentSettings, accepted: AcceptedMessage) => Promise<{ outcome: string; detail?: string }>
+/** Stage 8: a partner wrote again in a thread Cassie already answered (PRD §10). */
+export type PartnerReplyStage = (db: SupabaseClient, settings: AgentSettings, input: { messageId: string; email: InboundEmail; cleanBody: string }) => Promise<{ outcome: string; detail?: string }>
 
 export interface IngestResult {
   messageId: string | null
@@ -76,7 +78,7 @@ function pickFilterHeaders(h: Record<string, string>): Record<string, string> {
 export async function ingestEmail(
   db: SupabaseClient,
   email: InboundEmail,
-  opts: { settings?: AgentSettings; composer?: ComposerStage } = {},
+  opts: { settings?: AgentSettings; composer?: ComposerStage; partnerReply?: PartnerReplyStage } = {},
 ): Promise<IngestResult> {
   const settings = opts.settings ?? await loadAgentSettings(db)
 
@@ -97,6 +99,19 @@ export async function ingestEmail(
   const messageId = inserted.id as string
 
   if (!verdict.pass) {
+    // A partner follow-up on a thread Cassie answered is not a drop: it is the outcome
+    // signal. Classify it and flag a person; Cassie never replies twice in a thread.
+    if (verdict.reason === 'thread_actioned' && opts.partnerReply) {
+      try {
+        const res = await opts.partnerReply(db, settings, { messageId, email, cleanBody: stripQuotedHistory(email.bodyText) })
+        await db.from('agent_email_messages').update({ outcome: res.outcome, outcome_detail: res.detail ?? null }).eq('id', messageId)
+        return { messageId, ...res }
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e)
+        await db.from('agent_email_messages').update({ outcome: 'partner_reply', outcome_detail: `unclassified: ${detail.slice(0, 300)}` }).eq('id', messageId)
+        return { messageId, outcome: 'partner_reply', detail }
+      }
+    }
     return { messageId, outcome: verdict.reason === 'human_reply' ? 'human_reply' : `dropped_${verdict.reason}`, detail: verdict.detail }
   }
 
