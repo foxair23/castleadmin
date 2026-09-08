@@ -38,19 +38,45 @@ export function chatEventsUrl(): string { return `${appUrl()}/api/cassie/chat/ev
 
 interface ServiceAccount { client_email: string; private_key: string }
 
-/** A service-account private key rarely survives an environment variable intact. The two
- *  ways it arrives broken, both of which OpenSSL reports only as the opaque
- *  "error:1E08010C:DECODER routines::unsupported":
+/** A service-account private key rarely survives an environment variable intact, and
+ *  OpenSSL reports every one of the ways it breaks as the same opaque
+ *  "error:1E08010C:DECODER routines::unsupported". The ways it arrives broken:
  *    • its newlines come through as the two characters \ and n, because the value was
  *      escaped a second time between the key file and the env store;
- *    • the whole value is wrapped in quotes the store did not strip.
- *  Neither is the operator's doing and both are trivially repairable, so repair them
- *  rather than making someone decode an OpenSSL error code. */
+ *    • the whole value is wrapped in quotes the store did not strip;
+ *    • its line breaks were collapsed to spaces, or lost altogether, by a UI that
+ *      treated the value as a single line of text.
+ *  None of that is the operator's doing and all of it is repairable, so rather than
+ *  patching the symptoms we rebuild the PEM: take the base64 body between the markers,
+ *  discard everything that is not base64, and re-wrap it at 64 characters. Whatever
+ *  mangled the whitespace, the result is the canonical key file again. */
 export function normalizePrivateKey(raw: string): string {
   let key = (raw ?? '').trim()
   if (key.length > 1 && ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'")))) key = key.slice(1, -1)
+  // Undo double-escaping first: a stray backslash would survive the body filter below as
+  // the letter n, quietly corrupting the base64 instead of being dropped.
   key = key.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\r\n/g, '\n').trim()
-  return key.endsWith('\n') ? key : `${key}\n`
+
+  const m = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/.exec(key)
+  if (!m) return key.endsWith('\n') ? key : `${key}\n`
+  const body = m[2].replace(/[^A-Za-z0-9+/=]/g, '')
+  const lines = body.match(/.{1,64}/g) ?? []
+  return `-----BEGIN ${m[1]}-----\n${lines.join('\n')}\n-----END ${m[1]}-----\n`
+}
+
+/** What is wrong with a key, in terms an operator can act on, without ever printing the
+ *  key itself. Appended to a signing failure so the next step is obvious rather than
+ *  another round of re-pasting. */
+export function describePrivateKey(key: string): string {
+  const m = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/.exec(key)
+  if (!m) return 'it has no matching BEGIN/END PRIVATE KEY markers'
+  const body = m[2].replace(/\s/g, '')
+  const stray = body.replace(/[A-Za-z0-9+/=]/g, '')
+  const parts: string[] = [`type ${m[1]}`, `${body.length} base64 characters`]
+  if (stray.length) parts.push(`${stray.length} characters that are not base64`)
+  if (body.length % 4 !== 0) parts.push('a body length that is not a multiple of 4, so it is truncated')
+  else if (body.length < 1000) parts.push('a body far shorter than a real 2048-bit key, so it is truncated')
+  return parts.join(', ')
 }
 
 function serviceAccount(): ServiceAccount {
@@ -82,7 +108,7 @@ export async function chatAccessToken(): Promise<string> {
   try { signature = signer.sign(sa.private_key) }
   catch (e) {
     // OpenSSL's DECODER error names neither the key nor the reason. Say both.
-    throw new Error(`Could not sign with the service-account private key (${e instanceof Error ? e.message : e}). The key in GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not readable as PEM — re-paste the key file, base64-encoded so it survives the env store.`)
+    throw new Error(`Could not sign with the service-account private key (${e instanceof Error ? e.message : e}). The key we read from GOOGLE_CHAT_SERVICE_ACCOUNT_JSON has ${describePrivateKey(sa.private_key)} — download a fresh key from Google Cloud (IAM → Service Accounts → Keys → Add key → JSON) and paste it base64-encoded.`)
   }
   const jwt = `${header}.${claims}.${b64url(signature)}`
   const res = await fetch(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }) })

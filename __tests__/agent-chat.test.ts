@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildCard, decodeJwt, verifyEventToken, normalizePrivateKey } from '@/lib/agent/chat/google-chat'
+import { createSign, generateKeyPairSync } from 'crypto'
+import { buildCard, decodeJwt, verifyEventToken, normalizePrivateKey, describePrivateKey } from '@/lib/agent/chat/google-chat'
 
 describe('buildCard', () => {
   it('renders paragraphs as decorated text and buttons as native widgets', () => {
@@ -55,21 +56,36 @@ describe('event token verification', () => {
   })
 })
 
-describe('service-account private key normalisation', () => {
-  const REAL = '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\nkqhkiG9w0BAQ\n-----END PRIVATE KEY-----\n'
-  it('repairs literal backslash-n, the usual env-store corruption', () => {
-    const mangled = REAL.replace(/\n/g, '\\n')
-    expect(normalizePrivateKey(mangled)).toBe(REAL)
+describe('a real key, mangled every way an env store mangles one', () => {
+  // The point of normalisation is not that the string looks right — it is that OpenSSL
+  // signs with it. So generate a genuine key, break it, repair it, and sign.
+  const PEM = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey as string
+  const signs = (key: string) => { const s = createSign('RSA-SHA256'); s.update('payload'); return s.sign(key).length > 0 }
+
+  it.each([
+    ['untouched', (k: string) => k],
+    ['literal backslash-n', (k: string) => k.replace(/\n/g, '\\n')],
+    ['wrapped in quotes', (k: string) => `"${k.replace(/\n/g, '\\n')}"`],
+    ['CRLF line endings', (k: string) => k.replace(/\n/g, '\r\n')],
+    ['newlines collapsed to spaces', (k: string) => k.replace(/\n/g, ' ')],
+    ['line breaks dropped entirely', (k: string) => k.replace(/\n/g, '')],
+    ['re-wrapped at the wrong width', (k: string) => {
+      const body = k.replace(/-----[A-Z ]+-----/g, '').replace(/\s/g, '')
+      return `-----BEGIN PRIVATE KEY-----\n${(body.match(/.{1,40}/g) ?? []).join('\n')}\n-----END PRIVATE KEY-----`
+    }],
+  ])('repairs a key %s', (_label, mangle) => {
+    const repaired = normalizePrivateKey(mangle(PEM))
+    expect(signs(repaired)).toBe(true)
+    expect(repaired).toBe(normalizePrivateKey(repaired))   // idempotent
   })
-  it('strips wrapping quotes some stores add', () => {
-    expect(normalizePrivateKey(`"${REAL.replace(/\n/g, '\\n')}"`)).toBe(REAL)
-    expect(normalizePrivateKey(`'${REAL.replace(/\n/g, '\\n')}'`)).toBe(REAL)
+
+  it('describes a truncated key without printing it', () => {
+    const cut = PEM.slice(0, 400) + '\n-----END PRIVATE KEY-----\n'
+    const d = describePrivateKey(normalizePrivateKey(cut))
+    expect(d).toContain('truncated')
+    expect(d).not.toContain(PEM.slice(60, 100))
   })
-  it('leaves an already-valid key alone, and always ends with a newline', () => {
-    expect(normalizePrivateKey(REAL)).toBe(REAL)
-    expect(normalizePrivateKey(REAL.trimEnd())).toBe(REAL)
-  })
-  it('normalises CRLF', () => {
-    expect(normalizePrivateKey(REAL.replace(/\n/g, '\r\n'))).toBe(REAL)
+  it('says so when the markers are missing entirely', () => {
+    expect(describePrivateKey('not a key at all')).toMatch(/no matching BEGIN\/END/)
   })
 })
