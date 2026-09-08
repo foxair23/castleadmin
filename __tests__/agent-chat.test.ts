@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createPrivateKey, createSign, generateKeyPairSync } from 'crypto'
-import { buildCard, decodeJwt, verifyEventToken, normalizePrivateKey, describePrivateKey } from '@/lib/agent/chat/google-chat'
+import { buildCard, decodeJwt, verifyEventToken, normalizePrivateKey, describePrivateKey, checkKeyFile } from '@/lib/agent/chat/google-chat'
 
 describe('buildCard', () => {
   it('renders paragraphs as decorated text and buttons as native widgets', () => {
@@ -124,5 +124,44 @@ describe('a real key, mangled every way an env store mangles one', () => {
     it('says so when there are no markers at all', () => {
       expect(describePrivateKey('not a key at all')).toMatch(/not a PEM key at all/)
     })
+  })
+})
+
+describe('checkKeyFile', () => {
+  const PEM = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey as string
+  const file = JSON.stringify({ client_email: 'cassie@p.iam.gserviceaccount.com', private_key: PEM })
+
+  it('signs a good key file and names the account', () => {
+    const r = checkKeyFile(file)
+    expect(r.ok).toBe(true)
+    expect(r.message).toContain('cassie@p.iam.gserviceaccount.com')
+  })
+  it('accepts a bare PEM as well as a key file', () => {
+    expect(checkKeyFile(PEM).ok).toBe(true)
+  })
+  it('blames the file, not the environment, when the key cannot sign', () => {
+    const good = Buffer.from(PEM.replace(/-----[A-Z ]+-----/g, '').replace(/\s/g, ''), 'base64')
+    const der = Buffer.concat([good.subarray(0, 40), Buffer.alloc(good.length - 40, 0x41)])
+    const broken = `-----BEGIN PRIVATE KEY-----\n${der.toString('base64')}\n-----END PRIVATE KEY-----\n`
+    const r = checkKeyFile(JSON.stringify({ client_email: 'x@y', private_key: broken }))
+    expect(r.ok).toBe(false)
+    expect(r.message).toMatch(/file itself is the problem/)
+  })
+  it('says when the file does not match what is deployed', () => {
+    const prev = process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON
+    process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON = JSON.stringify({ private_key: 'a different key entirely' })
+    try { expect(checkKeyFile(file).message).toMatch(/does NOT match the value currently deployed/) }
+    finally { if (prev === undefined) delete process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON; else process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON = prev }
+  })
+  it('confirms a match when the deployed value holds the same key', () => {
+    const prev = process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON
+    process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON = file
+    try { expect(checkKeyFile(file).message).toMatch(/matches what is deployed/) }
+    finally { if (prev === undefined) delete process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON; else process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON = prev }
+  })
+  it('rejects empty and non-key input without throwing', () => {
+    expect(checkKeyFile('').ok).toBe(false)
+    expect(checkKeyFile('hello').message).toMatch(/neither a key file nor a PEM/)
+    expect(checkKeyFile('{ bad json').message).toMatch(/not valid JSON/)
   })
 })

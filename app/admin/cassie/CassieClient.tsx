@@ -16,7 +16,7 @@ import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
   saveAnswer, setAnswerActiveAction,
-  createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail, testChatConnectionAction,
+  createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail, testChatConnectionAction, checkKeyFileAction,
 } from './actions'
 
 export interface DraftRow {
@@ -282,6 +282,8 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
   const [chatTest, setChatTest] = useState<{ ok: boolean; message: string } | null>(null)
+  const [keyPaste, setKeyPaste] = useState('')
+  const [keyCheck, setKeyCheck] = useState<{ ok: boolean; message: string } | null>(null)
   const [f, setF] = useState({
     mailbox_address: s.mailbox_address, from_display_name: s.from_display_name, reply_to_email: s.reply_to_email ?? '',
     cc_office: s.cc_office, signature_text: s.signature_text, escape_hatch_text: s.escape_hatch_text,
@@ -405,6 +407,18 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
           <span className="text-xs text-gray-500">Posts a throwaway message to the space. Save first if you just changed the space.</span>
         </div>
         {chatTest && <p className={`mt-2 rounded-md px-3 py-2 text-xs ${chatTest.ok ? 'border border-green-200 bg-green-50 text-green-800' : 'border border-red-200 bg-red-50 text-red-800'}`}>{chatTest.message}</p>}
+        <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">Check a service-account key file</summary>
+          <p className="mt-1">If Test connection reports that the key cannot be read, paste the key file here. Signing it in the browser separates the two possible faults: a bad key file, or a good one that the environment variable is altering. Nothing is stored, logged or sent anywhere — the text is used for one signature and dropped.</p>
+          <textarea className={`${input} mt-2 font-mono`} rows={4} value={keyPaste} onChange={e => setKeyPaste(e.target.value)} placeholder="Paste the whole key file JSON, exactly as downloaded from Google Cloud" />
+          <div className="mt-2 flex items-center gap-3">
+            <button type="button" className={btnGhost} disabled={pending} onClick={() => start(async () => {
+              setKeyCheck(null)
+              try { setKeyCheck(await checkKeyFileAction(keyPaste)) } catch (e) { setKeyCheck({ ok: false, message: e instanceof Error ? e.message : String(e) }) }
+            })}>Check this key</button>
+            <button type="button" className={btnGhost} onClick={() => { setKeyPaste(''); setKeyCheck(null) }}>Clear</button>
+          </div>
+          {keyCheck && <p className={`mt-2 rounded-md px-3 py-2 ${keyCheck.ok ? 'border border-green-200 bg-green-50 text-green-800' : 'border border-red-200 bg-red-50 text-red-800'}`}>{keyCheck.message}</p>}
+        </details>
         <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">One-time Google Cloud setup for the Chat app</summary>
           <ol className="list-decimal pl-5 mt-1 space-y-0.5">
             <li>In the same Google Cloud project, enable the <b>Google Chat API</b> and create a <b>service account</b> with a JSON key. Put the key in Vercel as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_SERVICE_ACCOUNT_JSON</code> and the project number as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_PROJECT_NUMBER</code>.</li>
