@@ -52,7 +52,7 @@ const SOURCE_LABEL: Record<string, string> = {
   charter: 'Charter', thread_message: 'Thread message', chat_answer: 'Google Chat answer', model: 'Model', resolver: 'Job match',
 }
 
-type View = 'queue' | 'queued' | 'sent' | 'closed'
+type View = 'queue' | 'followups' | 'queued' | 'sent' | 'closed'
 
 export default function ReviewTab({ items, gmailConfigured, initialOpen, settings }: { items: ReviewItem[]; gmailConfigured: boolean; initialOpen: string | null; settings: AgentSettings }) {
   const [view, setView] = useState<View>('queue')
@@ -60,6 +60,7 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
   const byView: Record<View, ReviewItem[]> = {
     queue: items.filter(i => i.status === 'draft'),
     queued: items.filter(i => i.status === 'queued'),
+    followups: items.filter(i => i.outcomes.some(o => o.classification !== 'resolved')),
     sent: items.filter(i => i.status === 'sent'),
     closed: items.filter(i => ['rejected', 'escalated', 'cancelled', 'superseded', 'failed'].includes(i.status)),
   }
@@ -71,7 +72,7 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
         <p className="rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900">{byView.queued.length} approved repl{byView.queued.length === 1 ? 'y is' : 'ies are'} queued but no mailbox is connected yet, so nothing has been sent. They will go out once Gmail is connected under Settings.</p>
       )}
       <div className="flex gap-1 text-sm">
-        {([['queue', 'Needs review'], ['queued', 'Queued'], ['sent', 'Sent'], ['closed', 'Closed']] as [View, string][]).map(([k, label]) => (
+        {([['queue', 'Needs review'], ['followups', 'Follow-ups'], ['queued', 'Queued'], ['sent', 'Sent'], ['closed', 'Closed']] as [View, string][]).map(([k, label]) => (
           <button key={k} onClick={() => setView(k)} className={`px-3 py-1.5 rounded-full border ${view === k ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
             {label} <span className={`ml-1 text-xs ${view === k ? 'text-gray-300' : 'text-gray-400'}`}>{byView[k].length}</span>
           </button>
@@ -79,7 +80,7 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
       </div>
       {list.length === 0 && (
         <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">
-          {view === 'queue' ? 'Nothing waiting for review.' : 'Nothing here yet.'}
+          {view === 'queue' ? 'Nothing waiting for review.' : view === 'followups' ? 'No partner has come back confused or with a new question.' : 'Nothing here yet.'}
         </div>
       )}
       <div className="space-y-2">
@@ -100,6 +101,8 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
                     {item.question_type && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{item.question_type}</span>}
                     {item.sf_job_number ? <span className="text-xs text-gray-600">Job {item.sf_job_number} <span className="text-gray-400">via {item.resolve_tier}</span></span> : <span className="text-xs text-red-700">{item.resolve_status === 'ambiguous' ? 'ambiguous match' : 'no job matched'}</span>}
                     {item.was_edited && <span className="text-[10px] text-gray-500">edited</span>}
+                    {item.approval_path === 'auto' && item.status === 'sent' && <span className="text-[10px] text-purple-700">auto-sent</span>}
+                    {item.outcomes.map((o, i) => <OutcomeBadge key={i} c={o.classification} />)}
                   </div>
                   <div className="text-sm text-gray-900 truncate">{m?.subject ?? item.composed_subject ?? '(no subject)'}</div>
                   <div className="text-xs text-gray-500 truncate">{m?.from_name ? `${m.from_name} · ` : ''}{m?.from_addr} · {fmt(m?.received_at ?? item.created_at)}{item.question_summary ? ` · ${item.question_summary}` : ''}</div>
@@ -113,6 +116,13 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
     </div>
   )
 }
+
+const OUTCOME: Record<string, { label: string; cls: string }> = {
+  resolved: { label: 'Partner: resolved', cls: 'bg-green-100 text-green-900' },
+  confused: { label: 'Partner: confused', cls: 'bg-red-600 text-white' },
+  new_question: { label: 'Partner: new question', cls: 'bg-indigo-100 text-indigo-900' },
+}
+const OutcomeBadge = ({ c }: { c: string }) => { const o = OUTCOME[c] ?? { label: c, cls: 'bg-gray-100 text-gray-700' }; return <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${o.cls}`}>{o.label}</span> }
 
 const confColor = (c: number | null) => c == null ? 'text-gray-400' : c >= 0.9 ? 'text-green-700' : c >= 0.6 ? 'text-amber-700' : 'text-red-700'
 
@@ -228,6 +238,19 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
             </ul>
           )}
         </div>
+        {item.outcomes.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-gray-700 mb-1">What the partner did next</div>
+            <ul className="space-y-2">{item.outcomes.map((o, i) => (
+              <li key={i} className="rounded border border-gray-200 bg-white p-2">
+                <div className="flex items-center gap-2 mb-1"><OutcomeBadge c={o.classification} /><span className="text-[11px] text-gray-500">{fmt(o.created_at)}</span></div>
+                {o.reason && <div className="text-xs text-gray-600 italic mb-1">{o.reason}</div>}
+                {o.partner_text && <pre className="whitespace-pre-wrap font-sans text-xs text-gray-800 max-h-40 overflow-auto">{o.partner_text.split(/\nOn .{5,120} wrote:/)[0].split('\n').filter(l => !l.startsWith('>')).join('\n').trim()}</pre>}
+                {o.classification !== 'resolved' && <p className="mt-1 text-[11px] text-red-800">Cassie will not reply again in this thread. Answer from the office inbox, then add a note here about what should have been said.</p>}
+              </li>
+            ))}</ul>
+          </div>
+        )}
         {item.feedback.length > 0 && (
           <div>
             <div className="text-xs font-semibold text-gray-700 mb-1">Notes</div>

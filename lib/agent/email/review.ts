@@ -50,6 +50,7 @@ export interface ReviewItem {
   message: { from_addr: string | null; from_name: string | null; from_domain: string | null; subject: string | null; body_text: string | null; received_at: string | null; delivery_path: string | null; gmail_thread_id: string | null } | null
   sources: Array<{ source_type: string; ref_id: string | null; ref_label: string | null; fields: Record<string, unknown>; retrieved_at: string }>
   feedback: Array<{ kind: string; note: string; created_at: string }>
+  outcomes: Array<{ classification: string; reason: string | null; created_at: string; partner_text: string | null }>
 }
 
 const REPLY_COLS = 'id, message_id, status, created_at, question_type, question_summary, resolve_status, resolve_tier, sf_job_id, sf_job_number, live_fetched_at, composed_subject, composed_text, sent_text, was_edited, claims, unsourced_claims, hard_fail_reasons, auto_send_blockers, confidence, confidence_breakdown, send_after, sent_at, approval_path, cancel_reason, error, applied_instruction_ids, charter_version, model'
@@ -59,11 +60,17 @@ export async function loadReviewItems(db: SupabaseClient, opts: { statuses: Repl
   const rows = (replies ?? []) as unknown as Omit<ReviewItem, 'message' | 'sources' | 'feedback'>[]
   if (rows.length === 0) return []
   const ids = rows.map(r => r.id), msgIds = [...new Set(rows.map(r => r.message_id))]
-  const [{ data: msgs }, { data: sources }, { data: fb }] = await Promise.all([
+  const [{ data: msgs }, { data: sources }, { data: fb }, { data: oc }] = await Promise.all([
     db.from('agent_email_messages').select('id, from_addr, from_name, from_domain, subject, body_text, received_at, delivery_path, gmail_thread_id').in('id', msgIds),
     db.from('agent_email_sources').select('reply_id, source_type, ref_id, ref_label, fields, retrieved_at').in('reply_id', ids),
     db.from('agent_email_feedback').select('reply_id, kind, note, created_at').in('reply_id', ids).order('created_at', { ascending: true }),
+    db.from('agent_email_outcomes').select('reply_id, classification, reason, created_at, partner:agent_email_messages(body_text)').in('reply_id', ids).order('created_at', { ascending: true }),
   ])
+  const ocBy = new Map<string, ReviewItem['outcomes']>()
+  for (const o of (oc ?? []) as unknown as Array<{ reply_id: string; classification: string; reason: string | null; created_at: string; partner: { body_text: string | null } | Array<{ body_text: string | null }> | null }>) {
+    const p = Array.isArray(o.partner) ? o.partner[0] : o.partner
+    const a = ocBy.get(o.reply_id) ?? []; a.push({ classification: o.classification, reason: o.reason, created_at: o.created_at, partner_text: p?.body_text ?? null }); ocBy.set(o.reply_id, a)
+  }
   const msgById = new Map((msgs ?? []).map(m => [m.id as string, m]))
   const srcBy = new Map<string, ReviewItem['sources']>(), fbBy = new Map<string, ReviewItem['feedback']>()
   for (const s of (sources ?? []) as Array<{ reply_id: string } & ReviewItem['sources'][number]>) { const a = srcBy.get(s.reply_id) ?? []; a.push(s); srcBy.set(s.reply_id, a) }
@@ -74,6 +81,7 @@ export async function loadReviewItems(db: SupabaseClient, opts: { statuses: Repl
     message: (msgById.get(r.message_id) as ReviewItem['message']) ?? null,
     sources: (srcBy.get(r.id) ?? []).filter(s => s.source_type !== 'thread_message' || true),
     feedback: fbBy.get(r.id) ?? [],
+    outcomes: ocBy.get(r.id) ?? [],
   }))
   // Queue order: highest confidence first, then newest (PRD §12 "sorted by confidence").
   if (opts.statuses.includes('draft')) items.sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0) || b.created_at.localeCompare(a.created_at))

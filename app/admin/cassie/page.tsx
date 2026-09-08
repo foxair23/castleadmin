@@ -4,6 +4,7 @@ import { agentDb, loadAgentSettings } from '@/lib/agent/settings'
 import { getActiveCharter, listCharterVersions, listInstructions, listAnswers, listStyleExamples } from '@/lib/agent/knowledge'
 import CassieClient from './CassieClient'
 import { loadReviewItems } from '@/lib/agent/email/review'
+import { loadRecentOutcomes, computeConfusionRates } from '@/lib/agent/email/outcomes'
 import { loadGmailCredential, isGoogleOAuthConfigured, gmailRedirectUri } from '@/lib/agent/email/gmail'
 
 export const dynamic = 'force-dynamic'
@@ -31,6 +32,7 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
   const gmailConfigured = !!gmailCred
   const gmail = { connected: !!gmailCred, email: gmailCred?.email ?? null, grantedAt: gmailCred?.granted_at ?? null, source: gmailCred?.source ?? null, oauthReady: isGoogleOAuthConfigured(), redirectUri: gmailRedirectUri(), lastOkAt: settings.gmail_last_ok_at, lastError: settings.gmail_last_error, lastErrorAt: settings.gmail_last_error_at }
   const gmailFlash = sp.gmail ? { ok: sp.gmail === 'connected', msg: sp.msg ?? '' } : null
+  const confusionRates = computeConfusionRates(await loadRecentOutcomes(db))
   const reviewItems = await loadReviewItems(db, { statuses: ['draft', 'queued', 'sent', 'rejected', 'escalated', 'cancelled', 'superseded', 'failed'], limit: 300 })
   const [{ data: activity }, { data: draftRows }] = await Promise.all([
     db.from('agent_email_messages')
@@ -56,6 +58,7 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
       initialReply={sp.reply ?? null}
       gmail={gmail}
       gmailFlash={gmailFlash}
+      confusionRates={confusionRates}
     />
   )
 }
