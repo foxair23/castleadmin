@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sfGet, sfPut } from '@/lib/crm/service-fusion'
+import { sfPhone } from '@/lib/crm/phone'
 
 const digits = (s: string | null | undefined) => (s ?? '').replace(/\D/g, '')
 const last10 = (s: string | null | undefined) => {
@@ -93,9 +94,11 @@ export async function updateExistingCustomerContactInfo(
     target.emails.push({ email: leadEmail })
     changed = true
   }
-  const leadPhone10 = last10(lead.customer_phone)
-  if (leadPhone10.length === 10 && !target._phoneSet.has(leadPhone10)) {
-    target.phones.push({ phone: lead.customer_phone, type: 'Mobile' })
+  // Send SF the 10-digit form it validates against, never the raw value — a "+1" here
+  // fails the whole PUT, and the sync that relies on it.
+  const leadPhone10 = sfPhone(lead.customer_phone)
+  if (leadPhone10 && !target._phoneSet.has(leadPhone10)) {
+    target.phones.push({ phone: leadPhone10, type: 'Mobile' })
     changed = true
   }
 

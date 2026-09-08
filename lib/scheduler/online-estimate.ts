@@ -1,5 +1,6 @@
 import { createClient as createServiceClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sfPost } from '@/lib/crm/service-fusion'
+import { sfPhones } from '@/lib/crm/phone'
 import { findExistingSfCustomer, updateExistingCustomerContactInfo } from '@/lib/scheduler/sf-customer-match'
 import { getMediaShortLink, leadAttachmentCount } from '@/lib/scheduler/media-link'
 
@@ -73,7 +74,7 @@ export async function createOnlineEstimateInSf(leadId: string): Promise<{ ok: bo
         customer_name: l.customer_last_name ? `${l.customer_first_name} ${l.customer_last_name}` : l.customer_first_name,
         contacts: [{
           fname: l.customer_first_name, lname: l.customer_last_name || '.', is_primary: 1,
-          phones: [{ phone: l.customer_phone, type: 'Mobile' }],
+          ...sfPhones(l.customer_phone),
           ...(l.customer_email ? { emails: [{ email: l.customer_email }] } : {}),
         }],
         locations: [{

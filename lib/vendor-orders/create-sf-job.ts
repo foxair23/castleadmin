@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sfPost, sfGet } from '@/lib/crm/service-fusion'
+import { sfPhones } from '@/lib/crm/phone'
 import { findExistingSfCustomer } from '@/lib/scheduler/sf-customer-match'
 import { getVendor } from './config'
 import { loadIpoLines, toSfServices } from './ipo-services'
@@ -113,7 +114,7 @@ export async function createSfJobForOrder(orderId: string): Promise<CreateJobRes
         customer_name: [name.first, name.last].filter(x => x && x !== '.').join(' ') || o.customer_name || o.external_id,
         contacts: [{
           fname: name.first, lname: name.last || '.', is_primary: 1,
-          ...(o.phone ? { phones: [{ phone: o.phone, type: 'Mobile' }] } : {}),
+          ...sfPhones(o.phone),
           ...(o.email ? { emails: [{ email: o.email }] } : {}),
         }],
         locations: [{ street_1: o.street_address, city: o.city, state_prov: o.state_prov, postal_code: o.postal_code }],
