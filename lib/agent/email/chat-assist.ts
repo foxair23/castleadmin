@@ -64,7 +64,7 @@ export async function postChatAsk(db: SupabaseClient, settings: AgentSettings, a
     ],
   })
   const posted = await postCard(settings.chat_space_name, `cassie-${a.replyId}`, card, `Cassie needs a hand — ${who}: ${a.missing}`)
-  await db.from('agent_chat_asks').update({ chat_message_name: posted.name }).eq('id', askId)
+  await db.from('agent_chat_asks').update({ chat_message_name: posted.name, chat_thread_name: posted.thread?.name ?? null }).eq('id', askId)
   return { posted: true, askId }
 }
 
@@ -80,17 +80,23 @@ export interface ChatEvent {
   action?: { actionMethodName?: string; parameters?: Array<{ key: string; value: string }> }
 }
 
+/** Which ask is this Chat message a reply to?
+ *
+ *  Google echoes the thread's RESOURCE NAME on inbound events, not the thread_key we chose,
+ *  so the name recorded when we posted the card is the only exact key we have. Matching on
+ *  anything looser than that can attach one partner's answer to another partner's question,
+ *  which is the worst thing this feature could do — so when nothing matches exactly we
+ *  return null and stay quiet rather than guess. */
 async function askForThread(db: SupabaseClient, ev: ChatEvent) {
   const threadName = ev.message?.thread?.name ?? null
   const threadKey = ev.message?.thread?.threadKey ?? null
+  if (threadName) {
+    const { data } = await db.from('agent_chat_asks').select('*').eq('chat_thread_name', threadName).order('posted_at', { ascending: false }).limit(1).maybeSingle()
+    if (data) return data
+  }
   if (threadKey) {
     const { data } = await db.from('agent_chat_asks').select('*').eq('thread_key', threadKey).order('posted_at', { ascending: false }).limit(1).maybeSingle()
     if (data) return data
-  }
-  if (threadName) {
-    // Our stored message name is spaces/X/messages/Y; the thread is spaces/X/threads/T. Match via draft/ask message prefix.
-    const { data } = await db.from('agent_chat_asks').select('*').or(`chat_message_name.like.${threadName.split('/threads/')[0]}%,draft_card_name.like.${threadName.split('/threads/')[0]}%`).in('status', ['open', 'answered', 'composed']).order('posted_at', { ascending: false }).limit(5)
-    return (data ?? [])[0] ?? null
   }
   return null
 }
@@ -147,7 +153,10 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     ],
   })
   const posted = await postCard(ask.space_name, ask.thread_key, card, `Draft reply based on ${who.name}'s answer`)
-  await db.from('agent_chat_asks').update({ status: 'composed', draft_reply_id: rc.replyId, draft_card_name: posted.name }).eq('id', ask.id)
+  await db.from('agent_chat_asks').update({
+    status: 'composed', draft_reply_id: rc.replyId, draft_card_name: posted.name,
+    ...(ask.chat_thread_name ? {} : { chat_thread_name: posted.thread?.name ?? null }),
+  }).eq('id', ask.id)
   return 'composed'
 }
 
