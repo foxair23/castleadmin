@@ -1,10 +1,11 @@
 import { createSign, createVerify, X509Certificate } from 'crypto'
+import { appUrl } from '@/lib/config/domains'
 
 // Google Chat, app-authenticated (PRD §11 "Technical implementation"). Raw REST + a
 // service-account JWT, no googleapis dependency.
 //
 //   Env: GOOGLE_CHAT_SERVICE_ACCOUNT_JSON — the service account key JSON (raw or base64)
-//        GOOGLE_CHAT_PROJECT_NUMBER      — audience of the events Google sends us
+//        GOOGLE_CHAT_PROJECT_NUMBER      — optional; one of the audiences we accept
 //
 //   Posting uses scope chat.bot. Events arrive at /api/cassie/chat/events with a
 //   Google-signed bearer token; verifyEventToken checks signature, issuer and audience.
@@ -12,12 +13,28 @@ import { createSign, createVerify, X509Certificate } from 'crypto'
 const SCOPE = 'https://www.googleapis.com/auth/chat.bot'
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const API = 'https://chat.googleapis.com/v1'
-const EVENT_ISSUER = 'chat@system.gserviceaccount.com'
-const CERTS_URL = `https://www.googleapis.com/service_accounts/v1/metadata/x509/${EVENT_ISSUER}`
+// Who signs the events Google sends us. A classic Chat app is signed by Chat itself; a
+// Chat app built as a Workspace add-on ("Build this Chat app as a Workspace add-on" in the
+// Chat API config) is signed by that project's add-ons service agent instead. Both are
+// Google-controlled identities and both are verified against Google's published cert for
+// that exact issuer, so accepting both costs nothing and saves picking a config mode.
+const CHAT_ISSUER = 'chat@system.gserviceaccount.com'
+const addonsIssuer = (projectNumber: string) => `service-${projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`
+const certsUrlFor = (issuer: string) => `https://www.googleapis.com/service_accounts/v1/metadata/x509/${encodeURIComponent(issuer)}`
 
-export function isChatConfigured(): boolean {
-  return !!(process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CHAT_PROJECT_NUMBER)
+export function allowedIssuers(): string[] {
+  const n = (process.env.GOOGLE_CHAT_PROJECT_NUMBER ?? '').trim()
+  return n ? [CHAT_ISSUER, addonsIssuer(n)] : [CHAT_ISSUER]
 }
+
+/** Posting needs only the service account key; the project number is one of two
+ *  audiences we accept on inbound events, so it is not required to be configured. */
+export function isChatConfigured(): boolean {
+  return !!process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON
+}
+
+/** Where Google Chat posts events. Also a valid `aud` value — see allowedAudiences(). */
+export function chatEventsUrl(): string { return `${appUrl()}/api/cassie/chat/events` }
 
 interface ServiceAccount { client_email: string; private_key: string }
 function serviceAccount(): ServiceAccount {
@@ -91,13 +108,14 @@ export async function updateCard(messageName: string, card: Record<string, unkno
 
 // ── Inbound event verification ──────────────────────────────────────────────
 
-let certCache: { at: number; certs: Record<string, string> } | null = null
-async function issuerCerts(): Promise<Record<string, string>> {
-  if (certCache && Date.now() - certCache.at < 6 * 3600_000) return certCache.certs
-  const res = await fetch(CERTS_URL)
-  if (!res.ok) throw new Error(`Could not fetch Google Chat signing certs (${res.status})`)
+const certCache = new Map<string, { at: number; certs: Record<string, string> }>()
+async function issuerCerts(issuer: string): Promise<Record<string, string>> {
+  const hit = certCache.get(issuer)
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.certs
+  const res = await fetch(certsUrlFor(issuer))
+  if (!res.ok) throw new Error(`Could not fetch signing certs for ${issuer} (${res.status})`)
   const certs = await res.json() as Record<string, string>
-  certCache = { at: Date.now(), certs }
+  certCache.set(issuer, { at: Date.now(), certs })
   return certs
 }
 
@@ -110,17 +128,29 @@ export function decodeJwt(token: string): { header: { kid?: string; alg?: string
   } catch { return null }
 }
 
+/** The audiences we accept on an inbound event.
+ *
+ *  Google Chat's app configuration lets you pick what it puts in the token's `aud`: the
+ *  Cloud project number, or the app's own endpoint URL. Which one is offered — and where
+ *  the control lives — has moved around between console versions, and getting it wrong
+ *  produces silent 401s that look like nothing arriving at all. Both values are equally
+ *  strong proof (the token is signed by Google either way), so accept both and let the
+ *  setting be whatever it is. */
+export function allowedAudiences(): string[] {
+  return [process.env.GOOGLE_CHAT_PROJECT_NUMBER, chatEventsUrl()].filter((a): a is string => !!a && a.trim() !== '')
+}
+
 /** Google signs every event it sends us. Reject anything else outright. */
-export async function verifyEventToken(authorization: string | null, audience = process.env.GOOGLE_CHAT_PROJECT_NUMBER): Promise<{ ok: true } | { ok: false; reason: string }> {
+export async function verifyEventToken(authorization: string | null, audiences: string[] = allowedAudiences(), issuers: string[] = allowedIssuers()): Promise<{ ok: true } | { ok: false; reason: string }> {
   const token = (authorization ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!token) return { ok: false, reason: 'no bearer token' }
   const d = decodeJwt(token)
   if (!d) return { ok: false, reason: 'malformed token' }
   if (d.header.alg !== 'RS256') return { ok: false, reason: `unexpected alg ${d.header.alg}` }
-  if (d.payload.iss !== EVENT_ISSUER) return { ok: false, reason: `unexpected issuer ${d.payload.iss}` }
-  if (!audience || d.payload.aud !== audience) return { ok: false, reason: 'audience mismatch' }
+  if (!d.payload.iss || !issuers.includes(d.payload.iss)) return { ok: false, reason: `issuer ${d.payload.iss ?? 'missing'} is not one of ${issuers.join(', ')}` }
+  if (!d.payload.aud || !audiences.includes(d.payload.aud)) return { ok: false, reason: `audience ${d.payload.aud ?? 'missing'} is not one of ${audiences.join(', ')}` }
   if (!d.payload.exp || d.payload.exp * 1000 < Date.now()) return { ok: false, reason: 'expired' }
-  const certs = await issuerCerts()
+  const certs = await issuerCerts(d.payload.iss)
   const pem = d.header.kid ? certs[d.header.kid] : undefined
   if (!pem) return { ok: false, reason: 'unknown signing key' }
   const [h, p, sig] = token.split('.')
