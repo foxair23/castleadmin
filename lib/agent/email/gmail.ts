@@ -20,8 +20,14 @@ const API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
 export function gmailRedirectUri(): string { return `${appUrl()}/api/cassie/gmail/callback` }
 
+// Cassie's OAuth client lives in a Workspace-owned Google Cloud project (consent screen
+// "Internal": no verification review, refresh tokens never expire). GMAIL_CLIENT_ID /
+// GMAIL_CLIENT_SECRET name it; the reviews client (GOOGLE_CLIENT_*) is the fallback so an
+// existing setup keeps working.
+export const gmailClientId = (): string => process.env.GMAIL_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || ''
+export const gmailClientSecret = (): string => process.env.GMAIL_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || ''
 export function isGoogleOAuthConfigured(): boolean {
-  return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)
+  return !!(gmailClientId() && gmailClientSecret())
 }
 
 export class GmailAuthError extends Error { constructor(msg: string) { super(msg); this.name = 'GmailAuthError' } }
@@ -39,7 +45,7 @@ export async function loadGmailCredential(db: SupabaseClient): Promise<GmailCred
 
 export function authorizeUrl(state: string): string {
   const p = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID!, redirect_uri: gmailRedirectUri(), response_type: 'code',
+    client_id: gmailClientId(), redirect_uri: gmailRedirectUri(), response_type: 'code',
     scope: GMAIL_SCOPES.join(' '), access_type: 'offline', prompt: 'consent', include_granted_scopes: 'false', state,
   })
   return `${AUTH_URL}?${p}`
@@ -48,7 +54,7 @@ export function authorizeUrl(state: string): string {
 export async function exchangeCode(code: string): Promise<{ refresh_token: string; access_token: string; scope: string }> {
   const res = await fetch(TOKEN_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, redirect_uri: gmailRedirectUri(), grant_type: 'authorization_code' }),
+    body: new URLSearchParams({ code, client_id: gmailClientId(), client_secret: gmailClientSecret(), redirect_uri: gmailRedirectUri(), grant_type: 'authorization_code' }),
   })
   const j = await res.json() as { refresh_token?: string; access_token?: string; scope?: string; error?: string; error_description?: string }
   if (!res.ok || !j.access_token) throw new GmailAuthError(`Google token exchange failed: ${j.error ?? res.status} ${j.error_description ?? ''}`.trim())
@@ -63,7 +69,7 @@ export async function getAccessToken(cred: GmailCredential): Promise<string> {
   if (accessCache && accessCache.key === key && Date.now() < accessCache.exp - 60_000) return accessCache.token
   const res = await fetch(TOKEN_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, refresh_token: cred.refresh_token, grant_type: 'refresh_token' }),
+    body: new URLSearchParams({ client_id: gmailClientId(), client_secret: gmailClientSecret(), refresh_token: cred.refresh_token, grant_type: 'refresh_token' }),
   })
   const j = await res.json() as { access_token?: string; expires_in?: number; error?: string; error_description?: string }
   if (!res.ok || !j.access_token) throw new GmailAuthError(`Gmail authorization failed: ${j.error ?? res.status} ${j.error_description ?? ''}`.trim())

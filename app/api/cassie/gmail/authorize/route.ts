@@ -15,7 +15,7 @@ export async function GET() {
   if (!user) return NextResponse.redirect(new URL('/login?next=/admin/cassie', process.env.NEXT_PUBLIC_APP_URL ?? 'https://hq.castlegarage.com'))
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (profile?.role !== 'admin') return NextResponse.json({ error: 'Admins only' }, { status: 403 })
-  if (!isGoogleOAuthConfigured()) return NextResponse.json({ error: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set in Vercel.' }, { status: 500 })
+  if (!isGoogleOAuthConfigured()) return NextResponse.json({ error: 'GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET are not set in Vercel.' }, { status: 500 })
 
   const state = randomBytes(24).toString('base64url')
   const jar = await cookies()
