@@ -328,12 +328,13 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
           <a href="/api/cassie/gmail/authorize" className={`${btn} ${!gmail.oauthReady ? 'pointer-events-none opacity-50' : ''}`}>{gmail.connected ? 'Reconnect Gmail' : 'Connect Gmail'}</a>
           <span className="text-xs text-gray-500">Sign in as <b>{s.mailbox_address}</b> when Google asks. Any other account is refused.</span>
         </div>
-        {!gmail.oauthReady && <p className="mt-2 text-xs text-red-700">GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set in Vercel.</p>}
+        {!gmail.oauthReady && <p className="mt-2 text-xs text-red-700">GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET are not set in Vercel.</p>}
         <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">One-time Google Cloud setup</summary>
           <ol className="list-decimal pl-5 mt-1 space-y-0.5">
-            <li>In the Google Cloud project that owns the existing OAuth client, enable the <b>Gmail API</b>.</li>
-            <li>On that OAuth client (Credentials → OAuth 2.0 Client IDs), add this authorized redirect URI: <code className="rounded bg-gray-100 px-1">{gmail.redirectUri}</code></li>
-            <li>If the consent screen is in Testing mode, add {s.mailbox_address} as a test user (or publish it for the Workspace).</li>
+            <li>Signed in as a castlegarage.com Workspace admin, create a new Google Cloud project (e.g. &ldquo;Cassie&rdquo;). Set its OAuth consent screen user type to <b>Internal</b> — no verification review, and tokens never expire.</li>
+            <li>Enable the <b>Gmail API</b> in that project.</li>
+            <li>Create an OAuth client (Credentials → Create credentials → OAuth client ID → Web application) with this authorized redirect URI: <code className="rounded bg-gray-100 px-1">{gmail.redirectUri}</code></li>
+            <li>In Vercel, add <code className="rounded bg-gray-100 px-1">GMAIL_CLIENT_ID</code> and <code className="rounded bg-gray-100 px-1">GMAIL_CLIENT_SECRET</code> from that client and redeploy. (The Google Reviews client stays where it is.)</li>
             <li>Come back here, click Connect Gmail, and sign in as {s.mailbox_address}.</li>
           </ol>
         </details>
