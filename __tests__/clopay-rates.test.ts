@@ -72,3 +72,19 @@ describe('variancePatch', () => {
     expect(variancePatch(SCHEDULE, null, 100, 1).rate_variance).toBeNull()
   })
 })
+
+// ── Rate digest formatting ───────────────────────────────────────────────────
+import { fmtDate } from '@/lib/vendor-orders/clopay-rate-digest'
+
+describe('rate digest date formatting', () => {
+  it('formats a plain date from its parts, so it cannot slide a day', () => {
+    expect(fmtDate('2026-09-05')).toBe('Sep 5')
+    expect(fmtDate('2026-09-05', true)).toBe('Sep 5, 2026')
+    expect(fmtDate('2026-01-31T00:00:00Z')).toBe('Jan 31')
+  })
+  it('missing or unparseable dates read as a dash, never as today', () => {
+    expect(fmtDate(null)).toBe('—')
+    expect(fmtDate('')).toBe('—')
+    expect(fmtDate('last Tuesday')).toBe('—')
+  })
+})
