@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { verifyEventToken, allowedIssuers, allowedAudiences } from '@/lib/agent/chat/google-chat'
 import { agentDb, loadAgentSettings } from '@/lib/agent/settings'
-import { handleChatMessage, handleCardClick, normalizeChatEvent, type ChatEvent } from '@/lib/agent/email/chat-assist'
+import { handleChatMessage, handleCardClick, normalizeChatEvent, recordChatEvent, finishChatEvent, type ChatEvent } from '@/lib/agent/email/chat-assist'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -32,15 +32,27 @@ export async function POST(req: NextRequest) {
   }
   if (ev.type === 'MESSAGE') {
     after(async () => {
-      try { const settings = await loadAgentSettings(db); const r = await handleChatMessage(db, settings, ev); console.log('[cassie chat] message:', r) }
-      catch (e) { console.error('[cassie chat] message failed:', e instanceof Error ? e.message : e) }
+      const logged = await recordChatEvent(db, ev)
+      try {
+        const settings = await loadAgentSettings(db); const r = await handleChatMessage(db, settings, ev)
+        console.log('[cassie chat] message:', r); await finishChatEvent(db, logged, r)
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e)
+        console.error('[cassie chat] message failed:', detail); await finishChatEvent(db, logged, 'failed', detail)
+      }
     })
     return NextResponse.json({})   // silent ack; the card/thread reply comes asynchronously
   }
   if (ev.type === 'CARD_CLICKED') {
     after(async () => {
-      try { const settings = await loadAgentSettings(db); const r = await handleCardClick(db, settings, ev); console.log('[cassie chat] click:', r) }
-      catch (e) { console.error('[cassie chat] click failed:', e instanceof Error ? e.message : e) }
+      const logged = await recordChatEvent(db, ev)
+      try {
+        const settings = await loadAgentSettings(db); const r = await handleCardClick(db, settings, ev)
+        console.log('[cassie chat] click:', r); await finishChatEvent(db, logged, r)
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e)
+        console.error('[cassie chat] click failed:', detail); await finishChatEvent(db, logged, 'failed', detail)
+      }
     })
     // Immediate feedback on the card so the tap never looks broken — classic envelope
     // only; the add-on form uses a different action shape, and the work still lands.
@@ -50,5 +62,6 @@ export async function POST(req: NextRequest) {
   // Anything we do not recognise is logged with its shape. Returning 200 and saying
   // nothing is what made the add-on envelope invisible for a day.
   console.warn(`[cassie chat] unhandled event type: ${ev.type}`)
+  after(async () => { await finishChatEvent(db, await recordChatEvent(db, ev), 'unhandled event type') })
   return NextResponse.json({})
 }

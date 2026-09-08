@@ -136,6 +136,37 @@ export function normalizeChatEvent(raw: Record<string, unknown>): ChatEvent {
   }
 }
 
+/** Write the event down on arrival, so a Chat conversation leaves a trail whatever we then
+ *  decide to do with it — including deciding to do nothing. Returns the row id so the
+ *  outcome can be filled in once handling finishes. Never throws: a diagnostic that can
+ *  break the thing it is diagnosing is worse than none. */
+export async function recordChatEvent(db: SupabaseClient, ev: ChatEvent): Promise<string | null> {
+  try {
+    const sender = ev.user ?? ev.message?.sender
+    const { data } = await db.from('agent_chat_events').insert({
+      event_type: ev.type,
+      envelope: ev.addon ? 'addon' : 'classic',
+      space_name: ev.space?.name ?? null,
+      thread_name: ev.message?.thread?.name ?? null,
+      sender_name: sender?.displayName ?? null,
+      sender_email: sender?.email ?? null,
+      body: (ev.message?.argumentText ?? ev.message?.text ?? null),
+    }).select('id').single()
+    return (data?.id as string) ?? null
+  } catch { return null }
+}
+
+export async function finishChatEvent(db: SupabaseClient, id: string | null, outcome: string, error?: string): Promise<void> {
+  if (!id) return
+  try { await db.from('agent_chat_events').update({ outcome, error: error ?? null }).eq('id', id) } catch { /* diagnostics never break the path */ }
+}
+
+/** The last few Chat events, newest first, for the Google Chat panel in Settings. */
+export async function recentChatEvents(db: SupabaseClient, limit = 20) {
+  const { data } = await db.from('agent_chat_events').select('*').order('received_at', { ascending: false }).limit(limit)
+  return data ?? []
+}
+
 /** Which ask is this Chat message a reply to?
  *
  *  Google echoes the thread's RESOURCE NAME on inbound events, not the thread_key we chose,

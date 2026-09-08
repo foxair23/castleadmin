@@ -31,6 +31,12 @@ export interface GmailStatus {
   lastOkAt: string | null; lastError: string | null; lastErrorAt: string | null
 }
 
+export interface ChatEventRow {
+  id: string; received_at: string; event_type: string; envelope: string
+  space_name: string | null; thread_name: string | null; sender_name: string | null; sender_email: string | null
+  body: string | null; outcome: string | null; error: string | null
+}
+
 export interface ActivityRow {
   id: string; received_at: string | null; from_addr: string | null; from_name: string | null; subject: string | null
   snippet: string | null; delivery_path: string | null; outcome: string | null; outcome_detail: string | null; gmail_thread_id: string | null
@@ -78,6 +84,7 @@ export default function CassieClient(props: {
   drafts: DraftRow[]
   reviewItems: ReviewItem[]
   initialReply: string | null
+  chatEvents: ChatEventRow[]
   gmail: GmailStatus
   gmailFlash: { ok: boolean; msg: string } | null
   confusionRates: TierRate[]
@@ -116,7 +123,7 @@ export default function CassieClient(props: {
       {tab === 'activity' && <ActivityTab rows={props.activity} drafts={props.drafts} />}
       {tab === 'dashboard' && <DashboardTab volume={props.dashboard.volume} cases={props.dashboard.cases} runs={props.dashboard.runs} trend={props.dashboard.trend} gmailOk={props.gmail.connected && !props.gmail.lastError} />}
       {tab === 'learning' && <LearningTab clusters={props.learning.clusters} editRates={props.learning.editRates} answers={props.answers} weeklyAsks={props.learning.weeklyAsks} />}
-      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} reviewItems={props.reviewItems} confusionRates={props.confusionRates} />}
+      {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} reviewItems={props.reviewItems} confusionRates={props.confusionRates} chatEvents={props.chatEvents} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}
       {tab === 'instructions' && <InstructionsTab rows={props.instructions} />}
       {tab === 'answers' && <AnswersTab rows={props.answers} />}
@@ -277,7 +284,7 @@ function DraftDetail({ d }: { d: DraftRow }) {
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewItems, confusionRates }: { settings: AgentSettings; gmailConfigured: boolean; gmail: GmailStatus; gmailFlash: { ok: boolean; msg: string } | null; reviewItems: ReviewItem[]; confusionRates: TierRate[] }) {
+function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewItems, confusionRates, chatEvents }: { settings: AgentSettings; gmailConfigured: boolean; gmail: GmailStatus; gmailFlash: { ok: boolean; msg: string } | null; reviewItems: ReviewItem[]; confusionRates: TierRate[]; chatEvents: ChatEventRow[] }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
@@ -407,6 +414,29 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
           <span className="text-xs text-gray-500">Posts a throwaway message to the space. Save first if you just changed the space.</span>
         </div>
         {chatTest && <p className={`mt-2 rounded-md px-3 py-2 text-xs ${chatTest.ok ? 'border border-green-200 bg-green-50 text-green-800' : 'border border-red-200 bg-red-50 text-red-800'}`}>{chatTest.message}</p>}
+        <div className="mt-3 border-t border-gray-100 pt-3">
+          <h3 className="text-xs font-semibold text-gray-900">Messages Cassie received here</h3>
+          <p className="text-xs text-gray-500">Every inbound Chat event, whatever she then did with it — including the ones she ignored. Newest first.</p>
+          {chatEvents.length === 0
+            ? <p className="mt-2 text-xs text-gray-500">Nothing yet. If you have written to Cassie in the space and nothing appears here, the message is not reaching this app at all.</p>
+            : <div className="mt-2 overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead><tr className="text-left text-gray-500"><th className="py-1 pr-3">When</th><th className="py-1 pr-3">From</th><th className="py-1 pr-3">Said</th><th className="py-1 pr-3">What Cassie did</th></tr></thead>
+                <tbody>
+                  {chatEvents.map(e => (
+                    <tr key={e.id} className="border-t border-gray-100 align-top">
+                      <td className="py-1 pr-3 whitespace-nowrap text-gray-500">{fmt(e.received_at)}</td>
+                      <td className="py-1 pr-3 text-gray-900">{e.sender_name ?? e.sender_email ?? '—'}</td>
+                      <td className="py-1 pr-3 text-gray-700">{e.body ? (e.body.length > 80 ? `${e.body.slice(0, 80)}…` : e.body) : <span className="text-gray-400">{e.event_type}</span>}</td>
+                      <td className="py-1 pr-3">{e.error
+                        ? <span className="text-red-700">{e.error}</span>
+                        : <span className="text-gray-700">{e.outcome ?? 'in progress'}</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>}
+        </div>
         <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">Check a service-account key file</summary>
           <p className="mt-1">If Test connection reports that the key cannot be read, paste the key file here. Signing it in the browser separates the two possible faults: a bad key file, or a good one that the environment variable is altering. Nothing is stored, logged or sent anywhere — the text is used for one signature and dropped.</p>
           <textarea className={`${input} mt-2 font-mono`} rows={4} value={keyPaste} onChange={e => setKeyPaste(e.target.value)} placeholder="Paste the whole key file JSON, exactly as downloaded from Google Cloud" />
