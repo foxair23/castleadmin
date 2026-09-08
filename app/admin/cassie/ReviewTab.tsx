@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ReviewItem } from '@/lib/agent/email/review'
-import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction } from './actions'
+import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase } from './actions'
 import type { AgentSettings } from '@/lib/agent/settings'
 import { AutoRespondSwitch } from './AutoSendControls'
 
@@ -54,7 +54,8 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type View = 'queue' | 'followups' | 'queued' | 'sent' | 'closed'
 
-export default function ReviewTab({ items, gmailConfigured, initialOpen, settings }: { items: ReviewItem[]; gmailConfigured: boolean; initialOpen: string | null; settings: AgentSettings }) {
+export default function ReviewTab({ items, gmailConfigured, initialOpen, settings, autoBaselineOk }: { items: ReviewItem[]; gmailConfigured: boolean; initialOpen: string | null; settings: AgentSettings; autoBaselineOk: boolean }) {
+  const [q, setQ] = useState('')
   const [view, setView] = useState<View>('queue')
   const [openId, setOpenId] = useState<string | null>(initialOpen)
   const byView: Record<View, ReviewItem[]> = {
@@ -64,10 +65,12 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
     sent: items.filter(i => i.status === 'sent'),
     closed: items.filter(i => ['rejected', 'escalated', 'cancelled', 'superseded', 'failed'].includes(i.status)),
   }
-  const list = byView[view]
+  const needle = q.trim().toLowerCase()
+  const matches = (i: ReviewItem) => !needle || [i.message?.subject, i.message?.from_addr, i.message?.from_name, i.sf_job_number, i.question_summary, i.sent_text, i.composed_text, i.message?.body_text].some(v => (v ?? '').toLowerCase().includes(needle))
+  const list = byView[view].filter(matches)
   return (
     <div className="space-y-4">
-      <AutoRespondSwitch settings={settings} canEnable={gmailConfigured && settings.processing_enabled} />
+      <AutoRespondSwitch settings={settings} canEnable={gmailConfigured && settings.processing_enabled && autoBaselineOk} baselineOk={autoBaselineOk} />
       {!gmailConfigured && byView.queued.length > 0 && (
         <p className="rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900">{byView.queued.length} approved repl{byView.queued.length === 1 ? 'y is' : 'ies are'} queued but no mailbox is connected yet, so nothing has been sent. They will go out once Gmail is connected under Settings.</p>
       )}
@@ -78,6 +81,9 @@ export default function ReviewTab({ items, gmailConfigured, initialOpen, setting
           </button>
         ))}
       </div>
+      {(view === 'sent' || view === 'closed' || view === 'followups') && (
+        <input className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm text-gray-900 bg-white" placeholder="Search by subject, sender, job number, or any words in the email or reply" value={q} onChange={e => setQ(e.target.value)} />
+      )}
       {list.length === 0 && (
         <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">
           {view === 'queue' ? 'Nothing waiting for review.' : view === 'followups' ? 'No partner has come back confused or with a new question.' : 'Nothing here yet.'}
@@ -184,13 +190,19 @@ function ReviewDetail({ item, onDone }: { item: ReviewItem; onDone: () => void }
             <button className={btnGhost} disabled={pending} onClick={() => run(() => unqueueReplyAction(item.id))}>Un-queue</button>
           </div>
         )}
+        {item.status === 'sent' && item.approval_path !== 'auto' && (
+          <div className="flex items-center gap-2">
+            <button className={btnGhost} disabled={pending} onClick={() => run(() => saveAsRegressionCase(item.id).then(() => setMsg('Saved as a regression test case (Dashboard → Regression set).')), false)}>Save as test case</button>
+            <span className="text-xs text-gray-500">Freezes this inquiry, the job facts, and the reply a person approved as a known-good example.</span>
+          </div>
+        )}
         {['sent', 'rejected', 'escalated', 'cancelled', 'superseded'].includes(item.status) && (
           <div className="flex gap-2">
             <input className={input} placeholder="Add a note about this reply (kept with it for review)" value={note} onChange={e => setNote(e.target.value)} />
             <button className={btnGhost} disabled={pending || !note.trim()} onClick={() => run(() => replyFeedbackAction(item.id, item.status === 'sent' ? 'post_send' : 'note', note).then(() => setNote('')), false)}>Save note</button>
           </div>
         )}
-        {msg && <p className="text-sm text-red-700">{msg}</p>}
+        {msg && <p className={`text-sm ${/^Saved/.test(msg) ? 'text-green-700' : 'text-red-700'}`}>{msg}</p>}
         {item.error && <p className="text-xs text-red-700">{item.error}</p>}
       </div>
 

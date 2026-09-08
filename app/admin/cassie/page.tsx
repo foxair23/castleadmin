@@ -6,9 +6,11 @@ import CassieClient from './CassieClient'
 import { loadReviewItems } from '@/lib/agent/email/review'
 import { loadRecentOutcomes, computeConfusionRates } from '@/lib/agent/email/outcomes'
 import { loadCoverageLog, groupCoverageLog, editRateByType, loadEditRateRows } from '@/lib/agent/email/learning'
+import { loadDashboard } from '@/lib/agent/email/dashboard'
 import { loadGmailCredential, isGoogleOAuthConfigured, gmailRedirectUri } from '@/lib/agent/email/gmail'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300   // the regression run action composes every case in one request
 export const metadata = { title: 'Cassie' }
 
 export default async function CassiePage({ searchParams }: { searchParams: Promise<{ reply?: string; gmail?: string; msg?: string }> }) {
@@ -41,6 +43,7 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
   for (const r of coverageRows) weeklyMap.set(weekOf(r.created_at), (weeklyMap.get(weekOf(r.created_at)) ?? 0) + 1)
   const weeklyAsks = [...weeklyMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-12).map(([week, count]) => ({ week, count }))
   const editRates = editRateByType(await loadEditRateRows(db, 30))
+  const dashboard = await loadDashboard(db)
   const reviewItems = await loadReviewItems(db, { statuses: ['draft', 'queued', 'sent', 'rejected', 'escalated', 'cancelled', 'superseded', 'failed'], limit: 300 })
   const [{ data: activity }, { data: draftRows }] = await Promise.all([
     db.from('agent_email_messages')
@@ -68,6 +71,8 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
       gmailFlash={gmailFlash}
       confusionRates={confusionRates}
       learning={{ clusters, editRates, weeklyAsks }}
+      dashboard={dashboard}
+      autoBaselineOk={dashboard.runs.some(r => r.cases >= 30)}
     />
   )
 }

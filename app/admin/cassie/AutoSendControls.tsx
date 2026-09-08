@@ -29,7 +29,7 @@ const TIERS: { key: MatchTier; label: string; hint: string }[] = [
   { key: 'name', label: 'Customer name → exactly one active or recent job', hint: 'weaker; enable after PO sends prove clean' },
 ]
 
-export function AutoRespondSwitch({ settings, canEnable }: { settings: AgentSettings; canEnable: boolean }) {
+export function AutoRespondSwitch({ settings, canEnable, baselineOk = true }: { settings: AgentSettings; canEnable: boolean; baselineOk?: boolean }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [err, setErr] = useState<string | null>(null)
@@ -46,7 +46,7 @@ export function AutoRespondSwitch({ settings, canEnable }: { settings: AgentSett
       <span className="text-xs text-gray-600">
         {on
           ? <>Cassie sends replies that pass every check at or above <b>{Math.round(settings.confidence_threshold * 100)}%</b> confidence after a <b>{settings.hold_minutes}-minute</b> hold. Everything else still comes here. Turning this off pulls back anything queued.</>
-          : canEnable ? 'Every reply is a draft for a person to approve. Turn on only after the regression set exists and the unedited rate is above 95%.' : 'Every reply is a draft. Connect the mailbox and turn Processing on before this can be enabled.'}
+          : canEnable ? 'Every reply is a draft for a person to approve. Turn on only once the unedited rate on a tier is above 95%.' : !baselineOk ? 'Every reply is a draft. Locked until the regression set has 30 cases and has been run once (Dashboard → Regression set).' : 'Every reply is a draft. Connect the mailbox and turn Processing on before this can be enabled.'}
       </span>
       {err && <span className="text-xs text-red-700">{err}</span>}
     </div>

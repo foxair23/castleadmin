@@ -10,6 +10,8 @@ import { AutoSendCard } from './AutoSendControls'
 import type { TierRate } from '@/lib/agent/email/outcomes'
 import type { CoverageCluster, EditRate } from '@/lib/agent/email/learning'
 import LearningTab from './LearningTab'
+import DashboardTab from './DashboardTab'
+import type { DashboardData } from '@/lib/agent/email/dashboard'
 import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
@@ -62,7 +64,7 @@ function fmt(s: string | null | undefined): string {
 const lines = (arr: string[]) => arr.join('\n')
 const parseLines = (s: string) => s.split(/[\n,;]+/).map(x => x.trim()).filter(Boolean)
 
-type Tab = 'review' | 'activity' | 'learning' | 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
+type Tab = 'review' | 'dashboard' | 'activity' | 'learning' | 'settings' | 'charter' | 'instructions' | 'answers' | 'style'
 
 export default function CassieClient(props: {
   settings: AgentSettings
@@ -80,12 +82,15 @@ export default function CassieClient(props: {
   gmailFlash: { ok: boolean; msg: string } | null
   confusionRates: TierRate[]
   learning: { clusters: CoverageCluster[]; editRates: EditRate[]; weeklyAsks: Array<{ week: string; count: number }> }
+  dashboard: DashboardData
+  autoBaselineOk: boolean
 }) {
   const [tab, setTab] = useState<Tab>('review')
   const needsReview = props.reviewItems.filter(i => i.status === 'draft').length
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: 'review', label: 'Review', count: needsReview },
     { key: 'activity', label: 'Activity', count: props.activity.length },
+    { key: 'dashboard', label: 'Dashboard' },
     { key: 'learning', label: 'Learning', count: props.learning.clusters.length },
     { key: 'settings', label: 'Settings' },
     { key: 'charter', label: 'Charter' },
@@ -107,8 +112,9 @@ export default function CassieClient(props: {
           </button>
         ))}
       </div>
-      {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} settings={props.settings} />}
+      {tab === 'review' && <ReviewTab items={props.reviewItems} gmailConfigured={props.gmailConfigured} initialOpen={props.initialReply} settings={props.settings} autoBaselineOk={props.autoBaselineOk} />}
       {tab === 'activity' && <ActivityTab rows={props.activity} drafts={props.drafts} />}
+      {tab === 'dashboard' && <DashboardTab volume={props.dashboard.volume} cases={props.dashboard.cases} runs={props.dashboard.runs} trend={props.dashboard.trend} gmailOk={props.gmail.connected && !props.gmail.lastError} />}
       {tab === 'learning' && <LearningTab clusters={props.learning.clusters} editRates={props.learning.editRates} answers={props.answers} weeklyAsks={props.learning.weeklyAsks} />}
       {tab === 'settings' && <SettingsTab settings={props.settings} gmailConfigured={props.gmailConfigured} gmail={props.gmail} gmailFlash={props.gmailFlash} reviewItems={props.reviewItems} confusionRates={props.confusionRates} />}
       {tab === 'charter' && <CharterTab charter={props.charter} versions={props.versions} />}

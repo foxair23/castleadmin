@@ -36,6 +36,11 @@ const EDITABLE: ReadonlyArray<keyof AgentSettings> = [
 
 export async function saveAgentSettings(patch: Partial<AgentSettings>): Promise<void> {
   const userId = await assertAdmin()
+  // Phase-2 gate (PRD §14): auto-send may not be enabled until a regression baseline exists.
+  if (patch.auto_respond_enabled === true) {
+    const { count } = await agentDb().from('agent_regression_runs').select('id', { count: 'exact', head: true }).gte('cases', 30)
+    if (!count) throw new Error('Auto-Respond stays off until the regression set has at least 30 cases and has been run once (Cassie → Dashboard).')
+  }
   const row: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: userId }
   for (const k of EDITABLE) if (k in patch) row[k] = patch[k]
   const db = agentDb()
@@ -154,4 +159,27 @@ export async function unqueueReplyAction(id: string): Promise<void> {
   const { userId } = await reviewer()
   const { cancelQueuedReply } = await import('@/lib/agent/email/review')
   await cancelQueuedReply(agentDb(), id, userId); revalidatePath(PATH)
+}
+
+
+// ── Regression set (PRD §10, §14) ───────────────────────────────────────────
+export async function saveAsRegressionCase(replyId: string): Promise<void> {
+  const { userId } = await reviewer()
+  const { createCaseFromReply } = await import('@/lib/agent/email/regression')
+  await createCaseFromReply(agentDb(), replyId, userId); revalidatePath(PATH)
+}
+export async function runRegressionAction(): Promise<{ cases: number; passed: number; mean_score: number | null }> {
+  const { userId } = await reviewer()
+  const { runRegression } = await import('@/lib/agent/email/regression')
+  const { loadAgentSettings } = await import('@/lib/agent/settings')
+  const db = agentDb()
+  const run = await runRegression(db, await loadAgentSettings(db), { userId })
+  revalidatePath(PATH)
+  return { cases: run.cases, passed: run.passed, mean_score: run.mean_score }
+}
+export async function setRegressionCaseActive(id: string, active: boolean): Promise<void> {
+  await assertAdmin(); await agentDb().from('agent_regression_cases').update({ is_active: active }).eq('id', id); revalidatePath(PATH)
+}
+export async function deleteRegressionCase(id: string): Promise<void> {
+  await assertAdmin(); await agentDb().from('agent_regression_cases').delete().eq('id', id); revalidatePath(PATH)
 }
