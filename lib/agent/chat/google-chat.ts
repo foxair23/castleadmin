@@ -287,3 +287,45 @@ export async function testChatConnection(space: string): Promise<{ ok: boolean; 
     return { ok: false, message: `${msg}${hint}` }
   }
 }
+
+/** Does a key file sign, independent of what is in the environment? This is the one
+ *  experiment that separates the two possible faults: if the file the operator downloaded
+ *  signs here but the deployed value does not, the env store is altering it; if neither
+ *  signs, the key file itself is bad and no amount of repair will help. The pasted text is
+ *  used and dropped — never stored, never logged, never echoed back. */
+export function checkKeyFile(pasted: string): { ok: boolean; message: string } {
+  const text = (pasted ?? '').trim()
+  if (!text) return { ok: false, message: 'Paste the contents of the key file first.' }
+
+  let key = ''
+  let account = ''
+  if (text.startsWith('{')) {
+    try {
+      const j = JSON.parse(text) as { private_key?: string; client_email?: string }
+      key = j.private_key ?? ''
+      account = j.client_email ?? ''
+      if (!key) return { ok: false, message: 'That JSON has no private_key field — paste the whole service-account key file.' }
+    } catch { return { ok: false, message: 'That is not valid JSON. Paste the whole key file, exactly as downloaded.' } }
+  } else if (text.includes('PRIVATE KEY')) {
+    key = text
+  } else {
+    return { ok: false, message: 'That looks like neither a key file nor a PEM key.' }
+  }
+
+  const pem = normalizePrivateKey(key)
+  try {
+    const signer = createSign('RSA-SHA256'); signer.update('castle'); signer.sign(pem)
+  } catch (e) {
+    return { ok: false, message: `This key file does NOT sign, so the file itself is the problem, not the environment variable — download a fresh key from Google Cloud. (${e instanceof Error ? e.message : e}; the key has ${describePrivateKey(key)}.)` }
+  }
+
+  const deployed = process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON ?? ''
+  const same = deployed.includes(key.slice(-40).trim()) || deployed.includes(key.replace(/\n/g, '\\n').slice(-40))
+  return {
+    ok: true,
+    message: `This key file signs correctly${account ? ` (${account})` : ''}. `
+      + (same
+        ? 'It also matches what is deployed, so the environment variable is intact and the fault is elsewhere.'
+        : 'It does NOT match the value currently deployed — so the environment variable is either a different key or is being altered in storage. Re-paste this file into GOOGLE_CHAT_SERVICE_ACCOUNT_JSON, base64-encoded, and redeploy.'),
+  }
+}

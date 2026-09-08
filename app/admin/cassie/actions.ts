@@ -192,3 +192,11 @@ export async function testChatConnectionAction(): Promise<{ ok: boolean; message
   const s = await loadAgentSettings(agentDb())
   return testChatConnection(s.chat_space_name ?? '')
 }
+
+/** Sign with a pasted key file, to tell a bad key file apart from a mangled env var.
+ *  Nothing is stored: the pasted text lives only for the duration of this call. */
+export async function checkKeyFileAction(pasted: string): Promise<{ ok: boolean; message: string }> {
+  await assertAdmin()
+  const { checkKeyFile } = await import('@/lib/agent/chat/google-chat')
+  return checkKeyFile(pasted)
+}
