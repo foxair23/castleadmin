@@ -196,7 +196,8 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
       note = `Google Chat ask failed: ${e instanceof Error ? e.message : String(e)}`
       console.error('[cassie]', note)
     }
-    await db.from('agent_email_feedback').insert({ reply_id: replyId, kind: 'note', note }).then(() => {}, () => {})
+    const { error: noteErr } = await db.from('agent_email_feedback').insert({ reply_id: replyId, kind: 'note', note })
+    if (noteErr) console.error('[cassie] could not record the chat-ask note:', noteErr.message)
   }
 
   const detail = `draft · confidence ${Math.round(confidence * 100)}%` + (route.blockers.length ? `; held for review: ${route.blockers.join(', ')}` : '')

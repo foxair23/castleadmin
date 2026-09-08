@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildCard, decodeJwt, verifyEventToken } from '@/lib/agent/chat/google-chat'
+import { buildCard, decodeJwt, verifyEventToken, normalizePrivateKey } from '@/lib/agent/chat/google-chat'
 
 describe('buildCard', () => {
   it('renders paragraphs as decorated text and buttons as native widgets', () => {
@@ -52,5 +52,24 @@ describe('event token verification', () => {
     const t = `${b64({ alg: 'RS256', kid: 'abc' })}.${b64({ iss: 'x', aud: 'y' })}.zzz`
     expect(decodeJwt(t)).toEqual({ header: { alg: 'RS256', kid: 'abc' }, payload: { iss: 'x', aud: 'y' } })
     expect(decodeJwt('a.b')).toBeNull()
+  })
+})
+
+describe('service-account private key normalisation', () => {
+  const REAL = '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\nkqhkiG9w0BAQ\n-----END PRIVATE KEY-----\n'
+  it('repairs literal backslash-n, the usual env-store corruption', () => {
+    const mangled = REAL.replace(/\n/g, '\\n')
+    expect(normalizePrivateKey(mangled)).toBe(REAL)
+  })
+  it('strips wrapping quotes some stores add', () => {
+    expect(normalizePrivateKey(`"${REAL.replace(/\n/g, '\\n')}"`)).toBe(REAL)
+    expect(normalizePrivateKey(`'${REAL.replace(/\n/g, '\\n')}'`)).toBe(REAL)
+  })
+  it('leaves an already-valid key alone, and always ends with a newline', () => {
+    expect(normalizePrivateKey(REAL)).toBe(REAL)
+    expect(normalizePrivateKey(REAL.trimEnd())).toBe(REAL)
+  })
+  it('normalises CRLF', () => {
+    expect(normalizePrivateKey(REAL.replace(/\n/g, '\r\n'))).toBe(REAL)
   })
 })

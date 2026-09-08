@@ -183,3 +183,12 @@ export async function setRegressionCaseActive(id: string, active: boolean): Prom
 export async function deleteRegressionCase(id: string): Promise<void> {
   await assertAdmin(); await agentDb().from('agent_regression_cases').delete().eq('id', id); revalidatePath(PATH)
 }
+
+/** Post a test message to the configured Chat space and report the result verbatim. */
+export async function testChatConnectionAction(): Promise<{ ok: boolean; message: string }> {
+  await assertAdmin()
+  const { testChatConnection } = await import('@/lib/agent/chat/google-chat')
+  const { loadAgentSettings } = await import('@/lib/agent/settings')
+  const s = await loadAgentSettings(agentDb())
+  return testChatConnection(s.chat_space_name ?? '')
+}

@@ -37,12 +37,35 @@ export function isChatConfigured(): boolean {
 export function chatEventsUrl(): string { return `${appUrl()}/api/cassie/chat/events` }
 
 interface ServiceAccount { client_email: string; private_key: string }
+
+/** A service-account private key rarely survives an environment variable intact. The two
+ *  ways it arrives broken, both of which OpenSSL reports only as the opaque
+ *  "error:1E08010C:DECODER routines::unsupported":
+ *    • its newlines come through as the two characters \ and n, because the value was
+ *      escaped a second time between the key file and the env store;
+ *    • the whole value is wrapped in quotes the store did not strip.
+ *  Neither is the operator's doing and both are trivially repairable, so repair them
+ *  rather than making someone decode an OpenSSL error code. */
+export function normalizePrivateKey(raw: string): string {
+  let key = (raw ?? '').trim()
+  if (key.length > 1 && ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'")))) key = key.slice(1, -1)
+  key = key.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\r\n/g, '\n').trim()
+  return key.endsWith('\n') ? key : `${key}\n`
+}
+
 function serviceAccount(): ServiceAccount {
   const raw = process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON ?? ''
+  if (!raw.trim()) throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not set')
   const json = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8')
-  const sa = JSON.parse(json) as ServiceAccount
-  if (!sa.client_email || !sa.private_key) throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is missing client_email/private_key')
-  return sa
+  let sa: ServiceAccount
+  try { sa = JSON.parse(json) as ServiceAccount }
+  catch { throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not valid JSON — paste the whole key file, or its base64') }
+  if (!sa.client_email || !sa.private_key) throw new Error('GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is missing client_email or private_key')
+  const private_key = normalizePrivateKey(sa.private_key)
+  if (!/^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(private_key)) {
+    throw new Error('The private_key in GOOGLE_CHAT_SERVICE_ACCOUNT_JSON does not begin with a PEM header — re-copy the key file from Google Cloud')
+  }
+  return { client_email: sa.client_email, private_key }
 }
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -55,7 +78,13 @@ export async function chatAccessToken(): Promise<string> {
   const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
   const claims = b64url(JSON.stringify({ iss: sa.client_email, scope: SCOPE, aud: TOKEN_URL, iat: now, exp: now + 3600 }))
   const signer = createSign('RSA-SHA256'); signer.update(`${header}.${claims}`)
-  const jwt = `${header}.${claims}.${b64url(signer.sign(sa.private_key))}`
+  let signature: Buffer
+  try { signature = signer.sign(sa.private_key) }
+  catch (e) {
+    // OpenSSL's DECODER error names neither the key nor the reason. Say both.
+    throw new Error(`Could not sign with the service-account private key (${e instanceof Error ? e.message : e}). The key in GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not readable as PEM — re-paste the key file, base64-encoded so it survives the env store.`)
+  }
+  const jwt = `${header}.${claims}.${b64url(signature)}`
   const res = await fetch(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }) })
   const j = await res.json() as { access_token?: string; expires_in?: number; error?: string; error_description?: string }
   if (!res.ok || !j.access_token) throw new Error(`Google Chat auth failed: ${j.error ?? res.status} ${j.error_description ?? ''}`.trim())
@@ -157,4 +186,31 @@ export async function verifyEventToken(authorization: string | null, audiences: 
   const v = createVerify('RSA-SHA256'); v.update(`${h}.${p}`)
   const ok = v.verify(new X509Certificate(pem).publicKey, Buffer.from(sig.replace(/-/g, '+').replace(/_/g, '/'), 'base64'))
   return ok ? { ok: true } : { ok: false, reason: 'bad signature' }
+}
+
+// ── Connection test ─────────────────────────────────────────────────────────
+
+/** Post a throwaway message to the space and report what happened, in plain English.
+ *  Exercises exactly the outbound path an ask uses: service-account JWT → token → post.
+ *  Used by the "Test connection" button so a misconfiguration names itself in one click
+ *  instead of being inferred from a card that never appeared. */
+export async function testChatConnection(space: string): Promise<{ ok: boolean; message: string }> {
+  if (!space.trim()) return { ok: false, message: 'No space is set. Paste the space resource name (spaces/AAAA…) above and save first.' }
+  if (!/^spaces\//.test(space.trim())) return { ok: false, message: `"${space}" does not look like a space resource name. It should start with "spaces/".` }
+  if (!isChatConfigured()) return { ok: false, message: 'GOOGLE_CHAT_SERVICE_ACCOUNT_JSON is not set in Vercel (or the deploy predates it).' }
+  try {
+    await chatAccessToken()
+  } catch (e) {
+    return { ok: false, message: `Could not authenticate as the service account: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  try {
+    const posted = await postText(space.trim(), `cassie-test-${Date.now()}`, 'Connection test from Castle Admin — Cassie can post here. You can ignore this message.')
+    return { ok: true, message: `Posted to the space (${posted.name}). Check Google Chat.` }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const hint = /403/.test(msg) ? ' — a 403 usually means the Cassie app has not been added to that space, or the service account is in a different Cloud project from the Chat app.'
+      : /404/.test(msg) ? ' — a 404 usually means the space resource name is wrong.'
+      : ''
+    return { ok: false, message: `${msg}${hint}` }
+  }
 }

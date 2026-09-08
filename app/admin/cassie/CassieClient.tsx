@@ -16,7 +16,7 @@ import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
   saveAnswer, setAnswerActiveAction,
-  createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail,
+  createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail, testChatConnectionAction,
 } from './actions'
 
 export interface DraftRow {
@@ -281,6 +281,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
   const router = useRouter()
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
+  const [chatTest, setChatTest] = useState<{ ok: boolean; message: string } | null>(null)
   const [f, setF] = useState({
     mailbox_address: s.mailbox_address, from_display_name: s.from_display_name, reply_to_email: s.reply_to_email ?? '',
     cc_office: s.cc_office, signature_text: s.signature_text, escape_hatch_text: s.escape_hatch_text,
@@ -396,6 +397,14 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
           <Field label="Reminder after (min)" hint="one nudge, then escalation by email at double this"><input type="number" min={5} className={input} value={f.chat_timeout_minutes} onChange={e => set('chat_timeout_minutes', Number(e.target.value))} /></Field>
           <Field label="Max asks per hour" hint="noise control"><input type="number" min={1} className={input} value={f.chat_max_asks_per_hour} onChange={e => set('chat_max_asks_per_hour', Number(e.target.value))} /></Field>
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="button" className={btnGhost} disabled={pending} onClick={() => start(async () => {
+            setChatTest(null)
+            try { setChatTest(await testChatConnectionAction()) } catch (e) { setChatTest({ ok: false, message: e instanceof Error ? e.message : String(e) }) }
+          })}>Test connection</button>
+          <span className="text-xs text-gray-500">Posts a throwaway message to the space. Save first if you just changed the space.</span>
+        </div>
+        {chatTest && <p className={`mt-2 rounded-md px-3 py-2 text-xs ${chatTest.ok ? 'border border-green-200 bg-green-50 text-green-800' : 'border border-red-200 bg-red-50 text-red-800'}`}>{chatTest.message}</p>}
         <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">One-time Google Cloud setup for the Chat app</summary>
           <ol className="list-decimal pl-5 mt-1 space-y-0.5">
             <li>In the same Google Cloud project, enable the <b>Google Chat API</b> and create a <b>service account</b> with a JSON key. Put the key in Vercel as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_SERVICE_ACCOUNT_JSON</code> and the project number as <code className="rounded bg-gray-100 px-1">GOOGLE_CHAT_PROJECT_NUMBER</code>.</li>
