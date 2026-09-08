@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createPrivateKey, createSign, generateKeyPairSync } from 'crypto'
-import { buildCard, decodeJwt, verifyEventToken, normalizePrivateKey, describePrivateKey, checkKeyFile } from '@/lib/agent/chat/google-chat'
+import { buildCard, decodeJwt, verifyEventToken, allowedIssuers, normalizePrivateKey, describePrivateKey, checkKeyFile } from '@/lib/agent/chat/google-chat'
 
 describe('buildCard', () => {
   it('renders paragraphs as decorated text and buttons as native widgets', () => {
@@ -48,6 +48,27 @@ describe('event token verification', () => {
       expect(r.ok).toBe(false)
       expect((r as { reason: string }).reason).not.toMatch(/audience/)
     }
+  })
+  it("accepts Google's OIDC issuer, which is what a Workspace add-on actually sends", () => {
+    const prev = process.env.GOOGLE_CHAT_PROJECT_NUMBER
+    process.env.GOOGLE_CHAT_PROJECT_NUMBER = '123'
+    try {
+      expect(allowedIssuers()).toContain('https://accounts.google.com')
+      delete process.env.GOOGLE_CHAT_PROJECT_NUMBER
+      expect(allowedIssuers()).toContain('https://accounts.google.com')
+    } finally { if (prev === undefined) delete process.env.GOOGLE_CHAT_PROJECT_NUMBER; else process.env.GOOGLE_CHAT_PROJECT_NUMBER = prev }
+  })
+  it('refuses an OIDC token that speaks for somebody else\'s project', async () => {
+    // accounts.google.com signs for every Google identity, so the audience alone is not a
+    // gate: another project's app aimed at our URL is signed by ITS service agent.
+    const ISS = ['chat@system.gserviceaccount.com', 'service-1026096616480@gcp-sa-gsuiteaddons.iam.gserviceaccount.com', 'https://accounts.google.com']
+    const r = await verifyEventToken(mk({ iss: 'https://accounts.google.com', aud: '123', exp: 9e9, email: 'service-999@gcp-sa-gsuiteaddons.iam.gserviceaccount.com' }), AUD, ISS)
+    expect(r).toMatchObject({ ok: false, reason: /token subject .* is not one of/ })
+  })
+  it('lets our own project past the subject check', async () => {
+    const ISS = ['chat@system.gserviceaccount.com', 'https://accounts.google.com']
+    const r = await verifyEventToken(mk({ iss: 'https://accounts.google.com', aud: '123', exp: 9e9, email: 'chat@system.gserviceaccount.com' }), AUD, ISS)
+    expect((r as { reason: string }).reason).not.toMatch(/issuer|token subject/)
   })
   it('decodeJwt reads header and payload', () => {
     const t = `${b64({ alg: 'RS256', kid: 'abc' })}.${b64({ iss: 'x', aud: 'y' })}.zzz`

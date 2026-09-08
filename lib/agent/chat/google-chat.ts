@@ -20,11 +20,18 @@ const API = 'https://chat.googleapis.com/v1'
 // that exact issuer, so accepting both costs nothing and saves picking a config mode.
 const CHAT_ISSUER = 'chat@system.gserviceaccount.com'
 const addonsIssuer = (projectNumber: string) => `service-${projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`
-const certsUrlFor = (issuer: string) => `https://www.googleapis.com/service_accounts/v1/metadata/x509/${encodeURIComponent(issuer)}`
+// A third form, and the one a Workspace add-on actually sends: an ordinary Google OIDC
+// identity token issued by accounts.google.com rather than by a service-account identity.
+// Same trust root, different signing keys — Google's OAuth2 certs, not a per-account cert.
+const OIDC_ISSUER = 'https://accounts.google.com'
+const OIDC_CERTS = 'https://www.googleapis.com/oauth2/v1/certs'
+const certsUrlFor = (issuer: string) =>
+  issuer === OIDC_ISSUER ? OIDC_CERTS
+    : `https://www.googleapis.com/service_accounts/v1/metadata/x509/${encodeURIComponent(issuer)}`
 
 export function allowedIssuers(): string[] {
   const n = (process.env.GOOGLE_CHAT_PROJECT_NUMBER ?? '').trim()
-  return n ? [CHAT_ISSUER, addonsIssuer(n)] : [CHAT_ISSUER]
+  return n ? [CHAT_ISSUER, OIDC_ISSUER, addonsIssuer(n)] : [CHAT_ISSUER, OIDC_ISSUER]
 }
 
 /** Posting needs only the service account key; the project number is one of two
@@ -225,7 +232,7 @@ async function issuerCerts(issuer: string): Promise<Record<string, string>> {
   return certs
 }
 
-export function decodeJwt(token: string): { header: { kid?: string; alg?: string }; payload: { iss?: string; aud?: string; exp?: number } } | null {
+export function decodeJwt(token: string): { header: { kid?: string; alg?: string }; payload: { iss?: string; aud?: string; exp?: number; email?: string } } | null {
   const parts = token.split('.')
   if (parts.length !== 3) return null
   try {
@@ -256,6 +263,14 @@ export async function verifyEventToken(authorization: string | null, audiences: 
   if (!d.payload.iss || !issuers.includes(d.payload.iss)) return { ok: false, reason: `issuer ${d.payload.iss ?? 'missing'} is not one of ${issuers.join(', ')}` }
   if (!d.payload.aud || !audiences.includes(d.payload.aud)) return { ok: false, reason: `audience ${d.payload.aud ?? 'missing'} is not one of ${audiences.join(', ')}` }
   if (!d.payload.exp || d.payload.exp * 1000 < Date.now()) return { ok: false, reason: 'expired' }
+  // accounts.google.com signs a token for every Google identity there is, so for that
+  // issuer the audience is not enough on its own: check that the subject is one of the
+  // Google-run service agents that speak for OUR project. Another project's app pointed
+  // at this URL would be signed by ITS agent and is refused here.
+  if (d.payload.iss === OIDC_ISSUER && d.payload.email) {
+    const agents = issuers.filter(i => i !== OIDC_ISSUER)
+    if (agents.length && !agents.includes(d.payload.email)) return { ok: false, reason: `token subject ${d.payload.email} is not one of ${agents.join(', ')}` }
+  }
   const certs = await issuerCerts(d.payload.iss)
   const pem = d.header.kid ? certs[d.header.kid] : undefined
   if (!pem) return { ok: false, reason: 'unknown signing key' }
