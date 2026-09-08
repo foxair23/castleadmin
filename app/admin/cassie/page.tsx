@@ -7,6 +7,7 @@ import { loadReviewItems } from '@/lib/agent/email/review'
 import { loadRecentOutcomes, computeConfusionRates } from '@/lib/agent/email/outcomes'
 import { loadCoverageLog, groupCoverageLog, editRateByType, loadEditRateRows } from '@/lib/agent/email/learning'
 import { loadDashboard } from '@/lib/agent/email/dashboard'
+import { recentChatEvents } from '@/lib/agent/email/chat-assist'
 import { loadGmailCredential, isGoogleOAuthConfigured, gmailRedirectUri } from '@/lib/agent/email/gmail'
 
 export const dynamic = 'force-dynamic'
@@ -44,6 +45,7 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
   const weeklyAsks = [...weeklyMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-12).map(([week, count]) => ({ week, count }))
   const editRates = editRateByType(await loadEditRateRows(db, 30))
   const dashboard = await loadDashboard(db)
+  const chatEvents = await recentChatEvents(db, 20)
   const reviewItems = await loadReviewItems(db, { statuses: ['draft', 'queued', 'sent', 'rejected', 'escalated', 'cancelled', 'superseded', 'failed'], limit: 300 })
   const [{ data: activity }, { data: draftRows }] = await Promise.all([
     db.from('agent_email_messages')
@@ -71,6 +73,7 @@ export default async function CassiePage({ searchParams }: { searchParams: Promi
       gmailFlash={gmailFlash}
       confusionRates={confusionRates}
       learning={{ clusters, editRates, weeklyAsks }}
+      chatEvents={chatEvents as never}
       dashboard={dashboard}
       autoBaselineOk={dashboard.runs.some(r => r.cases >= 30)}
     />
