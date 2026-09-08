@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createSign, generateKeyPairSync } from 'crypto'
+import { createPrivateKey, createSign, generateKeyPairSync } from 'crypto'
 import { buildCard, decodeJwt, verifyEventToken, normalizePrivateKey, describePrivateKey } from '@/lib/agent/chat/google-chat'
 
 describe('buildCard', () => {
@@ -69,6 +69,7 @@ describe('a real key, mangled every way an env store mangles one', () => {
     ['CRLF line endings', (k: string) => k.replace(/\n/g, '\r\n')],
     ['newlines collapsed to spaces', (k: string) => k.replace(/\n/g, ' ')],
     ['line breaks dropped entirely', (k: string) => k.replace(/\n/g, '')],
+    ['base64 rewritten URL-safe', (k: string) => k.replace(/\+/g, '-').replace(/\//g, '_')],
     ['re-wrapped at the wrong width', (k: string) => {
       const body = k.replace(/-----[A-Z ]+-----/g, '').replace(/\s/g, '')
       return `-----BEGIN PRIVATE KEY-----\n${(body.match(/.{1,40}/g) ?? []).join('\n')}\n-----END PRIVATE KEY-----`
@@ -79,13 +80,37 @@ describe('a real key, mangled every way an env store mangles one', () => {
     expect(repaired).toBe(normalizePrivateKey(repaired))   // idempotent
   })
 
-  it('describes a truncated key without printing it', () => {
-    const cut = PEM.slice(0, 400) + '\n-----END PRIVATE KEY-----\n'
-    const d = describePrivateKey(normalizePrivateKey(cut))
-    expect(d).toContain('truncated')
-    expect(d).not.toContain(PEM.slice(60, 100))
+  it('relabels a PKCS#1 key that arrived under a PKCS#8 label', () => {
+    const pkcs1 = createPrivateKey(PEM).export({ type: 'pkcs1', format: 'pem' }).toString()
+    const mislabelled = pkcs1.replace(/RSA PRIVATE KEY/g, 'PRIVATE KEY')
+    const repaired = normalizePrivateKey(mislabelled)
+    expect(repaired).toContain('-----BEGIN RSA PRIVATE KEY-----')
+    expect(signs(repaired)).toBe(true)
   })
-  it('says so when the markers are missing entirely', () => {
-    expect(describePrivateKey('not a key at all')).toMatch(/no matching BEGIN\/END/)
+
+  describe('describePrivateKey reads the raw value, and never prints it', () => {
+    const secret = PEM.replace(/-----[A-Z ]+-----/g, '').replace(/\s/g, '').slice(80, 140)
+    it('reports a healthy key as PKCS#8 of the expected size', () => {
+      const d = describePrivateKey(PEM)
+      expect(d).toContain('label PRIVATE KEY')
+      expect(d).toMatch(/\d+ decoded bytes/)
+      expect(d).not.toContain('corrupt')
+      expect(d).not.toContain(secret)
+    })
+    it('counts what the repair had to throw away', () => {
+      expect(describePrivateKey(PEM.replace(/\+/g, '#'))).toMatch(/characters outside the base64 alphabet/)
+    })
+    it('names missing bytes when the body is cut short', () => {
+      const body = PEM.replace(/-----[A-Z ]+-----/g, '').replace(/\s/g, '')
+      const cut = `-----BEGIN PRIVATE KEY-----\n${body.slice(0, 800)}\n-----END PRIVATE KEY-----\n`
+      expect(describePrivateKey(cut)).toMatch(/are missing/)
+    })
+    it('says so when the bytes are neither PKCS#8 nor PKCS#1', () => {
+      const junk = Buffer.from('not a key, just some bytes that base64 cleanly').toString('base64')
+      expect(describePrivateKey(`-----BEGIN PRIVATE KEY-----\n${junk}\n-----END PRIVATE KEY-----\n`)).toMatch(/not an ASN.1 SEQUENCE|corrupt/)
+    })
+    it('says so when there are no markers at all', () => {
+      expect(describePrivateKey('not a key at all')).toMatch(/not a PEM key at all/)
+    })
   })
 })
