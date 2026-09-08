@@ -20,14 +20,33 @@ describe('buildCard', () => {
 
 describe('event token verification', () => {
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+  const AUD = ['123', 'https://hq.castlegarage.com/api/cassie/chat/events']
+  const mk = (p: Record<string, unknown>, h: Record<string, unknown> = { alg: 'RS256', kid: 'k' }) => `Bearer ${b64(h)}.${b64(p)}.sig`
   it('rejects missing, malformed, wrong-issuer, wrong-audience and expired tokens before touching the network', async () => {
-    expect(await verifyEventToken(null, '123')).toMatchObject({ ok: false, reason: 'no bearer token' })
-    expect(await verifyEventToken('Bearer nope', '123')).toMatchObject({ ok: false, reason: 'malformed token' })
-    const mk = (p: Record<string, unknown>, h: Record<string, unknown> = { alg: 'RS256', kid: 'k' }) => `Bearer ${b64(h)}.${b64(p)}.sig`
-    expect(await verifyEventToken(mk({ iss: 'evil', aud: '123', exp: 9e9 }), '123')).toMatchObject({ ok: false, reason: /issuer/ })
-    expect(await verifyEventToken(mk({ iss: 'chat@system.gserviceaccount.com', aud: '999', exp: 9e9 }), '123')).toMatchObject({ ok: false, reason: 'audience mismatch' })
-    expect(await verifyEventToken(mk({ iss: 'chat@system.gserviceaccount.com', aud: '123', exp: 1 }), '123')).toMatchObject({ ok: false, reason: 'expired' })
-    expect(await verifyEventToken(mk({ iss: 'chat@system.gserviceaccount.com', aud: '123', exp: 9e9 }, { alg: 'HS256' }), '123')).toMatchObject({ ok: false, reason: /alg/ })
+    expect(await verifyEventToken(null, AUD)).toMatchObject({ ok: false, reason: 'no bearer token' })
+    expect(await verifyEventToken('Bearer nope', AUD)).toMatchObject({ ok: false, reason: 'malformed token' })
+    expect(await verifyEventToken(mk({ iss: 'evil', aud: '123', exp: 9e9 }), AUD)).toMatchObject({ ok: false, reason: /issuer/ })
+    // An add-on service agent from ANOTHER project is not ours.
+    expect(await verifyEventToken(mk({ iss: 'service-999@gcp-sa-gsuiteaddons.iam.gserviceaccount.com', aud: '123', exp: 9e9 }), AUD)).toMatchObject({ ok: false, reason: /issuer/ })
+    expect(await verifyEventToken(mk({ iss: 'chat@system.gserviceaccount.com', aud: '999', exp: 9e9 }), AUD)).toMatchObject({ ok: false, reason: /audience/ })
+    expect(await verifyEventToken(mk({ iss: 'chat@system.gserviceaccount.com', aud: '123', exp: 1 }), AUD)).toMatchObject({ ok: false, reason: 'expired' })
+    expect(await verifyEventToken(mk({ iss: 'chat@system.gserviceaccount.com', aud: '123', exp: 9e9 }, { alg: 'HS256' }), AUD)).toMatchObject({ ok: false, reason: /alg/ })
+  })
+  it('accepts both issuers: classic Chat, and this project\'s add-on service agent', async () => {
+    const ISS = ['chat@system.gserviceaccount.com', 'service-1026096616480@gcp-sa-gsuiteaddons.iam.gserviceaccount.com']
+    for (const iss of ISS) {
+      const r = await verifyEventToken(mk({ iss, aud: '123', exp: 9e9 }), AUD, ISS)
+      expect((r as { reason: string }).reason).not.toMatch(/issuer/)
+    }
+  })
+  it('accepts either audience Google may send — project number or the endpoint URL', async () => {
+    // Both get past the audience check and fail later, at the signature: proof the
+    // audience itself was accepted. Whichever way the Chat app is configured, it works.
+    for (const aud of AUD) {
+      const r = await verifyEventToken(mk({ iss: 'chat@system.gserviceaccount.com', aud, exp: 9e9 }), AUD)
+      expect(r.ok).toBe(false)
+      expect((r as { reason: string }).reason).not.toMatch(/audience/)
+    }
   })
   it('decodeJwt reads header and payload', () => {
     const t = `${b64({ alg: 'RS256', kid: 'abc' })}.${b64({ iss: 'x', aud: 'y' })}.zzz`
