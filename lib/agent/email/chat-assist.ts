@@ -119,16 +119,45 @@ async function askForThread(db: SupabaseClient, ev: ChatEvent) {
 
 const responderOf = (u: ChatUser | undefined) => ({ name: u?.displayName ?? u?.email ?? 'a team member', email: u?.email ?? null, id: u?.name ?? null })
 
+/** What to do with a message that lands in an ask's thread. Silence is the worst possible
+ *  answer here: a person who writes to Cassie and gets nothing back cannot tell whether she
+ *  is broken, ignoring them, or simply slow. So every outcome says something.
+ *
+ *  A late answer is still worth having — the timeout escalates the email to the team, it
+ *  does not send anything to the partner — so 'timed_out' is answerable, not closed. */
+export function planForAsk(status: string, awaitingEdit: boolean): { act: 'edit' | 'answer' } | { act: 'explain'; text: string } {
+  if (awaitingEdit) return { act: 'edit' }
+  if (['open', 'answered', 'timed_out'].includes(status)) return { act: 'answer' }
+  const said: Record<string, string> = {
+    composed: 'I have already written a reply for this one — it is on the card above, waiting for Approve, Edit or Send to review.',
+    approved: 'This one is already approved and on its way, so I have not changed anything.',
+    sent: 'This one has already gone to the partner, so I have not changed anything.',
+    reviewed: 'This one is already in the review queue for a person to finish.',
+  }
+  return { act: 'explain', text: said[status] ?? `This question is already closed (${status}), so I have not changed anything.` }
+}
+
 /** A person wrote in an ask's thread: either the answer, or the edited text we asked for. */
 export async function handleChatMessage(db: SupabaseClient, settings: AgentSettings, ev: ChatEvent): Promise<string> {
   if (ev.user?.type === 'BOT' || ev.message?.sender?.type === 'BOT') return 'ignored bot'
   const ask = await askForThread(db, ev)
-  if (!ask) return 'no ask for this thread'
+  if (!ask) {
+    // An @mention with no open question behind it. Say so, rather than looking broken.
+    const space = ev.space?.name
+    if (space) await postText(space, ev.message?.thread?.threadKey ?? null, "I do not have an open question in this thread. I will post here when I need a hand with a partner email.", ev.message?.thread?.name ?? null)
+    return 'no ask for this thread'
+  }
   const text = (ev.message?.argumentText ?? ev.message?.text ?? '').replace(/@\S*cassie\S*/gi, '').trim()
   if (!text) return 'empty'
   const who = responderOf(ev.user ?? ev.message?.sender)
 
-  if (ask.awaiting_edit && ask.draft_reply_id) {
+  const plan = planForAsk(String(ask.status), Boolean(ask.awaiting_edit && ask.draft_reply_id))
+  if (plan.act === 'explain') {
+    await postText(ask.space_name, ask.thread_key, `Thanks ${who.name}. ${plan.text} You can still open it here: ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
+    return `ask is ${ask.status}`
+  }
+
+  if (plan.act === 'edit' && ask.awaiting_edit && ask.draft_reply_id) {
     // Edited text replaces the draft body; a person approved that exact wording.
     const { approveReply } = await import('./review')
     const { data: r } = await db.from('agent_email_replies').select('composed_text').eq('id', ask.draft_reply_id).single()
@@ -140,8 +169,6 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     await postText(ask.space_name, ask.thread_key, `Got it — sending your edited version. Thanks, ${who.name}.`)
     return 'edited and approved'
   }
-
-  if (!['open', 'answered'].includes(ask.status)) return `ask is ${ask.status}`
 
   await db.from('agent_chat_asks').update({ status: 'answered', responder_name: who.name, responder_email: who.email, responder_id: who.id, response_text: text, responded_at: new Date().toISOString() }).eq('id', ask.id)
   // Compose a clean partner reply FROM the answer — never forward it.

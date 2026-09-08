@@ -197,9 +197,13 @@ export async function postCard(space: string, threadKey: string, card: Record<st
   return capi<PostedMessage>(`/${space}/messages?${q}`, { method: 'POST', body: JSON.stringify({ text: text ?? '', cardsV2: [card], thread: { threadKey } }) })
 }
 
-export async function postText(space: string, threadKey: string, text: string): Promise<PostedMessage> {
+/** Post into a thread. Prefer the thread's resource name when we have it — that is what
+ *  Google echoes on an inbound event, and it lands the reply in the thread the person is
+ *  actually reading. A threadKey only works for threads we opened ourselves. */
+export async function postText(space: string, threadKey: string | null, text: string, threadName?: string | null): Promise<PostedMessage> {
   const q = new URLSearchParams({ messageReplyOption: 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD' })
-  return capi<PostedMessage>(`/${space}/messages?${q}`, { method: 'POST', body: JSON.stringify({ text, thread: { threadKey } }) })
+  const thread = threadName ? { name: threadName } : { threadKey }
+  return capi<PostedMessage>(`/${space}/messages?${q}`, { method: 'POST', body: JSON.stringify({ text, thread }) })
 }
 
 /** Replace a card we posted earlier (e.g. buttons → "Working…" / "Approved by Jane"). */
