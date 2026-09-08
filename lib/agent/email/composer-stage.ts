@@ -4,6 +4,7 @@ import { isLlmConfigured, describeLlmError } from '@/lib/agent/llm'
 import { getActiveCharter, listInstructions, listStyleExamples } from '@/lib/agent/knowledge'
 import type { LiveJobFacts } from '@/lib/agent/live-refresh'
 import { classifyInquiry } from './classify'
+import { extractIdentifiers } from './identifiers'
 import { buildGrounding, type GroundingPack } from './grounding'
 import { composeReply, renderBody, renderEmail } from './compose'
 import { checkGrounding } from './grounding-check'
@@ -42,6 +43,11 @@ export interface ComposerOptions {
   noChatAsk?: boolean
 }
 
+/** Reference numbers a team member typed into Chat, for the resolver to try. */
+export function chatAnswerPos(text: string | null | undefined): string[] {
+  return text ? extractIdentifiers(text).pos : []
+}
+
 export function makeComposerStage(opts: ComposerOptions = {}): ComposerStage {
   return async (db, settings, accepted) => runComposer(db, settings, accepted, opts)
 }
@@ -71,13 +77,23 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     await db.from('agent_email_replies').insert({ ...base, status: 'failed', error: `classify: ${err}` })
     return { outcome: 'error', detail: `classify: ${err}` }
   }
-  const pos = [...new Set([...a.identifiers.pos, ...extraPos])]
+  // The partner's numbers, the classifier's, and — when a team member has answered in
+  // Chat — theirs too. "It might be PO 74491444" is a lookup to run, not a phrase to relay.
+  const partnerPos = [...new Set([...a.identifiers.pos, ...extraPos])]
+  const pos = [...new Set([...partnerPos, ...chatAnswerPos(opts.chatAnswer?.text)])]
   const identifiers = { pos, customerName, email: a.identifiers.email, phone: a.identifiers.phone }
 
   // 3b. Ground.
   let pack: GroundingPack
   try {
-    pack = await buildGrounding(db, { identifiers, questionType, questionText: `${a.email.subject}\n${a.cleanBody}`, settings, liveOverride: opts.liveOverride, extraFacts: opts.chatAnswer ? [{ source: 'chat_answer', refId: opts.chatAnswer.askId, label: `Team answer · ${opts.chatAnswer.responder}`, text: opts.chatAnswer.text, values: [] }] : [] })
+    pack = await buildGrounding(db, { identifiers, questionType, questionText: `${a.email.subject}\n${a.cleanBody}`, settings, liveOverride: opts.liveOverride, extraFacts: [
+      // What the partner themselves wrote is a fact about the inquiry: "I don't see a job
+      // under PO 74233491444" repeats their number, it does not invent one.
+      ...(partnerPos.length ? [{ source: 'inquiry' as const, refId: null, label: 'Reference numbers in the partner\'s message', text: `The partner's message quotes: ${partnerPos.map(p => `PO ${p}`).join(', ')}.`, values: partnerPos }] : []),
+      // A team member's answer is written FROM, never quoted — so it carries no values the
+      // reply may repeat. A number they mention reaches the partner only via a job it matched.
+      ...(opts.chatAnswer ? [{ source: 'chat_answer' as const, refId: opts.chatAnswer.askId, label: `Team answer · ${opts.chatAnswer.responder}`, text: opts.chatAnswer.text, values: [] }] : []),
+    ] })
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
     await db.from('agent_email_replies').insert({ ...base, question_type: questionType, question_summary: summary, identifiers, status: 'failed', error: `grounding: ${err}` })

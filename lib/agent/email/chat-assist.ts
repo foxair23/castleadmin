@@ -198,14 +198,28 @@ const responderOf = (u: ChatUser | undefined) => ({ name: u?.displayName ?? u?.e
  *  does not send anything to the partner — so 'timed_out' is answerable, not closed. */
 export function planForAsk(status: string, awaitingEdit: boolean): { act: 'edit' | 'answer' } | { act: 'explain'; text: string } {
   if (awaitingEdit) return { act: 'edit' }
-  if (['open', 'answered', 'timed_out'].includes(status)) return { act: 'answer' }
+  // 'composed' is answerable too: a person who writes again after seeing the draft is
+  // revising their answer — "no, look up the other PO first" — not asking for a status.
+  if (['open', 'answered', 'timed_out', 'composed'].includes(status)) return { act: 'answer' }
   const said: Record<string, string> = {
-    composed: 'I have already written a reply for this one — it is on the card above, waiting for Approve, Edit or Send to review.',
     approved: 'This one is already approved and on its way, so I have not changed anything.',
     sent: 'This one has already gone to the partner, so I have not changed anything.',
     reviewed: 'This one is already in the review queue for a person to finish.',
   }
   return { act: 'explain', text: said[status] ?? `This question is already closed (${status}), so I have not changed anything.` }
+}
+
+export interface LookupSummary { resolve_status?: string | null; sf_job_number?: string | null; identifiers?: { pos?: string[] } | null }
+
+/** One line on what the resolver did with the reference numbers in play — the partner's and
+ *  any the team supplied — so the person in Chat can see the lookup happened. */
+export function describeLookup(d: LookupSummary | null | undefined): string | null {
+  const pos = d?.identifiers?.pos ?? []
+  if (!pos.length) return null
+  const list = pos.map(p => `PO ${p}`).join(', ')
+  if (d?.resolve_status === 'matched' && d.sf_job_number) return `Looked up ${list} — matched Job ${d.sf_job_number}.`
+  if (d?.resolve_status === 'ambiguous') return `Looked up ${list} — more than one job could match, so I did not pick one.`
+  return `Looked up ${list} — no job found under ${pos.length > 1 ? 'any of them' : 'it'}.`
 }
 
 /** A person wrote in an ask's thread: either the answer, or the edited text we asked for. */
@@ -241,21 +255,35 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     return 'edited and approved'
   }
 
-  await db.from('agent_chat_asks').update({ status: 'answered', responder_name: who.name, responder_email: who.email, responder_id: who.id, response_text: text, responded_at: new Date().toISOString() }).eq('id', ask.id)
+  // The whole conversation is the answer, not just the latest line: "it might be PO
+  // 74491444" followed by "look that up first" only makes sense together.
+  const conversation = [ask.response_text as string | null, text].filter(Boolean).join('\n')
+  await db.from('agent_chat_asks').update({ status: 'answered', responder_name: who.name, responder_email: who.email, responder_id: who.id, response_text: conversation, responded_at: new Date().toISOString() }).eq('id', ask.id)
+  // A previous draft card must not keep offering Approve for a reply that is about to be
+  // superseded. Approving it would be refused anyway; better that it does not invite it.
+  if (ask.draft_card_name) {
+    await updateCard(ask.draft_card_name as string, buildCard(`superseded-${ask.id}`, {
+      header: 'Superseded — a newer answer came in', subheader: `${who.name} added more; the current draft is below.`, paragraphs: [{ text: ' ' }],
+    }), 'Superseded by a newer answer').catch(() => { /* the card may already be gone */ })
+  }
   // Compose a clean partner reply FROM the answer — never forward it.
   const { recomposeReply } = await import('./composer-stage')
-  const rc = await recomposeReply(db, settings, ask.reply_id as string, `answered in Google Chat by ${who.name}`, { chatAnswer: { askId: ask.id as string, text, responder: who.name }, noChatAsk: true })
+  const rc = await recomposeReply(db, settings, ask.reply_id as string, `answered in Google Chat by ${who.name}`, { chatAnswer: { askId: ask.id as string, text: conversation, responder: who.name }, noChatAsk: true })
   if (rc.outcome === 'error' || !rc.replyId) {
     await postText(ask.space_name, ask.thread_key, `Thanks ${who.name}. I could not write the reply (${rc.detail ?? 'unknown error'}). It is in the review queue: ${reviewUrl(ask.reply_id as string)}`)
     return 'compose failed'
   }
-  const { data: draft } = await db.from('agent_email_replies').select('composed_text, unsourced_claims').eq('id', rc.replyId).single()
+  const { data: draft } = await db.from('agent_email_replies').select('composed_text, unsourced_claims, resolve_status, sf_job_number, identifiers').eq('id', rc.replyId).single()
   const body = stripWrapper((draft?.composed_text as string) ?? '')
   const unsourced = (draft?.unsourced_claims as string[]) ?? []
+  const checked = describeLookup(draft as LookupSummary | null)
   const card = buildCard(`draft-${rc.replyId}`, {
     header: 'Here is what I would send',
     subheader: `Based on ${who.name}'s answer`,
     paragraphs: [
+      // Say what was looked up before showing the draft, so "no job under that PO" reads
+      // as a result rather than a shrug.
+      ...(checked ? [{ label: 'What I checked', text: checked }] : []),
       { label: 'Reply to the partner', text: body },
       ...(unsourced.length ? [{ label: 'Heads up — not backed by a record', text: unsourced.join('\n') }] : []),
     ],
