@@ -616,7 +616,10 @@ async function runJobSchedule(cfg, log) {
     } catch (e) {
       res = { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, date: item.date, window: res?.window ? `${res.window.start}-${res.window.end}` : (item.windowStart ? `${item.windowStart}-${item.windowEnd}` : null), ...res })
+    // The writer reports the window it used as { start, end }; the log wants one string.
+    const { window: w, ...rest } = res || {}
+    const windowText = w ? `${w.start}-${w.end}${item.windowStart ? '' : ' (default)'}` : (item.windowStart ? `${item.windowStart}-${item.windowEnd}` : null)
+    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, date: item.date, window: windowText, ...rest })
 
     if (!cfg.dryRun) {
       try {
