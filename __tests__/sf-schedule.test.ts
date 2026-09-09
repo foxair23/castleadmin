@@ -1,72 +1,75 @@
 import { describe, it, expect } from 'vitest'
-import { toSfDate, toSfTime, findScheduleCandidates, isMapped, buildScheduleBody } from '../chrome-extension/sf-remittance/sf-schedule.js'
+import { toSfDate, toSfTime, windowFor, jobUpdatedAtFromPage, statusIdFromPage, buildSchedulePayloads, postSucceeded, DEFAULT_WINDOW } from '../chrome-extension/sf-remittance/sf-schedule.js'
 
-// The extension writes a Genie appointment into SF's job edit form the way sf-lines.js writes
-// line items: echo the form as it stands, change only our fields, flip only our section flag.
-const MAP = { startDate: 'Job[start_date]', windowStart: 'Job[tf_start]', windowEnd: 'Job[tf_end]', dateFormat: 'MM/DD/YYYY', timeFormat: 'h:mm A' }
-const FORM: Array<[string, string]> = [
-  ['inPage', '1'], ['Job[customer_id]', '42'], ['Job[start_date]', '09/01/2026'], ['Job[tf_start]', '8:00 AM'], ['Job[tf_end]', '12:00 PM'],
-  ['Job[description]', 'a & b'], ['jobStartDateModified', '0'], ['jobChargesModified', '0'], ['lastUpdated', '2026-09-01 10:00:00'],
-]
-
-describe('date and time formats', () => {
-  it('renders the form formats from what we store', () => {
-    expect(toSfDate('2026-09-15')).toBe('09/15/2026')
-    expect(toSfDate('2026-09-15', 'YYYY-MM-DD')).toBe('2026-09-15')
-    expect(toSfTime('08:00')).toBe('8:00 AM')
-    expect(toSfTime('12:00')).toBe('12:00 PM')
-    expect(toSfTime('00:30')).toBe('12:30 AM')
-    expect(toSfTime('13:05', 'HH:mm')).toBe('13:05')
+// Wire formats and body shapes are pinned to a real capture of the job view page's inline
+// editors (2026-09-08). Change them only against a new capture.
+describe('wire formats', () => {
+  it('date is DD-MM-YYYY', () => {
+    expect(toSfDate('2026-09-15')).toBe('15-09-2026')
+    expect(() => toSfDate('09/15/2026')).toThrow()
   })
-  it('refuses malformed values rather than writing them into a job', () => {
-    expect(() => toSfDate('9/15/26')).toThrow()
+  it('time is zero-padded 12-hour with lower-case am/pm', () => {
+    expect(toSfTime('08:00')).toBe('08:00 am')
+    expect(toSfTime('16:00')).toBe('04:00 pm')
+    expect(toSfTime('12:00')).toBe('12:00 pm')
+    expect(toSfTime('00:30')).toBe('12:30 am')
     expect(() => toSfTime('8am')).toThrow()
+    expect(() => toSfTime('25:00')).toThrow()
   })
 })
 
-describe('field discovery for the dry run', () => {
-  it('lists date/time-shaped fields with their current values, and skips the section flags', () => {
-    const c = findScheduleCandidates(FORM)
-    expect(c.map((x: { name: string }) => x.name)).toEqual(['Job[start_date]', 'Job[tf_start]', 'Job[tf_end]', 'lastUpdated'])
-    expect(c[0].value).toBe('09/01/2026')
+describe('business rules', () => {
+  it('"any time" becomes the 8-to-4 window', () => {
+    expect(windowFor(null, null)).toEqual(DEFAULT_WINDOW)
+    expect(DEFAULT_WINDOW).toEqual({ start: '08:00', end: '16:00' })
+  })
+  it('a chosen window is kept', () => {
+    expect(windowFor('10:00', '14:00')).toEqual({ start: '10:00', end: '14:00' })
   })
 })
 
-describe('isMapped', () => {
-  it('needs the date field, and the window fields only when a window is written', () => {
-    expect(isMapped(FORM, MAP, false)).toBe(true)
-    expect(isMapped(FORM, MAP, true)).toBe(true)
-    expect(isMapped(FORM, { ...MAP, windowEnd: null }, true)).toBe(false)
-    expect(isMapped(FORM, { ...MAP, windowEnd: null }, false)).toBe(true)
+describe('reading the job page', () => {
+  it('finds the concurrency token in the forms SF is known to use', () => {
+    expect(jobUpdatedAtFromPage(`<input type="hidden" name="jobUpdatedAt" value="cNlIOo3LgNX_adigHXhhV0quYKS2-kfJ9ftVZSpF2A4">`)).toBe('cNlIOo3LgNX_adigHXhhV0quYKS2-kfJ9ftVZSpF2A4')
+    expect(jobUpdatedAtFromPage(`var cfg = { jobUpdatedAt: 'cNlIOo3LgNX_adigHXhhV0quYKS2-kfJ9ftVZSpF2A4' }`)).toBe('cNlIOo3LgNX_adigHXhhV0quYKS2-kfJ9ftVZSpF2A4')
+    expect(jobUpdatedAtFromPage('<html>nothing</html>')).toBeNull()
   })
-  it('is false until FIELD_MAP is confirmed — the default state refuses to post', () => {
-    expect(isMapped(FORM, { startDate: null, windowStart: null, windowEnd: null }, false)).toBe(false)
-  })
-  it('is false when the mapped name is not actually on this form', () => {
-    expect(isMapped(FORM, { ...MAP, startDate: 'Job[nope]' }, false)).toBe(false)
+  it('finds the Scheduled status id in a status list, whichever attribute carries it', () => {
+    expect(statusIdFromPage(`<option value="1018744944">Unscheduled</option><option value="1018744945">Scheduled</option>`)).toBe('1018744945')
+    expect(statusIdFromPage(`<li data-value="1018744945" class="x"> Scheduled </li>`)).toBe('1018744945')
+    expect(statusIdFromPage(`<option value="1">Rescheduled</option>`)).toBeNull()
   })
 })
 
-describe('buildScheduleBody', () => {
+describe('buildSchedulePayloads', () => {
   const parse = (body: string) => Object.fromEntries(body.split('&').map(p => p.split('=').map(decodeURIComponent)))
+  const P = buildSchedulePayloads({ jobId: 'K1UHlU2w47', date: '2026-09-15', windowStart: null, windowEnd: null, jobUpdatedAt: 'tok_123', statusId: '1018744945' })
 
-  it('echoes every other field untouched and replaces only ours', () => {
-    const b = parse(buildScheduleBody(FORM, MAP, { date: '2026-09-15', windowStart: '08:00', windowEnd: '12:00' }))
-    expect(b['Job[customer_id]']).toBe('42')
-    expect(b['Job[description]']).toBe('a & b')
-    expect(b['lastUpdated']).toBe('2026-09-01 10:00:00')   // SF's own concurrency guard, echoed
-    expect(b['Job[start_date]']).toBe('09/15/2026')
-    expect(b['Job[tf_start]']).toBe('8:00 AM')
-    expect(b['Job[tf_end]']).toBe('12:00 PM')
+  it('posts date, then window, then status', () => {
+    expect(P.map(p => p.step)).toEqual(['date', 'window', 'status'])
+    expect(P.map(p => p.path)).toEqual(['/jobs/changeJobDatePopup', '/jobs/changeJobTimePopupXedit', '/jobs/updateJobStatus'])
   })
-  it('flips only the start-date section flag', () => {
-    const b = parse(buildScheduleBody(FORM, MAP, { date: '2026-09-15', windowStart: null, windowEnd: null }))
-    expect(b['jobStartDateModified']).toBe('1')
-    for (const k of ['jobChargesModified', 'jobTechsModified', 'jobStatusModified', 'jobNotesModified', 'jobLocationModified']) expect(b[k]).toBe('0')
+  it('matches the captured date body', () => {
+    expect(parse(P[0].body)).toEqual({ name: 'startdatepicker', value: '15-09-2026', pk: '1', jobId: 'K1UHlU2w47', updateChildrenJobs: '0', responseFormat: 'json' })
   })
-  it('leaves the window fields alone when the booking is "any time"', () => {
-    const b = parse(buildScheduleBody(FORM, MAP, { date: '2026-09-15', windowStart: null, windowEnd: null }))
-    expect(b['Job[tf_start]']).toBeUndefined()
-    expect(b['Job[tf_end]']).toBeUndefined()
+  it('matches the captured window body, with the 8-to-4 default', () => {
+    expect(parse(P[1].body)).toEqual({ name: 'xeditTime-timeRange', 'value[time_frame_promised_start]': '08:00 am', 'value[time_frame_promised_end]': '04:00 pm', pk: '1', jobId: 'K1UHlU2w47', updateChildrenJobs: '0' })
+  })
+  it('matches the captured status body, carrying the page token', () => {
+    expect(parse(P[2].body)).toEqual({ name: 'statusManual', value: '1018744945', pk: '1', jobId: 'K1UHlU2w47', jobUpdatedAt: 'tok_123', accept: 'html', updateChildrenJobs: '0' })
+  })
+})
+
+describe('postSucceeded', () => {
+  it('accepts a 200 with a quiet or affirmative body', () => {
+    expect(postSucceeded({ status: 200, loginRedirect: false, text: '' })).toBe(true)
+    expect(postSucceeded({ status: 200, loginRedirect: false, text: '{"success":true}' })).toBe(true)
+    expect(postSucceeded({ status: 200, loginRedirect: false, text: '<div class="ok">Sep 15</div>' })).toBe(true)
+  })
+  it('rejects a login bounce, a non-200, or a body that says it failed', () => {
+    expect(postSucceeded({ status: 200, loginRedirect: true, text: '' })).toBe(false)
+    expect(postSucceeded({ status: 500, loginRedirect: false, text: '' })).toBe(false)
+    expect(postSucceeded({ status: 200, loginRedirect: false, text: '{"success":false,"error":"Invalid date"}' })).toBe(false)
+    expect(postSucceeded({ status: 200, loginRedirect: false, text: 'Error: job is locked' })).toBe(false)
   })
 })

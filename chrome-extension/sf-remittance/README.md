@@ -74,15 +74,14 @@ interval.
 - `app-api.js` — talks to Castle Admin (payment + note queue / callback)
 - `options.html/js`, `popup.html/js`, `store.js`
 
-## Genie appointments → SF job (0.9.0)
+## Genie appointments → SF job (0.9.4)
 
 The Genie self-scheduler cannot set a job's date through the API (PUT /jobs/{id} is 405), so
-booked appointments are queued and this extension writes them into the job edit form — the
-same way it posts payments and IPO line items.
+booked appointments are queued and this extension writes them into the job — the same way it
+posts payments and IPO line items — using the job view page's three inline editors, captured
+from a real session: `changeJobDatePopup` (date, DD-MM-YYYY), `changeJobTimePopupXedit`
+(arrival window, "08:00 am"–"04:00 pm") and `updateJobStatus` (→ Scheduled). A booking with no
+window is written as 8:00 am – 4:00 pm.
 
-**First run is a discovery run.** The exact schedule field names on SF's job edit form are
-not yet confirmed. With **Dry run ON**, each queued appointment produces a trace entry with
-`candidates` — every date/time-shaped field on the form and its current value — and
-`mapped: false`. Send that trace over; the names get pinned in `FIELD_MAP` at the top of
-`sf-schedule.js`, a new version ships, and only then does live mode post. Until the mapping is
-confirmed the extension leaves those items queued and never saves the form.
+**Dry run** opens the job page, reads the concurrency token and the Scheduled status id off
+it, and shows the three payloads it would post. Nothing is written until Dry run is off.
