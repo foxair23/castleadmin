@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toSfDate, toSfTime, windowFor, jobUpdatedAtFromPage, statusIdFromPage, buildSchedulePayloads, postSucceeded, DEFAULT_WINDOW } from '../chrome-extension/sf-remittance/sf-schedule.js'
+import { toSfDate, toSfTime, windowFor, jobUpdatedAtFromPage, statusIdFromPage, statusSnippet, buildSchedulePayloads, postSucceeded, DEFAULT_WINDOW } from '../chrome-extension/sf-remittance/sf-schedule.js'
 
 // Wire formats and body shapes are pinned to a real capture of the job view page's inline
 // editors (2026-09-08). Change them only against a new capture.
@@ -34,10 +34,22 @@ describe('reading the job page', () => {
     expect(jobUpdatedAtFromPage(`var cfg = { jobUpdatedAt: 'cNlIOo3LgNX_adigHXhhV0quYKS2-kfJ9ftVZSpF2A4' }`)).toBe('cNlIOo3LgNX_adigHXhhV0quYKS2-kfJ9ftVZSpF2A4')
     expect(jobUpdatedAtFromPage('<html>nothing</html>')).toBeNull()
   })
-  it('finds the Scheduled status id in a status list, whichever attribute carries it', () => {
+  it('finds the Scheduled status id whatever the control looks like', () => {
     expect(statusIdFromPage(`<option value="1018744944">Unscheduled</option><option value="1018744945">Scheduled</option>`)).toBe('1018744945')
     expect(statusIdFromPage(`<li data-value="1018744945" class="x"> Scheduled </li>`)).toBe('1018744945')
+    expect(statusIdFromPage(`<a href="#" data-status-id="1018744945" class="status-item">Scheduled</a>`)).toBe('1018744945')
+    expect(statusIdFromPage(`<kendo-item data-kendo-id="1018744945" role="option">Scheduled</kendo-item>`)).toBe('1018744945')
+    expect(statusIdFromPage(`var statuses = [{"id":1018744944,"name":"Unscheduled"},{"id":1018744945,"name":"Scheduled"}]`)).toBe('1018744945')
+    expect(statusIdFromPage(`[{name:"Scheduled", color:"#0f0", id:"1018744945"}]`)).toBe('1018744945')
+  })
+  it('does not mistake Unscheduled or Rescheduled for Scheduled, and returns null when absent', () => {
+    expect(statusIdFromPage(`<option value="1018744944">Unscheduled</option>`)).toBeNull()
     expect(statusIdFromPage(`<option value="1">Rescheduled</option>`)).toBeNull()
+    expect(statusIdFromPage(`<html>no statuses here</html>`)).toBeNull()
+  })
+  it('quotes the page around the word when nothing parses, so the next run shows the markup', () => {
+    expect(statusSnippet(`<div class="weird-widget"><span data-x="9">Scheduled</span></div>`)).toContain('weird-widget')
+    expect(statusSnippet(`<html>nothing</html>`)).toMatch(/does not appear/)
   })
 })
 
