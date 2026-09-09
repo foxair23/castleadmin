@@ -50,12 +50,20 @@ export interface IpoIngestResult {
 /** Clopay's documenT_TYPE for one stored document, read off the order's crawled detail
  *  (`raw.documents[]`, keyed by the same id we store as `external_ref`). */
 function docTypeFor(raw: unknown, externalRef: string | null): string | null {
-  if (!raw || typeof raw !== 'object' || !externalRef) return null
+  return docMetaFor(raw, externalRef).docType
+}
+
+/** Clopay's documenT_TYPE and the portal's own name for one stored document, from the
+ *  order's crawled detail (`raw.documents[]`, keyed by the id we keep as `external_ref`). */
+export function docMetaFor(raw: unknown, externalRef: string | null): { docType: string | null; name: string | null } {
+  if (!raw || typeof raw !== 'object' || !externalRef) return { docType: null, name: null }
   const docs = (raw as { documents?: unknown }).documents
-  if (!Array.isArray(docs)) return null
-  const hit = docs.find(d => d && typeof d === 'object' && String((d as { id?: unknown }).id ?? '') === externalRef)
-  const t = hit && (hit as { docType?: unknown }).docType
-  return typeof t === 'string' ? t : null
+  if (!Array.isArray(docs)) return { docType: null, name: null }
+  const hit = docs.find(d => d && typeof d === 'object' && String((d as { id?: unknown }).id ?? '') === externalRef) as { docType?: unknown; name?: unknown } | undefined
+  return {
+    docType: typeof hit?.docType === 'string' ? hit.docType : null,
+    name: typeof hit?.name === 'string' ? hit.name : null,
+  }
 }
 
 /** Parse one stored attachment and persist every IPO it contains. Never throws — the

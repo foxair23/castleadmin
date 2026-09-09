@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parsePendingIpoAttachments } from '@/lib/vendor-orders/ipo-ingest'
 import { syncPendingSfJobLines } from '@/lib/vendor-orders/sf-job-lines'
+import { classifyPendingAttachments } from '@/lib/esign/backfill'
 
 export const maxDuration = 300
 
@@ -47,7 +48,17 @@ export async function GET(req: NextRequest) {
   // services are written to; anything with hand-entered lines is reported, never overwritten.
   const sfLines = await syncPendingSfJobLines(50)
 
+  // Classify stored documents for e-sign (blank lien waivers → esign rows; signed ones close
+  // them). Backfills the ones captured before the crawl carried the document type; new
+  // documents are classified by the store route as they arrive. Same time budget.
+  const esign = { looked: 0, lien_waiver: 0, signed: 0, none: 0, remaining: 0, batches: 0 }
+  for (;;) {
+    const c = await classifyPendingAttachments(100)
+    esign.batches++; esign.looked += c.looked; esign.lien_waiver += c.lien_waiver; esign.signed += c.signed; esign.none += c.none; esign.remaining = c.remaining
+    if (once || c.remaining === 0 || c.looked === 0 || Date.now() - started > BUDGET_MS) break
+  }
+
   // `candidates` vs `skipped` matters: "nothing to do" and "nothing recognized" are very
   // different outcomes and used to be indistinguishable here.
-  return NextResponse.json({ ...total, remaining, batches, sf_lines: sfLines, elapsed_ms: Date.now() - started, ok_run: true, done: remaining === 0 })
+  return NextResponse.json({ ...total, remaining, batches, sf_lines: sfLines, esign, elapsed_ms: Date.now() - started, ok_run: true, done: remaining === 0 })
 }

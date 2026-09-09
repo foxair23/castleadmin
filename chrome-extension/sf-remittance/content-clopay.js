@@ -355,14 +355,16 @@
       if (!d.id) continue
       if (attempted >= (budget || docs.length)) break
       const filename = d.name || `doc-${d.id}`
-      const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId: d.id, filename })
+      // Clopay's document type and the portal's own name travel with the file: the stored
+      // filename is made filesystem-safe and URL-style names are unrecognisable after that.
+      const chk = await msgBg({ type: 'clopay-store-doc', external_id, documentId: d.id, filename, docType: d.docType || null, rawName: d.name || null })
       if (chk.ok && chk.alreadyStored) { existing++; continue }
       if (!chk.ok) { LOG(`doc ${d.id}: check failed (${chk.error || '?'})`); continue }
       const url = await resolveDocUrl(d.id, d.docType, installerNum)
       if (!url) { LOG(`doc ${d.id}: getdocumenturl failed`); continue }
       attempted++
       const capture = async (u) => {
-        const res = await msgBg({ type: 'clopay-capture-docs', docs: [{ external_id, documentId: d.id, filename, url: u }] })
+        const res = await msgBg({ type: 'clopay-capture-docs', docs: [{ external_id, documentId: d.id, filename, url: u, docType: d.docType || null, rawName: d.name || null }] })
         return (res && res.results && res.results[0]) || { ok: false, error: res && res.error }
       }
       let r = await capture(url)
