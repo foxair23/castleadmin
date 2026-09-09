@@ -42,6 +42,11 @@ describe('reading the job page', () => {
     expect(statusIdFromPage(`var statuses = [{"id":1018744944,"name":"Unscheduled"},{"id":1018744945,"name":"Scheduled"}]`)).toBe('1018744945')
     expect(statusIdFromPage(`[{name:"Scheduled", color:"#0f0", id:"1018744945"}]`)).toBe('1018744945')
   })
+  it('reads the x-editable source the job page actually uses ({value, text}, options built at click time)', () => {
+    const page = `$('#statusManual').editable({ type: 'select', source: [{value: 1018744943, text: "Unscheduled"}, {value: 1018744945, text: "Scheduled"}, {value: 1018744946, text: "Rescheduled"}] })`
+    expect(statusIdFromPage(page)).toBe('1018744945')
+    expect(statusIdFromPage(`source: [{"text":"Scheduled","value":"1018744945"}]`)).toBe('1018744945')
+  })
   it('does not mistake Unscheduled or Rescheduled for Scheduled, and returns null when absent', () => {
     expect(statusIdFromPage(`<option value="1018744944">Unscheduled</option>`)).toBeNull()
     expect(statusIdFromPage(`<option value="1">Rescheduled</option>`)).toBeNull()

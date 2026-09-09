@@ -61,11 +61,17 @@ export function jobUpdatedAtFromPage(html) {
 }
 
 /** The id of a named status, from the view page — whatever the status control looks like.
- *  Tried in order: an element whose text is the name and which carries a numeric attribute
- *  (any attribute name); JSON embedded in the page in either key order. */
+ *
+ *  On the job page the status is an x-editable popover (a#statusManual → a <select> built at
+ *  click time), so the options are not in the markup at all: they sit in the editor's JS
+ *  `source` array as { value, text } pairs. That form is tried first. Then: an element whose
+ *  text is the name carrying any numeric attribute; then { id, name } JSON, either key order. */
 export function statusIdFromPage(html, name = SCHEDULED_STATUS_NAME) {
   const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const tries = [
+    // x-editable source: {value: 1018744945, text: "Scheduled"} — either order, quoted or not
+    new RegExp(`["']?value["']?\\s*:\\s*["']?(\\d{3,})["']?[^{}]{0,200}["']?text["']?\\s*:\\s*["']${n}["']`, 'i'),
+    new RegExp(`["']?text["']?\\s*:\\s*["']${n}["'][^{}]{0,200}["']?value["']?\\s*:\\s*["']?(\\d{3,})`, 'i'),
     new RegExp(`[A-Za-z_:-]+=["'](\\d{3,})["'][^<>]{0,300}>\\s*${n}\\s*<`, 'i'),
     new RegExp(`>\\s*${n}\\s*<[^<>]{0,300}?[A-Za-z_:-]+=["'](\\d{3,})["']`, 'i'),
     new RegExp(`["']?id["']?\\s*:\\s*["']?(\\d{3,})["']?[^{}]{0,200}["']?name["']?\\s*:\\s*["']${n}["']`, 'i'),
