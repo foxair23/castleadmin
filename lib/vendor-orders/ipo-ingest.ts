@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { downloadVendorDoc } from './attachments'
 import { isIpoDoc, parseIpoDocument, type IpoParseResult } from './clopay-ipo'
 import { loadRateSchedule, variancePatch } from './clopay-rates'
+import { autoQueueLinesAfterIpo } from './sf-lines-queue'
 
 // Turn a stored Clopay IPO PDF into structured line items.
 //
@@ -197,6 +198,13 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
     const { data: kid } = await supabase.from('vendor_orders').select('parent_order_id').eq('id', oid).maybeSingle()
     const pid = kid?.parent_order_id as string | null | undefined
     if (pid && pid !== parentId) await rollUpGroupTotal(supabase, pid)
+  }
+
+  // The lines are stored; if the SF job already exists, queue them for the extension now
+  // rather than waiting for a button. Best-effort: a hiccup here must not fail the parse.
+  if (touchedOrders.size) {
+    try { await autoQueueLinesAfterIpo([...touchedOrders]) }
+    catch (e) { console.error('[ipo-ingest] auto-queue of line items failed:', e instanceof Error ? e.message : e) }
   }
 
   // Two very different outcomes, kept apart so neither hides the other:

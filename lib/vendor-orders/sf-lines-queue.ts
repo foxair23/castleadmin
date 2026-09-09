@@ -48,7 +48,40 @@ export interface EnqueueResult {
 
 /** Mark one order's lines ready for the extension. Refuses when the job already carries
  *  line items — those are somebody's hand-entered work and this never competes with it. */
-export async function enqueueSfJobLines(orderId: string): Promise<EnqueueResult> {
+/** Statuses that mean the lines are already on their way or already there. Anything else —
+ *  never considered, skipped earlier for want of revenue lines, or failed — is worth another
+ *  look when new IPO lines arrive. */
+export function shouldAutoQueueLines(status: string | null | undefined): boolean {
+  return status !== 'queued' && status !== 'posted'
+}
+
+/** IPO lines just landed for these orders. For each house whose SF job already exists and
+ *  whose lines are not already queued or posted, queue them for the extension — the IPO
+ *  almost always arrives AFTER autopilot has created the job, so without this the lines
+ *  would wait for someone to press the button. The extension still refuses a job that
+ *  carries any hand-entered line, so nothing of the office's is ever overwritten. Orders
+ *  with no job yet are left alone: their lines ride along when the job is created. */
+export async function autoQueueLinesAfterIpo(orderIds: string[]): Promise<{ queued: number; skipped: number; noJob: number; errors: number }> {
+  const out = { queued: 0, skipped: 0, noJob: 0, errors: 0 }
+  const ids = [...new Set(orderIds.filter(Boolean))]
+  if (!ids.length) return out
+  const supabase = db()
+  const { data } = await supabase.from('vendor_orders').select('id, parent_order_id').in('id', ids)
+  const roots = [...new Set(((data ?? []) as Array<{ id: string; parent_order_id: string | null }>).map(o => o.parent_order_id ?? o.id))]
+  for (const rootId of roots) {
+    const { data: root } = await supabase.from('vendor_orders').select('sf_lines_status').eq('id', rootId).maybeSingle()
+    if (!shouldAutoQueueLines(root?.sf_lines_status as string | null)) { out.skipped++; continue }
+    const r = await enqueueSfJobLines(rootId, { source: 'ipo' })
+    if (r.status === 'queued') out.queued++
+    else if (r.status === 'no_job') out.noJob++
+    else if (r.status === 'error') out.errors++
+    else out.skipped++
+  }
+  console.log(`[sf-lines-queue] after IPO: ${out.queued} queued, ${out.skipped} skipped, ${out.noJob} without a job yet, ${out.errors} error(s)`)
+  return out
+}
+
+export async function enqueueSfJobLines(orderId: string, opts: { source?: 'button' | 'ipo' } = {}): Promise<EnqueueResult> {
   const supabase = db()
   try {
     const { data: self } = await supabase
@@ -82,7 +115,7 @@ export async function enqueueSfJobLines(orderId: string): Promise<EnqueueResult>
       return { ok: true, status: 'already_has_lines', existing, lines: 0, note }
     }
 
-    const note = `${services.length} line item(s) queued for the extension`
+    const note = `${services.length} line item(s) queued for the extension${opts.source === 'ipo' ? ' (automatically, when the IPO arrived)' : ''}`
     await stamp(supabase, rootId, 'queued', note)
     return { ok: true, status: 'queued', lines: services.length, note }
   } catch (e) {
