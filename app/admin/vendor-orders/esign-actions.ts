@@ -136,3 +136,14 @@ export async function adoptAttachmentAsWaiverAction(attachmentId: string): Promi
     return { ok: true, docId: r.docId }
   } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) } }
 }
+
+/** Find the SF job for every waiting document that has none (shared matcher), and store it. */
+export async function linkEsignJobsAction(): Promise<{ ok: boolean; looked?: number; linked?: number; error?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { linkMissingEsignJobs } = await import('@/lib/esign/job-link')
+  const { createClient: adminClient } = await import('@supabase/supabase-js')
+  const supabase = adminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
+  const r = await linkMissingEsignJobs(supabase, 500)
+  revalidatePath(PATH)
+  return { ok: true, ...r }
+}

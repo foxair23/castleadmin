@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction, resetSignatureAction } from '../esign-actions'
+import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction, resetSignatureAction, linkEsignJobsAction } from '../esign-actions'
 
 export interface EsignRow {
   id: string; order_id: string; status: string; template_key: string | null; template_fingerprint: string | null
@@ -67,6 +67,7 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={btnDark} disabled={pending} onClick={() => run(classifyBacklogAction, r => `Classified ${r.looked}: ${r.lien_waiver} blank waiver(s), ${r.signed} signed, ${r.none} other · ${r.remaining} left`)}>Classify stored documents</button>
           <button className={btnDark} disabled={pending} onClick={() => run(runPrepareSweepAction, r => `Looked at ${r.looked}: ${r.prepared} prepared, ${r.unrecognised} need a template, ${r.failed} failed`)}>Prepare pending</button>
+          <button className={btnDark} disabled={pending} title="Find each waiting document's SF job through the shared matcher (PO → name → email → phone) and store it. The job's start date is what decides when the customer is messaged." onClick={() => run(linkEsignJobsAction, r => `Looked at ${r.looked} without a job: linked ${r.linked}`)}>Link SF jobs</button>
           {uninspected > 0 && <span className="text-xs text-gray-500">{uninspected} found and not yet inspected</span>}
           {msg && <span className="text-xs text-gray-700">{msg}</span>}
         </div>

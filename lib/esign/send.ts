@@ -10,6 +10,7 @@ import { templateByKey, type TemplateService } from './templates'
 import { customerStageDue, ptDay, ptHour, type CustomerStage } from './eligibility'
 import { getEsignSettings } from './settings'
 import { prepareEsignDoc } from './prepare'
+import { linkMissingEsignJobs } from './job-link'
 
 // The customer sender. An hourly sweep (business hours PT) walks the documents that are
 // prepared or already with the customer, asks eligibility.ts which message — if any — is due
@@ -91,6 +92,8 @@ export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSwee
   const out: EsignSweepResult = { enabled: s.enabled, looked: 0, sent: 0, failed: 0, held: 0, errors: [] }
   if (!s.enabled || !s.enabledAt) return out
   const supabase = db()
+  // Jobs get booked after the blank shows up; find them first so today's installs are seen.
+  await linkMissingEsignJobs(supabase)
   const { data: docs } = await supabase.from('esign_documents').select(DOC_COLS)
     .eq('vendor', VENDOR).eq('doc_type', DOC_TYPE).in('status', ['found', 'prepared', 'sent_customer']).is('customer_signed_at', null)
     .gte('created_at', s.enabledAt).order('created_at', { ascending: true }).limit(200)

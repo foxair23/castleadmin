@@ -3,6 +3,7 @@ import { downloadVendorDoc } from '@/lib/vendor-orders/attachments'
 import { inspectPdf, fingerprintPdf, renderPrepared, renderOverlay, type PdfInspection } from './render'
 import { resolveTemplate, templateByKey, type TemplateSpec } from './templates'
 import { buildPrefill, type PrefillOrder, type PrefillJob } from './prefill'
+import { linkEsignJob } from './job-link'
 
 // From "found" to "prepared": download the blank, work out which form version it is, fill it
 // from the order and job, store the result. A version the registry does not know is held as
@@ -23,9 +24,10 @@ async function loadContext(supabase: SupabaseClient, docId: string) {
   const { data: att } = await supabase.from('vendor_order_attachments').select('id, storage_path').eq('id', doc.source_attachment_id as string).maybeSingle()
   const { data: root } = await supabase.from('vendor_orders').select(ORDER_COLS).eq('id', doc.order_id as string).maybeSingle()
   const { data: kids } = await supabase.from('vendor_orders').select(ORDER_COLS).eq('parent_order_id', doc.order_id as string)
-  const sfJobId = (root?.sf_job_id as string | null) ?? (doc.sf_job_id as string | null)
-  const { data: job } = sfJobId ? await supabase.from('sf_jobs').select('number, start_date').eq('id', sfJobId).maybeSingle() : { data: null }
-  return { doc, att, root: root as PrefillOrder | null, doors: (kids ?? []) as PrefillOrder[], job: job as PrefillJob | null, sfJobId }
+  // The SF job: stored on the row, on the order, or found by the shared matcher and kept.
+  const linked = await linkEsignJob(supabase, { id: doc.id as string, order_id: doc.order_id as string, sf_job_id: doc.sf_job_id as string | null })
+  const job: PrefillJob | null = linked ? { number: linked.number, start_date: linked.start_date } : null
+  return { doc, att, root: root as PrefillOrder | null, doors: (kids ?? []) as PrefillOrder[], job, sfJobId: linked?.sfJobId ?? null }
 }
 
 export interface PrepareResult { ok: boolean; status?: string; fingerprint?: string; template?: string | null; error?: string }
