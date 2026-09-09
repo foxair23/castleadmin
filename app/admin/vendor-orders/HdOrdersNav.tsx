@@ -14,6 +14,8 @@ export default function HdOrdersNav({ base }: { base: string }) {
     { href: base, label: 'Genie', active: pathname === base },
     { href: `${base}/clopay`, label: 'Clopay', active: pathname.startsWith(`${base}/clopay`) && !pathname.startsWith(`${base}/clopay-sts`) },
     { href: `${base}/clopay-sts`, label: 'Clopay STS', active: pathname.startsWith(`${base}/clopay-sts`) },
+    // Signatures (e-signed lien waivers) is admin-only; the sales area has no such route.
+    ...(base.startsWith('/admin') ? [{ href: `${base}/signatures`, label: 'Signatures', active: pathname.startsWith(`${base}/signatures`) }] : []),
   ]
   return (
     <div className="flex gap-4 border-b border-gray-200 mb-6 items-end">

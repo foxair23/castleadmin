@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { parsePendingIpoAttachments } from '@/lib/vendor-orders/ipo-ingest'
 import { syncPendingSfJobLines } from '@/lib/vendor-orders/sf-job-lines'
 import { classifyPendingAttachments } from '@/lib/esign/backfill'
+import { preparePendingEsignDocs } from '@/lib/esign/prepare'
 
 export const maxDuration = 300
 
@@ -57,8 +58,11 @@ export async function GET(req: NextRequest) {
     esign.batches++; esign.looked += c.looked; esign.lien_waiver += c.lien_waiver; esign.signed += c.signed; esign.none += c.none; esign.remaining = c.remaining
     if (once || c.remaining === 0 || c.looked === 0 || Date.now() - started > BUDGET_MS) break
   }
+  // Inspect and pre-fill the blanks found: fingerprinted, matched to a pinned layout, filled
+  // from the order and job. Versions with no layout yet are held and listed on Signatures.
+  const esignPrepare = Date.now() - started > BUDGET_MS ? null : await preparePendingEsignDocs(50)
 
   // `candidates` vs `skipped` matters: "nothing to do" and "nothing recognized" are very
   // different outcomes and used to be indistinguishable here.
-  return NextResponse.json({ ...total, remaining, batches, sf_lines: sfLines, esign, elapsed_ms: Date.now() - started, ok_run: true, done: remaining === 0 })
+  return NextResponse.json({ ...total, remaining, batches, sf_lines: sfLines, esign, esign_prepare: esignPrepare, elapsed_ms: Date.now() - started, ok_run: true, done: remaining === 0 })
 }
