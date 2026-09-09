@@ -74,14 +74,15 @@ interval.
 - `app-api.js` — talks to Castle Admin (payment + note queue / callback)
 - `options.html/js`, `popup.html/js`, `store.js`
 
-## Genie appointments → SF job (0.9.4)
+## Genie appointments → SF job (0.9.11)
 
 The Genie self-scheduler cannot set a job's date through the API (PUT /jobs/{id} is 405), so
 booked appointments are queued and this extension writes them into the job — the same way it
-posts payments and IPO line items — using the job view page's three inline editors, captured
-from a real session: `changeJobDatePopup` (date, DD-MM-YYYY), `changeJobTimePopupXedit`
-(arrival window, "08:00 am"–"04:00 pm") and `updateJobStatus` (→ Scheduled). A booking with no
-window is written as 8:00 am – 4:00 pm.
+posts payments and IPO line items — using two of the job view page's inline editors, captured
+from a real session: `changeJobDatePopup` (date, DD-MM-YYYY) and `changeJobTimePopupXedit`
+(arrival window, "08:00 am"–"04:00 pm"). A booking with no window is written as
+8:00 am – 4:00 pm. The status is left alone: the job stays Unscheduled until the dispatcher
+assigns a tech and marks it Scheduled.
 
-**Dry run** opens the job page, reads the concurrency token and the Scheduled status id off
-it, and shows the three payloads it would post. Nothing is written until Dry run is off.
+**Dry run** resolves the job and shows the two payloads it would post. Nothing is written
+until Dry run is off.

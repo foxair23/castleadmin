@@ -11,7 +11,7 @@ describe('renderGenieScheduleSyncFailure', () => {
     expect(m.subject).toBe('⚠ 2 Genie appointments need the schedule set in SF by hand')
     expect(m.bodyText).toContain('Job 1020259248 · Thien Huynh · HD #3865646 · Tuesday, September 15 · 8 AM – 4 PM (any time) — status was not saved (HTTP 500)')
     expect(m.bodyText).toContain('Job 1020259251 · HD #3865733 · HD #3865733')
-    expect(m.bodyText).toMatch(/set the date and arrival window, and set the status to Scheduled/)
+    expect(m.bodyText).toMatch(/set the date and arrival window; the status stays Unscheduled/)
     expect(m.bodyHtml).toContain('Open HD Orders')
   })
   it('reads correctly for a single job', () => {

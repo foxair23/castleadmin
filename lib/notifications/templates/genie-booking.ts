@@ -97,7 +97,7 @@ export interface ScheduleSyncFailure {
 export function renderGenieScheduleSyncFailure(o: { jobs: ScheduleSyncFailure[]; adminUrl: string }): { subject: string; bodyHtml: string; bodyText: string } {
   const n = o.jobs.length
   const subject = `⚠ ${n} Genie appointment${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} the schedule set in SF by hand`
-  const lead = `The Castle extension could not write ${n === 1 ? 'this appointment' : 'these appointments'} to the Service Fusion job. Open each job, set the date and arrival window, and set the status to Scheduled.`
+  const lead = `The Castle extension could not write ${n === 1 ? 'this appointment' : 'these appointments'} to the Service Fusion job. Open each job and set the date and arrival window; the status stays Unscheduled for dispatch.`
   const line = (j: ScheduleSyncFailure) => `Job ${j.sfJobNumber ?? '—'} · ${j.customerName ?? `HD #${j.hdOrder}`} · HD #${j.hdOrder} · ${j.dateLabel} · ${j.windowLabel}${j.error ? ` — ${j.error}` : ''}`
 
   const bodyText = `${lead}
