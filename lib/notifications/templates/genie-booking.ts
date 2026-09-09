@@ -74,78 +74,46 @@ Our technician will call ahead before arriving. Need to change something? Call u
   return { subject, html, text }
 }
 
-// ── Internal team alert (plain style, matches scheduler_lead_synced) ─────────
 const A_BASE = `font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #111827; max-width: 560px; margin: 0 auto; padding: 32px 24px;`
 const A_HEADING = `font-size: 20px; font-weight: 700; margin: 0 0 16px;`
 const A_LABEL = `font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;`
 const A_VALUE = `font-size: 15px; margin: 2px 0 12px;`
 const A_BTN = `display:inline-block; background:#111827; color:#ffffff; padding:11px 22px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;`
 
-export function renderGenieBookingAlert(o: {
-  customerName: string | null
-  phone: string | null
-  email: string | null
-  hdOrder: string
+// ── Internal team alert: appointments the extension could NOT write to SF ────
+//
+// There is deliberately no "booked" email: Action Items already lists every booking. The
+// office hears from this path only when something needs a hand — the extension tried to
+// write a schedule to a job and SF did not take it. One email per run, every job in it.
+export interface ScheduleSyncFailure {
   sfJobNumber: string | null
+  customerName: string | null
+  hdOrder: string
   dateLabel: string
   windowLabel: string
-  address: string | null
-  adminUrl: string
-  // How the date reached the SF job. 'pending': queued for the Chrome extension, which
-  // writes it through SF's web session on its next poll (the API cannot update a job).
-  // 'failed': it could not even be queued — the office must set it manually. `synced`
-  // is the older boolean form; false means failed.
-  sync?: 'synced' | 'pending' | 'failed'
-  synced?: boolean
-  syncError?: string | null
-}): { subject: string; bodyHtml: string; bodyText: string } {
-  const name = o.customerName || `HD #${o.hdOrder}`
-  const state: 'synced' | 'pending' | 'failed' = o.sync ?? (o.synced === false ? 'failed' : 'synced')
-  const failed = state === 'failed'
-  const pending = state === 'pending'
-  const subject = failed
-    ? `⚠ Genie booking NOT synced — set date manually: ${name} — ${o.dateLabel}`
-    : pending
-      ? `Genie install booked (SF date pending): ${name} — ${o.dateLabel}`
-      : `Genie install booked: ${name} — ${o.dateLabel}`
-  const contact = [o.phone, o.email].filter(Boolean).join(' · ')
+  error: string | null
+}
 
-  const fields: Array<[string, string]> = [
-    ['Customer', `${name}${contact ? ` · ${contact}` : ''}`],
-    ['Home Depot order', `#${o.hdOrder}`],
-    ['SF job', o.sfJobNumber ? `#${o.sfJobNumber}` : '—'],
-    ['Date', o.dateLabel],
-    ['Arrival window', o.windowLabel],
-    ['Address', o.address || '—'],
-  ]
+export function renderGenieScheduleSyncFailure(o: { jobs: ScheduleSyncFailure[]; adminUrl: string }): { subject: string; bodyHtml: string; bodyText: string } {
+  const n = o.jobs.length
+  const subject = `⚠ ${n} Genie appointment${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} the schedule set in SF by hand`
+  const lead = `The Castle extension could not write ${n === 1 ? 'this appointment' : 'these appointments'} to the Service Fusion job. Open each job, set the date and arrival window, and set the status to Scheduled.`
+  const line = (j: ScheduleSyncFailure) => `Job ${j.sfJobNumber ?? '—'} · ${j.customerName ?? `HD #${j.hdOrder}`} · HD #${j.hdOrder} · ${j.dateLabel} · ${j.windowLabel}${j.error ? ` — ${j.error}` : ''}`
 
-  const warnText = failed
-    ? `\n*** ACTION NEEDED: we could NOT write this date to the Service Fusion job. Open the SF job and set the date/window manually, then call the customer to confirm. (${o.syncError ?? 'sync failed'}) ***\n`
-    : pending
-      ? `\nThe date is being written to the SF job by the Castle extension — usually within 10 minutes. If it is still not on the job in an hour, set it manually.\n`
-      : ''
-  const bodyText = `Genie install ${failed ? 'requested (NOT synced to SF)' : 'booked'} via the self-scheduler.
-${warnText}
-${fields.map(([k, v]) => `${k}: ${v}`).join('\n')}
+  const bodyText = `${lead}
+
+${o.jobs.map(j => `• ${line(j)}`).join('\n')}
 
 Manage: ${o.adminUrl}`
 
-  const warnHtml = failed
-    ? `<div style="background:#FEF2F2;border:1.5px solid #dc2626;border-radius:6px;padding:12px 14px;margin:0 0 14px;color:#991b1b;font-size:13px;line-height:1.5;">
-        <strong>⚠ Not synced to Service Fusion.</strong> We couldn&rsquo;t write this date to the SF job. Open the job, set the date/window manually, and call the customer to confirm.${o.syncError ? `<br/><span style="color:#b91c1c;font-size:11px;">${esc(o.syncError)}</span>` : ''}
-      </div>`
-    : pending
-      ? `<div style="background:#FFFBEB;border:1.5px solid #d97706;border-radius:6px;padding:12px 14px;margin:0 0 14px;color:#92400e;font-size:13px;line-height:1.5;">
-        <strong>SF date pending.</strong> The Castle extension writes this date to the SF job on its next poll &mdash; usually within 10 minutes. If it is still not on the job in an hour, set it manually.
-      </div>`
-      : ''
   const bodyHtml = `
 <div style="${A_BASE}">
-  <p style="${A_HEADING}">Genie install ${failed ? 'requested — not synced' : pending ? 'booked — SF date pending' : 'booked'}</p>
-  ${warnHtml}
-  ${fields.map(([k, v]) => `<p style="${A_LABEL}">${esc(k)}</p><p style="${A_VALUE}">${esc(v)}</p>`).join('')}
+  <p style="${A_HEADING}">${esc(subject)}</p>
+  <div style="background:#FEF2F2;border:1.5px solid #dc2626;border-radius:6px;padding:12px 14px;margin:0 0 14px;color:#991b1b;font-size:13px;line-height:1.5;">${esc(lead)}</div>
+  ${o.jobs.map(j => `
+  <p style="${A_LABEL}">Job ${esc(j.sfJobNumber ?? '—')} · ${esc(j.customerName ?? `HD #${j.hdOrder}`)}</p>
+  <p style="${A_VALUE}">HD #${esc(j.hdOrder)} · ${esc(j.dateLabel)} · ${esc(j.windowLabel)}${j.error ? `<br/><span style="color:#b91c1c;font-size:11px;">${esc(j.error)}</span>` : ''}</p>`).join('')}
   <p style="margin:20px 0 0;"><a href="${esc(o.adminUrl)}" style="${A_BTN}">Open HD Orders</a></p>
 </div>`
-
   return { subject, bodyHtml, bodyText }
 }
