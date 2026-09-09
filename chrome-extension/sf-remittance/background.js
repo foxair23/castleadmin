@@ -592,6 +592,15 @@ async function runJobLines(cfg, log) {
     res.ok ? posted++ : failed++
     await sleep(1500) // be gentle on SF
   }
+  // One report for the run: the app emails the office a single list of jobs to set by hand
+  // (each job at most once a day). Never in dry run — nothing was actually attempted.
+  if (!cfg.dryRun) {
+    const runFailures = log.filter(l => l.date && l.jobNumber && l.ok === false && l.orderId).map(l => ({ orderId: l.orderId, error: l.reason ?? l.error ?? null }))
+    if (runFailures.length) {
+      try { await postScheduleResult(cfg.baseUrl, cfg.token, { runFailures }) }
+      catch (e) { log.push({ scheduleReportError: String(e) }) }
+    }
+  }
   return { posted, failed }
 }
 
@@ -616,7 +625,10 @@ async function runJobSchedule(cfg, log) {
     } catch (e) {
       res = { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, date: item.date, window: res?.window ? `${res.window.start}-${res.window.end}` : (item.windowStart ? `${item.windowStart}-${item.windowEnd}` : null), ...res })
+    // The writer reports the window it used as { start, end }; the log wants one string.
+    const { window: w, ...rest } = res || {}
+    const windowText = w ? `${w.start}-${w.end}${item.windowStart ? '' : ' (default)'}` : (item.windowStart ? `${item.windowStart}-${item.windowEnd}` : null)
+    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, date: item.date, window: windowText, ...rest })
 
     if (!cfg.dryRun) {
       try {

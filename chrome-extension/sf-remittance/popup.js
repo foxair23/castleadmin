@@ -31,7 +31,7 @@ async function render() {
       if (l.date && l.jobNumber) {
         // A Genie appointment: date, the window actually written (8-4 when the customer
         // chose "any time"), and Scheduled status — or which of the three steps failed.
-        const win = l.window ? l.window : (l.ok || l.dryRun ? '08:00-16:00 (default)' : '')
+        const win = l.window || ''
         return `appointment job #${l.jobNumber} → ${l.date}${win ? ' ' + win : ''} → ${outcome(l)}${l.ok ? ' + status Scheduled' : ''}`
       }
       if (typeof l.lines === 'number' && l.jobNumber) return `lines job #${l.jobNumber} (${l.lines}) → ${outcome(l)}`

@@ -1,5 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sfGet } from '@/lib/crm/service-fusion'
+import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
+import { renderGenieScheduleSyncFailure, type ScheduleSyncFailure } from '@/lib/notifications/templates/genie-booking'
 
 // Queue of Genie appointments for the Chrome extension to write onto existing SF jobs.
 //
@@ -107,4 +109,42 @@ export async function recordSfScheduleResult(
     await supabase.from('vendor_order_events').insert({ order_id: orderId, event_type: 'sf_schedule_synced', to_value: 'posted', detail: {} })
   }
   return { ok: true }
+}
+
+const fmtDay = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+const fmtTime = (t: string) => { const [h, m] = t.split(':').map(Number); const ampm = h < 12 ? 'AM' : 'PM'; const h12 = h % 12 === 0 ? 12 : h % 12; return m ? `${h12}:${String(m).padStart(2, '0')} ${ampm}` : `${h12} ${ampm}` }
+
+/** The extension's end-of-run report: appointments it could not write. Emails ONE list of
+ *  jobs to fix by hand, and only the jobs not already flagged in the last 24 hours — so a job
+ *  that keeps failing is raised once a day, not on every poll. Returns how many were emailed. */
+export async function reportSfScheduleRunFailures(failures: Array<{ orderId: string; error?: string | null }>): Promise<{ ok: boolean; emailed: number }> {
+  if (!failures.length) return { ok: true, emailed: 0 }
+  const supabase = db()
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString()
+  const ids = [...new Set(failures.map(f => f.orderId))]
+  const { data } = await supabase
+    .from('vendor_orders')
+    .select('id, external_id, customer_name, sf_schedule_job_number, sf_created_job_number, appointment_date, appointment_window_start, appointment_window_end, sf_schedule_alerted_at')
+    .in('id', ids)
+  const fresh = ((data ?? []) as Array<Record<string, string | null>>).filter(o => !o.sf_schedule_alerted_at || (o.sf_schedule_alerted_at as string) < since)
+  if (!fresh.length) return { ok: true, emailed: 0 }
+
+  const errorFor = new Map(failures.map(f => [f.orderId, f.error ?? null]))
+  const jobs: ScheduleSyncFailure[] = fresh.map(o => ({
+    sfJobNumber: o.sf_schedule_job_number ?? o.sf_created_job_number ?? null,
+    customerName: o.customer_name ?? null,
+    hdOrder: o.external_id as string,
+    dateLabel: o.appointment_date ? fmtDay(o.appointment_date) : '—',
+    windowLabel: o.appointment_window_start && o.appointment_window_end ? `${fmtTime(o.appointment_window_start)} – ${fmtTime(o.appointment_window_end)}` : '8 AM – 4 PM (any time)',
+    error: errorFor.get(o.id as string) ?? null,
+  }))
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://hq.castlegarage.com'}/admin/vendor-orders`
+  const mail = renderGenieScheduleSyncFailure({ jobs, adminUrl })
+  await enqueueForSubscribers({
+    notificationTypeKey: 'scheduler_lead_synced',
+    subject: mail.subject, bodyHtml: mail.bodyHtml, bodyText: mail.bodyText,
+    relatedEntityType: 'vendor_orders', relatedEntityId: `sf-schedule-failures:${new Date().toISOString()}`,
+  })
+  await supabase.from('vendor_orders').update({ sf_schedule_alerted_at: new Date().toISOString() }).in('id', fresh.map(o => o.id as string))
+  return { ok: true, emailed: fresh.length }
 }

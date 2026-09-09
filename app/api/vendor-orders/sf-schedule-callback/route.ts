@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { recordSfScheduleResult } from '@/lib/vendor-orders/sf-schedule-queue'
+import { recordSfScheduleResult, reportSfScheduleRunFailures } from '@/lib/vendor-orders/sf-schedule-queue'
 
 export const dynamic = 'force-dynamic'
 
 // POST { orderId, ok, error? } — the extension reporting what happened when it wrote one
 // order's appointment to its SF job. Idempotent: an order already marked posted stays
 // posted, so a repeated callback cannot flip a success into a failure.
+//
+// POST { runFailures: [{ orderId, error }] } — the same extension, at the end of a run,
+// listing what it could not write. The app emails the office one list of jobs to set by
+// hand (each job at most once a day).
 function authed(req: NextRequest): boolean {
   const token = process.env.REMITTANCE_APPLY_TOKEN
   if (!token) return false
@@ -19,8 +23,12 @@ export function OPTIONS() { return new NextResponse(null, { status: 204, headers
 
 export async function POST(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors })
-  let b: { orderId?: string; ok?: boolean; error?: string }
+  let b: { orderId?: string; ok?: boolean; error?: string; runFailures?: Array<{ orderId: string; error?: string | null }> }
   try { b = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400, headers: cors }) }
+  if (Array.isArray(b.runFailures)) {
+    const res = await reportSfScheduleRunFailures(b.runFailures.filter(f => f && typeof f.orderId === 'string'))
+    return NextResponse.json(res, { headers: cors })
+  }
   if (!b.orderId) return NextResponse.json({ error: 'orderId required' }, { status: 400, headers: cors })
   const res = await recordSfScheduleResult(b.orderId, { ok: !!b.ok, error: b.error })
   return NextResponse.json(res, { status: res.ok ? 200 : 400, headers: cors })
