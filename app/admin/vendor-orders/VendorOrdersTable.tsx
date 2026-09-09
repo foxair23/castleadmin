@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
 import { createSfJobAction, sendNudgeNowAction, getOrderDetailAction, addIpoLinesToSfJobAction, linkSfJobAction } from './actions'
+import { sendEsignNowAction, notifyTechNowAction, prepareEsignDocAction, finalizeNowAction, markPortalUploadedAction, cancelEsignAction, resetSignatureAction, adoptAttachmentAsWaiverAction } from './esign-actions'
 import { statusChipStyle } from '@/lib/vendor-orders/status-style'
 
 // Portal-specific detail captured verbatim by the crawler (Clopay's Summary
@@ -68,6 +69,16 @@ export interface VendorOrder {
   /** How many doors this job covers (1 unless it's a grouped multi-door job). */
   door_count?: number
   attachments?: StoredAttachment[]
+  /** The Home Depot e-sign form for this house, when one has been found. */
+  esign?: OrderEsign | null
+}
+
+export interface OrderEsign {
+  id: string; status: string; template_key: string | null
+  customer_sent_at: string | null; customer_asked_at: string | null; customer_signed_at: string | null
+  tech_name: string | null; tech_sent_at: string | null; tech_signed_at: string | null
+  completed_at: string | null; sf_uploaded_at: string | null; portal_uploaded_at: string | null; portal_uploaded_by: string | null
+  prepared_url: string | null; completed_url: string | null; error: string | null
 }
 
 // One line of the order's current Installer Purchase Order, parsed from the stored PDF.
@@ -371,6 +382,92 @@ function AtDcBadge({ reservedAt, lastSeen }: { reservedAt: string; lastSeen: str
   )
 }
 
+// ── E-sign ─────────────────────────────────────────────────────────────────
+const ESIGN_LABEL: Record<string, string> = {
+  found: 'found, not inspected', unrecognised_template: 'form version not pinned', prepared: 'ready — waiting for the work date', sent_customer: 'with the customer',
+  customer_signed: 'customer signed — tech next', sent_tech: 'with the technician', tech_signed: 'both signed — finishing', completed: 'completed — upload to Clopay',
+  sf_uploaded: 'on the SF job — upload to Clopay', portal_uploaded: 'done', cancelled: 'cancelled',
+}
+export function esignBadge(e: OrderEsign | null | undefined): { text: string; tone: string } | null {
+  if (!e) return null
+  const tone = e.status === 'portal_uploaded' ? 'bg-green-100 text-green-700' : ['completed', 'sf_uploaded'].includes(e.status) ? 'bg-blue-100 text-blue-700'
+    : e.status === 'unrecognised_template' || e.error ? 'bg-amber-100 text-amber-700' : e.status === 'cancelled' ? 'bg-gray-100 text-gray-500' : 'bg-gray-100 text-gray-700'
+  return { text: `E-sign: ${ESIGN_LABEL[e.status] ?? e.status}`, tone }
+}
+const fmtTs = (iso: string | null) => iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null
+
+function EsignSection({ esign, attachments, orderId }: { esign: OrderEsign | null | undefined; attachments: StoredAttachment[]; orderId: string }) {
+  const [pending, start] = useTransition()
+  const [msg, setMsg] = useState<string | null>(null)
+  const [techOverride, setTechOverride] = useState<{ name: string; phone: string; email: string } | null>(null)
+  const b = 'text-[11px] px-2 py-0.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 bg-white'
+  const run = (fn: () => Promise<{ ok: boolean; error?: string } & Record<string, unknown>>, done: (r: Record<string, unknown>) => string) => start(async () => {
+    setMsg(null); const r = await fn(); setMsg(r.ok ? done(r) : (r.error ?? 'failed'))
+  })
+  const e = esign
+  if (!e) {
+    // No waiver found for this house. Let the office point at the right stored document.
+    const pdfs = attachments.filter(a => /pdf/i.test(a.mime_type ?? '') || /\.pdf$/i.test(a.filename ?? ''))
+    return (
+      <section className="mb-6">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Home Depot form (e-sign)</h4>
+        <p className="text-xs text-gray-500">No blank lien waiver recognised for this house yet.
+          {pdfs.length > 0 && <> If one of the stored documents is it: <select className={`${b} text-gray-900`} disabled={pending} value="" onChange={ev => { const id = ev.target.value; if (id && confirm('Use this document as the lien waiver for this house?')) run(() => adoptAttachmentAsWaiverAction(id), () => 'Attached and prepared — reload to see it') }}>
+            <option value="">choose a document…</option>{pdfs.map(a => <option key={a.id} value={a.id}>{a.filename}</option>)}</select></>}
+          {msg && <span className="ml-2 text-gray-700">{msg}</span>}
+        </p>
+      </section>
+    )
+  }
+  const badge = esignBadge(e)!
+  const unsigned = !e.customer_signed_at
+  const live = !['cancelled', 'portal_uploaded'].includes(e.status)
+  return (
+    <section className="mb-6">
+      <div className="flex flex-wrap items-center gap-2 mb-1">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Home Depot form (e-sign)</h4>
+        <span className={`text-[11px] px-1.5 py-0.5 rounded ${badge.tone}`}>{badge.text}</span>
+        {e.template_key && <span className="text-[10px] text-gray-400">{e.template_key}</span>}
+        <a href={`/admin/vendor-orders/signatures`} className="text-[11px] text-blue-600 underline">Signatures tab</a>
+      </div>
+      {e.error && <div className="text-[11px] text-red-600 mb-1">{e.error}</div>}
+      <div className="grid gap-x-6 gap-y-1 text-xs text-gray-700 sm:grid-cols-3">
+        <div><span className="text-gray-500">Customer:</span> {e.customer_signed_at ? `signed ${fmtTs(e.customer_signed_at)}` : e.customer_asked_at ? `asked ${fmtTs(e.customer_asked_at)}` : e.customer_sent_at ? `link sent ${fmtTs(e.customer_sent_at)}` : '—'}</div>
+        <div><span className="text-gray-500">Technician:</span> {e.tech_signed_at ? `signed ${fmtTs(e.tech_signed_at)}` : e.tech_sent_at ? `sent ${fmtTs(e.tech_sent_at)}` : '—'}{e.tech_name ? ` · ${e.tech_name}` : ''}</div>
+        <div><span className="text-gray-500">Filed:</span> {e.portal_uploaded_at ? `Clopay ${fmtTs(e.portal_uploaded_at)} (${e.portal_uploaded_by === 'portal:signed_doc' ? 'confirmed by portal' : e.portal_uploaded_by ?? 'office'})` : e.sf_uploaded_at ? `SF job ${fmtTs(e.sf_uploaded_at)}` : e.completed_at ? `completed ${fmtTs(e.completed_at)}` : '—'}</div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {e.prepared_url && <a className={b} href={e.prepared_url} target="_blank" rel="noreferrer">Prepared PDF</a>}
+        {e.completed_url && <a className={b} href={e.completed_url} target="_blank" rel="noreferrer">Signed PDF</a>}
+        {live && unsigned && ['found', 'prepared', 'sent_customer', 'unrecognised_template'].includes(e.status) && (
+          <select className={`${b} text-gray-900`} disabled={pending} value="" onChange={ev => { const v = ev.target.value as '' | 'heads_up' | 'ask' | 'reminder'; if (!v) return; if (confirm(`Send the ${v === 'heads_up' ? 'heads-up' : v === 'ask' ? '"please sign"' : 'reminder'} to the customer now?`)) run(() => sendEsignNowAction(e.id, v), r => `Sent via ${(r.channels as string[]).join(', ')}`) }}>
+            <option value="">Send to customer…</option><option value="heads_up">Heads-up (link ahead of the work)</option><option value="ask">Please sign (work is done)</option><option value="reminder">Reminder</option>
+          </select>)}
+        {live && ['customer_signed', 'sent_tech'].includes(e.status) && <>
+          <button className={b} disabled={pending} onClick={() => run(() => notifyTechNowAction(e.id), r => `Sent to ${r.tech} via ${(r.channels as string[]).join(', ')}`)}>{e.tech_sent_at ? 'Resend to tech' : 'Send to tech now'}</button>
+          <button className={b} disabled={pending} onClick={() => setTechOverride(techOverride ? null : { name: '', phone: '', email: '' })}>Other person…</button>
+        </>}
+        {live && ['found', 'unrecognised_template', 'prepared'].includes(e.status) && <button className={b} disabled={pending} onClick={() => run(() => prepareEsignDocAction(e.id), r => `${r.status}`)}>Re-prepare</button>}
+        {live && e.status === 'tech_signed' && <button className={b} disabled={pending} onClick={() => run(() => finalizeNowAction(e.id), r => `${r.status}`)}>Finish now</button>}
+        {live && ['completed', 'sf_uploaded'].includes(e.status) && <button className={`${b} border-green-600 text-green-700`} disabled={pending} onClick={() => { if (confirm('Mark as uploaded to the Clopay portal?')) run(() => markPortalUploadedAction(e.id), () => 'Marked uploaded to Clopay') }}>Uploaded to Clopay</button>}
+        {live && e.customer_signed_at && !['sf_uploaded'].includes(e.status) && <button className={`${b} text-red-700`} disabled={pending} onClick={() => { if (confirm('Clear the customer\'s signature (and the tech\'s)? The link will work again.')) run(() => resetSignatureAction(e.id, 'customer'), r => `Cleared · now ${r.status}`) }}>Clear signatures</button>}
+        {live && <button className={`${b} text-gray-500`} disabled={pending} onClick={() => { if (confirm('Cancel this form? Both links will say it is no longer needed.')) run(() => cancelEsignAction(e.id), () => 'Cancelled') }}>Cancel</button>}
+        {e.status === 'cancelled' && <button className={b} disabled={pending} onClick={() => run(() => cancelEsignAction(e.id, true), () => 'Restored — will be inspected again')}>Restore</button>}
+        {msg && <span className="text-[11px] text-gray-700">{msg}</span>}
+      </div>
+      {techOverride && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <input className="border border-gray-300 rounded px-2 py-0.5 text-gray-900 w-36" placeholder="Name" value={techOverride.name} onChange={ev => setTechOverride({ ...techOverride, name: ev.target.value })} />
+          <input className="border border-gray-300 rounded px-2 py-0.5 text-gray-900 w-32" placeholder="Mobile" value={techOverride.phone} onChange={ev => setTechOverride({ ...techOverride, phone: ev.target.value })} />
+          <input className="border border-gray-300 rounded px-2 py-0.5 text-gray-900 w-44" placeholder="Email" value={techOverride.email} onChange={ev => setTechOverride({ ...techOverride, email: ev.target.value })} />
+          <button className={b} disabled={pending || !techOverride.name.trim() || (!techOverride.phone.trim() && !techOverride.email.trim())} onClick={() => run(() => notifyTechNowAction(e.id, { name: techOverride.name.trim(), phone: techOverride.phone.trim() || null, email: techOverride.email.trim() || null }), r => `Sent to ${r.tech} via ${(r.channels as string[]).join(', ')}`)}>Send tech link to this person</button>
+        </div>
+      )}
+      <input type="hidden" value={orderId} readOnly />
+    </section>
+  )
+}
+
 function DoorsSection({ doors, groupTotal }: { doors: OrderDoor[]; groupTotal: number | null }) {
   const withItems = doors.filter(d => d.items.length > 0)
   if (withItems.length === 0) return null
@@ -599,6 +696,7 @@ function DetailDrawer({ order, colSpan }: { order: VendorOrder; colSpan: number 
             <DoorsSection doors={doors} groupTotal={order.total_fee ?? null} />
           </>
         )}
+        {order.esign !== undefined && <EsignSection esign={order.esign} attachments={order.attachments ?? []} orderId={order.id} />}
         <div className="grid gap-6 md:grid-cols-3">
           <section>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Summary</h4>
@@ -837,6 +935,7 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                   </div>
                 )}
                 {o.dc_reserved_at && <AtDcBadge reservedAt={o.dc_reserved_at} lastSeen={o.dc_last_seen_at ?? null} />}
+                {(() => { const bd = esignBadge(o.esign); return bd && !['found', 'prepared', 'cancelled'].includes(o.esign!.status) ? <div className="mt-0.5"><span className={`text-[10px] px-1.5 py-0.5 rounded ${bd.tone}`}>{bd.text}</span></div> : null })()}
               </td>
               <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">
                 <PaymentReceived amount={o.payment_received ?? null} totalFee={o.total_fee ?? null} pos={o.payment_pos ?? null} />

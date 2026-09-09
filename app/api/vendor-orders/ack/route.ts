@@ -21,6 +21,11 @@ export async function POST(req: NextRequest) {
   if (!body.leadId) return NextResponse.json({ error: 'leadId required' }, { status: 400 })
 
   if (body.kind === 'at_dc') await markDcPoScheduled(body.leadId, profile.full_name ?? null)
+  else if (body.kind === 'portal_upload') {
+    const { markEsignPortalUploaded } = await import('@/lib/esign/finalize')
+    const r = await markEsignPortalUploaded(body.leadId, profile.full_name ?? null)
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 })
+  }
   else await markGenieActionDone(body.leadId, profile.full_name ?? null)
   return NextResponse.json({ ok: true })
 }

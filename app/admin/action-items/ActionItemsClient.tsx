@@ -1634,7 +1634,7 @@ export default function ActionItemsClient({
           title="Clopay — To Schedule"
           count={clopayItems.length}
         >
-          <p className="text-xs text-gray-400 mb-2">Two kinds of work. <strong>New Job to Schedule</strong> — our service created an SF job from a Clopay HD order. <strong>Schedule Install/Delivery</strong> — the product has landed at the DC and is ready to install, from the weekly DC report; these are listed per PO, oldest arrival first, and once pressed a PO never comes back even though it stays on the DC report until it ships.</p>
+          <p className="text-xs text-gray-400 mb-2">Three kinds of work. <strong>Uploaded to Clopay</strong> — a Home Depot form both parties e-signed; download the signed PDF, upload it to the customer&rsquo;s order in the Clopay portal, then press the button (it also clears itself once the crawl sees the signed copy come back). <strong>New Job to Schedule</strong> — our service created an SF job from a Clopay HD order. <strong>Schedule Install/Delivery</strong> — the product has landed at the DC and is ready to install, from the weekly DC report; these are listed per PO, oldest arrival first, and once pressed a PO never comes back even though it stays on the DC report until it ships.</p>
           {clopayItems.length === 0 ? <AllClear /> : <ClopayTable items={clopayItems} />}
         </AlertSection>
       )}
@@ -1813,8 +1813,14 @@ function ClopayTable({ items }: { items: ClopayActionItem[] }) {
                   leadId={c.id}
                   endpoint="/api/vendor-orders/ack"
                   kind={c.kind}
-                  label={c.kind === 'at_dc' ? 'Schedule Install/Delivery' : 'New Job to Schedule'}
+                  label={c.kind === 'at_dc' ? 'Schedule Install/Delivery' : c.kind === 'portal_upload' ? 'Uploaded to Clopay' : 'New Job to Schedule'}
                 />
+                {c.kind === 'portal_upload' && (
+                  <div className="mt-1 flex items-center gap-2 text-[11px]">
+                    {c.completed_url ? <a href={c.completed_url} target="_blank" rel="noreferrer" className="text-blue-600 underline">Signed PDF</a> : <span className="text-gray-400">PDF missing</span>}
+                    <span className={`px-1.5 py-0.5 rounded ${c.sf_uploaded ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`} title={c.sf_uploaded ? 'The extension filed it on the SF job' : 'Not on the SF job yet — the extension will file it, or upload it by hand'}>{c.sf_uploaded ? 'on SF job' : 'SF pending'}</span>
+                  </div>
+                )}
               </td>
               <td className="px-4 py-2 font-medium text-gray-900 whitespace-nowrap">
                 {c.external_id}
