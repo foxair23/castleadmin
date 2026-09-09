@@ -11,6 +11,7 @@ import { CLOPAY_STS_STAGES } from '@/lib/clopay-sts/stages'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { clopayPaymentsByPo } from '@/lib/vendor-orders/payments'
 import { enqueueSfJobLines } from '@/lib/vendor-orders/sf-lines-queue'
+import { linkSfJobToOrder } from '@/lib/vendor-orders/link-sf-job'
 
 async function isAllowed(): Promise<boolean> {
   const supabase = await createClient()
@@ -125,6 +126,15 @@ export async function addIpoLinesToSfJobAction(orderId: string): Promise<{ ok: b
   const r = await enqueueSfJobLines(orderId)
   if (r.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
   return { ok: r.ok, status: r.status, added: r.lines, existing: r.existing, note: r.note, error: r.error }
+}
+
+/** Link an order (its whole house) to an SF job the office already created — the matcher
+ *  could not see it. Queues the IPO line items onto that job as part of the same step. */
+export async function linkSfJobAction(orderId: string, jobNumber: string): Promise<{ ok: boolean; error?: string; jobNumber?: string; customerName?: string | null; lines?: string }> {
+  if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
+  const r = await linkSfJobToOrder(orderId, jobNumber)
+  if (r.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
+  return r
 }
 
 /** Toggle a vendor's autopilot (admin only). vendor: 'genie_thd' | 'clopay_hd'. */
