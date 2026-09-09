@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
-import { createSfJobAction, sendNudgeNowAction, getOrderDetailAction, addIpoLinesToSfJobAction } from './actions'
+import { createSfJobAction, sendNudgeNowAction, getOrderDetailAction, addIpoLinesToSfJobAction, linkSfJobAction } from './actions'
 import { statusChipStyle } from '@/lib/vendor-orders/status-style'
 
 // Portal-specific detail captured verbatim by the crawler (Clopay's Summary
@@ -191,6 +191,41 @@ function CreateJobButton({ orderId }: { orderId: string }) {
       </button>
       {err && <span className="text-[10px] text-red-600 max-w-[180px] whitespace-normal">{err}</span>}
       {warn && <span className="text-[10px] text-amber-700 max-w-[220px] whitespace-normal">{warn}</span>}
+    </span>
+  )
+}
+
+// "HD Orders doesn't see the job I already made." The matcher links by PO, name, email and
+// phone; a job the office created by hand with none of those lining up never gets found, and
+// creating one here would duplicate it. Same idea as the remittance "or Job #" box: type the
+// number, the house is linked, and its IPO lines are queued for the extension in one go.
+function LinkJobInput({ orderId }: { orderId: string }) {
+  const [pending, start] = useTransition()
+  const [num, setNum] = useState('')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  return (
+    <span className="inline-flex flex-col gap-0.5">
+      <span className="inline-flex items-center gap-1">
+        <input
+          value={num}
+          onChange={e => setNum(e.target.value)}
+          placeholder="or link Job #"
+          inputMode="numeric"
+          className="text-xs border border-gray-300 rounded px-1 py-0.5 text-gray-900 w-28"
+        />
+        <button
+          type="button"
+          disabled={pending || !num.trim()}
+          onClick={() => { setMsg(null); start(async () => {
+            const r = await linkSfJobAction(orderId, num)
+            setMsg(r.ok ? { ok: true, text: `Linked to #${r.jobNumber}${r.customerName ? ` · ${r.customerName}` : ''} — ${r.lines}` } : { ok: false, text: r.error ?? 'failed' })
+          }) }}
+          className="text-xs px-2 py-0.5 rounded bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {pending ? 'Linking…' : 'Link'}
+        </button>
+      </span>
+      {msg && <span className={`text-[10px] max-w-[220px] whitespace-normal ${msg.ok ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</span>}
     </span>
   )
 }
@@ -806,7 +841,12 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                             <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
                           )}
                         </span>
-                      ) : <CreateJobButton orderId={o.id} />}
+                      ) : (
+                        <span className="inline-flex flex-col gap-1">
+                          <CreateJobButton orderId={o.id} />
+                          <LinkJobInput orderId={o.id} />
+                        </span>
+                      )}
                       {enableNudge && (o.sf_created_job_number || o.sf_job_id) && (o.email || o.phone) && (
                         <NudgeButton orderId={o.id} sentAt={o.schedule_nudge_sent_at} />
                       )}
