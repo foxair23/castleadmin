@@ -15,6 +15,9 @@ export function isPublicPath(pathname: string): boolean {
     // the path is the authorization). Page + its accept API are both public.
     pathname.startsWith('/approve/') ||
     pathname.startsWith('/api/approve/') ||
+    // E-sign: the customer's and the technician's signing links (token in the path).
+    pathname.startsWith('/sign/') ||
+    pathname.startsWith('/api/sign/') ||
     pathname.startsWith('/api/scheduler/') ||
     // The Genie booking widget's API: widget-key gated with a CORS allowlist, called by
     // customers on the public embed page who have no login and never will. Was never on

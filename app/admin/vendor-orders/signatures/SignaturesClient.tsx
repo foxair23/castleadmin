@@ -10,6 +10,7 @@ export interface EsignRow {
   tech_name: string | null; tech_sent_at: string | null; tech_signed_at: string | null
   completed_at: string | null; sf_uploaded_at: string | null; portal_uploaded_at: string | null; portal_uploaded_by: string | null
   has_prepared: boolean; has_completed: boolean; error: string | null; created_at: string
+  customer_link: string; tech_link: string
 }
 export interface FingerprintRow { fingerprint: string; count: number; template_key: string | null; sample_doc_id: string; sample_external_id: string | null }
 export interface SignedSample { id: string; external_id: string | null; url: string | null; created_at: string }
@@ -129,6 +130,10 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
                 <td className="py-1.5 pr-3 flex gap-1.5">
                   {['found', 'unrecognised_template', 'prepared'].includes(r.status) && <button className={btn} disabled={pending} onClick={() => run(() => prepareEsignDocAction(r.id), x => `${x.status}${x.fingerprint ? ` · ${x.fingerprint}` : ''}`)}>Prepare</button>}
                   {r.template_fingerprint && <a className={btn} href={`/api/admin/esign/preview/${r.id}`} target="_blank" rel="noreferrer">Preview</a>}
+                  {r.has_prepared && r.status !== 'cancelled' && <>
+                    <button className={btn} title={r.customer_link} onClick={() => { navigator.clipboard.writeText(r.customer_link); setMsg('Customer link copied') }}>Customer link</button>
+                    <button className={btn} title={r.tech_link} onClick={() => { navigator.clipboard.writeText(r.tech_link); setMsg('Tech link copied') }}>Tech link</button>
+                  </>}
                   {['found', 'prepared', 'sent_customer'].includes(r.status) && !r.customer_signed_at && (
                     <select className={`${btn} text-gray-900 bg-white`} disabled={pending} value="" title="Send a message to the customer now — regardless of the auto-send setting"
                       onChange={e => { const v = e.target.value as '' | 'heads_up' | 'ask' | 'reminder'; if (!v) return; if (!confirm(`Send the ${v === 'heads_up' ? 'heads-up (link ahead of the work)' : v === 'ask' ? '"please sign"' : 'reminder'} to ${r.customer_name ?? 'this customer'} now?`)) return; run(() => sendEsignNowAction(r.id, v), x => `Sent via ${(x.channels as string[]).join(', ')}${x.warning ? ` · ${x.warning}` : ''}`) }}>
