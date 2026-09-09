@@ -1134,6 +1134,69 @@ export async function runBackfill(entity?: string): Promise<Record<string, numbe
 // Run one entity at a time via runWeeklyReconcileForEntity — each entity gets
 // its own function invocation to stay within Vercel's per-function time limit.
 
+// ── Verify-before-delete ───────────────────────────────────────────────────
+//
+// A record missing from SF's paginated LIST is not the same as a record SF no longer has.
+// The list drops records at page boundaries, and a record that sits at a boundary is dropped
+// on every scan — stamped, then soft-deleted, then never seen again to recover, while SF
+// still has it. So before anything is soft-deleted it is asked about directly, one GET per
+// record, and a record SF still returns is upserted instead (is_deleted back to false).
+
+/** The mirror client throws on 4xx with the status in the message. */
+export function classifySfLookupError(err: unknown): 'gone' | 'unknown' {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /\(404\)/.test(msg) ? 'gone' : 'unknown'
+}
+
+/** SF returns a single record either bare or wrapped as the only item of a list. */
+export function pickSingleRecord(res: unknown): Raw | null {
+  const r = res as Record<string, unknown> | null
+  if (!r) return null
+  if (r.id != null) return r as Raw
+  const items = r.items as Raw[] | undefined
+  return Array.isArray(items) && items.length === 1 ? items[0] : null
+}
+
+type Verified = { state: 'exists'; raw: Raw } | { state: 'gone' } | { state: 'unknown'; error: string }
+async function verifyWithSf(cfg: IncrementalEntityConfig, id: string): Promise<Verified> {
+  try {
+    const res = await sfMirrorGet(`${cfg.path}/${encodeURIComponent(id)}`, cfg.expand ? { expand: cfg.expand } : undefined)
+    const raw = pickSingleRecord(res)
+    return raw ? { state: 'exists', raw } : { state: 'unknown', error: 'unexpected response shape' }
+  } catch (e) {
+    return classifySfLookupError(e) === 'gone' ? { state: 'gone' } : { state: 'unknown', error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** Ask SF about soft-deleted records a batch at a time, newest first, and revive the ones it
+ *  still has. Each record is asked about once (sf_deleted_verified_at), so the truly deleted
+ *  are not re-checked every day. Runs from the daily sync; heals a backlog in a few days. */
+export async function reviveFalselyDeleted(entity = 'jobs', limit = 150): Promise<{ checked: number; revived: number; gone: number; unknown: number }> {
+  const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entity)
+  if (!cfg) throw new Error(`Unknown entity: ${entity}`)
+  const supabase = db()
+  const out = { checked: 0, revived: 0, gone: 0, unknown: 0 }
+  const { data } = await supabase.from(cfg.table).select('id').eq('is_deleted', true).is('sf_deleted_verified_at', null)
+    .order('closed_at', { ascending: false, nullsFirst: false }).limit(limit)
+  for (const row of (data ?? []) as Array<{ id: string }>) {
+    const v = await verifyWithSf(cfg, row.id)
+    out.checked++
+    if (v.state === 'exists') {
+      await batchUpsert(cfg.table, [cfg.mapper(v.raw)])          // mapper sets is_deleted: false
+      if (cfg.afterUpsert) await cfg.afterUpsert([v.raw])
+      await supabase.from(cfg.table).update({ sf_missing_since: null, sf_deleted_verified_at: nowIso() }).eq('id', row.id)
+      out.revived++
+    } else if (v.state === 'gone') {
+      await supabase.from(cfg.table).update({ sf_deleted_verified_at: nowIso() }).eq('id', row.id)
+      out.gone++
+    } else {
+      out.unknown++                                                // left unmarked; asked again next run
+    }
+  }
+  if (out.checked) console.log(`[sf-revive] ${entity}: checked ${out.checked}, revived ${out.revived}, confirmed gone ${out.gone}, unknown ${out.unknown}`)
+  return out
+}
+
 export async function runWeeklyReconcileForEntity(
   entityName: string,
   { skipExpand = false, concurrency = 1 }: { skipExpand?: boolean; concurrency?: number } = {}
@@ -1221,11 +1284,22 @@ export async function runWeeklyReconcileForEntity(
         const now = nowIso()
         const cutoff = new Date(Date.now() - RECONCILE_GRACE_MS).toISOString()
         const firstMiss = candidates.filter(r => !r.sf_missing_since).map(r => r.id)                       // strike 1: stamp only
-        const confirmed = candidates.filter(r => r.sf_missing_since && r.sf_missing_since < cutoff).map(r => r.id) // missing past grace → delete
+        const confirmed = candidates.filter(r => r.sf_missing_since && r.sf_missing_since < cutoff).map(r => r.id) // missing past grace → verify, then delete
         for (const c of chunk(firstMiss, 500)) await supabase.from(cfg.table).update({ sf_missing_since: now }).in('id', c)
-        for (const c of chunk(confirmed, 500)) await supabase.from(cfg.table).update({ is_deleted: true, sf_synced_at: now }).in('id', c)
+        // Strike two is not the list's word to give. Ask SF about each record directly: a
+        // 404 is deleted; a record SF still returns was a list omission — upsert it and
+        // clear the stamp; anything else stays stamped for next week.
+        const gone: string[] = [], back: string[] = []
+        for (const id of confirmed) {
+          const v = await verifyWithSf(cfg, id)
+          if (v.state === 'gone') gone.push(id)
+          else if (v.state === 'exists') { await batchUpsert(cfg.table, [cfg.mapper(v.raw)]); back.push(id) }
+        }
+        for (const c of chunk(gone, 500)) await supabase.from(cfg.table).update(cfg.table === 'sf_jobs' ? { is_deleted: true, sf_synced_at: now, sf_deleted_verified_at: now } : { is_deleted: true, sf_synced_at: now }).in('id', c)
+        for (const c of chunk(back, 500)) await supabase.from(cfg.table).update({ sf_missing_since: null }).in('id', c)
         if (firstMiss.length) console.log(`[sf-reconcile] ${cfg.entity}: ${firstMiss.length} newly missing (grace started)`)
-        if (confirmed.length) console.log(`[sf-reconcile] ${cfg.entity}: marked ${confirmed.length} deleted (missing past grace)`)
+        if (gone.length) console.log(`[sf-reconcile] ${cfg.entity}: marked ${gone.length} deleted (missing past grace, confirmed by direct lookup)`)
+        if (back.length) console.log(`[sf-reconcile] ${cfg.entity}: ${back.length} missing from the list but still in SF — kept`)
       }
 
       // Reappeared: a seen row that still carried a missing-stamp → clear it.
