@@ -22,6 +22,8 @@ describe('isPublicPath', () => {
       '/api/genie-scheduler/lookup',   // widget key + CORS; a customer on the embed, no login
       '/api/genie-scheduler/track',
       '/api/genie-scheduler/book',
+      '/sign/abc123',                  // e-sign links: token in the path, no login
+      '/api/sign/abc123',
     ]) expect(isPublicPath(p), p).toBe(true)
   })
 
