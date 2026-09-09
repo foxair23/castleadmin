@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction } from '../esign-actions'
+import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction, resetSignatureAction } from '../esign-actions'
 
 export interface EsignRow {
   id: string; order_id: string; status: string; template_key: string | null; template_fingerprint: string | null
@@ -130,6 +130,12 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
                 <td className="py-1.5 pr-3 flex gap-1.5">
                   {['found', 'unrecognised_template', 'prepared'].includes(r.status) && <button className={btn} disabled={pending} onClick={() => run(() => prepareEsignDocAction(r.id), x => `${x.status}${x.fingerprint ? ` · ${x.fingerprint}` : ''}`)}>Prepare</button>}
                   {r.template_fingerprint && <a className={btn} href={`/api/admin/esign/preview/${r.id}`} target="_blank" rel="noreferrer">Preview</a>}
+                  {r.customer_signed_at && !['sf_uploaded', 'portal_uploaded', 'cancelled'].includes(r.status) && (
+                    <button className={`${btn} text-red-700`} disabled={pending} title="Wipe the customer's signature (and the tech's, if any) so the link works again"
+                      onClick={() => { if (confirm(`Clear ${r.customer_name ?? 'the customer'}'s signature${r.tech_signed_at ? ' AND the technician\'s' : ''}? The signing link will work again.`)) run(() => resetSignatureAction(r.id, 'customer'), x => `Customer signature cleared · now ${x.status}`) }}>Clear customer signature</button>)}
+                  {r.tech_signed_at && !['sf_uploaded', 'portal_uploaded', 'cancelled'].includes(r.status) && (
+                    <button className={`${btn} text-red-700`} disabled={pending} title="Wipe the technician's signature so their link works again"
+                      onClick={() => { if (confirm('Clear the technician\'s signature? Their link will work again.')) run(() => resetSignatureAction(r.id, 'tech'), x => `Tech signature cleared · now ${x.status}`) }}>Clear tech signature</button>)}
                   {r.has_prepared && r.status !== 'cancelled' && <>
                     <button className={btn} title={r.customer_link} onClick={() => { navigator.clipboard.writeText(r.customer_link); setMsg('Customer link copied') }}>Customer link</button>
                     <button className={btn} title={r.tech_link} onClick={() => { navigator.clipboard.writeText(r.tech_link); setMsg('Tech link copied') }}>Tech link</button>
