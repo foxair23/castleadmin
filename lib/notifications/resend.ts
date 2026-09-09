@@ -12,6 +12,8 @@ export async function sendEmail(params: {
   replyTo?: string
   cc?: string | string[]
   bcc?: string | string[]
+  /** File attachments — content is the raw bytes, base64-encoded on the wire. */
+  attachments?: Array<{ filename: string; content: Uint8Array }>
 }): Promise<void> {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -28,6 +30,7 @@ export async function sendEmail(params: {
       ...(params.replyTo ? { reply_to: params.replyTo } : {}),
       ...(params.cc ? { cc: params.cc } : {}),
       ...(params.bcc ? { bcc: params.bcc } : {}),
+      ...(params.attachments?.length ? { attachments: params.attachments.map(a => ({ filename: a.filename, content: Buffer.from(a.content).toString('base64') })) } : {}),
     }),
   })
 

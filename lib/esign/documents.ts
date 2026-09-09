@@ -21,7 +21,7 @@ export interface EnsureResult { kind: EsignDocKind; docId?: string; action: 'cre
 
 /** Classify one stored attachment and act on it. Idempotent: re-running on the same
  *  attachment changes nothing the second time. */
-export async function ensureEsignDocForAttachment(attachmentId: string, supabase: SupabaseClient = db()): Promise<EnsureResult> {
+export async function ensureEsignDocForAttachment(attachmentId: string, supabase: SupabaseClient = db(), opts: { forceKind?: EsignDocKind } = {}): Promise<EnsureResult> {
   const { data: att } = await supabase.from('vendor_order_attachments')
     .select('id, order_id, filename, raw_name, doc_type, esign_doc_type, source')
     .eq('id', attachmentId).maybeSingle()
@@ -29,7 +29,7 @@ export async function ensureEsignDocForAttachment(attachmentId: string, supabase
   const { data: order } = await supabase.from('vendor_orders').select('id, vendor, parent_order_id, sf_job_id').eq('id', att.order_id as string).maybeSingle()
   if (!order) return { kind: 'none', action: 'noop' }
 
-  const kind = classifyVendorDoc(order.vendor as string, (att.raw_name as string | null) ?? (att.filename as string | null), att.doc_type as string | null)
+  const kind = opts.forceKind ?? classifyVendorDoc(order.vendor as string, (att.raw_name as string | null) ?? (att.filename as string | null), att.doc_type as string | null)
   if (att.esign_doc_type !== kind) await supabase.from('vendor_order_attachments').update({ esign_doc_type: kind }).eq('id', attachmentId)
   if (kind === 'none') return { kind, action: 'noop' }
 
@@ -99,4 +99,17 @@ export async function esignDocsForOrders(orderIds: string[], supabase: SupabaseC
     arr.push(r); map.set(r.order_id, arr)
   }
   return map
+}
+
+/** Cancel (or restore) a document. Cancelled rows are ignored by every sweep and both links
+ *  say "no longer needed". Restore puts it back to 'found' so it is inspected afresh. */
+export async function cancelEsignDoc(docId: string, restore = false, supabase: SupabaseClient = db()): Promise<{ ok: boolean; error?: string }> {
+  const { data: doc } = await supabase.from('esign_documents').select('id, order_id, status').eq('id', docId).maybeSingle()
+  if (!doc) return { ok: false, error: 'Document not found.' }
+  if (!restore && ['sf_uploaded', 'portal_uploaded'].includes(doc.status as string)) return { ok: false, error: 'Already filed — nothing to cancel.' }
+  if (restore && doc.status !== 'cancelled') return { ok: false, error: 'Not cancelled.' }
+  const now = new Date().toISOString()
+  await supabase.from('esign_documents').update({ status: restore ? 'found' : 'cancelled', updated_at: now }).eq('id', docId)
+  await supabase.from('vendor_order_events').insert({ order_id: doc.order_id, event_type: restore ? 'esign_restored' : 'esign_cancelled', to_value: restore ? 'found' : 'cancelled', detail: { doc_id: docId, from_status: doc.status } })
+  return { ok: true }
 }

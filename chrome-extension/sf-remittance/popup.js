@@ -20,9 +20,11 @@ async function render() {
   const linesLine = (li.posted || li.failed) ? `\nline items · posted ${li.posted ?? 0} · failed ${li.failed ?? 0}` : ''
   const sc = s.schedule || {}
   const schedLine = (sc.posted || sc.failed) ? `\nappointments · posted ${sc.posted ?? 0} · failed ${sc.failed ?? 0}` : ''
+  const dc = s.docs || {}
+  const docsLine = (dc.discovered || dc.posted || dc.failed || dc.pending) ? `\nsigned forms · ${dc.pending ?? 0} queued · discovered ${dc.discovered ?? 0} · uploaded ${dc.posted ?? 0} · failed ${dc.failed ?? 0}` : ''
   const head = s.error
     ? `Error: ${s.error}`
-    : `Last run: ${fmt(s.at)}\nqueued ${s.queued ?? 0} · applied ${s.applied ?? 0} · failed ${s.failed ?? 0} · skipped ${skipped.length}${s.dryRun ? ' (dry run)' : ''}${notesLine}${linesLine}${schedLine}`
+    : `Last run: ${fmt(s.at)}\nqueued ${s.queued ?? 0} · applied ${s.applied ?? 0} · failed ${s.failed ?? 0} · skipped ${skipped.length}${s.dryRun ? ' (dry run)' : ''}${notesLine}${linesLine}${schedLine}${docsLine}`
   const outcome = (l) => l.ok ? (l.dryRun ? 'would post' : 'posted') : (l.skipped ? 'skipped: ' + (l.reason || '') : 'FAIL: ' + (l.reason || l.error || ''))
   const detail = (s.log || [])
     .map(l => {

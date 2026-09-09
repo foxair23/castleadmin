@@ -9,6 +9,7 @@ import { NudgeControls } from './NudgeControls'
 import HdOrdersNav from './HdOrdersNav'
 import { statusChipStyle, isTerminalStatus } from '@/lib/vendor-orders/status-style'
 import { attachmentsForOrders, signedUrls } from '@/lib/vendor-orders/attachments'
+import { esignDocsForOrders } from '@/lib/esign/documents'
 import { clopayPaymentsByPo } from '@/lib/vendor-orders/payments'
 import { varianceByOrder } from '@/lib/vendor-orders/clopay-rates'
 
@@ -118,6 +119,29 @@ export default async function VendorOrdersView({
         id: a.id, filename: a.filename, mime_type: a.mime_type,
         external_ref: a.external_ref, url: urls.get(a.storage_path) ?? null,
       }))
+    }
+  }
+
+  // E-sign: the Home Depot form's journey for each house (root order). Signed URLs for the
+  // prepared/completed PDFs are minted here so the drawer can link straight to them.
+  if (vendor === 'clopay_hd') {
+    const esignMap = await esignDocsForOrders(orders.filter(o => !o.parent_order_id).map(o => o.id))
+    const pdfPaths: string[] = []
+    for (const docs of esignMap.values()) for (const d of docs) { if (d.prepared_pdf_path) pdfPaths.push(d.prepared_pdf_path); if (d.completed_pdf_path) pdfPaths.push(d.completed_pdf_path) }
+    const pdfUrls = await signedUrls(pdfPaths)
+    for (const o of orders) {
+      if (o.parent_order_id) continue
+      const d = esignMap.get(o.id)?.[0]
+      if (!d) { o.esign = null; continue }
+      o.esign = {
+        id: d.id, status: d.status, template_key: d.template_key,
+        customer_sent_at: d.customer_sent_at, customer_asked_at: d.customer_asked_at, customer_signed_at: d.customer_signed_at,
+        tech_name: d.tech_name, tech_sent_at: d.tech_sent_at, tech_signed_at: d.tech_signed_at,
+        completed_at: d.completed_at, sf_uploaded_at: d.sf_uploaded_at, portal_uploaded_at: d.portal_uploaded_at, portal_uploaded_by: d.portal_uploaded_by,
+        prepared_url: d.prepared_pdf_path ? pdfUrls.get(d.prepared_pdf_path) ?? null : null,
+        completed_url: d.completed_pdf_path ? pdfUrls.get(d.completed_pdf_path) ?? null : null,
+        error: d.error,
+      }
     }
   }
 

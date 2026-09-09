@@ -85,3 +85,54 @@ export async function resetSignatureAction(id: string, scope: 'customer' | 'tech
   revalidatePath(PATH)
   return r
 }
+
+// ── Tech, finalize, portal, cancel, override ───────────────────────────────
+
+export async function notifyTechNowAction(id: string, override?: { name: string; phone: string | null; email: string | null }): Promise<{ ok: boolean; channels?: string[]; tech?: string; error?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { notifyTech } = await import('@/lib/esign/tech')
+  const r = await notifyTech(id, override ? { override: { id: null, ...override } } : {})
+  revalidatePath(PATH); revalidatePath('/admin/vendor-orders')
+  return r
+}
+
+export async function finalizeNowAction(id: string): Promise<{ ok: boolean; status?: string; error?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { finalizeEsignDoc } = await import('@/lib/esign/finalize')
+  const r = await finalizeEsignDoc(id)
+  revalidatePath(PATH); revalidatePath('/admin/vendor-orders')
+  return r
+}
+
+export async function markPortalUploadedAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle()
+  const { markEsignPortalUploaded } = await import('@/lib/esign/finalize')
+  const r = await markEsignPortalUploaded(id, (profile?.full_name as string | null) ?? null)
+  revalidatePath(PATH); revalidatePath('/admin/vendor-orders'); revalidatePath('/admin/action-items')
+  return r
+}
+
+export async function cancelEsignAction(id: string, restore = false): Promise<{ ok: boolean; error?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { cancelEsignDoc } = await import('@/lib/esign/documents')
+  const r = await cancelEsignDoc(id, restore)
+  revalidatePath(PATH); revalidatePath('/admin/vendor-orders')
+  return r
+}
+
+/** The classifier missed one: treat this stored attachment as the blank lien waiver. */
+export async function adoptAttachmentAsWaiverAction(attachmentId: string): Promise<{ ok: boolean; docId?: string; error?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { ensureEsignDocForAttachment } = await import('@/lib/esign/documents')
+  const { prepareEsignDoc } = await import('@/lib/esign/prepare')
+  try {
+    const r = await ensureEsignDocForAttachment(attachmentId, undefined, { forceKind: 'lien_waiver' })
+    if (!r.docId) return { ok: false, error: 'Could not attach this document (is there already a waiver for the house?).' }
+    await prepareEsignDoc(r.docId)
+    revalidatePath(PATH); revalidatePath('/admin/vendor-orders')
+    return { ok: true, docId: r.docId }
+  } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) } }
+}

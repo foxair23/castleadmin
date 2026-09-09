@@ -37,8 +37,11 @@ export interface GenieActionItemsResult { items: GenieActionItem[] }
 //               "Schedule Install/Delivery". Sourced from the weekly DC report, keyed by PO.
 // They dismiss to different places (see markClopayActionDone), so the kind travels with the
 // item rather than being inferred in the UI.
+//   'portal_upload' — a Home Depot form both parties e-signed, waiting for a person to upload
+//               it to the Clopay portal. Button: "Uploaded to Clopay". Auto-clears when the
+//               crawl sees the Signed ICA/LW come back.
 export interface ClopayActionItem extends GenieActionItem {
-  kind: 'new_job' | 'at_dc'
+  kind: 'new_job' | 'at_dc' | 'portal_upload'
   /** at_dc only — the PO is the unit of work, and one customer can have one PO at the DC
    *  while another has not arrived. */
   po?: string | null
@@ -47,6 +50,10 @@ export interface ClopayActionItem extends GenieActionItem {
   /** at_dc only — true when the DC report names an order we have no record of at all (the
    *  Castle-direct orders, Clopay customer 61232, which reach no other system). */
   unknown_order?: boolean
+  /** portal_upload only — the completed, signed PDF (one-hour link) and whether it is on the SF job yet. */
+  completed_url?: string | null
+  sf_uploaded?: boolean
+  completed_at?: string | null
 }
 export interface ClopayActionItemsResult { items: ClopayActionItem[] }
 
@@ -88,9 +95,41 @@ export function getGenieActionItems(): Promise<GenieActionItemsResult> {
  *  has landed at the DC ready for install. Oldest DC arrivals first — a PO that has been
  *  sitting for months is the one worth calling out. */
 export async function getClopayActionItems(): Promise<ClopayActionItemsResult> {
-  const [jobs, dc] = await Promise.all([getCreatedJobItems('clopay_hd'), getDcActionItems()])
+  const [jobs, dc, uploads] = await Promise.all([getCreatedJobItems('clopay_hd'), getDcActionItems(), getPortalUploadItems()])
   const jobItems: ClopayActionItem[] = jobs.items.map(i => ({ ...i, kind: 'new_job' as const }))
-  return { items: [...jobItems, ...dc] }
+  return { items: [...uploads, ...jobItems, ...dc] }
+}
+
+/** Signed forms waiting for the Clopay portal upload — first on the list: Home Depot is
+ *  waiting on them and the work is two minutes. */
+async function getPortalUploadItems(): Promise<ClopayActionItem[]> {
+  const supabase = db()
+  const { data } = await supabase.from('esign_documents')
+    .select('id, order_id, status, completed_at, completed_pdf_path, sf_uploaded_at, prefill')
+    .in('status', ['completed', 'sf_uploaded']).is('portal_uploaded_at', null).order('completed_at', { ascending: true }).limit(200)
+  const rows = (data ?? []) as Array<{ id: string; order_id: string; status: string; completed_at: string | null; completed_pdf_path: string | null; sf_uploaded_at: string | null; prefill: Record<string, string> | null }>
+  if (!rows.length) return []
+  const { data: orders } = await supabase.from('vendor_orders')
+    .select('id, external_id, customer_name, street_address, city, state_prov, postal_code, order_date, status, phone, sf_created_job_number')
+    .in('id', rows.map(r => r.order_id))
+  const byId = new Map(((orders ?? []) as Array<Record<string, string | null>>).map(o => [o.id as string, o]))
+  const { signedUrls } = await import('./attachments')
+  const urls = await signedUrls(rows.map(r => r.completed_pdf_path).filter((p): p is string => !!p))
+  return rows.map(r => {
+    const o = byId.get(r.order_id)
+    return {
+      id: r.id, kind: 'portal_upload' as const,
+      external_id: (o?.external_id as string) ?? '—',
+      customer_name: o?.customer_name ?? r.prefill?.customer_name ?? null,
+      sf_job_number: r.prefill?.sf_job_number ?? o?.sf_created_job_number ?? null,
+      address: o ? ([o.street_address, o.city, o.state_prov, o.postal_code].filter(Boolean).join(', ') || null) : (r.prefill?.address_full ?? null),
+      order_date: o?.order_date ?? null, status: o?.status ?? null, phone: o?.phone ?? null,
+      created_job_at: r.completed_at ?? '',
+      appointment_date: null, appointment_window_start: null, appointment_window_end: null, schedule_nudge_sent_at: null,
+      completed_url: r.completed_pdf_path ? urls.get(r.completed_pdf_path) ?? null : null,
+      sf_uploaded: !!r.sf_uploaded_at, completed_at: r.completed_at,
+    }
+  })
 }
 
 /** POs on the weekly DC report that nobody has scheduled yet. A PO reappears on every report

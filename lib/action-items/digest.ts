@@ -156,6 +156,9 @@ export async function computeTodoDigest(db: SupabaseClient): Promise<TodoDigest>
     }
   })
   const clopayLines: Line[] = clopay.items.map(c => {
+    if (c.kind === 'portal_upload') {
+      return { text: `${c.customer_name ?? '—'} — Order #${c.external_id}${c.sf_job_number ? ` — SF Job ${c.sf_job_number}` : ''} — signed form to upload to Clopay${c.sf_uploaded ? ' (on the SF job)' : ''}` }
+    }
     if (c.kind === 'at_dc') {
       // Aging is the reason this line exists — lead with it.
       const age = c.days_at_dc == null ? 'at DC' : `at DC ${c.days_at_dc}d`

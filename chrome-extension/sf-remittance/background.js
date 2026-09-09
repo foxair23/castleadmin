@@ -1,8 +1,9 @@
 import { getConfig, setStatus } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult } from './app-api.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult } from './app-api.js'
 import { applyOne } from './sf.js'
 import { addLinesToJob } from './sf-lines.js'
 import { setJobSchedule } from './sf-schedule.js'
+import { uploadDocument } from './sf-document.js'
 import { postNote } from './sf-note.js'
 
 const ALARM = 'sf-remittance-poll'
@@ -642,6 +643,42 @@ async function runJobSchedule(cfg, log) {
   return { posted, failed }
 }
 
+/** Signed e-sign forms onto their SF jobs. DISCOVERY ONLY until SF's upload request is
+ *  captured: each queued item gets its job page read and the upload widget's configuration
+ *  reported back; nothing is uploaded and nothing counts as a failure. Items already
+ *  discovered are skipped, so this costs one page read per document, once. */
+async function runDocumentUploads(cfg, log) {
+  let discovered = 0, posted = 0, failed = 0
+  let items = []
+  try {
+    ({ items } = await fetchDocsQueue(cfg.baseUrl, cfg.token))
+  } catch (e) {
+    log.push({ docsQueueError: String(e) })
+    return { discovered, posted, failed }
+  }
+  const todo = items.filter(i => !i.discovered)
+  if (!todo.length) return { discovered, posted, failed, pending: items.length }
+  console.log('[sf-remittance] document queue', { items: items.length, toDiscover: todo.length })
+  for (const item of todo) {
+    let res
+    try {
+      res = await uploadDocument({ jobNumber: item.jobNumber, dryRun: cfg.dryRun })
+    } catch (e) {
+      res = { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+    log.push({ docId: item.id, jobNumber: item.jobNumber, filename: item.filename, ...(res.discovery ? { discovery: { url: res.discovery.pluploadUrl, fileField: res.discovery.fileDataName, forms: res.discovery.forms?.length ?? 0 } } : {}), ...(res.error ? { error: res.error } : {}), discoveryOnly: res.ok === undefined })
+    if (!cfg.dryRun) {
+      try {
+        if (res.ok === undefined) await postDocsResult(cfg.baseUrl, cfg.token, { id: item.id, discovery: res.discovery })
+        else await postDocsResult(cfg.baseUrl, cfg.token, { id: item.id, ok: !!res.ok, error: res.ok ? undefined : res.error })
+      } catch (e) { log.push({ docId: item.id, callbackError: String(e) }) }
+    }
+    if (res.ok === undefined) discovered++; else if (res.ok) posted++; else failed++
+    await sleep(1500)
+  }
+  return { discovered, posted, failed, pending: items.length }
+}
+
 export async function run(source) {
   if (running) return { ok: false, error: 'already running' }
   const cfg = await getConfig()
@@ -698,6 +735,9 @@ export async function run(source) {
     // etc.). Independent of the payment pass — a failure here never affects it.
     const notes = await runNotes(cfg, log)
 
+    // Signed e-sign forms onto their SF jobs — discovery only until the upload request is captured.
+    const docs = await runDocumentUploads(cfg, log)
+
     // Alert on SF trouble: a login-looking failure → logged_out; any other apply
     // failure → error. Deduped server-side so it's one email, not one per line.
     if (!cfg.dryRun) {
@@ -717,9 +757,9 @@ export async function run(source) {
       else if (failures.length) { setBadge('!'); await notifyAlert('service_fusion', 'error', `${failures.length} remittance line(s) failed to post`) }
     }
 
-    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, log })
-    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, log })
-    return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, log }
+    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, docs, log })
+    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log })
+    return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
     await setStatus({ source, error, log })
