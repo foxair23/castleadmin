@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { runReferenceSync, runIncrementalSyncForEntity, runScopedReconcile } from '@/lib/sf-mirror/sync-engine'
+import { runReferenceSync, runIncrementalSyncForEntity, runScopedReconcile, reviveFalselyDeleted } from '@/lib/sf-mirror/sync-engine'
 import { refreshCommission } from '@/lib/commission/engine'
 
 export const maxDuration = 800
@@ -34,6 +34,16 @@ export async function GET(req: NextRequest) {
       console.error('[sf-sync-daily] scoped reconcile failed:', e)
       reconciled = { error: String(e) }
     }
+    // Ask SF directly about soft-deleted jobs, a batch a day, and revive the ones it still
+    // has — the weekly list scan drops records at page boundaries and had been deleting
+    // live, invoiced jobs. Non-fatal.
+    let revived: unknown = null
+    try {
+      revived = await reviveFalselyDeleted('jobs', 150)
+    } catch (e) {
+      console.error('[sf-sync-daily] revive pass failed:', e)
+      revived = { error: String(e) }
+    }
     // Recompute commission off the fresh job/agent/invoice data. Non-fatal:
     // a commission error must not fail the mirror sync.
     let commission: unknown = null
@@ -43,7 +53,7 @@ export async function GET(req: NextRequest) {
       console.error('[sf-sync-daily] commission refresh failed:', e)
       commission = { error: String(e) }
     }
-    return NextResponse.json({ ok: true, reference: refCounts, jobs: jobsUpserted, reconciled, commission, ms: Date.now() - started })
+    return NextResponse.json({ ok: true, reference: refCounts, jobs: jobsUpserted, reconciled, revived, commission, ms: Date.now() - started })
   } catch (err) {
     console.error('[sf-sync-daily] fatal:', err)
     return NextResponse.json({ ok: false, error: String(err), ms: Date.now() - started }, { status: 500 })
