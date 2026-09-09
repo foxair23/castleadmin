@@ -612,7 +612,7 @@ async function runJobSchedule(cfg, log) {
   for (const item of items) {
     let res
     try {
-      res = await setJobSchedule({ jobNumber: item.jobNumber, date: item.date, windowStart: item.windowStart, windowEnd: item.windowEnd, dryRun: cfg.dryRun })
+      res = await setJobSchedule({ jobNumber: item.jobNumber, date: item.date, windowStart: item.windowStart, windowEnd: item.windowEnd, scheduledStatusId: item.scheduledStatusId ?? null, dryRun: cfg.dryRun })
     } catch (e) {
       res = { ok: false, error: e instanceof Error ? e.message : String(e) }
     }

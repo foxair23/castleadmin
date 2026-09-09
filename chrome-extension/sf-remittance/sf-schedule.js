@@ -60,11 +60,33 @@ export function jobUpdatedAtFromPage(html) {
   return m ? m[1] : null
 }
 
-/** The id of a named status, from the view page's status list. */
+/** The id of a named status, from the view page — whatever the status control looks like.
+ *
+ *  On the job page the status is an x-editable popover (a#statusManual → a <select> built at
+ *  click time), so the options are not in the markup at all: they sit in the editor's JS
+ *  `source` array as { value, text } pairs. That form is tried first. Then: an element whose
+ *  text is the name carrying any numeric attribute; then { id, name } JSON, either key order. */
 export function statusIdFromPage(html, name = SCHEDULED_STATUS_NAME) {
-  const re = new RegExp(`(?:value|data-value|data-id)=["'](\\d+)["'][^>]*>\\s*${name}\\s*<`, 'i')
-  const m = html.match(re) || html.match(new RegExp(`>\\s*${name}\\s*<[^>]*?(?:value|data-value|data-id)=["'](\\d+)["']`, 'i'))
-  return m ? m[1] : null
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const tries = [
+    // x-editable source: {value: 1018744945, text: "Scheduled"} — either order, quoted or not
+    new RegExp(`["']?value["']?\\s*:\\s*["']?(\\d{3,})["']?[^{}]{0,200}["']?text["']?\\s*:\\s*["']${n}["']`, 'i'),
+    new RegExp(`["']?text["']?\\s*:\\s*["']${n}["'][^{}]{0,200}["']?value["']?\\s*:\\s*["']?(\\d{3,})`, 'i'),
+    new RegExp(`[A-Za-z_:-]+=["'](\\d{3,})["'][^<>]{0,300}>\\s*${n}\\s*<`, 'i'),
+    new RegExp(`>\\s*${n}\\s*<[^<>]{0,300}?[A-Za-z_:-]+=["'](\\d{3,})["']`, 'i'),
+    new RegExp(`["']?id["']?\\s*:\\s*["']?(\\d{3,})["']?[^{}]{0,200}["']?name["']?\\s*:\\s*["']${n}["']`, 'i'),
+    new RegExp(`["']?name["']?\\s*:\\s*["']${n}["'][^{}]{0,200}["']?id["']?\\s*:\\s*["']?(\\d{3,})`, 'i'),
+  ]
+  for (const re of tries) { const m = html.match(re); if (m) return m[1] }
+  return null
+}
+
+/** The page around the first occurrence of the status name — what the next run needs to
+ *  see when the parse above finds nothing. Markup only; a status list holds no customer data. */
+export function statusSnippet(html, name = SCHEDULED_STATUS_NAME) {
+  const i = html.indexOf(name)
+  if (i < 0) return `(the word "${name}" does not appear on the page)`
+  return html.slice(Math.max(0, i - 220), i + 120).replace(/\s+/g, ' ')
 }
 
 /** The three posts, in the order they are made. Pure, so the dry run can show exactly them. */
@@ -90,7 +112,7 @@ export function postSucceeded(res) {
 }
 
 /** Write one appointment. `dryRun` returns the payloads without posting anything. */
-export async function setJobSchedule({ jobNumber, date, windowStart, windowEnd, dryRun = false }) {
+export async function setJobSchedule({ jobNumber, date, windowStart, windowEnd, scheduledStatusId = null, dryRun = false }) {
   const trace = []
   if (!jobNumber) throw new Error('jobNumber required')
   if (!date) throw new Error('date required')
@@ -101,10 +123,14 @@ export async function setJobSchedule({ jobNumber, date, windowStart, windowEnd, 
   if (page.loginRedirect) throw new Error('SF session expired — sign in to admin.servicefusion.com')
 
   const jobUpdatedAt = jobUpdatedAtFromPage(page.text)
-  const statusId = statusIdFromPage(page.text)
-  trace.push({ step: 'readPage', jobUpdatedAt: !!jobUpdatedAt, statusId })
+  // The page is the first choice for the status id (it is exactly what the UI would send);
+  // the id the app read from SF's API is the fallback. Same id space — the API's statuses
+  // are the ones the page lists.
+  const pageStatusId = statusIdFromPage(page.text)
+  const statusId = pageStatusId ?? (scheduledStatusId ? String(scheduledStatusId) : null)
+  trace.push({ step: 'readPage', jobUpdatedAt: !!jobUpdatedAt, statusId, statusSource: pageStatusId ? 'page' : (statusId ? 'api' : null) })
   if (!jobUpdatedAt) throw new Error('could not read jobUpdatedAt from the job page — SF may have changed the page')
-  if (!statusId) throw new Error(`could not find the "${SCHEDULED_STATUS_NAME}" status on the job page`)
+  if (!statusId) throw new Error(`could not find the "${SCHEDULED_STATUS_NAME}" status on the job page and the app supplied none — page near the word: ${statusSnippet(page.text)}`)
 
   const payloads = buildSchedulePayloads({ jobId, date, windowStart, windowEnd, jobUpdatedAt, statusId })
   if (dryRun) return { ok: true, dryRun: true, jobId, window: windowFor(windowStart, windowEnd), statusId, payloads, trace }
