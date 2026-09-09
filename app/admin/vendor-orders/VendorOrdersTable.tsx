@@ -331,6 +331,9 @@ function DoorPayment({ paid, fee }: { paid: number | null; fee: number | null })
  *  multi-door row sums every door's PO, so the figure lines up with Total Fee, which is also
  *  the whole job. Green once it covers the fee, amber while it is short — the comparison is
  *  the point, a bare number would mean re-reading the row to interpret it. */
+// Remittance dollars against the IPO total, with the verdict spelled out: "Paid in full" when
+// what Clopay has paid covers the total fee, "Partial" (and by how much) when it does not.
+// The colour alone said this before; a tag says it to someone scanning the list.
 function PaymentReceived({ amount, totalFee, pos }: { amount: number | null; totalFee: number | null; pos: Array<{ po: string; amount: number }> | null }) {
   if (amount == null || amount === 0) return <span className="text-gray-300">—</span>
   const covered = totalFee != null && totalFee > 0 && amount + 0.005 >= totalFee
@@ -339,8 +342,15 @@ function PaymentReceived({ amount, totalFee, pos }: { amount: number | null; tot
   const title = [
     ...(pos ?? []).map(p => `PO ${p.po}: ${p.amount > 0 ? fmtMoney(p.amount) : 'awaiting payment'}`),
     ...(short ? [`Short ${fmtMoney(totalFee! - amount)} of the ${fmtMoney(totalFee!)} total fee`] : []),
+    ...(covered ? [`Covers the ${fmtMoney(totalFee!)} total fee`] : []),
   ].join('\n') || undefined
-  return <span className={`font-medium ${tone}`} title={title}>{fmtMoney(amount)}</span>
+  return (
+    <span className="inline-flex flex-col items-start gap-0.5" title={title}>
+      <span className={`font-medium ${tone}`}>{fmtMoney(amount)}</span>
+      {covered && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">Paid in full</span>}
+      {short && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Partial · {fmtMoney(totalFee! - amount)} short</span>}
+    </span>
+  )
 }
 
 /** "At DC 63d" — this order's product is sitting at the San Diego DC, and has been for that
@@ -676,7 +686,8 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
       if (nextStep && o.next_step !== nextStep) return false
       if (orderType && o.order_type !== orderType) return false
       if (q) {
-        const hay = [o.external_id, o.customer_name, o.street_address, o.city, o.customer_po, o.store_number, o.email, o.phone, o.scope, o.next_step, o.status, o.sf_job_number]
+        const paidTag = o.payment_received && o.total_fee && o.total_fee > 0 ? (o.payment_received + 0.005 >= o.total_fee ? 'paid in full' : 'partial') : null
+        const hay = [o.external_id, o.customer_name, o.street_address, o.city, o.customer_po, o.store_number, o.email, o.phone, o.scope, o.next_step, o.status, o.sf_job_number, paidTag]
           .filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
