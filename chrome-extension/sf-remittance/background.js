@@ -1,7 +1,8 @@
 import { getConfig, setStatus } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult } from './app-api.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult } from './app-api.js'
 import { applyOne } from './sf.js'
 import { addLinesToJob } from './sf-lines.js'
+import { setJobSchedule } from './sf-schedule.js'
 import { postNote } from './sf-note.js'
 
 const ALARM = 'sf-remittance-poll'
@@ -594,6 +595,43 @@ async function runJobLines(cfg, log) {
   return { posted, failed }
 }
 
+/** Write queued Genie appointments onto their SF jobs. Same shape as runJobLines. An item
+ *  whose form fields are not yet mapped (FIELD_MAP in sf-schedule.js) is NOT reported back:
+ *  it stays queued so it is written once the mapping ships, and the dry-run trace carries
+ *  the candidate field names that mapping needs. */
+async function runJobSchedule(cfg, log) {
+  let posted = 0, failed = 0, unmapped = 0
+  let items = []
+  try {
+    ({ items } = await fetchScheduleQueue(cfg.baseUrl, cfg.token))
+  } catch (e) {
+    log.push({ scheduleQueueError: String(e) })
+    return { posted, failed, unmapped }
+  }
+  if (!items.length) return { posted, failed, unmapped }
+  console.log('[sf-remittance] job schedule queue', { items: items.length })
+
+  for (const item of items) {
+    let res
+    try {
+      res = await setJobSchedule({ jobNumber: item.jobNumber, date: item.date, windowStart: item.windowStart, windowEnd: item.windowEnd, dryRun: cfg.dryRun })
+    } catch (e) {
+      res = { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, date: item.date, window: item.windowStart ? `${item.windowStart}-${item.windowEnd}` : null, ...res })
+
+    if (res.needsMapping) { unmapped++; continue }   // leave queued; nothing to report yet
+    if (!cfg.dryRun) {
+      try {
+        await postScheduleResult(cfg.baseUrl, cfg.token, { orderId: item.orderId, ok: !!res.ok, error: res.ok ? undefined : (res.reason ?? res.error) })
+      } catch (e) { log.push({ orderId: item.orderId, callbackError: String(e) }) }
+    }
+    res.ok ? posted++ : failed++
+    await sleep(1500) // be gentle on SF
+  }
+  return { posted, failed, unmapped }
+}
+
 export async function run(source) {
   if (running) return { ok: false, error: 'already running' }
   const cfg = await getConfig()
@@ -643,6 +681,9 @@ export async function run(source) {
     // payment pass — a failure here never affects it, and vice versa.
     const lines = await runJobLines(cfg, log)
 
+    // Genie appointments onto their SF jobs — same wall, same arm. Independent of the rest.
+    const schedule = await runJobSchedule(cfg, log)
+
     // Third pass: post any queued SF job notes (invoice-reminder audit trail,
     // etc.). Independent of the payment pass — a failure here never affects it.
     const notes = await runNotes(cfg, log)
@@ -666,9 +707,9 @@ export async function run(source) {
       else if (failures.length) { setBadge('!'); await notifyAlert('service_fusion', 'error', `${failures.length} remittance line(s) failed to post`) }
     }
 
-    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, notes, log })
-    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, notes, log })
-    return { ok: true, dryRun: cfg.dryRun, applied, failed, notes, log }
+    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, log })
+    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, log })
+    return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, log }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
     await setStatus({ source, error, log })

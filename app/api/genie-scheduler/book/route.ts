@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { officeEmail, schedulerOrigins } from '@/lib/config/domains'
 import { createClient } from '@supabase/supabase-js'
-import { sfPut } from '@/lib/crm/service-fusion'
 import { enqueueNote } from '@/lib/sf-notes/queue'
 import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
 import { sendEmail } from '@/lib/notifications/resend'
@@ -13,10 +12,11 @@ import { renderGenieBookingConfirmation, renderGenieBookingAlert } from '@/lib/n
 // job we already created for this order, and queue a note summarizing the
 // customer's pre-install qualification answers.
 //
-// SF has no API to add a note to a job, so the note is enqueued (sf_note_queue)
-// and the browser extension posts it in the logged-in session. The schedule
-// itself IS an API write (sfPut /jobs/{id}). We record the appointment on the
-// vendor_orders row regardless, so a transient SF hiccup never loses the booking
+// SF has no API to add a note to a job, nor to change one that exists — PUT
+// /jobs/{id} is 405 — so both the note (sf_note_queue) and the appointment
+// (sf_schedule_status = 'queued') are written by the browser extension through
+// SF's logged-in session. The vendor_orders row is the source of truth and is
+// recorded first, so nothing about the booking depends on the extension's timing
 // — the office sees the request either way.
 
 export const dynamic = 'force-dynamic'
@@ -199,31 +199,14 @@ export async function POST(req: NextRequest) {
 
   const answers: GenieAnswers = body.answers ?? {}
 
-  // 1) Write the schedule onto the existing SF job. Retry transient failures
-  //    (5xx/429/timeout/network) with backoff — SF intermittently 500s/429s.
-  //    We still record the request below either way, and if this ultimately
-  //    fails the customer is told it's not yet confirmed and the office alert is
-  //    flagged so a human sets the date manually (rather than a silent success).
-  let sfSynced = false
-  let sfError: string | null = null
-  const putBody = {
-    start_date: appointment_date,
-    ...(useWindow ? { time_frame_promised_start: window_start, time_frame_promised_end: window_end } : {}),
-  }
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await sfPut(`/jobs/${sfJobId}`, putBody)
-      sfSynced = true
-      sfError = null
-      break
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      sfError = msg
-      const transient = /\(5\d\d\)|\(429\)|busy|abort|network|fetch failed|timeout/i.test(msg)
-      if (!transient || attempt === 2) break
-      await new Promise(r => setTimeout(r, 500 * 2 ** attempt)) // 0.5s, 1s
-    }
-  }
+  // 1) The schedule is written onto the SF job by the Chrome extension, not here. SF's API
+  //    cannot update an existing job — PUT /jobs/{id} is 405, "GET, HEAD, OPTIONS" only —
+  //    so, as with payments and IPO line items, the order is queued (step 3 stamps it) and
+  //    the extension writes the date through SF's web session within its next poll. The
+  //    order is the source of truth either way; the office alert says the SF write is
+  //    pending rather than failed, and the callback marks it posted.
+  const sfSync = 'pending' as const
+  const sfError: string | null = null
 
   // 2) Queue the qualification note (posted to SF by the extension). Dedup per
   //    order + chosen slot so a genuine reschedule posts a fresh note.
@@ -246,6 +229,12 @@ export async function POST(req: NextRequest) {
     scheduled_contact_phone: body.contact_phone ?? null,
     scheduled_contact_email: body.contact_email ?? null,
     schedule_answers: answers,
+    // Queue the SF write for the extension (see step 1). A rebooking re-queues: the extension
+    // writes whatever the order says now.
+    sf_schedule_status: 'queued',
+    sf_schedule_job_number: sfJobNumber,
+    sf_schedule_sync_note: null,
+    sf_schedule_synced_at: null,
     updated_at: nowIso,
   }).eq('id', order.id)
 
@@ -253,7 +242,7 @@ export async function POST(req: NextRequest) {
     order_id: order.id,
     event_type: 'scheduled',
     to_value: useWindow ? `${appointment_date} ${window_start}-${window_end}` : appointment_date,
-    detail: { sfSynced, sfError, slotMode, answers },
+    detail: { sfSync, sfError, slotMode, answers },
   })
 
   // If an earlier failed lookup captured this customer as a Genie partial lead, the
@@ -289,7 +278,7 @@ export async function POST(req: NextRequest) {
     const alert = renderGenieBookingAlert({
       customerName: order.customer_name, phone: order.phone, email: customerEmail,
       hdOrder: order.external_id, sfJobNumber, dateLabel, windowLabel: windowText, address: addressText, adminUrl,
-      synced: sfSynced, syncError: sfError,
+      sync: sfSync, syncError: sfError,
     })
     await enqueueForSubscribers({
       notificationTypeKey: 'scheduler_lead_synced',
@@ -300,7 +289,11 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    sf_synced: sfSynced,
+    // From the customer's side the booking is confirmed: the order holds the date and the
+    // extension writes it to SF within minutes. `sf_synced: false` would send them to the
+    // "pending — the office will finish this" page, which is no longer what is happening.
+    // The office alert carries the sync state; the customer does not need to.
+    sf_sync: sfSync,
     order_number: order.external_id,
     sf_job_number: sfJobNumber,
     appointment_date,

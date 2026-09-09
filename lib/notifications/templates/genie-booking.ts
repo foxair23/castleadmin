@@ -91,16 +91,23 @@ export function renderGenieBookingAlert(o: {
   windowLabel: string
   address: string | null
   adminUrl: string
-  // When false, the appointment date could NOT be written to the SF job — the
-  // office must set it manually. The customer was told it's not yet confirmed.
+  // How the date reached the SF job. 'pending': queued for the Chrome extension, which
+  // writes it through SF's web session on its next poll (the API cannot update a job).
+  // 'failed': it could not even be queued — the office must set it manually. `synced`
+  // is the older boolean form; false means failed.
+  sync?: 'synced' | 'pending' | 'failed'
   synced?: boolean
   syncError?: string | null
 }): { subject: string; bodyHtml: string; bodyText: string } {
   const name = o.customerName || `HD #${o.hdOrder}`
-  const failed = o.synced === false
+  const state: 'synced' | 'pending' | 'failed' = o.sync ?? (o.synced === false ? 'failed' : 'synced')
+  const failed = state === 'failed'
+  const pending = state === 'pending'
   const subject = failed
     ? `⚠ Genie booking NOT synced — set date manually: ${name} — ${o.dateLabel}`
-    : `Genie install booked: ${name} — ${o.dateLabel}`
+    : pending
+      ? `Genie install booked (SF date pending): ${name} — ${o.dateLabel}`
+      : `Genie install booked: ${name} — ${o.dateLabel}`
   const contact = [o.phone, o.email].filter(Boolean).join(' · ')
 
   const fields: Array<[string, string]> = [
@@ -114,7 +121,9 @@ export function renderGenieBookingAlert(o: {
 
   const warnText = failed
     ? `\n*** ACTION NEEDED: we could NOT write this date to the Service Fusion job. Open the SF job and set the date/window manually, then call the customer to confirm. (${o.syncError ?? 'sync failed'}) ***\n`
-    : ''
+    : pending
+      ? `\nThe date is being written to the SF job by the Castle extension — usually within 10 minutes. If it is still not on the job in an hour, set it manually.\n`
+      : ''
   const bodyText = `Genie install ${failed ? 'requested (NOT synced to SF)' : 'booked'} via the self-scheduler.
 ${warnText}
 ${fields.map(([k, v]) => `${k}: ${v}`).join('\n')}
@@ -125,10 +134,14 @@ Manage: ${o.adminUrl}`
     ? `<div style="background:#FEF2F2;border:1.5px solid #dc2626;border-radius:6px;padding:12px 14px;margin:0 0 14px;color:#991b1b;font-size:13px;line-height:1.5;">
         <strong>⚠ Not synced to Service Fusion.</strong> We couldn&rsquo;t write this date to the SF job. Open the job, set the date/window manually, and call the customer to confirm.${o.syncError ? `<br/><span style="color:#b91c1c;font-size:11px;">${esc(o.syncError)}</span>` : ''}
       </div>`
-    : ''
+    : pending
+      ? `<div style="background:#FFFBEB;border:1.5px solid #d97706;border-radius:6px;padding:12px 14px;margin:0 0 14px;color:#92400e;font-size:13px;line-height:1.5;">
+        <strong>SF date pending.</strong> The Castle extension writes this date to the SF job on its next poll &mdash; usually within 10 minutes. If it is still not on the job in an hour, set it manually.
+      </div>`
+      : ''
   const bodyHtml = `
 <div style="${A_BASE}">
-  <p style="${A_HEADING}">Genie install ${failed ? 'requested — not synced' : 'booked'}</p>
+  <p style="${A_HEADING}">Genie install ${failed ? 'requested — not synced' : pending ? 'booked — SF date pending' : 'booked'}</p>
   ${warnHtml}
   ${fields.map(([k, v]) => `<p style="${A_LABEL}">${esc(k)}</p><p style="${A_VALUE}">${esc(v)}</p>`).join('')}
   <p style="margin:20px 0 0;"><a href="${esc(o.adminUrl)}" style="${A_BTN}">Open HD Orders</a></p>

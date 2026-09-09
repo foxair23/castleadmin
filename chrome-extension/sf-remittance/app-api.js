@@ -65,6 +65,25 @@ export async function postLinesResult(baseUrl, token, payload) {
 
 // ── Vendor portal orders (Genie / Home Depot, etc.) ─────────────────────────
 
+// Genie appointments the app wants written onto existing SF jobs (same 405 wall as lines).
+export async function fetchScheduleQueue(baseUrl, token) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-schedule-queue`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error(`schedule queue ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
+export async function postScheduleResult(baseUrl, token, payload) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-schedule-callback`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`schedule callback ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
 export async function postVendorOrders(baseUrl, token, vendor, orders, { kind, mode } = {}) {
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/ingest`, {
     method: 'POST',
