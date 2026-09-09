@@ -24,7 +24,7 @@ function db(): SupabaseClient {
 
 /** Clopay's Oracle generator pads PDFs out to a fixed size (many are exactly 1,280,000
  *  bytes). Trimming past the last %%EOF keeps the PDF reader from chewing through filler. */
-function trimPdfPadding(bytes: Uint8Array): Uint8Array {
+export function trimPdfPadding(bytes: Uint8Array): Uint8Array {
   const idx = Buffer.from(bytes).lastIndexOf(Buffer.from('%%EOF'))
   return idx > 0 ? bytes.slice(0, idx + 5) : bytes
 }
