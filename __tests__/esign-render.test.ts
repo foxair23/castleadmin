@@ -213,3 +213,49 @@ describe('template hd_com_lw_pod', () => {
     expect(fingerprintPdf(c)).not.toBe(fingerprintPdf(a))
   })
 })
+
+// Forms that FLOW: a wrapped line pushes every label below it down, so boxes follow labels.
+describe('anchored boxes', () => {
+  async function labelled(labelY: number): Promise<Uint8Array> {
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    const p = doc.addPage([595, 842])
+    p.drawText('Customer Signature', { x: 63, y: labelY, size: 12, font })
+    p.drawText('Date Completed', { x: 358, y: labelY, size: 12, font })
+    p.drawText('Date', { x: 338, y: 295, size: 12, font })
+    return doc.save()
+  }
+  const SPEC: TemplateSpec = {
+    key: 'anch', vendor: 'clopay_hd', docType: 'lien_waiver', label: 'anchored', service: 'delivery', fingerprints: [],
+    fields: [
+      { key: 'cust_sig', kind: 'signature', source: 'customer_signature', box: { page: 0, x: 66, y: 621, w: 168, h: 26 }, anchor: { text: /^Customer Signature$/, dx: 3, dy: 14 } },
+      { key: 'cust_date', kind: 'date', source: 'customer_signed_date', box: { page: 0, x: 362, y: 622, w: 138, h: 12 }, anchor: { text: /^Date Completed$/, dx: 4, dy: 15 } },
+      { key: 'tech_date', kind: 'date', source: 'tech_signed_date', box: { page: 0, x: 372, y: 288, w: 150, h: 12 }, anchor: { text: /^Date$/, dx: 34, dy: -7 } },
+      { key: 'ghost', kind: 'date', source: 'tech_signed_date', box: { page: 0, x: 10, y: 10, w: 50, h: 12 }, anchor: { text: /^Nowhere$/, dx: 0, dy: 0 } },
+    ],
+  }
+  it('follows the label when the page flows, and keeps the static box when the label is missing', async () => {
+    const { anchorTemplate } = await import('@/lib/esign/render')
+    const a = await anchorTemplate(await labelled(607), SPEC)
+    const b = await anchorTemplate(await labelled(590), SPEC)
+    const box = (t: TemplateSpec, k: string) => t.fields.find(f => f.key === k)!.box!
+    expect(Math.round(box(a, 'cust_sig').y)).toBe(621)
+    expect(Math.round(box(b, 'cust_sig').y)).toBe(604)
+    expect(Math.round(box(b, 'cust_date').x)).toBe(362)
+    // "Date" must not also match "Date Completed" — exactly one run.
+    expect(Math.round(box(b, 'tech_date').y)).toBe(288)
+    expect(box(b, 'ghost')).toEqual({ page: 0, x: 10, y: 10, w: 50, h: 12 })
+  })
+  it('places the date where the label moved to, end to end', async () => {
+    const done = await renderCompleted(await labelled(590), SPEC, { customer: { png: PNG, name: 'C', at: '2026-09-15T20:00:00Z' } })
+    const { getDocumentProxy } = await import('unpdf')
+    const page = await (await getDocumentProxy(done)).getPage(1)
+    const items = (await page.getTextContent()).items as Array<{ str: string; transform: number[] }>
+    const date = items.find(i => i.str === '9/15/2026')!
+    expect(Math.round(date.transform[5])).toBe(607)   // 590 + 15, then centred inside the 12pt box
+  })
+  it('the real delivery template anchors every box', async () => {
+    const { templateByKey } = await import('@/lib/esign/templates')
+    for (const f of templateByKey('hd_com_lw_pod')!.fields) expect(f.anchor).toBeTruthy()
+  })
+})

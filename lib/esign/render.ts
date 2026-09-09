@@ -91,8 +91,44 @@ function drawTextInBox(page: PDFPage, font: PDFFont, text: string, box: Box, max
 
 export type Values = Partial<Record<string, string>>
 
+export interface TextRun { page: number; str: string; x: number; y: number }
+
+/** Every text run in the document with its position (PDF points, bottom-left origin). */
+export async function textRuns(bytes: Uint8Array): Promise<TextRun[]> {
+  const out: TextRun[] = []
+  try {
+    const { getDocumentProxy } = await import('unpdf')
+    const pdf = await getDocumentProxy(trimPdfPadding(bytes))
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p)
+      const tc = await page.getTextContent()
+      for (const it of tc.items as Array<{ str?: string; transform?: number[] }>) {
+        const str = (it.str ?? '').trim()
+        if (!str || !it.transform) continue
+        out.push({ page: p - 1, str, x: it.transform[4], y: it.transform[5] })
+      }
+    }
+  } catch { /* best-effort: anchored fields fall back to their static boxes */ }
+  return out
+}
+
+/** Resolve anchored boxes against this document's text: a field whose `anchor.text` matches
+ *  exactly one run on its page moves to (run.x + dx, run.y + dy). Anything else keeps its box. */
+export async function anchorTemplate(bytes: Uint8Array, template: TemplateSpec): Promise<TemplateSpec> {
+  if (!template.fields.some(f => f.anchor && f.box)) return template
+  const runs = await textRuns(bytes)
+  const fields = template.fields.map(f => {
+    if (!f.anchor || !f.box) return f
+    const hits = runs.filter(r => r.page === f.box!.page && f.anchor!.text.test(r.str))
+    if (hits.length !== 1) return f
+    return { ...f, box: { ...f.box, x: hits[0].x + f.anchor.dx, y: hits[0].y + f.anchor.dy } }
+  })
+  return { ...template, fields }
+}
+
 /** Fill every text/date field the values cover. Fields without a value are left blank. */
-export async function renderPrepared(bytes: Uint8Array, template: TemplateSpec, values: Values): Promise<Uint8Array> {
+export async function renderPrepared(bytes: Uint8Array, spec: TemplateSpec, values: Values): Promise<Uint8Array> {
+  const template = await anchorTemplate(bytes, spec)
   const doc = await PDFDocument.load(trimPdfPadding(bytes), { ignoreEncryption: true, updateMetadata: false })
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const form = safeForm(doc)
@@ -125,7 +161,8 @@ const fmtStamp = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZo
 
 /** Stamp the signatures (and their dates/names, and any customer-typed fields) onto the
  *  prepared PDF, flatten any form fields, and add a small audit line to the last page. */
-export async function renderCompleted(prepared: Uint8Array, template: TemplateSpec, input: CompletionInput): Promise<Uint8Array> {
+export async function renderCompleted(prepared: Uint8Array, spec: TemplateSpec, input: CompletionInput): Promise<Uint8Array> {
+  const template = await anchorTemplate(prepared, spec)
   const doc = await PDFDocument.load(prepared, { ignoreEncryption: true, updateMetadata: false })
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const form = safeForm(doc)
@@ -175,10 +212,11 @@ export async function renderCompleted(prepared: Uint8Array, template: TemplateSp
  *  eye on the Templates page. Also works with an unregistered form: boxes come from `spec`,
  *  which may be a candidate layout being tried out. */
 export async function renderOverlay(bytes: Uint8Array, spec: Pick<TemplateSpec, 'fields'>): Promise<Uint8Array> {
+  const { fields } = await anchorTemplate(bytes, { key: '', vendor: '', docType: '', label: '', service: 'install', fingerprints: [], fields: spec.fields })
   const doc = await PDFDocument.load(trimPdfPadding(bytes), { ignoreEncryption: true, updateMetadata: false })
   const font = await doc.embedFont(StandardFonts.HelveticaBold)
   const pages = doc.getPages()
-  for (const f of spec.fields) {
+  for (const f of fields) {
     if (!f.box || !pages[f.box.page]) continue
     const page = pages[f.box.page]
     page.drawRectangle({ x: f.box.x, y: f.box.y, width: f.box.w, height: f.box.h, borderColor: rgb(0.85, 0.1, 0.1), borderWidth: 1 })

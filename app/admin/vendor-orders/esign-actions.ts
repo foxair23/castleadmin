@@ -44,3 +44,32 @@ export async function inspectEsignDocAction(id: string): Promise<{ ok: boolean; 
   if (!r.ok || !r.inspection) return { ok: false, error: r.error ?? 'inspect failed' }
   return { ok: true, fingerprint: r.fingerprint, template: r.template?.key ?? null, pageCount: r.inspection.pageCount, pageSizes: r.inspection.pageSizes, acroFields: r.inspection.acroFields, firstPageText: r.inspection.firstPageText.slice(0, 3000) }
 }
+
+// ── Sending ────────────────────────────────────────────────────────────────
+
+export async function setEsignSettingsAction(enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { setEsignSettings } = await import('@/lib/esign/settings')
+  await setEsignSettings('clopay_hd', 'lien_waiver', enabled, user.id)
+  revalidatePath(PATH)
+  return { ok: true }
+}
+
+/** Manual send to the customer — any stage, regardless of the setting or its cutoff. */
+export async function sendEsignNowAction(id: string, stage: 'heads_up' | 'ask' | 'reminder'): Promise<{ ok: boolean; channels?: string[]; error?: string; warning?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { sendEsignNowForDoc } = await import('@/lib/esign/send')
+  const r = await sendEsignNowForDoc(id, stage)
+  revalidatePath(PATH)
+  return r
+}
+
+export async function runEsignSweepAction(): Promise<{ ok: boolean; enabled?: boolean; looked?: number; sent?: number; failed?: number; held?: number; errors?: string[]; error?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { runEsignCustomerSweep } = await import('@/lib/esign/send')
+  const r = await runEsignCustomerSweep()
+  revalidatePath(PATH)
+  return { ok: true, ...r }
+}
