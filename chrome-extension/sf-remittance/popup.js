@@ -15,12 +15,11 @@ async function render() {
   const skipped = Array.isArray(s.skipped) ? s.skipped : []
   const n = s.notes || {}
   const notesLine = (n.queued ?? 0) ? `\nnotes ${n.queued} · posted ${n.posted ?? 0} · failed ${n.failed ?? 0}` : ''
-  // The two job-form passes (IPO line items, Genie appointments). "awaiting field mapping"
-  // means the schedule fields on SF's form are not yet pinned — see the candidates below.
+  // The two job passes that go through SF's web session: IPO line items, Genie appointments.
   const li = s.lines || {}
   const linesLine = (li.posted || li.failed) ? `\nline items · posted ${li.posted ?? 0} · failed ${li.failed ?? 0}` : ''
   const sc = s.schedule || {}
-  const schedLine = (sc.posted || sc.failed || sc.unmapped) ? `\nappointments · posted ${sc.posted ?? 0} · failed ${sc.failed ?? 0} · awaiting field mapping ${sc.unmapped ?? 0}` : ''
+  const schedLine = (sc.posted || sc.failed) ? `\nappointments · posted ${sc.posted ?? 0} · failed ${sc.failed ?? 0}` : ''
   const head = s.error
     ? `Error: ${s.error}`
     : `Last run: ${fmt(s.at)}\nqueued ${s.queued ?? 0} · applied ${s.applied ?? 0} · failed ${s.failed ?? 0} · skipped ${skipped.length}${s.dryRun ? ' (dry run)' : ''}${notesLine}${linesLine}${schedLine}`
@@ -30,15 +29,10 @@ async function render() {
       if (l.noteId) return `note[${l.event ?? '?'}] job #${l.jobNumber ?? l.jobId ?? '?'} → ${outcome(l)}`
       if (l.invoiceNumber || l.amount) return `#${l.invoiceNumber ?? '?'} $${l.amount ?? '?'} → ${outcome(l)}`
       if (l.date && l.jobNumber) {
-        // A Genie appointment. Until the form's schedule fields are pinned (FIELD_MAP in
-        // sf-schedule.js) the trace lists every date/time-shaped field it saw, with its
-        // current value — that list IS the mapping work, so show all of it.
-        const when = `${l.date}${l.window ? ' ' + l.window : ''}`
-        if (l.needsMapping || (l.dryRun && l.mapped === false)) {
-          const cands = (l.candidates || []).map(c => `    ${c.name} = ${c.value}`).join('\n')
-          return `appointment job #${l.jobNumber} → ${when}\n  FIELDS NOT MAPPED — candidates on the form:\n${cands || '    (none found)'}`
-        }
-        return `appointment job #${l.jobNumber} → ${when} → ${outcome(l)}`
+        // A Genie appointment: date, the window actually written (8-4 when the customer
+        // chose "any time"), and Scheduled status — or which of the three steps failed.
+        const win = l.window ? l.window : (l.ok || l.dryRun ? '08:00-16:00 (default)' : '')
+        return `appointment job #${l.jobNumber} → ${l.date}${win ? ' ' + win : ''} → ${outcome(l)}${l.ok ? ' + status Scheduled' : ''}`
       }
       if (typeof l.lines === 'number' && l.jobNumber) return `lines job #${l.jobNumber} (${l.lines}) → ${outcome(l)}`
       if (l.scheduleQueueError) return `appointment queue: ${l.scheduleQueueError}`

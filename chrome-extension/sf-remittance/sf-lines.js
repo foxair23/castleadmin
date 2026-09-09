@@ -85,14 +85,46 @@ export function parseFormFields(html) {
   return out
 }
 
+/** Pull the hashed web id for one job out of a global-search response.
+ *
+ *  SF answers this endpoint with JSON — { results: [{ type, label, value, … }] } — which is
+ *  how the remittance flow has read it live for months (sf.js resolveInvoiceId). The earlier
+ *  version here looked for an HTML link instead and found nothing, so every appointment
+ *  failed with "not found in SF global search" for jobs that plainly exist. Read the JSON
+ *  first; keep the link form (plain or JSON-escaped) as a fallback; return null if neither. */
+export function jobIdFromSearch(text, jobNumber) {
+  const num = String(jobNumber)
+  try {
+    const data = JSON.parse(text)
+    const results = Array.isArray(data) ? data : (data.results || data.items || data.data || [])
+    const isJob = (x) => /job/i.test(String(x.type || x.category || x.group || x.entity || ''))
+    const mentions = (x) => JSON.stringify(x).includes(num)
+    const hit = results.find(x => isJob(x) && mentions(x)) || results.find(x => mentions(x))
+    if (hit) {
+      // A URL on the result is the most trustworthy source of the WEB id.
+      const url = String(hit.url || hit.link || hit.href || '')
+      const m = url.match(/job(?:View|Edit)\?id=([A-Za-z0-9_\-]+)/)
+      if (m) return m[1]
+      const v = hit.value ?? hit.id ?? hit.hash ?? null
+      if (v != null && String(v) !== num) return String(v)   // the number itself is not the web id
+    }
+  } catch { /* not JSON — try the link forms */ }
+  const m = text.match(/\/jobs\/job(?:View|Edit)\?id=([A-Za-z0-9_\-]+)/)
+    || text.match(/\\\/jobs\\\/job(?:View|Edit)\?id=([A-Za-z0-9_\-]+)/)
+  return m ? m[1] : null
+}
+
 /** An SF job NUMBER (1020259223) → the hashed web id /jobs/jobEdit wants. */
 export async function resolveJobId(jobNumber, trace) {
   const r = await sfFetch('/serviceSpot/loadGlobalSearchResults', { method: 'POST', xhr: true, body: `string=${enc(jobNumber)}` })
-  trace.push({ step: 'searchJob', status: r.status })
+  trace.push({ step: 'searchJob', status: r.status, bytes: r.text.length })
   if (r.loginRedirect) throw new Error('SF session expired — sign in to admin.servicefusion.com')
-  const m = r.text.match(/\/jobs\/job(?:View|Edit)\?id=([A-Za-z0-9_\-]+)/)
-  if (!m) throw new Error(`job ${jobNumber} not found in SF global search`)
-  return m[1]
+  const id = jobIdFromSearch(r.text, jobNumber)
+  // If this still fails, the error carries the start of the response so the shape is known
+  // from the run itself rather than guessed at again. Search results hold customer names,
+  // nothing more sensitive; cookies never appear in a body.
+  if (!id) throw new Error(`job ${jobNumber} not found in SF global search — response starts: ${r.text.slice(0, 300).replace(/\s+/g, ' ')}`)
+  return id
 }
 
 /** A catalog code (FIR010) → the ids a service row needs. */

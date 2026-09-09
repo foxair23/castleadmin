@@ -595,20 +595,18 @@ async function runJobLines(cfg, log) {
   return { posted, failed }
 }
 
-/** Write queued Genie appointments onto their SF jobs. Same shape as runJobLines. An item
- *  whose form fields are not yet mapped (FIELD_MAP in sf-schedule.js) is NOT reported back:
- *  it stays queued so it is written once the mapping ships, and the dry-run trace carries
- *  the candidate field names that mapping needs. */
+/** Write queued Genie appointments onto their SF jobs — date, arrival window, Scheduled
+ *  status — through the job view page's inline editors. Same shape as runJobLines. */
 async function runJobSchedule(cfg, log) {
-  let posted = 0, failed = 0, unmapped = 0
+  let posted = 0, failed = 0
   let items = []
   try {
     ({ items } = await fetchScheduleQueue(cfg.baseUrl, cfg.token))
   } catch (e) {
     log.push({ scheduleQueueError: String(e) })
-    return { posted, failed, unmapped }
+    return { posted, failed }
   }
-  if (!items.length) return { posted, failed, unmapped }
+  if (!items.length) return { posted, failed }
   console.log('[sf-remittance] job schedule queue', { items: items.length })
 
   for (const item of items) {
@@ -618,9 +616,8 @@ async function runJobSchedule(cfg, log) {
     } catch (e) {
       res = { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, date: item.date, window: item.windowStart ? `${item.windowStart}-${item.windowEnd}` : null, ...res })
+    log.push({ orderId: item.orderId, jobNumber: item.jobNumber, date: item.date, window: res?.window ? `${res.window.start}-${res.window.end}` : (item.windowStart ? `${item.windowStart}-${item.windowEnd}` : null), ...res })
 
-    if (res.needsMapping) { unmapped++; continue }   // leave queued; nothing to report yet
     if (!cfg.dryRun) {
       try {
         await postScheduleResult(cfg.baseUrl, cfg.token, { orderId: item.orderId, ok: !!res.ok, error: res.ok ? undefined : (res.reason ?? res.error) })
@@ -629,7 +626,7 @@ async function runJobSchedule(cfg, log) {
     res.ok ? posted++ : failed++
     await sleep(1500) // be gentle on SF
   }
-  return { posted, failed, unmapped }
+  return { posted, failed }
 }
 
 export async function run(source) {

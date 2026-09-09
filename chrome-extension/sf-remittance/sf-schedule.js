@@ -1,131 +1,118 @@
 // Write a Genie appointment onto an existing Service Fusion job.
 //
-// Service Fusion's REST API cannot modify a job that already exists — PUT /jobs/{id} answers
-// 405, "this url can only handle GET, HEAD, OPTIONS" — so, exactly as payments and IPO line
-// items do, this drives SF's own web session: open the job edit form, change the schedule
-// fields, post the form back as it stands. Runs in the service worker (no DOM).
+// Service Fusion's REST API cannot modify a job that exists — PUT /jobs/{id} answers 405 —
+// so this drives SF's own web session, as payments and IPO line items already do. It does
+// NOT repost the job edit form: the job VIEW page has inline editors for the date, the
+// arrival window and the status, each a small AJAX call of its own. Captured from a real
+// session (2026-09-08), all POST, urlencoded, X-Requested-With: XMLHttpRequest:
 //
-// Flow, the same one sf-lines.js has verified live:
-//   1. resolveJobId(jobNumber)   — global search → the hashed web id /jobs/jobEdit wants
-//   2. GET  /jobs/jobEdit?id=…   — the whole edit form
-//   3. parseFormFields(html)     — every field, so the post is the form as it stands
-//   4. set the date (and window) fields, flip ONLY jobStartDateModified
-//   5. POST /jobs/jobEdit?id=…   — 302 → jobView on success
+//   /jobs/changeJobDatePopup      name=startdatepicker&value=DD-MM-YYYY&pk=1&jobId=…
+//                                 &updateChildrenJobs=0&responseFormat=json
+//   /jobs/changeJobTimePopupXedit name=xeditTime-timeRange
+//                                 &value[time_frame_promised_start]=08:00 am
+//                                 &value[time_frame_promised_end]=04:00 pm&pk=1&jobId=…
+//                                 &updateChildrenJobs=0
+//   /jobs/updateJobStatus         name=statusManual&value=<statusId>&pk=1&jobId=…
+//                                 &jobUpdatedAt=<token>&accept=html&updateChildrenJobs=0
 //
-// THE ONE THING NOT YET KNOWN: the exact names of the schedule fields on that form. They are
-// discovered by a dry run — every date/time-shaped field and its current value comes back in
-// the trace — and then pinned in FIELD_MAP below. Until FIELD_MAP is filled in, live mode
-// refuses to post: a form we cannot address is not a form we should save.
+// `jobId` is the hashed web id (global search → resolveJobId). `jobUpdatedAt` is a per-job
+// token on the view page — SF's concurrency guard — and the status id is read off the same
+// page's status list, so neither is hardcoded to one account.
+//
+// Business rules: a booking with no window ("any time — tech will call ahead") is written
+// as 8:00 am – 4:00 pm; every written appointment sets the status to Scheduled.
 
-import { sfFetch, enc, parseFormFields, resolveJobId } from './sf-lines.js'
+import { sfFetch, enc, resolveJobId } from './sf-lines.js'
 
-/** Exact form field names, confirmed from a dry run. null = not yet confirmed → never post. */
-export const FIELD_MAP = {
-  startDate: null,      // e.g. 'Job[start_date]'
-  windowStart: null,    // e.g. 'Job[time_frame_promised_start]'
-  windowEnd: null,      // e.g. 'Job[time_frame_promised_end]'
-  dateFormat: 'MM/DD/YYYY',   // what the form's current value looks like in the dry run
-  timeFormat: 'h:mm A',
-}
+export const DEFAULT_WINDOW = { start: '08:00', end: '16:00' }
+export const SCHEDULED_STATUS_NAME = 'Scheduled'
 
 const pad = (n) => String(n).padStart(2, '0')
 
-/** YYYY-MM-DD → the form's date format. */
-export function toSfDate(iso, fmt = FIELD_MAP.dateFormat) {
+/** YYYY-MM-DD → DD-MM-YYYY, the date picker's wire format. */
+export function toSfDate(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '')
   if (!m) throw new Error(`bad appointment date ${iso}`)
-  const [, y, mo, d] = m
-  return fmt === 'YYYY-MM-DD' ? `${y}-${mo}-${d}` : `${mo}/${d}/${y}`
+  return `${m[3]}-${m[2]}-${m[1]}`
 }
 
-/** HH:MM (24h) → the form's time format. */
-export function toSfTime(hhmm, fmt = FIELD_MAP.timeFormat) {
+/** HH:MM (24h) → "hh:mm am", zero-padded lower-case, as the time editor sends it. */
+export function toSfTime(hhmm) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || '')
   if (!m) throw new Error(`bad window time ${hhmm}`)
   const h = Number(m[1]), min = m[2]
-  if (fmt === 'HH:mm') return `${pad(h)}:${min}`
-  const ampm = h >= 12 ? 'PM' : 'AM'
+  if (h > 23 || Number(min) > 59) throw new Error(`bad window time ${hhmm}`)
+  const ampm = h >= 12 ? 'pm' : 'am'
   const h12 = h % 12 === 0 ? 12 : h % 12
-  return `${h12}:${min} ${ampm}`
+  return `${pad(h12)}:${min} ${ampm}`
 }
 
-/** Fields that could be the schedule, for the dry-run trace. The *Modified flags are section
- *  switches, not values, so they are left out. Values are included: an existing appointment
- *  on the job shows the format the form expects. */
-export function findScheduleCandidates(fields) {
-  return fields
-    .filter(([k]) => /date|time|promis|window|arriv|start|end|slot/i.test(k) && !/Modified$/i.test(k))
-    .slice(0, 60)
-    .map(([name, value]) => ({ name, value: String(value ?? '').slice(0, 40) }))
+/** The window to write: the booking's, or the default when the customer chose "any time". */
+export function windowFor(windowStart, windowEnd) {
+  return windowStart && windowEnd ? { start: windowStart, end: windowEnd } : { ...DEFAULT_WINDOW }
 }
 
-/** Are the fields we intend to write actually on this form? Window fields only matter when a
- *  window is being written. */
-export function isMapped(fields, map, needWindow) {
-  const names = new Set(fields.map(([k]) => k))
-  if (!map.startDate || !names.has(map.startDate)) return false
-  if (needWindow && (!map.windowStart || !map.windowEnd || !names.has(map.windowStart) || !names.has(map.windowEnd))) return false
-  return true
+/** SF's per-job concurrency token, from the view page. */
+export function jobUpdatedAtFromPage(html) {
+  const m = html.match(/jobUpdatedAt["']?\s*[:=]\s*["']([A-Za-z0-9_\-]{10,})["']/)
+    || html.match(/name=["']jobUpdatedAt["'][^>]*value=["']([A-Za-z0-9_\-]{10,})["']/)
+    || html.match(/value=["']([A-Za-z0-9_\-]{10,})["'][^>]*name=["']jobUpdatedAt["']/)
+  return m ? m[1] : null
 }
 
-/** The form as it stands, with the schedule fields replaced and only that section flagged
- *  modified — every other section stays 0 so SF leaves it exactly as it found it. */
-export function buildScheduleBody(fields, map, { date, windowStart, windowEnd }) {
-  const ours = new Set([map.startDate, map.windowStart, map.windowEnd].filter(Boolean))
-  const parts = []
-  for (const [k, v] of fields) {
-    if (ours.has(k) || /^job\w*Modified$/.test(k)) continue
-    parts.push(`${enc(k)}=${enc(v)}`)
+/** The id of a named status, from the view page's status list. */
+export function statusIdFromPage(html, name = SCHEDULED_STATUS_NAME) {
+  const re = new RegExp(`(?:value|data-value|data-id)=["'](\\d+)["'][^>]*>\\s*${name}\\s*<`, 'i')
+  const m = html.match(re) || html.match(new RegExp(`>\\s*${name}\\s*<[^>]*?(?:value|data-value|data-id)=["'](\\d+)["']`, 'i'))
+  return m ? m[1] : null
+}
+
+/** The three posts, in the order they are made. Pure, so the dry run can show exactly them. */
+export function buildSchedulePayloads({ jobId, date, windowStart, windowEnd, jobUpdatedAt, statusId }) {
+  const w = windowFor(windowStart, windowEnd)
+  const common = `pk=1&jobId=${enc(jobId)}&updateChildrenJobs=0`
+  return [
+    { step: 'date', path: '/jobs/changeJobDatePopup', body: `name=startdatepicker&value=${enc(toSfDate(date))}&${common}&responseFormat=json` },
+    { step: 'window', path: '/jobs/changeJobTimePopupXedit', body: `name=xeditTime-timeRange&${enc('value[time_frame_promised_start]')}=${enc(toSfTime(w.start))}&${enc('value[time_frame_promised_end]')}=${enc(toSfTime(w.end))}&${common}` },
+    { step: 'status', path: '/jobs/updateJobStatus', body: `name=statusManual&value=${enc(statusId)}&${common.replace('&updateChildrenJobs=0', '')}&jobUpdatedAt=${enc(jobUpdatedAt)}&accept=html&updateChildrenJobs=0` },
+  ]
+}
+
+/** Did an inline-editor post succeed? A login bounce or a non-200 is a failure; so is a JSON
+ *  body that says so. Anything else SF returned 200 for is taken as saved. */
+export function postSucceeded(res) {
+  if (res.loginRedirect || res.status !== 200) return false
+  const t = (res.text || '').trim()
+  if (t.startsWith('{')) {
+    try { const j = JSON.parse(t); if (j.success === false || j.error || j.errors) return false } catch { /* not JSON after all */ }
   }
-  const flags = {
-    jobTableValuesModified: 0, jobContactsModified: 0, jobStartDateModified: 1,
-    jobChargesModified: 0, jobChargesProductsModified: 0,
-    jobChargesDriveModified: 0, jobChargesExpensesModified: 0, jobDocumentsModified: 0,
-    jobTasksModified: 0, jobTechsModified: 0, jobUsersModified: 0, jobLocationModified: 0,
-    jobEquipmentsModified: 0, jobNotesModified: 0, jobCustomFieldModified: 0,
-    jobJobNotesModified: 0, jobStatusModified: 0,
-  }
-  for (const [k, v] of Object.entries(flags)) parts.push(`${k}=${v}`)
-  parts.push(`${enc(map.startDate)}=${enc(toSfDate(date, map.dateFormat))}`)
-  if (windowStart && windowEnd && map.windowStart && map.windowEnd) {
-    parts.push(`${enc(map.windowStart)}=${enc(toSfTime(windowStart, map.timeFormat))}`)
-    parts.push(`${enc(map.windowEnd)}=${enc(toSfTime(windowEnd, map.timeFormat))}`)
-  }
-  return parts.join('&')
+  return !/\berror\b/i.test(t.slice(0, 200)) || /"error"\s*:\s*(null|false|"")/.test(t)
 }
 
-/** Write one appointment. `dryRun` returns the candidates and the body without posting.
- *  `needsMapping: true` means FIELD_MAP is not (fully) confirmed for this form — the caller
- *  must leave the item queued rather than report a failure. */
+/** Write one appointment. `dryRun` returns the payloads without posting anything. */
 export async function setJobSchedule({ jobNumber, date, windowStart, windowEnd, dryRun = false }) {
   const trace = []
   if (!jobNumber) throw new Error('jobNumber required')
   if (!date) throw new Error('date required')
 
   const jobId = await resolveJobId(jobNumber, trace)
-  const page = await sfFetch(`/jobs/jobEdit?id=${enc(jobId)}`)
-  trace.push({ step: 'openForm', status: page.status, bytes: page.text.length })
+  const page = await sfFetch(`/jobs/jobView?id=${enc(jobId)}`)
+  trace.push({ step: 'openView', status: page.status, bytes: page.text.length })
   if (page.loginRedirect) throw new Error('SF session expired — sign in to admin.servicefusion.com')
 
-  const fields = parseFormFields(page.text)
-  trace.push({ step: 'parseForm', fields: fields.length })
+  const jobUpdatedAt = jobUpdatedAtFromPage(page.text)
+  const statusId = statusIdFromPage(page.text)
+  trace.push({ step: 'readPage', jobUpdatedAt: !!jobUpdatedAt, statusId })
+  if (!jobUpdatedAt) throw new Error('could not read jobUpdatedAt from the job page — SF may have changed the page')
+  if (!statusId) throw new Error(`could not find the "${SCHEDULED_STATUS_NAME}" status on the job page`)
 
-  const needWindow = !!(windowStart && windowEnd)
-  const candidates = findScheduleCandidates(fields)
-  const mapped = isMapped(fields, FIELD_MAP, needWindow)
-  trace.push({ step: 'mapFields', mapped, needWindow, candidates })
+  const payloads = buildSchedulePayloads({ jobId, date, windowStart, windowEnd, jobUpdatedAt, statusId })
+  if (dryRun) return { ok: true, dryRun: true, jobId, window: windowFor(windowStart, windowEnd), statusId, payloads, trace }
 
-  if (dryRun) {
-    return { ok: true, dryRun: true, jobId, mapped, candidates, bodyPreview: mapped ? buildScheduleBody(fields, FIELD_MAP, { date, windowStart, windowEnd }).slice(0, 3000) : null, trace }
+  for (const p of payloads) {
+    const res = await sfFetch(p.path, { method: 'POST', xhr: true, body: p.body })
+    trace.push({ step: p.step, status: res.status, response: (res.text || '').slice(0, 160) })
+    if (!postSucceeded(res)) throw new Error(`${p.step} was not saved (HTTP ${res.status}): ${(res.text || '').slice(0, 200).replace(/\s+/g, ' ')}`)
   }
-  if (!mapped) {
-    return { ok: false, needsMapping: true, reason: 'schedule fields are not confirmed for this form — run a dry run and fill FIELD_MAP in sf-schedule.js', candidates, trace }
-  }
-
-  const body = buildScheduleBody(fields, FIELD_MAP, { date, windowStart, windowEnd })
-  const res = await sfFetch(`/jobs/jobEdit?id=${enc(jobId)}`, { method: 'POST', body, follow: true })
-  trace.push({ step: 'save', status: res.status, url: res.url })
-  const ok = /\/jobs\/jobView/.test(res.url || '')
-  if (!ok) throw new Error(`save did not land on jobView (status ${res.status}, url ${res.url || 'n/a'})`)
-  return { ok: true, jobId, trace }
+  return { ok: true, jobId, window: windowFor(windowStart, windowEnd), statusId, trace }
 }
