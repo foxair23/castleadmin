@@ -36,11 +36,17 @@ export interface FieldSpec {
   size?: number
 }
 
+/** What the form certifies. Home Depot's Clopay forms come in two flavours: the 329 Customer
+ *  Approval is signed after an INSTALL; the homedepot.com "Proof of Delivery" waiver is
+ *  signed after a DELIVERY (no install by us). Customer messages must say the right one. */
+export type TemplateService = 'install' | 'delivery'
+
 export interface TemplateSpec {
   key: string
   vendor: string
   docType: string
   label: string
+  service: TemplateService
   /** Every blank-form version this layout applies to. */
   fingerprints: string[]
   /** Text that identifies the version on its first page — Home Depot prints a form number and
@@ -60,7 +66,7 @@ export const TEMPLATES: TemplateSpec[] = [
   // Pinned 2026-09-09 from four real blanks' text coordinates (pdf.js transforms), all
   // identical to the point.
   {
-    key: 'hd329_2021_06', vendor: 'clopay_hd', docType: 'lien_waiver', label: 'HD form 329 Customer Approval (02 Jun 2021)',
+    key: 'hd329_2021_06', vendor: 'clopay_hd', docType: 'lien_waiver', label: 'HD form 329 Customer Approval (02 Jun 2021)', service: 'install',
     fingerprints: ['3ae7dbab259f9ab5'],   // computed from four real blanks, all identical
     markers: [/329\s+Customer\s+Approval\s*\(02\s*Jun\.?\s*21\)/i],
     fields: [
@@ -70,6 +76,25 @@ export const TEMPLATES: TemplateSpec[] = [
       // Certificate of Completion — line above "Customer Signature" / "Date", beside the printed name.
       { key: 'cust_sig', kind: 'signature', source: 'customer_signature', box: { page: 0, x: 287, y: 91, w: 195, h: 26 } },
       { key: 'cust_date', kind: 'date', source: 'customer_signed_date', box: { page: 0, x: 492, y: 93, w: 85, h: 12 }, size: 9 },
+    ],
+  },
+  // "HOMEDEPOT.COM ORDER — Lien Waiver – Proof of Delivery": the waiver for a homedepot.com
+  // DELIVERY (we deliver the door, we do not install it). One page, A4 595×842 pt, no
+  // version footer — the whole page is one scaled form XObject. Clopay pre-fills the customer
+  // block, the proposal number and "Installer's Company: CASTLE GARAGE INC", so again only
+  // signatures and dates are written. Pinned 2026-09-09 from three real blanks: the customer
+  // signature and "Date Completed" are drawn lines (x 63–237 and x 358–503 at y 619) with
+  // their labels BELOW; the installer's signature and date are boxes (x 63–335 and x 335–528,
+  // y 275–314) with the label printed inside at the left, so those go to the label's right.
+  {
+    key: 'hd_com_lw_pod', vendor: 'clopay_hd', docType: 'lien_waiver', label: 'homedepot.com Lien Waiver – Proof of Delivery', service: 'delivery',
+    fingerprints: ['9b4c7db714746055'],
+    markers: [/Lien\s+Waiver\s*[–—-]\s*Proof\s+of\s+Delivery/i],
+    fields: [
+      { key: 'cust_sig', kind: 'signature', source: 'customer_signature', box: { page: 0, x: 66, y: 621, w: 168, h: 26 } },
+      { key: 'cust_date', kind: 'date', source: 'customer_signed_date', box: { page: 0, x: 362, y: 622, w: 138, h: 12 }, size: 9 },
+      { key: 'tech_sig', kind: 'signature', source: 'tech_signature', box: { page: 0, x: 186, y: 278, w: 145, h: 33 } },
+      { key: 'tech_date', kind: 'date', source: 'tech_signed_date', box: { page: 0, x: 372, y: 288, w: 150, h: 12 }, size: 9 },
     ],
   },
 ]

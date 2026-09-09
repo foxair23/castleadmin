@@ -15,6 +15,8 @@ export interface PdfInspection {
   pageSizes: Array<{ w: number; h: number }>
   acroFields: Array<{ name: string; type: string }>
   firstPageText: string
+  /** The first page's text runs, as laid out — the boilerplate sentences a form is made of. */
+  firstPageItems?: string[]
 }
 
 export async function inspectPdf(bytes: Uint8Array): Promise<PdfInspection> {
@@ -26,13 +28,17 @@ export async function inspectPdf(bytes: Uint8Array): Promise<PdfInspection> {
     acroFields = doc.getForm().getFields().map(f => ({ name: f.getName(), type: f.constructor.name.replace(/^PDF/, '') }))
   } catch { acroFields = [] }
   let firstPageText = ''
+  let firstPageItems: string[] = []
   try {
     const { extractText, getDocumentProxy } = await import('unpdf')
     const pdf = await getDocumentProxy(trimmed)
     const { text } = await extractText(pdf, { mergePages: false })
     firstPageText = Array.isArray(text) ? String(text[0] ?? '') : String(text ?? '')
-  } catch { firstPageText = '' }
-  return { pageCount: pages.length, pageSizes: pages.map(p => ({ w: p.getWidth(), h: p.getHeight() })), acroFields, firstPageText }
+    const page = await pdf.getPage(1)
+    const tc = await page.getTextContent()
+    firstPageItems = (tc.items as Array<{ str?: string }>).map(i => (i.str ?? '').trim()).filter(Boolean)
+  } catch { /* text is best-effort */ }
+  return { pageCount: pages.length, pageSizes: pages.map(p => ({ w: p.getWidth(), h: p.getHeight() })), acroFields, firstPageText, firstPageItems }
 }
 
 /** The form's own version stamp, when it prints one: Home Depot's forms carry a form number
@@ -46,16 +52,28 @@ export function versionStamp(firstPageText: string): string | null {
   return [form?.[0], gen?.[0]].filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ')
 }
 
+/** The text a form is MADE OF, as opposed to what was typed into it: its long runs —
+ *  sentences of boilerplate and multi-word labels — with digits stripped. Names, addresses,
+ *  phone numbers and dates are short and drop out, so two blanks of one form made out to
+ *  different customers keep the same skeleton. */
+export function formSkeleton(insp: PdfInspection): string {
+  const items = insp.firstPageItems?.length ? insp.firstPageItems : insp.firstPageText.split(/\n+/)
+  return items
+    .map(s => s.toLowerCase().replace(/\d+/g, '').replace(/\s+/g, ' ').trim())
+    .filter(s => s.length >= 25)
+    .sort()
+    .join('|')
+    .slice(0, 6000)
+}
+
 /** Identifies a form VERSION, not a copy of it. A form that prints its version stamp is
  *  identified by that — every blank of one revision hashes alike no matter whose name is
- *  on it. Otherwise the layout is hashed: page count, sizes, field names, and the first
- *  page's text with digits stripped (which still varies with the customer's name, so such
- *  forms may show as several rows until a marker is pinned for them). */
+ *  on it. Otherwise its skeleton is hashed (page count, sizes, field names, long text runs
+ *  with digits stripped), which also survives a change of customer. */
 export function fingerprintPdf(insp: PdfInspection): string {
   const fields = insp.acroFields.map(f => f.name).sort().join(',')
   const sizes = insp.pageSizes.map(s => `${Math.round(s.w)}x${Math.round(s.h)}`).join(',')
-  const stamp = versionStamp(insp.firstPageText)
-  const text = stamp ?? insp.firstPageText.toLowerCase().replace(/\d+/g, '').replace(/\s+/g, ' ').trim().slice(0, 2000)
+  const text = versionStamp(insp.firstPageText) ?? formSkeleton(insp)
   return createHash('sha256').update(`${insp.pageCount}|${sizes}|${fields}|${text}`).digest('hex').slice(0, 16)
 }
 
