@@ -140,3 +140,38 @@ describe('renderOverlay', () => {
     for (const f of FLAT.fields) expect(insp.firstPageText).toContain(f.key)
   })
 })
+
+// The first real form version, pinned from a blank's text coordinates.
+describe('template hd329_2021_06', () => {
+  it('is recognised by the form number and revision Home Depot prints in the footer', async () => {
+    const { resolveTemplate } = await import('@/lib/esign/templates')
+    expect(resolveTemplate(null, 'Home Services Installation Customer Approval ... 329 Customer Approval (02 Jun. 21) Generated Date 05/21/2026')?.key).toBe('hd329_2021_06')
+    expect(resolveTemplate('0000000000000000', 'some other form 330 Customer Approval (01 Jan. 24)')).toBeNull()
+    expect(resolveTemplate(null, null)).toBeNull()
+  })
+  it('writes nothing Clopay already printed — signatures and their dates only', async () => {
+    // Clopay fills the customer, address, PO, phones, service provider, and even the
+    // "Additional PO(s)" line for a multi-door house. Every other box would overwrite them.
+    const { templateByKey } = await import('@/lib/esign/templates')
+    const t = templateByKey('hd329_2021_06')!
+    const sources = t.fields.map(f => f.source).sort()
+    expect(sources).toEqual(['customer_signature', 'customer_signed_date', 'tech_signature', 'tech_signed_date'])
+    for (const f of t.fields) { expect(f.box).toBeTruthy(); expect(f.box!.page).toBe(0) }
+  })
+  it('fingerprints every copy of a stamped form alike, whoever it is made out to', async () => {
+    const { versionStamp } = await import('@/lib/esign/render')
+    const a = 'Home Services Installation Customer Approval VELASCO SERGIO 1334 O AVE ... 329 Customer Approval (02 Jun. 21) Generated Date 05/21/2026 Lead/PO# 58420903 v 113.1.1'
+    const b = 'Home Services Installation Customer Approval JAGGARD CHRIS 1954 GREENFIELD DR ... 329 Customer Approval (02 Jun. 21) Generated Date 04/24/2026 Lead/PO# 48478131 v 113.1.1'
+    expect(versionStamp(a)).toBe('329 customer approval (02 jun. 21) v 113.1.1')
+    expect(versionStamp(a)).toBe(versionStamp(b))
+    expect(versionStamp('LIEN WAIVER — Order 3865646 Customer: ____')).toBeNull()
+    const base = { pageCount: 1, pageSizes: [{ w: 611, h: 843 }], acroFields: [] }
+    expect(fingerprintPdf({ ...base, firstPageText: a })).toBe(fingerprintPdf({ ...base, firstPageText: b }))
+    expect(fingerprintPdf({ ...base, firstPageText: a.replace('02 Jun. 21', '15 Mar. 24') })).not.toBe(fingerprintPdf({ ...base, firstPageText: a }))
+  })
+  it('lists only the OTHER doors under Additional PO(s)', () => {
+    const v = buildPrefill(ORDER, [{ ...ORDER, external_id: '3865647', customer_po: '46664199' }], null)
+    expect(v.additional_pos).toBe('46664199')
+    expect(buildPrefill(ORDER, [], null).additional_pos).toBe('')
+  })
+})

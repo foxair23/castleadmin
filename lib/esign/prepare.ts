@@ -41,7 +41,7 @@ export async function prepareEsignDoc(docId: string, supabase: SupabaseClient = 
     if (!bytes) throw new Error('could not download the blank')
     const insp = await inspectPdf(bytes)
     const fingerprint = fingerprintPdf(insp)
-    const template = resolveTemplate(fingerprint)
+    const template = resolveTemplate(fingerprint, insp.firstPageText)
     if (!template) {
       await supabase.from('esign_documents').update({ status: 'unrecognised_template', template_fingerprint: fingerprint, template_key: null, sf_job_id: sfJobId, error: null, updated_at: now }).eq('id', docId)
       return { ok: true, status: 'unrecognised_template', fingerprint, template: null }
@@ -72,7 +72,9 @@ export async function preparePendingEsignDocs(limit = 50): Promise<{ looked: num
     .in('status', ['found', 'unrecognised_template']).order('created_at', { ascending: true }).limit(limit * 3)
   for (const d of (data ?? []) as Array<{ id: string; status: string; template_fingerprint: string | null }>) {
     if (out.looked >= limit) break
-    if (d.status === 'unrecognised_template' && d.template_fingerprint && !resolveTemplate(d.template_fingerprint)) continue  // still unknown; nothing to do
+    // A held row is retried only when the registry might now know it: a fingerprint match is
+    // checked here for free; a marker match needs the text, so rows are retried a few at a time.
+    if (d.status === 'unrecognised_template' && d.template_fingerprint && !resolveTemplate(d.template_fingerprint) && out.looked >= Math.ceil(limit / 5)) continue
     out.looked++
     const r = await prepareEsignDoc(d.id, supabase)
     if (!r.ok) out.failed++
@@ -91,7 +93,7 @@ export async function inspectEsignDoc(docId: string): Promise<{ ok: boolean; ins
   if (!bytes) return { ok: false, error: 'could not download' }
   const inspection = await inspectPdf(bytes)
   const fingerprint = fingerprintPdf(inspection)
-  return { ok: true, inspection, fingerprint, template: resolveTemplate(fingerprint) }
+  return { ok: true, inspection, fingerprint, template: resolveTemplate(fingerprint, inspection.firstPageText) }
 }
 
 /** The blank, pre-filled where a template exists, with every box outlined and a coordinate
@@ -103,7 +105,8 @@ export async function previewEsignDoc(docId: string, candidate?: Pick<TemplateSp
   if (!ctx?.att || !ctx.root) return { ok: false, error: 'not found' }
   const bytes = await downloadVendorDoc(ctx.att.storage_path as string)
   if (!bytes) return { ok: false, error: 'could not download' }
-  const template = candidate ? { key: 'candidate', vendor: '', docType: '', label: '', fingerprints: [], fields: candidate.fields } : (templateByKey(ctx.doc.template_key as string | null) ?? resolveTemplate(ctx.doc.template_fingerprint as string | null))
+  const insp = await inspectPdf(bytes)
+  const template = candidate ? { key: 'candidate', vendor: '', docType: '', label: '', fingerprints: [], fields: candidate.fields } : (templateByKey(ctx.doc.template_key as string | null) ?? resolveTemplate(fingerprintPdf(insp), insp.firstPageText))
   const filled = template ? await renderPrepared(bytes, template, buildPrefill(ctx.root, ctx.doors, ctx.job)) : bytes
   return { ok: true, bytes: await renderOverlay(filled, { fields: template?.fields ?? [] }) }
 }

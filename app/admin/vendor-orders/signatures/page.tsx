@@ -56,6 +56,8 @@ export default async function SignaturesPage() {
   }
   const registered = new Set(TEMPLATES.flatMap(t => t.fingerprints))
   const fingerprints = [...byFp.values()].map(f => ({ ...f, template_key: f.template_key ?? (registered.has(f.fingerprint) ? TEMPLATES.find(t => t.fingerprints.includes(f.fingerprint))!.key : null) })).sort((a, b) => b.count - a.count)
+  // (A version pinned by its footer marker shows as pinned once any of its blanks has been
+  //  prepared — template_key on the row — which "Prepare pending" does.)
   const uninspected = rows.filter(r => r.status === 'found').length
 
   // A few signed forms that came back from the portal — the layout reference for signature and date boxes.
