@@ -29,10 +29,10 @@ async function render() {
       if (l.noteId) return `note[${l.event ?? '?'}] job #${l.jobNumber ?? l.jobId ?? '?'} → ${outcome(l)}`
       if (l.invoiceNumber || l.amount) return `#${l.invoiceNumber ?? '?'} $${l.amount ?? '?'} → ${outcome(l)}`
       if (l.date && l.jobNumber) {
-        // A Genie appointment: date, the window actually written (8-4 when the customer
-        // chose "any time"), and Scheduled status — or which of the three steps failed.
+        // A Genie appointment: date and the window actually written (8-4 when the customer
+        // chose "any time") — or which of the two steps failed. Status is left to dispatch.
         const win = l.window || ''
-        return `appointment job #${l.jobNumber} → ${l.date}${win ? ' ' + win : ''} → ${outcome(l)}${l.ok ? ' + status Scheduled' : ''}`
+        return `appointment job #${l.jobNumber} → ${l.date}${win ? ' ' + win : ''} → ${outcome(l)}`
       }
       if (typeof l.lines === 'number' && l.jobNumber) return `lines job #${l.jobNumber} (${l.lines}) → ${outcome(l)}`
       if (l.scheduleQueueError) return `appointment queue: ${l.scheduleQueueError}`

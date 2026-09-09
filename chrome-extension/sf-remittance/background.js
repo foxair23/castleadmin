@@ -604,8 +604,9 @@ async function runJobLines(cfg, log) {
   return { posted, failed }
 }
 
-/** Write queued Genie appointments onto their SF jobs — date, arrival window, Scheduled
- *  status — through the job view page's inline editors. Same shape as runJobLines. */
+/** Write queued Genie appointments onto their SF jobs — date and arrival window, through
+ *  the job view page's inline editors; the status is left for the dispatcher. Same shape as
+ *  runJobLines. */
 async function runJobSchedule(cfg, log) {
   let posted = 0, failed = 0
   let items = []
@@ -621,7 +622,7 @@ async function runJobSchedule(cfg, log) {
   for (const item of items) {
     let res
     try {
-      res = await setJobSchedule({ jobNumber: item.jobNumber, date: item.date, windowStart: item.windowStart, windowEnd: item.windowEnd, scheduledStatusId: item.scheduledStatusId ?? null, dryRun: cfg.dryRun })
+      res = await setJobSchedule({ jobNumber: item.jobNumber, date: item.date, windowStart: item.windowStart, windowEnd: item.windowEnd, dryRun: cfg.dryRun })
     } catch (e) {
       res = { ok: false, error: e instanceof Error ? e.message : String(e) }
     }

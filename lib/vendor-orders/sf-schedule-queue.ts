@@ -1,5 +1,4 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { sfGet } from '@/lib/crm/service-fusion'
 import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 import { renderGenieScheduleSyncFailure, type ScheduleSyncFailure } from '@/lib/notifications/templates/genie-booking'
 
@@ -27,24 +26,6 @@ export interface SfScheduleQueueItem {
   /** HH:MM, or null for "any time — tech will call ahead". */
   windowStart: string | null
   windowEnd: string | null
-  /** The id of the "Scheduled" job status, from SF's API. The extension prefers the id it
-   *  reads off the job page and uses this when the page does not yield one. */
-  scheduledStatusId: string | null
-}
-
-let statusCache: { at: number; id: string | null } | null = null
-/** SF's id for the status named "Scheduled" (read-only API call, cached for an hour). */
-export async function scheduledStatusId(): Promise<string | null> {
-  if (statusCache && Date.now() - statusCache.at < 3600_000) return statusCache.id
-  try {
-    const resp = (await sfGet('/job-statuses', { 'per-page': '50' })) as { items?: Array<{ id: number | string; name: string }> }
-    const hit = (resp?.items ?? []).find(s => String(s.name).trim().toLowerCase() === 'scheduled')
-    statusCache = { at: Date.now(), id: hit ? String(hit.id) : null }
-  } catch (e) {
-    console.error('[sf-schedule-queue] job-statuses:', e instanceof Error ? e.message : e)
-    statusCache = { at: Date.now(), id: null }
-  }
-  return statusCache.id
 }
 
 /** What the extension should write next. Everything it needs is in the payload. Orders
@@ -63,7 +44,6 @@ export async function getSfScheduleQueue(limit = 25): Promise<{ items: SfSchedul
   if (error) { console.error('[sf-schedule-queue] read:', error.message); return { items: [] } }
 
   const items: SfScheduleQueueItem[] = []
-  const statusId = (data ?? []).length ? await scheduledStatusId() : null
   for (const o of (data ?? []) as Array<Record<string, string | null>>) {
     const jobNumber = o.sf_schedule_job_number ?? o.sf_created_job_number ?? await jobNumberFor(supabase, o.sf_job_id as string)
     if (!jobNumber) {
@@ -79,7 +59,6 @@ export async function getSfScheduleQueue(limit = 25): Promise<{ items: SfSchedul
       date: o.appointment_date as string,
       windowStart: o.appointment_window_start ?? null,
       windowEnd: o.appointment_window_end ?? null,
-      scheduledStatusId: statusId,
     })
   }
   return { items }
