@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { signedUrls } from '@/lib/vendor-orders/attachments'
 import { TEMPLATES } from '@/lib/esign/templates'
+import { getEsignSettings } from '@/lib/esign/settings'
 import HdOrdersNav from '../HdOrdersNav'
 import SignaturesClient, { type EsignRow, type FingerprintRow, type SignedSample } from './SignaturesClient'
 
@@ -19,6 +20,7 @@ export default async function SignaturesPage() {
   if (!profile?.is_active || profile.role !== 'admin') redirect('/admin/vendor-orders')
 
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
+  const settings = await getEsignSettings('clopay_hd', 'lien_waiver')
   const { data: docs } = await db.from('esign_documents')
     .select('id, order_id, vendor, doc_type, status, template_key, template_fingerprint, source_attachment_id, sf_job_id, customer_sent_at, customer_asked_at, customer_signed_at, tech_name, tech_sent_at, tech_signed_at, completed_at, sf_uploaded_at, portal_uploaded_at, portal_uploaded_by, prepared_pdf_path, completed_pdf_path, error, created_at')
     .order('created_at', { ascending: false }).limit(500)
@@ -71,7 +73,7 @@ export default async function SignaturesPage() {
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <HdOrdersNav base="/admin/vendor-orders" />
-      <SignaturesClient rows={rows} fingerprints={fingerprints} uninspected={uninspected} signedSamples={signedSamples} registeredCount={TEMPLATES.length} />
+      <SignaturesClient rows={rows} fingerprints={fingerprints} uninspected={uninspected} signedSamples={signedSamples} registeredCount={TEMPLATES.length} settings={settings} />
     </div>
   )
 }

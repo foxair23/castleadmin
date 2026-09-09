@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction } from '../esign-actions'
+import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction } from '../esign-actions'
 
 export interface EsignRow {
   id: string; order_id: string; status: string; template_key: string | null; template_fingerprint: string | null
@@ -16,7 +16,7 @@ export interface SignedSample { id: string; external_id: string | null; url: str
 
 const STAGES: Array<{ key: string; label: string; statuses: string[] }> = [
   { key: 'needs_template', label: 'Needs template', statuses: ['unrecognised_template'] },
-  { key: 'awaiting_install', label: 'Awaiting install', statuses: ['found', 'prepared'] },
+  { key: 'awaiting_install', label: 'Awaiting install/delivery', statuses: ['found', 'prepared'] },
   { key: 'awaiting_customer', label: 'Awaiting customer', statuses: ['sent_customer'] },
   { key: 'awaiting_tech', label: 'Awaiting tech', statuses: ['customer_signed', 'sent_tech'] },
   { key: 'completed', label: 'Completed', statuses: ['tech_signed', 'completed', 'sf_uploaded'] },
@@ -33,7 +33,7 @@ const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString('en-U
 const btn = 'text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50'
 const btnDark = 'text-xs px-2.5 py-1 rounded bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50'
 
-export default function SignaturesClient({ rows, fingerprints, uninspected, signedSamples, registeredCount }: { rows: EsignRow[]; fingerprints: FingerprintRow[]; uninspected: number; signedSamples: SignedSample[]; registeredCount: number }) {
+export default function SignaturesClient({ rows, fingerprints, uninspected, signedSamples, registeredCount, settings }: { rows: EsignRow[]; fingerprints: FingerprintRow[]; uninspected: number; signedSamples: SignedSample[]; registeredCount: number; settings: { enabled: boolean; enabledAt: string | null } }) {
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
   const [stage, setStage] = useState<string>('all')
@@ -52,6 +52,17 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Signatures</h1>
         <p className="text-sm text-gray-600 mt-1">Home Depot&rsquo;s lien waiver for each Clopay house: found in the portal, pre-filled, e-signed by the customer and the technician, filed on the SF job, uploaded back to Clopay. Nothing is sent until the setting is on.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-gray-500">Auto-send to customers (email + SMS: the morning of the work, the ask the day after, one reminder)</span>
+          <button type="button" role="switch" aria-checked={settings.enabled} disabled={pending}
+            onClick={() => run(() => setEsignSettingsAction(!settings.enabled), () => settings.enabled ? 'Auto-send is OFF' : 'Auto-send is ON — only documents found from now on are sent automatically')}
+            title={settings.enabled ? `ON since ${fmt(settings.enabledAt)} — documents found before that are never auto-sent` : 'OFF — nothing is sent automatically'}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${settings.enabled ? 'bg-green-600' : 'bg-gray-300'} disabled:opacity-50`}>
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${settings.enabled ? 'translate-x-[18px]' : 'translate-x-1'}`} />
+          </button>
+          <span className={`px-2 py-0.5 rounded-full font-medium ${settings.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>{settings.enabled ? `ON since ${fmt(settings.enabledAt)}` : 'OFF'}</span>
+          {settings.enabled && <button className={btn} disabled={pending} onClick={() => run(runEsignSweepAction, r => `Sweep: ${r.sent} sent, ${r.failed} failed, ${r.held} not due${(r.errors as string[])?.length ? ` · ${(r.errors as string[]).join('; ')}` : ''}`)}>Run sweep now</button>}
+        </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button className={btnDark} disabled={pending} onClick={() => run(classifyBacklogAction, r => `Classified ${r.looked}: ${r.lien_waiver} blank waiver(s), ${r.signed} signed, ${r.none} other · ${r.remaining} left`)}>Classify stored documents</button>
           <button className={btnDark} disabled={pending} onClick={() => run(runPrepareSweepAction, r => `Looked at ${r.looked}: ${r.prepared} prepared, ${r.unrecognised} need a template, ${r.failed} failed`)}>Prepare pending</button>
@@ -118,6 +129,14 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
                 <td className="py-1.5 pr-3 flex gap-1.5">
                   {['found', 'unrecognised_template', 'prepared'].includes(r.status) && <button className={btn} disabled={pending} onClick={() => run(() => prepareEsignDocAction(r.id), x => `${x.status}${x.fingerprint ? ` · ${x.fingerprint}` : ''}`)}>Prepare</button>}
                   {r.template_fingerprint && <a className={btn} href={`/api/admin/esign/preview/${r.id}`} target="_blank" rel="noreferrer">Preview</a>}
+                  {['found', 'prepared', 'sent_customer'].includes(r.status) && !r.customer_signed_at && (
+                    <select className={`${btn} text-gray-900 bg-white`} disabled={pending} value="" title="Send a message to the customer now — regardless of the auto-send setting"
+                      onChange={e => { const v = e.target.value as '' | 'heads_up' | 'ask' | 'reminder'; if (!v) return; if (!confirm(`Send the ${v === 'heads_up' ? 'heads-up (link ahead of the work)' : v === 'ask' ? '"please sign"' : 'reminder'} to ${r.customer_name ?? 'this customer'} now?`)) return; run(() => sendEsignNowAction(r.id, v), x => `Sent via ${(x.channels as string[]).join(', ')}${x.warning ? ` · ${x.warning}` : ''}`) }}>
+                      <option value="">Send now…</option>
+                      <option value="heads_up">Heads-up (link ahead of the work)</option>
+                      <option value="ask">Please sign (work is done)</option>
+                      <option value="reminder">Reminder</option>
+                    </select>)}
                 </td>
               </tr>))}</tbody>
           </table>

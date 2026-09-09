@@ -122,6 +122,10 @@
     {
       "path": "/api/cron/cassie-poll",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/esign-sweep",
+      "schedule": "10 15-23,0-2 * * *"
     }
   ]
 }
