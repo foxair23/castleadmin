@@ -30,7 +30,7 @@ async function acroBlank(orderNo: string): Promise<Uint8Array> {
 const PNG = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64'))
 
 const FLAT: TemplateSpec = {
-  key: 't_flat', vendor: 'clopay_hd', docType: 'lien_waiver', label: 'flat', fingerprints: [],
+  key: 't_flat', vendor: 'clopay_hd', docType: 'lien_waiver', label: 'flat', service: 'install', fingerprints: [],
   fields: [
     { key: 'name', kind: 'text', source: 'customer_name', box: { page: 0, x: 120, y: 695, w: 250, h: 14 } },
     { key: 'po', kind: 'text', source: 'po_numbers', box: { page: 0, x: 420, y: 695, w: 120, h: 14 } },
@@ -173,5 +173,43 @@ describe('template hd329_2021_06', () => {
     const v = buildPrefill(ORDER, [{ ...ORDER, external_id: '3865647', customer_po: '46664199' }], null)
     expect(v.additional_pos).toBe('46664199')
     expect(buildPrefill(ORDER, [], null).additional_pos).toBe('')
+  })
+})
+
+// The second real form: homedepot.com's delivery waiver, which prints no version stamp.
+describe('template hd_com_lw_pod', () => {
+  it('is recognised by its title and knows it certifies a DELIVERY, not an install', async () => {
+    const { resolveTemplate, templateByKey } = await import('@/lib/esign/templates')
+    const t = resolveTemplate(null, 'HOMEDEPOT.COM ORDER Lien Waiver – Proof of Delivery Customer JOHNSTON, CHET ...')
+    expect(t?.key).toBe('hd_com_lw_pod')
+    expect(t?.service).toBe('delivery')
+    expect(templateByKey('hd329_2021_06')?.service).toBe('install')
+    // Either dash Clopay might emit.
+    expect(resolveTemplate(null, 'Lien Waiver - Proof of Delivery')?.key).toBe('hd_com_lw_pod')
+    expect(resolveTemplate('9b4c7db714746055')?.key).toBe('hd_com_lw_pod')
+  })
+  it('writes signatures and dates only, on page 1', async () => {
+    const { templateByKey } = await import('@/lib/esign/templates')
+    const t = templateByKey('hd_com_lw_pod')!
+    expect(t.fields.map(f => f.source).sort()).toEqual(['customer_signature', 'customer_signed_date', 'tech_signature', 'tech_signed_date'])
+    for (const f of t.fields) { expect(f.box).toBeTruthy(); expect(f.box!.page).toBe(0) }
+  })
+  it('fingerprints an unstamped form by its skeleton, so two customers\' blanks hash alike', async () => {
+    const { formSkeleton } = await import('@/lib/esign/render')
+    const boiler = [
+      'HOMEDEPOT.COM ORDER', 'Lien Waiver – Proof of Delivery', 'Customer',
+      'This document shall become effective to waive, relinquish, and forever release any right of the',
+      'undersigned or by any laborer, mechanic, or materialman claiming through or under the',
+      'Installer’s Signature', 'Date', 'Installer’s Company', 'CASTLE GARAGE INC',
+    ]
+    const a = { pageCount: 1, pageSizes: [{ w: 595, h: 842 }], acroFields: [], firstPageText: '',
+      firstPageItems: [...boiler, 'JOHNSTON, CHET', '17202 AMARILLO RD', 'RAMONA, CA 92065', '5625331190', 'I accept the materials described in Proposal # 39975769 complete and satisfactory.'] }
+    const b = { ...a, firstPageItems: [...boiler, 'VELASCO, SERGIO', '1334 O AVE', 'NATIONAL CITY, CA 91950', '6195551234', 'I accept the materials described in Proposal # 40011223 complete and satisfactory.'] }
+    expect(formSkeleton(a)).toBe(formSkeleton(b))
+    expect(formSkeleton(a)).not.toContain('johnston')
+    expect(fingerprintPdf(a)).toBe(fingerprintPdf(b))
+    // A different form (different boilerplate) hashes differently.
+    const c = { ...a, firstPageItems: [...boiler.slice(0, 3), 'Some other sentence that is long enough to count as boilerplate here'] }
+    expect(fingerprintPdf(c)).not.toBe(fingerprintPdf(a))
   })
 })

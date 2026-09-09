@@ -106,7 +106,7 @@ export async function previewEsignDoc(docId: string, candidate?: Pick<TemplateSp
   const bytes = await downloadVendorDoc(ctx.att.storage_path as string)
   if (!bytes) return { ok: false, error: 'could not download' }
   const insp = await inspectPdf(bytes)
-  const template = candidate ? { key: 'candidate', vendor: '', docType: '', label: '', fingerprints: [], fields: candidate.fields } : (templateByKey(ctx.doc.template_key as string | null) ?? resolveTemplate(fingerprintPdf(insp), insp.firstPageText))
+  const template = candidate ? { key: 'candidate', vendor: '', docType: '', label: '', service: 'install' as const, fingerprints: [], fields: candidate.fields } : (templateByKey(ctx.doc.template_key as string | null) ?? resolveTemplate(fingerprintPdf(insp), insp.firstPageText))
   const filled = template ? await renderPrepared(bytes, template, buildPrefill(ctx.root, ctx.doors, ctx.job)) : bytes
   return { ok: true, bytes: await renderOverlay(filled, { fields: template?.fields ?? [] }) }
 }
