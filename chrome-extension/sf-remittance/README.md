@@ -48,7 +48,7 @@ one source of truth. It uses SF's own "Add Note" AJAX request
    - **Received by** — your initials (goes in SF's "Received By")
    - leave **Dry run ON** and toggle **Enabled** on.
 3. Approve a line in Castle Admin → Remittances, then open the extension popup and
-   click **Run now**.
+   click **Run Now - Service Fusion**.
 
 ## First run = dry run (important)
 
