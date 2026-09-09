@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toSfDate, toSfTime, windowFor, jobUpdatedAtFromPage, statusIdFromPage, statusSnippet, buildSchedulePayloads, postSucceeded, DEFAULT_WINDOW } from '../chrome-extension/sf-remittance/sf-schedule.js'
+import { toSfDate, toSfTime, windowFor, jobUpdatedAtFromPage, statusIdFromPage, statusSnippet, buildSchedulePayloads, postSucceeded, isStaleTokenResponse, DEFAULT_WINDOW } from '../chrome-extension/sf-remittance/sf-schedule.js'
 
 // Wire formats and body shapes are pinned to a real capture of the job view page's inline
 // editors (2026-09-08). Change them only against a new capture.
@@ -88,5 +88,13 @@ describe('postSucceeded', () => {
     expect(postSucceeded({ status: 500, loginRedirect: false, text: '' })).toBe(false)
     expect(postSucceeded({ status: 200, loginRedirect: false, text: '{"success":false,"error":"Invalid date"}' })).toBe(false)
     expect(postSucceeded({ status: 200, loginRedirect: false, text: 'Error: job is locked' })).toBe(false)
+  })
+})
+
+describe('isStaleTokenResponse', () => {
+  it("recognises SF's concurrency refusal — which after our own date/window writes is us", () => {
+    expect(isStaleTokenResponse('{"success":false,"message":"This job has been modified by another user.<br \\/>Please <a data-clickaction=\\"refreshJobsData\\">refresh</a>"}')).toBe(true)
+    expect(isStaleTokenResponse('{"success":true}')).toBe(false)
+    expect(isStaleTokenResponse('')).toBe(false)
   })
 })

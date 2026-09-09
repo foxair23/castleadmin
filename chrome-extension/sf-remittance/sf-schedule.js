@@ -100,6 +100,12 @@ export function buildSchedulePayloads({ jobId, date, windowStart, windowEnd, job
   ]
 }
 
+/** SF's concurrency refusal. The token we sent was read before our own earlier writes, so
+ *  "another user" here is usually us — the cure is a fresh token, not a retry of the same. */
+export function isStaleTokenResponse(text) {
+  return /modified by another user/i.test(text || '')
+}
+
 /** Did an inline-editor post succeed? A login bounce or a non-200 is a failure; so is a JSON
  *  body that says so. Anything else SF returned 200 for is taken as saved. */
 export function postSucceeded(res) {
@@ -135,10 +141,32 @@ export async function setJobSchedule({ jobNumber, date, windowStart, windowEnd, 
   const payloads = buildSchedulePayloads({ jobId, date, windowStart, windowEnd, jobUpdatedAt, statusId })
   if (dryRun) return { ok: true, dryRun: true, jobId, window: windowFor(windowStart, windowEnd), statusId, payloads, trace }
 
-  for (const p of payloads) {
+  const post = async (p) => {
     const res = await sfFetch(p.path, { method: 'POST', xhr: true, body: p.body })
     trace.push({ step: p.step, status: res.status, response: (res.text || '').slice(0, 160) })
-    if (!postSucceeded(res)) throw new Error(`${p.step} was not saved (HTTP ${res.status}): ${(res.text || '').slice(0, 200).replace(/\s+/g, ' ')}`)
+    return res
   }
-  return { ok: true, jobId, window: windowFor(windowStart, windowEnd), statusId, trace }
+  const fail = (p, res) => new Error(`${p.step} was not saved (HTTP ${res.status}): ${(res.text || '').slice(0, 200).replace(/\s+/g, ' ')}`)
+
+  // Date and window first — neither carries the token.
+  for (const p of payloads.filter(p => p.step !== 'status')) {
+    const res = await post(p)
+    if (!postSucceeded(res)) throw fail(p, res)
+  }
+
+  // Those two writes changed the job, so the token read before them is now stale and SF
+  // would refuse the status post as "modified by another user". Re-read the page for the
+  // current token; if SF still calls it stale (someone really was editing), refresh once more.
+  let token = jobUpdatedAt
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const again = await sfFetch(`/jobs/jobView?id=${enc(jobId)}`)
+    if (again.loginRedirect) throw new Error('SF session expired — sign in to admin.servicefusion.com')
+    token = jobUpdatedAtFromPage(again.text) ?? token
+    trace.push({ step: 'refreshToken', attempt: attempt + 1, found: !!jobUpdatedAtFromPage(again.text) })
+    const statusPayload = buildSchedulePayloads({ jobId, date, windowStart, windowEnd, jobUpdatedAt: token, statusId }).find(p => p.step === 'status')
+    const res = await post(statusPayload)
+    if (postSucceeded(res)) return { ok: true, jobId, window: windowFor(windowStart, windowEnd), statusId, trace }
+    if (!isStaleTokenResponse(res.text) || attempt === 1) throw fail(statusPayload, res)
+  }
+  throw new Error('status was not saved')
 }
