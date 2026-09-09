@@ -5,7 +5,7 @@ import { isIpoDoc } from '@/lib/vendor-orders/clopay-ipo'
 
 export const dynamic = 'force-dynamic'
 
-// POST { vendor, external_id, documentId, filename, mime, dataB64? } — the extension's
+// POST { vendor, external_id, documentId, filename, mime, dataB64?, docType?, rawName? } — the extension's
 // content script downloads a document in the page context (where the Clopay session
 // cookie is present) and sends the base64 bytes here to store. With no dataB64 it's a
 // cheap dedup check (so already-stored docs aren't re-downloaded). Same shared-token
@@ -21,22 +21,29 @@ export function OPTIONS() { return new NextResponse(null, { status: 204, headers
 
 export async function POST(req: NextRequest) {
   if (!authed(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors })
-  let b: { vendor?: string; external_id?: string; documentId?: string | number; filename?: string; mime?: string; dataB64?: string }
+  let b: { vendor?: string; external_id?: string; documentId?: string | number; filename?: string; mime?: string; dataB64?: string; docType?: string; rawName?: string }
   try { b = await req.json() } catch { return NextResponse.json({ error: 'bad json' }, { status: 400, headers: cors }) }
   if (!b.vendor || !b.external_id || b.documentId == null) return NextResponse.json({ error: 'vendor, external_id, documentId required' }, { status: 400, headers: cors })
   const bytes = b.dataB64 ? new Uint8Array(Buffer.from(b.dataB64, 'base64')) : null
-  const res = await storeVendorDoc(b.vendor, b.external_id, String(b.documentId), b.filename || 'document', b.mime || 'application/pdf', bytes)
+  const res = await storeVendorDoc(b.vendor, b.external_id, String(b.documentId), b.filename || 'document', b.mime || 'application/pdf', bytes, { docType: b.docType ?? null, rawName: b.rawName ?? b.filename ?? null })
 
   // An IPO carries the line-item detail + what we get paid. Parse it into structured rows
   // AFTER responding, so the extension's doc sync is never slowed or broken by parsing.
-  if (res.ok && res.stored && isIpoDoc(b.filename)) {
+  if (res.ok && res.stored) {
+    const ipo = isIpoDoc(b.filename, b.docType)
     after(async () => {
       try {
-        const { parseAndStoreIpoAttachment } = await import('@/lib/vendor-orders/ipo-ingest')
         const { findAttachmentId } = await import('@/lib/vendor-orders/attachments')
         const id = await findAttachmentId(b.vendor!, b.external_id!, String(b.documentId))
-        if (id) await parseAndStoreIpoAttachment(id)
-      } catch (e) { console.error('[attachment/store] IPO parse failed (non-critical):', e) }
+        if (!id) return
+        if (ipo) {
+          const { parseAndStoreIpoAttachment } = await import('@/lib/vendor-orders/ipo-ingest')
+          await parseAndStoreIpoAttachment(id)
+        }
+        // A blank lien waiver becomes an e-sign document on its house; a signed one closes it.
+        const { ensureEsignDocForAttachment } = await import('@/lib/esign/documents')
+        await ensureEsignDocForAttachment(id)
+      } catch (e) { console.error('[attachment/store] post-store processing failed (non-critical):', e) }
     })
   }
   return NextResponse.json(res, { status: res.ok ? 200 : 400, headers: cors })

@@ -38,10 +38,14 @@ export async function signVendorAttachmentUpload(
   return { ok: true, uploadUrl: data.signedUrl, path }
 }
 
+/** What the crawl knows about a document beyond its file: Clopay's document type and the
+ *  portal's own name before it was made filesystem-safe. */
+export interface DocMeta { docType?: string | null; rawName?: string | null }
+
 /** Record a completed upload (after the extension PUT the bytes). Idempotent via the
  *  (order_id, external_ref) unique index. */
 export async function recordVendorAttachment(
-  vendor: string, externalId: string, documentId: string, path: string, filename: string, mime: string, size: number,
+  vendor: string, externalId: string, documentId: string, path: string, filename: string, mime: string, size: number, meta: DocMeta = {},
 ): Promise<{ ok: boolean; error?: string }> {
   const orderId = await orderIdFor(vendor, externalId)
   if (!orderId) return { ok: false, error: 'order not found' }
@@ -49,6 +53,7 @@ export async function recordVendorAttachment(
   const { error } = await db().from('vendor_order_attachments').insert({
     order_id: orderId, storage_path: path, filename: safeName(filename),
     mime_type: mime || null, byte_size: size ?? null, source: 'clopay_doc', external_ref: String(documentId),
+    doc_type: meta.docType ?? null, raw_name: meta.rawName ?? filename,
   })
   if (error && !/duplicate key|unique/i.test(error.message)) return { ok: false, error: error.message }
   return { ok: true }
@@ -58,7 +63,7 @@ export async function recordVendorAttachment(
  *  {alreadyStored} or {needsUpload}); with bytes it uploads (UPSERT — overwrites any
  *  earlier bad copy) and records the row. Keyed/deduped by (order, documentId). */
 export async function storeVendorDoc(
-  vendor: string, externalId: string, documentId: string, filename: string, mime: string, bytes: Uint8Array | null,
+  vendor: string, externalId: string, documentId: string, filename: string, mime: string, bytes: Uint8Array | null, meta: DocMeta = {},
 ): Promise<{ ok: boolean; alreadyStored?: boolean; needsUpload?: boolean; stored?: boolean; error?: string }> {
   const orderId = await orderIdFor(vendor, externalId)
   if (!orderId) return { ok: false, error: 'order not found' }
@@ -75,6 +80,9 @@ export async function storeVendorDoc(
   const { error } = await db().from('vendor_order_attachments').insert({
     order_id: orderId, storage_path: path, filename: safeName(filename),
     mime_type: mime || 'application/pdf', byte_size: bytes.byteLength, source: 'clopay_doc', external_ref: ref,
+    // What the filename loses on the way in: Clopay's type and the portal's own name (URL-style
+    // names are mangled by safeName and unrecognisable after) — the e-sign classifier needs both.
+    doc_type: meta.docType ?? null, raw_name: meta.rawName ?? filename,
   })
   if (error && !/duplicate key|unique/i.test(error.message)) return { ok: false, error: error.message }
   return { ok: true, stored: true }

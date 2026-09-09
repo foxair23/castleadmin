@@ -326,14 +326,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Forward a Clopay document check/upload to Castle's store endpoint with our token.
 // With no dataB64 it's a cheap dedup check ({alreadyStored} / {needsUpload}); with
 // bytes it stores (upsert). Used by the store-doc message and the capture loop below.
-async function storeClopayDoc({ external_id, documentId, filename, mime, dataB64 }) {
+async function storeClopayDoc({ external_id, documentId, filename, mime, dataB64, docType, rawName }) {
   const cfg = await getConfig()
   if (!cfg.baseUrl || !cfg.token) return { ok: false, error: 'not configured' }
   if (!external_id || documentId == null) return { ok: false, error: 'bad args' }
   try {
     const res = await fetch(`${cfg.baseUrl}/api/vendor-orders/attachment/store`, {
       method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ vendor: 'clopay_hd', external_id, documentId, filename, mime, ...(dataB64 ? { dataB64 } : {}) }),
+      body: JSON.stringify({ vendor: 'clopay_hd', external_id, documentId, filename, mime, docType: docType || null, rawName: rawName || null, ...(dataB64 ? { dataB64 } : {}) }),
     })
     const j = await res.json().catch(() => ({}))
     return res.ok ? j : { ok: false, error: j.error || `store ${res.status}` }
@@ -478,7 +478,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (!d || !d.url || d.documentId == null || !d.external_id) { results.push({ documentId: d && d.documentId, ok: false, error: 'bad args' }); continue }
       const cap = await captureDocBytes(d.url)
       if (!cap.ok || !cap.base64) { results.push({ documentId: d.documentId, ok: false, error: cap.error || 'capture failed' }); continue }
-      const store = await storeClopayDoc({ external_id: d.external_id, documentId: d.documentId, filename: d.filename, mime: cap.mime || 'application/pdf', dataB64: cap.base64 })
+      const store = await storeClopayDoc({ external_id: d.external_id, documentId: d.documentId, filename: d.filename, mime: cap.mime || 'application/pdf', dataB64: cap.base64, docType: d.docType, rawName: d.rawName })
       results.push({ documentId: d.documentId, ...store })
     }
     sendResponse({ ok: true, results })
