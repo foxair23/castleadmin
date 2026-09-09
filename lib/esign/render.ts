@@ -35,13 +35,27 @@ export async function inspectPdf(bytes: Uint8Array): Promise<PdfInspection> {
   return { pageCount: pages.length, pageSizes: pages.map(p => ({ w: p.getWidth(), h: p.getHeight() })), acroFields, firstPageText }
 }
 
-/** Identifies a form VERSION, not a copy of it: the order-specific numbers printed on the
- *  blank are stripped, so every blank of the same version hashes the same and a different
- *  version (different fields, pages or wording) hashes differently. */
+/** The form's own version stamp, when it prints one: Home Depot's forms carry a form number
+ *  and revision in the footer ("329 Customer Approval (02 Jun. 21)") and a generator version
+ *  ("v 113.1.1"). Null when nothing of the kind is present. */
+export function versionStamp(firstPageText: string): string | null {
+  const t = firstPageText.replace(/\s+/g, ' ')
+  const form = t.match(/\b\d{3}\s+[A-Za-z][A-Za-z ]{2,40}\(\d{1,2}\s*[A-Za-z]{3}\.?\s*\d{2,4}\)/)
+  const gen = t.match(/\bv\s*\d+(?:\.\d+)+\b/)
+  if (!form && !gen) return null
+  return [form?.[0], gen?.[0]].filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** Identifies a form VERSION, not a copy of it. A form that prints its version stamp is
+ *  identified by that — every blank of one revision hashes alike no matter whose name is
+ *  on it. Otherwise the layout is hashed: page count, sizes, field names, and the first
+ *  page's text with digits stripped (which still varies with the customer's name, so such
+ *  forms may show as several rows until a marker is pinned for them). */
 export function fingerprintPdf(insp: PdfInspection): string {
-  const text = insp.firstPageText.toLowerCase().replace(/\d+/g, '').replace(/\s+/g, ' ').trim().slice(0, 2000)
   const fields = insp.acroFields.map(f => f.name).sort().join(',')
   const sizes = insp.pageSizes.map(s => `${Math.round(s.w)}x${Math.round(s.h)}`).join(',')
+  const stamp = versionStamp(insp.firstPageText)
+  const text = stamp ?? insp.firstPageText.toLowerCase().replace(/\d+/g, '').replace(/\s+/g, ' ').trim().slice(0, 2000)
   return createHash('sha256').update(`${insp.pageCount}|${sizes}|${fields}|${text}`).digest('hex').slice(0, 16)
 }
 

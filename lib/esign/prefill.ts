@@ -19,6 +19,8 @@ const mdy = (iso: string | null | undefined) => {
 
 export function buildPrefill(root: PrefillOrder, doors: PrefillOrder[], job: PrefillJob | null, today = new Date()): Values {
   const pos = [...new Set([root, ...doors].map(d => d.customer_po || d.external_id).filter(Boolean) as string[])]
+  const rootPo = root.customer_po || root.external_id
+  const additional = pos.filter(p => p !== rootPo)
   const addressLine = root.street_address ?? ''
   const cityStateZip = [root.city, [root.state_prov, root.postal_code].filter(Boolean).join(' ')].filter(Boolean).join(', ')
   return {
@@ -29,6 +31,7 @@ export function buildPrefill(root: PrefillOrder, doors: PrefillOrder[], job: Pre
     zip: root.postal_code ?? '',
     address_full: [addressLine, cityStateZip].filter(Boolean).join(', '),
     po_numbers: pos.join(', '),
+    additional_pos: additional.join(', '),
     order_number: root.external_id ?? '',
     install_date: mdy(job?.start_date),
     sf_job_number: job?.number ?? '',
