@@ -55,6 +55,8 @@ export interface GenieBookingInput {
 export interface GenieBookingResult {
   ok: boolean
   sf_synced?: boolean
+  /** How the date reaches the SF job: 'pending' = queued for the office extension. */
+  sf_sync?: 'synced' | 'pending' | 'failed'
   order_number?: string
   sf_job_number?: string | null
   error?: string

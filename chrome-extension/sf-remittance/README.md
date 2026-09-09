@@ -73,3 +73,16 @@ interval.
 - `sf-note.js` — the Service Fusion add-note automation
 - `app-api.js` — talks to Castle Admin (payment + note queue / callback)
 - `options.html/js`, `popup.html/js`, `store.js`
+
+## Genie appointments → SF job (0.9.0)
+
+The Genie self-scheduler cannot set a job's date through the API (PUT /jobs/{id} is 405), so
+booked appointments are queued and this extension writes them into the job edit form — the
+same way it posts payments and IPO line items.
+
+**First run is a discovery run.** The exact schedule field names on SF's job edit form are
+not yet confirmed. With **Dry run ON**, each queued appointment produces a trace entry with
+`candidates` — every date/time-shaped field on the form and its current value — and
+`mapped: false`. Send that trace over; the names get pinned in `FIELD_MAP` at the top of
+`sf-schedule.js`, a new version ships, and only then does live mode post. Until the mapping is
+confirmed the extension leaves those items queued and never saves the form.

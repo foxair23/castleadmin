@@ -21,9 +21,9 @@
 // meantime is SF's to reject rather than ours to silently overwrite.
 
 const SF = 'https://admin.servicefusion.com'
-const enc = (v) => encodeURIComponent(v ?? '')
+export const enc = (v) => encodeURIComponent(v ?? '')
 
-async function sfFetch(path, { method = 'GET', body, follow = false, xhr = false } = {}) {
+export async function sfFetch(path, { method = 'GET', body, follow = false, xhr = false } = {}) {
   const headers = {}
   if (body) headers['Content-Type'] = 'application/x-www-form-urlencoded'
   // The search/details endpoints are XHR in the browser; the form save is a navigation.
