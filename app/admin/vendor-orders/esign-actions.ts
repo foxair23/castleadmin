@@ -73,3 +73,15 @@ export async function runEsignSweepAction(): Promise<{ ok: boolean; enabled?: bo
   revalidatePath(PATH)
   return { ok: true, ...r }
 }
+
+/** Wipe a signature so the link works again (test signs, wrong house). Customer reset also clears the tech's. */
+export async function resetSignatureAction(id: string, scope: 'customer' | 'tech'): Promise<{ ok: boolean; status?: string; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle()
+  const { resetSignature } = await import('@/lib/esign/reset')
+  const r = await resetSignature(id, scope, (profile?.full_name as string | null) ?? user.email ?? null)
+  revalidatePath(PATH)
+  return r
+}
