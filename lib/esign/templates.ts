@@ -29,6 +29,11 @@ export interface FieldSpec {
   acro?: string
   /** Where to draw when there is no AcroForm field (flat PDF) or for signatures/images. */
   box?: Box
+  /** Some forms FLOW: a wrapped line above pushes everything below it down. An anchored box
+   *  is placed relative to a printed label instead — `text` must match exactly one text run
+   *  on the box's page; the box then sits at (label.x + dx, label.y + dy). `box` is the
+   *  fallback when the label is not found, and gives the size. */
+  anchor?: { text: RegExp; dx: number; dy: number }
   /** For customer_input: the label shown on the signing page. */
   label?: string
   required?: boolean
@@ -91,10 +96,10 @@ export const TEMPLATES: TemplateSpec[] = [
     fingerprints: ['9b4c7db714746055'],
     markers: [/Lien\s+Waiver\s*[–—-]\s*Proof\s+of\s+Delivery/i],
     fields: [
-      { key: 'cust_sig', kind: 'signature', source: 'customer_signature', box: { page: 0, x: 66, y: 621, w: 168, h: 26 } },
-      { key: 'cust_date', kind: 'date', source: 'customer_signed_date', box: { page: 0, x: 362, y: 622, w: 138, h: 12 }, size: 9 },
-      { key: 'tech_sig', kind: 'signature', source: 'tech_signature', box: { page: 0, x: 186, y: 278, w: 145, h: 33 } },
-      { key: 'tech_date', kind: 'date', source: 'tech_signed_date', box: { page: 0, x: 372, y: 288, w: 150, h: 12 }, size: 9 },
+      { key: 'cust_sig', kind: 'signature', source: 'customer_signature', box: { page: 0, x: 66, y: 621, w: 168, h: 26 }, anchor: { text: /^Customer Signature$/, dx: 3, dy: 14 } },
+      { key: 'cust_date', kind: 'date', source: 'customer_signed_date', box: { page: 0, x: 362, y: 622, w: 138, h: 12 }, size: 9, anchor: { text: /^Date Completed$/, dx: 4, dy: 15 } },
+      { key: 'tech_sig', kind: 'signature', source: 'tech_signature', box: { page: 0, x: 186, y: 278, w: 145, h: 33 }, anchor: { text: /^Installer.s Signature$/, dx: 120, dy: -17 } },
+      { key: 'tech_date', kind: 'date', source: 'tech_signed_date', box: { page: 0, x: 372, y: 288, w: 150, h: 12 }, size: 9, anchor: { text: /^Date$/, dx: 34, dy: -7 } },
     ],
   },
 ]
