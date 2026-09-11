@@ -45,14 +45,25 @@ export async function setNudgeSettings(vendor: string, enabled: boolean, schedul
   await db().from('vendor_schedule_nudge').upsert(patch, { onConflict: 'vendor' })
 }
 
-export interface NudgeRunResult { enabled: boolean; sent: number; failed: number; remaining: number; errors: string[] }
+export interface NudgeRunResult { enabled: boolean; sent: number; failed: number; remaining: number; errors: string[]; quietHours?: boolean }
+
+// Quiet hours: the cron runs every 15 minutes around the clock, but a customer should not
+// get a text at midnight because their order was crawled at 11pm. Sends only inside this
+// Pacific window; anything that comes due overnight simply waits for the first run after
+// 8am. Same window as the e-sign sweep. The manual "Send reminder now" button is not gated.
+export const NUDGE_SEND_HOURS_PT = { from: 8, until: 19 }   // 8:00am ≤ hour < 7:00pm
+export function isNudgeSendTime(now: Date = new Date()): boolean {
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(now).replace(/[^0-9]/g, '')) % 24
+  return hour >= NUDGE_SEND_HOURS_PT.from && hour < NUDGE_SEND_HOURS_PT.until
+}
 
 /** Send the one-time schedule nudge to eligible new Genie orders. */
-export async function runGenieScheduleNudge(): Promise<NudgeRunResult> {
+export async function runGenieScheduleNudge(now: Date = new Date()): Promise<NudgeRunResult> {
   const s = await getNudgeSettings()
   if (!s.enabled || !s.enabledAt || !s.scheduleUrl) {
     return { enabled: false, sent: 0, failed: 0, remaining: 0, errors: [] }
   }
+  if (!isNudgeSendTime(now)) return { enabled: true, sent: 0, failed: 0, remaining: 0, errors: [], quietHours: true }
   const supabase = db()
 
   // Eligible: new (post-enable), active, has an SF job, not yet scheduled, not yet
