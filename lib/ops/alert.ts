@@ -7,7 +7,7 @@ import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 // problem re-detected each run emails at most once per COOLDOWN window.
 
 const COOLDOWN_HOURS = 6
-const NOTIFICATION_KEY = 'automation_alert'
+const NOTIFICATION_KEY = 'automation_health'
 
 function db(): SupabaseClient {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
@@ -17,7 +17,16 @@ function db(): SupabaseClient {
 const SOURCE_LABELS: Record<string, string> = {
   service_fusion: 'Service Fusion',
   genie: 'Genie / Home Depot portal',
+  clopay: 'Clopay HD Program portal',
   castle_admin: 'Castle Admin',
+}
+const REASON_TEXT: Record<string, string> = {
+  'bad-credentials': 'the site rejected the saved username or password',
+  'mfa-or-captcha': 'the site asked for a verification code or captcha, which cannot be automated',
+  'oidc-callback-error': 'the sign-in handoff (OIDC) returned an error',
+  'submit-did-not-navigate': 'the login form was filled and submitted but the page did not move on',
+  'already-tried-this-tab': 'the site bounced straight back to the login page after signing in',
+  'no-creds': 'no saved credentials for this site in the extension Options',
 }
 const label = (source: string) => SOURCE_LABELS[source] || source
 
@@ -41,6 +50,9 @@ export interface AlertResult { ok: boolean; sent: number; skipped?: string; erro
 export async function sendAutomationAlert(input: AlertInput): Promise<AlertResult> {
   const { source, kind = 'error', detail } = input
   if (!source) return { ok: false, sent: 0, error: 'source required' }
+  // Only a failed unattended login is still an email from the machine; everything else
+  // is a run row on the Health page and the health cron decides whether it matters.
+  if (kind !== 'logged_out') return { ok: true, sent: 0, skipped: 'retired: see /admin/ops' }
   try {
     const supabase = db()
     const dedupKey = `${source}:${kind}`
@@ -48,12 +60,18 @@ export async function sendAutomationAlert(input: AlertInput): Promise<AlertResul
 
     const site = label(source)
     const loggedOut = kind === 'logged_out'
-    const subject = loggedOut ? `⚠️ ${site} is logged out — automation paused` : `⚠️ ${site} automation error`
+    // The extension only reports logged_out AFTER its own unattended login was tried
+    // (twice, in a fresh tab the second time) and did not take — so say that, and why.
+    const reasonKey = (detail ?? '').match(/[a-z]+(?:-[a-z]+)+/)?.[0] ?? ''
+    const why = REASON_TEXT[reasonKey] ?? (detail ? detail : 'the site did not accept the automatic sign-in')
+    const subject = loggedOut ? `⚠️ Auto-login to ${site} failed — automation paused` : `⚠️ ${site} automation error`
     const lead = loggedOut
-      ? `The Castle browser extension found ${site} logged out on the office PC. Automation that depends on it is paused until someone signs back in there.`
+      ? `The Castle browser extension tried to sign in to ${site} with the saved credentials and it did not work: ${why}. Crawls and posts that depend on ${site} are paused until a sign-in succeeds.`
       : `The Castle browser extension hit an error with ${site}.${detail ? ` Details: ${detail}` : ''}`
     const action = loggedOut
-      ? 'On the office PC, open the site in Chrome and sign in (the saved password should fill in). Automation resumes automatically on the next run.'
+      ? (reasonKey === 'bad-credentials' || reasonKey === 'no-creds'
+        ? 'Check the saved username and password for this site in the extension Options on the office machine. The next hourly warm-up retries automatically.'
+        : 'Nothing to do yet: the extension retries the sign-in every hour on its own. If this repeats for more than a day, check the site by hand.')
       : 'Check the extension on the office PC (popup / service-worker console). It retries automatically on the next run.'
     const bodyText = `${lead}\n\nWhat to do: ${action}`
     const bodyHtml = `<p>${lead}</p><p><strong>What to do:</strong> ${action}</p>`

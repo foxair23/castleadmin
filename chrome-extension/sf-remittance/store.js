@@ -20,6 +20,8 @@ export const DEFAULTS = {
   clopayStoreDocs: true,         // download + store Clopay document FILES on our server (via the doc-sync job)
   clopayDocSyncEnabled: true,    // run the nightly Clopay document-sync job (~2am PT) — office PC only
   clopayMaxDocsPerRun: 300,      // cap documents captured per doc-sync run (resumable across runs via dedup)
+  deviceName: 'office',      // how this machine shows up on the Health page (e.g. office-mac)
+  clopayEntryUrl: '',            // where a Clopay crawl starts (blank = https://cca.clopay.com/, which begins a fresh OIDC login)
   // Saved logins for unattended re-login (this machine's local storage only).
   // Chrome won't let a script submit ITS autofilled password (anti-phishing), so
   // the login content script types these in itself. Leave blank to skip.
@@ -46,4 +48,17 @@ export async function setStatus(status) {
 export async function getStatus() {
   const { lastStatus } = await chrome.storage.local.get('lastStatus')
   return lastStatus || null
+}
+
+// The last 40 run / crawl / login outcomes, newest first — the popup's history and the
+// only local record that survives a crawl overwriting lastStatus.
+const HISTORY_MAX = 40
+export async function pushHistory(entry) {
+  const { history = [] } = await chrome.storage.local.get('history')
+  history.unshift({ ...entry, at: entry.at || Date.now() })
+  await chrome.storage.local.set({ history: history.slice(0, HISTORY_MAX) })
+}
+export async function getHistory() {
+  const { history = [] } = await chrome.storage.local.get('history')
+  return history
 }

@@ -1,6 +1,6 @@
 import { getConfig, setConfig } from './store.js'
 
-const fields = ['baseUrl', 'token', 'receivedBy', 'pollMinutes', 'maxDetailPerRun', 'clopayMaxDetailPerRun', 'clopayInstallerNum', 'genieUser', 'clopayUser', 'sfCompany', 'sfUser', 'castleUser']
+const fields = ['baseUrl', 'token', 'receivedBy', 'pollMinutes', 'maxDetailPerRun', 'clopayMaxDetailPerRun', 'clopayInstallerNum', 'clopayEntryUrl', 'deviceName', 'genieUser', 'clopayUser', 'sfCompany', 'sfUser', 'castleUser']
 const passwords = ['geniePass', 'clopayPass', 'sfPass', 'castlePass']
 const checks = ['enabled', 'dryRun', 'genieEnabled', 'genieAutoDetail', 'genieScheduleEnabled', 'clopayEnabled', 'clopayScheduleEnabled']
 

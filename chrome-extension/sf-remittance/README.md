@@ -86,3 +86,59 @@ assigns a tech and marks it Scheduled.
 
 **Dry run** resolves the job and shows the two payloads it would post. Nothing is written
 until Dry run is off.
+
+## Crawls that finish, logins that retry, fewer emails (0.9.14)
+
+- **Inactivity watchdog.** A crawl is no longer killed at a fixed 20 or 90 minutes. The
+  content script reports progress as it goes (also written to `chrome.storage`, so a sleeping
+  service worker cannot lose it); the crawl is closed as `stalled` only after 6–15 minutes of
+  silence, or at a 4-hour hard cap. The nightly Genie full crawl — 250 orders detailed one
+  click at a time — now runs for as long as it needs.
+- **Resumable Genie sweep.** The detail queue is kept when a crawl runs out of its time budget
+  (4 h full, 35 min incremental) and the next crawl picks it up; it is only discarded after
+  30 minutes with no progress.
+- **Schedule from stamps, not the clock.** The alarm runs every 15 minutes and starts whatever
+  is DUE (docs 2–5am once a day, full 3–6am once a day, incremental hourly 7am–6pm Mon–Sat).
+  A missed tick — sleep, a restart, a Chrome update — is caught up, not skipped for the day.
+- **Crawls run in their own minimized window**, so a locked screen does not throttle them.
+- **Unattended login retries once in a fresh tab** before it alarms, and the one remaining
+  email says why (`bad-credentials`, `mfa-or-captcha`, `oidc-callback-error`, …). Every portal
+  is also "warmed" hourly at a quiet moment so an expired session is renewed before a crawl
+  needs it. Clopay now enters through `https://cca.clopay.com/` (fresh OIDC state each time);
+  the old hardcoded login link is the fallback.
+- **No more per-run error emails.** Crawl timeouts and per-line SF failures are recorded (popup
+  "Recent" history, and the app's callbacks), not emailed. The Genie "set the date by hand"
+  report now actually sends (it was computed before the appointments pass ran).
+- The badge `!` clears itself when the thing that caused it succeeds.
+
+## Leaving it unattended (0.9.15–0.9.16)
+
+The extension now reports every run, crawl, login and warm-up to Castle Admin and sends a
+heartbeat every 10 minutes. **Castle Admin → settings gear → Automation Health** (`/admin/ops`)
+is the page to read from a phone: a green / amber / red card per subsystem, the last 50 runs
+with their logs, remote buttons (Run now, crawl either portal, re-login a site, clear the badge,
+flip the config flags), and the leave-it-alone checklist.
+
+**Emails.** One summary at 7am PT every day, whatever the colour. Otherwise an email only when a
+condition turns red (extension silent, a nightly crawl missing, auto-login failing twice, a
+queue stuck for a day…) and one when it recovers, never more than once per condition per 6 hours.
+The old per-event emails ("crawl timed out", "N lines failed", "is logged out") are gone.
+
+**Before you leave, on the machine that will run it (a Mac):**
+1. System Settings → Energy: never sleep; "Prevent automatic sleeping when the display is off".
+   A laptop must stay plugged in and open — closing the lid sleeps it and alarms stop.
+2. Chrome → Settings → System: "Continue running background apps when Chrome is closed" ON.
+   Add Chrome to Login Items. Sign Chrome into the profile that holds this extension.
+3. Extension Options: Castle Admin URL + token, a **Device name** (e.g. `office-mac`), saved
+   logins for Genie, Clopay and Service Fusion, both schedules ON, doc sync ON, Dry run OFF,
+   Enabled ON.
+4. Turn off any other machine that has the extension: two machines crawl twice and post twice
+   (the Health page warns when two devices report).
+5. Run "Genie full" and "Clopay full" once from the Health page and watch them land as `done`.
+6. Subscribe to "Automation Health" on the Notifications tab, and receive one 7am summary
+   before leaving. The checklist on the Health page turns fully green when all of this holds.
+
+**If the machine dies while you are away**, nothing can be done remotely: the Health page will
+go red for "extension not reporting" within 90 minutes (8 hours overnight), you will get one
+email, and the 7am summary will keep saying so. Everything the extension would have written is
+queued in Castle Admin and posts when it comes back.

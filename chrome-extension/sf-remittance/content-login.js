@@ -32,8 +32,20 @@
   const site = SITES.find(s => s.host.test(location.hostname))
   if (!site) return
 
-  const flag = () => { try { chrome.runtime.sendMessage({ type: site.flag, url: location.href }) } catch { /* ignore */ } }
+  // Tell the background WHY the unattended login did not take, so the retry and the
+  // alert can say something true — and that it did, so problems clear.
+  const fail = (reason) => { try { chrome.runtime.sendMessage({ type: site.flag, url: location.href, reason }) } catch { /* ignore */ } }
+  const okKey = site.flag.replace('-login-detected', '-login-ok')
+  const succeeded = () => { try { chrome.runtime.sendMessage({ type: okKey, url: location.href }) } catch { /* ignore */ } }
   const triedKey = `login-tried-${site.label}`
+  // What the page says went wrong, when it says anything.
+  function pageReason() {
+    const text = (document.body && document.body.innerText || '').slice(0, 4000).toLowerCase()
+    if (document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], input[name*="otp" i], input[autocomplete="one-time-code"]')) return 'mfa-or-captcha'
+    if (/invalid (username|password|login|credentials)|incorrect (password|username)|not recognized|does not match|locked/.test(text)) return 'bad-credentials'
+    if (/(^|\s)(error|invalid) (request|state)|correlation|oidc|unable to (complete|process) (the )?(request|login)/.test(text)) return 'oidc-callback-error'
+    return null
+  }
 
   function realClick(el) {
     for (const type of ['mousedown', 'mouseup', 'click']) {
@@ -137,7 +149,9 @@
     if (user && u) setValue(user, u)
     setValue(pw, p)
     const ok = await submitForm(pw)
-    if (!ok) { LOG('saved-credential login did not take — flagging for manual login'); flag() }
+    if (ok) { LOG('signed in'); succeeded(); return }
+    const why = pageReason() || 'submit-did-not-navigate'
+    LOG(`saved-credential login did not take (${why})`); fail(why)
   }
 
   // No saved credentials → coax Chrome's autofill and submit; if the (masked)
@@ -151,7 +165,8 @@
     if (user) user.focus()
     await sleep(1200)
     const ok = await submitForm(pw)
-    if (!ok) { LOG('autofill login did not take — flagging for manual login'); flag() }
+    if (ok) { LOG('signed in via autofill'); succeeded(); return }
+    LOG('autofill login did not take'); fail('no-creds')
   }
 
   const keys = [site.user, site.pass, ...(site.company ? [site.company] : [])]
@@ -173,7 +188,7 @@
         return
       }
       clearInterval(timer)
-      if (sessionStorage.getItem(triedKey)) { LOG(site.label, '— already tried this tab; flagging for manual login'); flag(); return }
+      if (sessionStorage.getItem(triedKey)) { const why = pageReason() || 'already-tried-this-tab'; LOG(site.label, `— back on the login page after trying (${why})`); fail(why); return }
       if (u && p) loginWithCreds(pw, u, p, comp)
       else loginWithAutofill(pw)
     }, 500)

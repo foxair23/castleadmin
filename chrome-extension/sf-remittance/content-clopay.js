@@ -30,6 +30,9 @@
   const NAME = 'clopay'            // message-type prefix ('clopay-crawl-done', …) + log tag
   const API_BASE = 'https://prod-apigateway.clopay.com/api/hdprogram/v1'
   const LIST_URL = 'https://hdprogram.clopay.com/orders'
+  // The original entry point: Clopay's IAM login with a baked-in OIDC state. Used only
+  // when the app root (cca.clopay.com) shows neither a login form nor the dashboard.
+  const LEGACY_LOGIN_URL = 'https://prod-iam.clopay.com/Account/Login?ReturnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fresponse_type%3Dcode%26client_id%3D6f5a9fb9039d422abebe546ef935951b%26state%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH%26redirect_uri%3Dhttps%253A%252F%252Fcca.clopay.com%252Fsignin-oidc%26scope%3Dopenid%2520profile%26code_challenge%3DFemCme6P6lp59gS8nDRLwOnnnyZgSAWtuHKdUlpHcf8%26code_challenge_method%3DS256%26nonce%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH'
   const DEFAULT_INSTALLER = '56505' // Castle Garage's dealer/installer number (configurable)
   const LOG = (...a) => console.log(`[${NAME}]`, ...a)
   const sleep = (ms) => new Promise(r => setTimeout(r, ms))
@@ -101,10 +104,19 @@
   }
   const getCrawlMode = () => storageGet({ clopayCrawlMode: null }).then(d => d.clopayCrawlMode)
   const getCfg = () => storageGet({ clopayInstallerNum: DEFAULT_INSTALLER, clopayMaxDetailPerRun: 12, clopayStoreDocs: true })
-  function endCrawl() {
+  // A crawl reached a terminal state — with the reason and what was measured. The
+  // background only acts on its own crawl tab; in a user's tab this is a no-op there.
+  function endCrawl(reason = 'done', counts = {}) {
     if (!ctxAlive()) return
     try { chrome.storage.local.remove('clopayCrawlMode') } catch { /* ignore */ }
-    try { chrome.runtime.sendMessage({ type: `${NAME}-crawl-done` }) } catch { /* SW asleep — timeout alarm covers it */ }
+    try { chrome.runtime.sendMessage({ type: `${NAME}-crawl-done`, reason, counts }) } catch { /* SW asleep — the watchdog reads storage */ }
+  }
+  // Progress: to storage (survives a sleeping worker) and as a message (re-arms the watchdog).
+  function progress(phase, done, total) {
+    if (!ctxAlive()) return
+    const p = { at: Date.now(), phase, done, total }
+    try { chrome.storage.local.set({ clopayCrawlProgress: p }) } catch { /* ignore */ }
+    try { chrome.runtime.sendMessage({ type: `${NAME}-crawl-progress`, ...p }) } catch { /* ignore */ }
   }
   function isCrawlTab() {
     return new Promise(resolve => {
@@ -391,19 +403,23 @@
     if (syncing) { LOG('doc sync already running'); return }
     if (!readToken()) { LOG('doc sync: no token yet — waiting'); return }
     syncing = true
+    let outcome = null
     try {
       const cfg = await getCfg()
       const installerNum = clean(cfg.clopayInstallerNum) || DEFAULT_INSTALLER
       const maxDocs = cfg.clopayMaxDocsPerRun || 300
       LOG(`doc sync start (installer ${installerNum}, cap ${maxDocs} docs)`)
       const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
-      if (listR.noToken || listR.status === 401) { LOG('doc sync: token missing/expired — aborting'); return }
+      if (listR.noToken || listR.status === 401) { LOG('doc sync: token missing/expired — aborting'); outcome = [listR.noToken ? 'no-token' : 'unauthorized', {}]; return }
       const orders = (Array.isArray(listR.obj) ? listR.obj : []).map(mapListItem).filter(Boolean)
       LOG(`doc sync: ${orders.length} order(s)`)
-      let budget = maxDocs, tStored = 0, tExisting = 0, tFailed = 0
+      progress('docs-list', 0, orders.length)
+      let budget = maxDocs, tStored = 0, tExisting = 0, tFailed = 0, seen = 0
       for (const item of orders) {
-        if (budget <= 0) { LOG(`doc sync: hit per-run cap (${maxDocs}) — re-run to continue`); break }
-        if (!readToken() || !ctxAlive()) { LOG('doc sync: token/context lost — stopping'); break }
+        seen++
+        if (seen % 5 === 0) progress('docs', seen, orders.length)
+        if (budget <= 0) { LOG(`doc sync: hit per-run cap (${maxDocs}) — re-run to continue`); outcome = ['budget', { stored: tStored, existing: tExisting, failed: tFailed, ordersSeen: seen, orders: orders.length }]; break }
+        if (!readToken() || !ctxAlive()) { LOG('doc sync: token/context lost — stopping'); outcome = ['no-token', { stored: tStored }]; break }
         const inc = item.raw && item.raw.incident_id
         const po = item.customer_po
         if (inc == null || !po) continue
@@ -416,11 +432,13 @@
         await sleep(200)
       }
       LOG(`doc sync complete — ${tStored} stored, ${tExisting} existing, ${tFailed} failed`)
+      if (!outcome) outcome = ['done', { stored: tStored, existing: tExisting, failed: tFailed, orders: orders.length }]
     } catch (e) {
       LOG('doc sync error', e?.message || e)
+      outcome = ['error', { error: String(e?.message || e) }]
     } finally {
       syncing = false
-      endCrawl() // signals done → background detaches the debugger + closes the orders tab
+      endCrawl(...(outcome || ['done', {}])) // → background detaches the debugger + closes the orders tab
     }
   }
 
@@ -430,6 +448,7 @@
     if (crawling) { LOG('crawl already running'); return }
     if (!readToken()) { LOG('no bearer token yet — waiting for the app to authenticate'); return }
     crawling = true
+    let outcome = null
     try {
       const cfg = await getCfg()
       const installerNum = clean(cfg.clopayInstallerNum) || DEFAULT_INSTALLER
@@ -440,14 +459,15 @@
 
       // 1) LIST
       const listR = await apiPost('/installerorder/orders', { installernum: String(installerNum) })
-      if (listR.noToken) { LOG('token missing during list — aborting'); return }
-      if (listR.status === 401) { LOG('list 401 — token expired; aborting (next crawl gets a fresh one)'); return }
+      if (listR.noToken) { LOG('token missing during list — aborting'); outcome = ['no-token', {}]; return }
+      if (listR.status === 401) { LOG('list 401 — token expired; aborting'); outcome = ['unauthorized', {}]; return }
       const rawList = Array.isArray(listR.obj) ? listR.obj : []
       const orders = rawList.map(mapListItem).filter(Boolean)
       LOG(`list: ${orders.length} order(s) (status ${listR.status})`)
-      if (!orders.length) { LOG('list empty — DOM/API may have changed; aborting'); return }
+      if (!orders.length) { LOG('list empty — DOM/API may have changed; aborting'); outcome = ['empty-list', { status: listR.status }]; return }
       const res = await ingest('list', orders)
       LOG('ingest(list) →', res && { inserted: res.inserted, updated: res.updated, needDetail: (res.needDetail || []).length })
+      progress('list', orders.length, orders.length)
 
       // 2) DETAIL. A FULL crawl re-details EVERY order (refreshes notes/documents/
       // status for all — the manual "crawl now" + the nightly backfill); incremental
@@ -470,7 +490,8 @@
 
       let done = 0
       for (const id of targets) {
-        if (!readToken() || !ctxAlive()) { LOG('token/context lost mid-detail — stopping'); break }
+        if (!readToken() || !ctxAlive()) { LOG('token/context lost mid-detail — stopping'); outcome = ['no-token', { orders: orders.length, detailed: done }]; break }
+        if (done % 10 === 0) progress('detail', done, targets.length)
         const item = byId.get(id)
         const avail = item.raw && item.raw.incident_id != null && notesAvail.has(item.raw.incident_id)
           ? notesAvail.get(item.raw.incident_id) : undefined
@@ -488,11 +509,13 @@
         await sleep(250) // gentle pacing
       }
       LOG(`crawl complete — ${orders.length} orders, ${done} detailed`)
+      if (!outcome) outcome = ['done', { orders: orders.length, detailed: done, needDetail: need.size }]
     } catch (e) {
       LOG('crawl error', e?.message || e)
+      outcome = ['error', { error: String(e?.message || e) }]
     } finally {
       crawling = false
-      endCrawl()
+      endCrawl(...(outcome || ['done', {}]))
     }
   }
 
@@ -545,6 +568,14 @@
         LOG(`cca: no dashboard at ${ms()}ms (${location.pathname}) — reloading once to advance`)
         if (reloadOnce('cca-advance')) return
       }
+      // Neither a dashboard nor a login form after 45 s: the app root did not start its
+      // login flow. Fall through to the legacy IAM login link, once per tab.
+      if (ms() >= 45000 && !onDashboard && !document.querySelector('input[type="password"]') && !sessionStorage.getItem('cca-legacy-login')) {
+        sessionStorage.setItem('cca-legacy-login', '1')
+        LOG('cca: no dashboard and no login form — falling back to the legacy login link')
+        location.href = LEGACY_LOGIN_URL
+        return
+      }
       await sleep(500)
     }
     LOG(`cca: no HD Program tile after ${ms()}ms — navigating directly to orders`)
@@ -567,7 +598,8 @@
     for (let i = 0; i < 240; i++) { // up to ~120s for the app to auth
       if (!ctxAlive()) return
       if (readToken()) {
-        // mode 'docs' → the separate document-sync job; anything else → the fast crawl.
+        // 'warm' → logged in, that is all; 'docs' → the document-sync job; else the crawl.
+        if (mode === 'warm') { LOG(`token present after ~${i * 0.5}s — session warm`); endCrawl('warm-ok'); return }
         if (mode === 'docs') { LOG(`token present after ~${i * 0.5}s — syncing documents`); await docsync() }
         else { LOG(`token present after ~${i * 0.5}s — crawling`); await crawl() }
         return
@@ -575,7 +607,7 @@
       if (i === 16 && looksBlank()) { reloadOnce('hd-blank'); return } // truly blank OIDC landing → one reload
       await sleep(500)
     }
-    LOG('hdprogram: no token after ~120s — session may not have authenticated'); endCrawl()
+    LOG('hdprogram: no token after ~120s — session may not have authenticated'); endCrawl('no-token', { url: location.pathname })
   }
 
   // ── Messages ─────────────────────────────────────────────────────────────────
