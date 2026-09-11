@@ -86,3 +86,27 @@ assigns a tech and marks it Scheduled.
 
 **Dry run** resolves the job and shows the two payloads it would post. Nothing is written
 until Dry run is off.
+
+## Crawls that finish, logins that retry, fewer emails (0.9.14)
+
+- **Inactivity watchdog.** A crawl is no longer killed at a fixed 20 or 90 minutes. The
+  content script reports progress as it goes (also written to `chrome.storage`, so a sleeping
+  service worker cannot lose it); the crawl is closed as `stalled` only after 6–15 minutes of
+  silence, or at a 4-hour hard cap. The nightly Genie full crawl — 250 orders detailed one
+  click at a time — now runs for as long as it needs.
+- **Resumable Genie sweep.** The detail queue is kept when a crawl runs out of its time budget
+  (4 h full, 35 min incremental) and the next crawl picks it up; it is only discarded after
+  30 minutes with no progress.
+- **Schedule from stamps, not the clock.** The alarm runs every 15 minutes and starts whatever
+  is DUE (docs 2–5am once a day, full 3–6am once a day, incremental hourly 7am–6pm Mon–Sat).
+  A missed tick — sleep, a restart, a Chrome update — is caught up, not skipped for the day.
+- **Crawls run in their own minimized window**, so a locked screen does not throttle them.
+- **Unattended login retries once in a fresh tab** before it alarms, and the one remaining
+  email says why (`bad-credentials`, `mfa-or-captcha`, `oidc-callback-error`, …). Every portal
+  is also "warmed" hourly at a quiet moment so an expired session is renewed before a crawl
+  needs it. Clopay now enters through `https://cca.clopay.com/` (fresh OIDC state each time);
+  the old hardcoded login link is the fallback.
+- **No more per-run error emails.** Crawl timeouts and per-line SF failures are recorded (popup
+  "Recent" history, and the app's callbacks), not emailed. The Genie "set the date by hand"
+  report now actually sends (it was computed before the appointments pass ran).
+- The badge `!` clears itself when the thing that caused it succeeds.

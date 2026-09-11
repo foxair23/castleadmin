@@ -1,4 +1,4 @@
-import { getConfig, getStatus } from './store.js'
+import { getConfig, getStatus, getHistory } from './store.js'
 
 function fmt(ts) { return ts ? new Date(ts).toLocaleString() : '—' }
 
@@ -44,7 +44,16 @@ async function render() {
     .filter(Boolean).join('\n')
   // Approved-in-app lines the server couldn't queue (e.g. no linked open invoice).
   const skipDetail = skipped.length ? 'Skipped by server:\n' + skipped.map(x => `• ${x.reason || 'skipped'}`).join('\n') : ''
-  el.textContent = [head, detail, skipDetail].filter(Boolean).join('\n\n')
+  const hist = (await getHistory()).slice(0, 8).map(h => {
+    const when = new Date(h.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    if (h.kind === 'run') return `${when}  run${h.source ? ` (${h.source})` : ''} → ${h.ok ? `ok · applied ${h.applied ?? 0} · failed ${h.failed ?? 0}` : `FAIL ${h.error || 'SF session'}`}`
+    if (h.kind === 'login') return `${when}  ${h.site} login → ${h.ok ? 'ok' : `failed: ${h.reason}${h.attempt ? ` (try ${h.attempt})` : ''}`}`
+    const c = h.counts || {}
+    const n = [c.orders != null ? `${c.orders} orders` : null, c.detailed != null ? `${c.detailed} detailed` : null, c.remaining ? `${c.remaining} left` : null, c.stored != null ? `${c.stored} docs` : null].filter(Boolean).join(', ')
+    return `${when}  ${h.site} ${h.mode || ''} → ${h.reason}${n ? ` · ${n}` : ''}${h.ms ? ` · ${Math.round(h.ms / 60000)} min` : ''}`
+  })
+  const histText = hist.length ? 'Recent:\n' + hist.join('\n') : ''
+  el.textContent = [head, detail, skipDetail, histText].filter(Boolean).join('\n\n')
 }
 
 document.getElementById('run').addEventListener('click', () => {

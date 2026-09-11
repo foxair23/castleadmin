@@ -1,4 +1,4 @@
-import { getConfig, setStatus } from './store.js'
+import { getConfig, setStatus, pushHistory } from './store.js'
 import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult } from './app-api.js'
 import { applyOne } from './sf.js'
 import { addLinesToJob } from './sf-lines.js'
@@ -17,98 +17,155 @@ async function scheduleAlarm() {
 const SF_RECOVER_ALARM = 'sf-session-recover'
 const SF_KEEPALIVE_ALARM = 'sf-session-keepalive'
 const CRAWL_TZ = 'America/Los_Angeles'
-const CRAWL_TIMEOUT_MS = 20 * 60 * 1000
+const SESSION_WARM_ALARM = 'session-warm'
+const RUN_LOCK_MS = 15 * 60 * 1000
+const CRAWL_HARD_CAP_MS = 4 * 60 * 60 * 1000
+// Clopay's IAM login link with a baked-in OIDC state — the original entry point. Kept as
+// the fallback the cca page navigates to when the app root neither shows a login form
+// nor the dashboard.
+export const CLOPAY_LEGACY_LOGIN_URL = 'https://prod-iam.clopay.com/Account/Login?ReturnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fresponse_type%3Dcode%26client_id%3D6f5a9fb9039d422abebe546ef935951b%26state%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH%26redirect_uri%3Dhttps%253A%252F%252Fcca.clopay.com%252Fsignin-oidc%26scope%3Dopenid%2520profile%26code_challenge%3DFemCme6P6lp59gS8nDRLwOnnnyZgSAWtuHKdUlpHcf8%26code_challenge_method%3DS256%26nonce%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH'
 
 // ── Scheduled vendor-portal crawls (Genie + Clopay share one engine) ────────
-// An always-on office PC runs these: hourly during work hours (incremental — just
-// new/changed orders) plus a nightly full backfill. The alarm fires hourly and
-// the handler decides what (if anything) to run based on the PT clock. Each crawl
-// opens a background tab to the order list; the content script does the work and
-// signals completion, then we close the tab. A timeout alarm force-closes a tab
-// that never finishes. State lives in chrome.storage (the MV3 worker is ephemeral).
+// An always-on office machine runs these: hourly during work hours (incremental — just
+// new/changed orders), a nightly full backfill, and for Clopay a nightly document sync.
+// The alarm fires every 15 minutes and the handler decides what is DUE from stored
+// stamps (last incremental finished, last full/docs date) — never from an hour
+// equality, so a missed tick (sleep, restart, Chrome update) is caught up on the next
+// one rather than skipped for the day.
+//
+// Each crawl opens a tab in its own minimized window (Chrome throttles timers in
+// background tabs of a visible window once the screen locks); the content script does
+// the work, reports PROGRESS as it goes, and signals completion with a reason. The
+// watchdog is inactivity-based: as long as progress keeps arriving the crawl may run
+// (up to a hard cap); a crawl that goes quiet is closed as 'stalled'. State lives in
+// chrome.storage (the MV3 worker is ephemeral); progress is written there too, so a
+// message lost while the worker slept still counts.
 //
 // Every crawler is one descriptor here — its portal URL, its own storage keys /
-// alarm names (so Genie and Clopay never step on each other), the option flags
-// that gate it, and the login/alert source names. All the machinery below is
-// parameterized by the descriptor, so adding a portal is one entry + its content
-// script.
+// alarm names, the option flags that gate it, and the login/alert source names.
 const CRAWLERS = {
   genie: {
     name: 'genie', vendor: 'genie_thd',
-    listUrl: 'https://install.openings.net/webcenter/portal/installerconnect/orderlist',
-    stateKey: 'genieCrawl', modeKey: 'genieCrawlMode',
+    listUrl: () => 'https://install.openings.net/webcenter/portal/installerconnect/orderlist',
+    inactivityMs: { default: 6 * 60 * 1000 },
+    stateKey: 'genieCrawl', modeKey: 'genieCrawlMode', progressKey: 'genieCrawlProgress',
     alarm: 'genie-crawl', timeoutAlarm: 'genie-crawl-timeout',
     scheduleFlag: 'genieScheduleEnabled', enabledFlag: 'genieEnabled',
     loginFlag: 'genie-login-detected', alertSource: 'genie',
   },
   clopay: {
     name: 'clopay', vendor: 'clopay_hd',
-    // Start at the Clopay IAM login URL (per Castle — this stable entry point does
-    // not expire): content-login signs in on prod-iam, the OIDC flow returns to
-    // cca.clopay.com, and content-clopay's cca handler clicks HD Program →
-    // hdprogram.clopay.com/orders. Opening /orders directly does NOT bounce to
-    // login, so a logged-out crawl would just sit on a blank page.
-    listUrl: 'https://prod-iam.clopay.com/Account/Login?ReturnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fresponse_type%3Dcode%26client_id%3D6f5a9fb9039d422abebe546ef935951b%26state%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH%26redirect_uri%3Dhttps%253A%252F%252Fcca.clopay.com%252Fsignin-oidc%26scope%3Dopenid%2520profile%26code_challenge%3DFemCme6P6lp59gS8nDRLwOnnnyZgSAWtuHKdUlpHcf8%26code_challenge_method%3DS256%26nonce%3DT2dVTzlsfkt4LWJwdDdyYm1tOGJIM1BFNWtmTnZCQ1pfaDFhUmJpLVV4MmlH',
-    // A full detail backfill of ~170 orders takes a while; give it longer before
-    // the safety timeout force-closes the tab (the in-page sweep also resumes if
-    // it is interrupted).
-    timeoutMs: 90 * 60 * 1000,
-    stateKey: 'clopayCrawl', modeKey: 'clopayCrawlMode',
+    // Enter through the app root (cca.clopay.com), which starts its own OIDC flow with a
+    // fresh state: content-login signs in on prod-iam, the flow returns to cca, and
+    // content-clopay's cca handler clicks HD Program → hdprogram.clopay.com/orders.
+    // The legacy hardcoded login link is the fallback the cca page falls through to.
+    listUrl: (cfg) => (cfg && cfg.clopayEntryUrl) || 'https://cca.clopay.com/',
+    inactivityMs: { default: 8 * 60 * 1000, docs: 15 * 60 * 1000 },
+    stateKey: 'clopayCrawl', modeKey: 'clopayCrawlMode', progressKey: 'clopayCrawlProgress',
     alarm: 'clopay-crawl', timeoutAlarm: 'clopay-crawl-timeout',
     scheduleFlag: 'clopayScheduleEnabled', enabledFlag: 'clopayEnabled',
     loginFlag: 'clopay-login-detected', alertSource: 'clopay',
   },
 }
+const inactivityFor = (c, mode) => (c.inactivityMs[mode] || c.inactivityMs.default)
 const crawlerByName = (name) => CRAWLERS[name] || null
 const crawlerByLoginFlag = (flag) => Object.values(CRAWLERS).find(c => c.loginFlag === flag) || null
 const crawlerByIngestType = (type) => CRAWLERS[type] || null // content scripts send type === crawler name
 
-chrome.runtime.onInstalled.addListener(() => { scheduleAlarm(); scheduleAllCrawls(); scheduleSfKeepalive() })
-chrome.runtime.onStartup.addListener(() => { scheduleAlarm(); scheduleAllCrawls(); scheduleSfKeepalive() })
+function armAll() { scheduleAlarm(); scheduleAllCrawls(); scheduleSfKeepalive(); scheduleSessionWarm() }
+chrome.runtime.onInstalled.addListener(armAll)
+chrome.runtime.onStartup.addListener(armAll)
 chrome.alarms.onAlarm.addListener(a => {
   if (a.name === ALARM) return run('alarm')
   if (a.name === SF_RECOVER_ALARM) return finishSfRecover()
   if (a.name === SF_KEEPALIVE_ALARM) return maybeSfKeepalive()
+  if (a.name === SESSION_WARM_ALARM) return maybeWarmSessions()
   for (const c of Object.values(CRAWLERS)) {
     if (a.name === c.alarm) return maybeScheduledCrawl(c)
     if (a.name === c.timeoutAlarm) return onCrawlTimeout(c)
   }
 })
 
-// A scheduled crawl that never signalled done → it stalled. Close its tab and
-// alert, so a silently-broken crawl doesn't go unnoticed.
+// The watchdog fired: nothing has been heard from the crawl for its inactivity window.
+// Progress is also written to storage by the content script — a message that arrived
+// while the worker slept still counts — so re-read that first. Fresh progress → give it
+// another window. Silence → close it as stalled (a run row / badge, never an email: the
+// app's health check is what decides whether a stalled crawl matters).
 async function onCrawlTimeout(c) {
-  const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
-  await finishCrawl(c, 'timeout')
-  if (state) { setBadge('!'); await notifyAlert(c.alertSource, 'error', 'scheduled crawl did not finish (timed out)') }
+  const st = await chrome.storage.local.get([c.stateKey, c.progressKey])
+  const state = st[c.stateKey]
+  if (!state) return
+  const progress = st[c.progressKey]
+  const lastAt = Math.max(state.lastProgressAt || state.startedAt || 0, (progress && progress.at) || 0)
+  const window_ = inactivityFor(c, state.mode)
+  if (Date.now() - lastAt < window_ && Date.now() < (state.hardCapAt || 0)) {
+    chrome.alarms.create(c.timeoutAlarm, { when: lastAt + window_ })
+    return
+  }
+  await finishCrawl(c, Date.now() >= (state.hardCapAt || 0) ? 'hard-cap' : 'stalled', progress ? { phase: progress.phase, done: progress.done, total: progress.total } : {})
 }
 
-// delayInMinutes:1 so the schedule also fires ~1 min after Chrome start / an
-// extension reload — otherwise each reload restarts a full 60-min countdown and a
-// machine that's reloaded/restarted often could go a long time without a crawl.
-function scheduleAllCrawls() { for (const c of Object.values(CRAWLERS)) chrome.alarms.create(c.alarm, { delayInMinutes: 1, periodInMinutes: 60 }) }
+// Every 15 minutes; delayInMinutes:1 so the schedule also fires ~1 min after Chrome
+// start / an extension reload and catches up on anything that is due.
+function scheduleAllCrawls() { for (const c of Object.values(CRAWLERS)) chrome.alarms.create(c.alarm, { delayInMinutes: 1, periodInMinutes: 15 }) }
 function scheduleSfKeepalive() { chrome.alarms.create(SF_KEEPALIVE_ALARM, { delayInMinutes: 2, periodInMinutes: 60 }) }
+function scheduleSessionWarm() { chrome.alarms.create(SESSION_WARM_ALARM, { delayInMinutes: 30, periodInMinutes: 60 }) }
 
 function ptNow() {
   const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', { timeZone: CRAWL_TZ, weekday: 'short', hour: '2-digit', hour12: false })
+    new Intl.DateTimeFormat('en-US', { timeZone: CRAWL_TZ, weekday: 'short', hour: '2-digit', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit' })
       .formatToParts(new Date()).map(p => [p.type, p.value]))
-  return { hour: Number(parts.hour) % 24, weekday: parts.weekday }
+  return { hour: Number(parts.hour) % 24, weekday: parts.weekday, date: `${parts.year}-${parts.month}-${parts.day}` }
 }
 
+// What each crawler last finished, for the due-check. PT dates for the daily jobs, a
+// timestamp for the hourly one.
+async function getStamps(c) { return ((await chrome.storage.local.get('crawlStamps')).crawlStamps || {})[c.name] || {} }
+async function setStamp(c, patch) {
+  const all = (await chrome.storage.local.get('crawlStamps')).crawlStamps || {}
+  all[c.name] = { ...(all[c.name] || {}), ...patch }
+  await chrome.storage.local.set({ crawlStamps: all })
+}
+
+/** Is a crawl running with fresh progress? (A stale one is torn down by startCrawl.) */
+async function crawlActive(c) {
+  const st = await chrome.storage.local.get([c.stateKey, c.progressKey])
+  const state = st[c.stateKey]
+  if (!state) return false
+  const lastAt = Math.max(state.lastProgressAt || state.startedAt || 0, (st[c.progressKey] && st[c.progressKey].at) || 0)
+  return Date.now() - lastAt < inactivityFor(c, state.mode) && await tabExists(state.tabId)
+}
+
+// Decide what is due. Priority: docs (Clopay, 2–5am, once a day) > full (3–6am, once a
+// day; a full that ended on its time budget is NOT stamped done, so it resumes on the
+// next tick until it finishes or the window closes) > incremental (Mon–Sat 7am–6pm, when
+// the last one finished more than 50 minutes ago).
 async function maybeScheduledCrawl(c) {
   const cfg = await getConfig()
-  const { hour, weekday } = ptNow()
-  // Clopay nightly DOCUMENT SYNC (~2am PT) — a separate slow job, gated by its own toggle
-  // and independent of the list/notes crawl schedule. Runs before the 3am full crawl.
-  if (c.name === 'clopay' && cfg.clopayDocSyncEnabled && hour === 2) { await startCrawl(c, 'docs'); return }
-  if (!cfg[c.scheduleFlag]) return
+  if (await crawlActive(c)) return
+  const { hour, weekday, date } = ptNow()
+  const stamps = await getStamps(c)
   const workday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(weekday)
-  let mode = null
-  if (hour === 3) mode = 'full'                                   // nightly full backfill ~3am PT
-  else if (workday && hour >= 7 && hour <= 18) mode = 'incremental' // 7am–6pm Mon–Sat
-  if (!mode) return
-  await startCrawl(c, mode)
+  if (c.name === 'clopay' && cfg.clopayDocSyncEnabled && hour >= 2 && hour <= 5 && stamps.lastDocsDoneDate !== date) { await startCrawl(c, 'docs'); return }
+  if (!cfg[c.scheduleFlag]) return
+  if (hour >= 3 && hour <= 6 && stamps.lastFullDoneDate !== date) { await startCrawl(c, 'full'); return }
+  if (workday && hour >= 7 && hour <= 18 && Date.now() - (stamps.lastIncrementalDoneAt || 0) > 50 * 60 * 1000) { await startCrawl(c, 'incremental'); return }
+}
+
+// Keep every portal session alive: once an hour, at a quiet moment, open each portal in
+// 'warm' mode (reach a logged-in page, then close). If the session had expired the login
+// happens HERE — proactively — rather than in the middle of a crawl. Skipped when the
+// portal was crawled or warmed in the last 50 minutes.
+async function maybeWarmSessions() {
+  const cfg = await getConfig()
+  for (const c of Object.values(CRAWLERS)) {
+    if (cfg[c.enabledFlag] === false || !cfg[c.scheduleFlag]) continue
+    if (await crawlActive(c)) continue
+    const stamps = await getStamps(c)
+    if (Date.now() - (stamps.lastTouchedAt || 0) < 50 * 60 * 1000) continue
+    await startCrawl(c, 'warm')
+    await sleep(2000)
+  }
 }
 
 async function tabExists(tabId) {
@@ -116,43 +173,95 @@ async function tabExists(tabId) {
   try { await chrome.tabs.get(tabId); return true } catch { return false }
 }
 
-// mode: 'full' | 'incremental'. force:true (the manual button) always starts a
-// fresh crawl. Returns { started, reason }.
+// mode: 'full' | 'incremental' | 'docs' | 'warm'. force:true (the manual buttons) always
+// starts a fresh crawl. Returns { started, reason }.
 async function startCrawl(c, mode, { force = false } = {}) {
-  const timeoutMs = c.timeoutMs || CRAWL_TIMEOUT_MS
+  const cfg = await getConfig()
   const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
-  // Only treat an existing crawl as "already running" if it's recent AND its tab
-  // is actually still open. Stale state (tab closed / worker died / a missed
-  // 'done' message) must not block a new crawl — especially the manual button.
-  if (state && !force && Date.now() - state.startedAt < timeoutMs && await tabExists(state.tabId)) {
+  if (state && !force && await crawlActive(c)) {
     console.log(`[${c.name}] crawl already running`)
     return { started: false, reason: 'already running' }
   }
   // Force, or leftover state — tear down anything stale before starting fresh.
-  if (state) {
-    chrome.alarms.clear(c.timeoutAlarm)
-    if (state.tabId != null) { try { await chrome.tabs.remove(state.tabId) } catch { /* already closed */ } }
-  }
+  if (state) await teardownCrawlTab(c, state)
   await chrome.storage.local.set({ [c.modeKey]: mode })
-  const tab = await chrome.tabs.create({ url: c.listUrl, active: false })
-  await chrome.storage.local.set({ [c.stateKey]: { tabId: tab.id, mode, startedAt: Date.now() } })
+  await chrome.storage.local.remove(c.progressKey)
+  // A window of its own, minimized: a background TAB in the user's window gets its timers
+  // throttled hard once the screen locks; a separate window does not.
+  let tabId = null, windowId = null
+  try {
+    const win = await chrome.windows.create({ url: c.listUrl(cfg), focused: false, state: 'minimized', type: 'normal' })
+    windowId = win.id; tabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null
+    if (tabId == null) { const tabs = await chrome.tabs.query({ windowId }); tabId = tabs[0] && tabs[0].id }
+  } catch (e) {
+    console.warn(`[${c.name}] minimized window failed (${e && e.message}) — falling back to a background tab`)
+    const tab = await chrome.tabs.create({ url: c.listUrl(cfg), active: false })
+    tabId = tab.id
+  }
+  const now = Date.now()
+  await chrome.storage.local.set({ [c.stateKey]: { tabId, windowId, mode, startedAt: now, lastProgressAt: now, hardCapAt: now + (mode === 'warm' ? 5 * 60 * 1000 : CRAWL_HARD_CAP_MS) } })
+  await setStamp(c, { lastTouchedAt: now })
   await setStatus({ source: `${c.name}-schedule`, mode, state: 'running' })
-  chrome.alarms.create(c.timeoutAlarm, { when: Date.now() + timeoutMs })
+  chrome.alarms.create(c.timeoutAlarm, { when: now + (mode === 'warm' ? 3 * 60 * 1000 : inactivityFor(c, mode)) })
   console.log(`[${c.name}] crawl started:`, mode, force ? '(forced)' : '')
   return { started: true }
 }
 
-async function finishCrawl(c, reason) {
-  const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
+async function teardownCrawlTab(c, state) {
   chrome.alarms.clear(c.timeoutAlarm)
-  await chrome.storage.local.remove([c.stateKey, c.modeKey])
-  if (state && state.tabId != null && reason !== 'login') {
-    try { await chrome.tabs.remove(state.tabId) } catch { /* already closed */ }
-  }
-  // The Clopay doc-sync uses a hidden debugger-driven capture tab — detach + close it
-  // when the crawl ends so no "debugging" tab is left behind.
+  if (state && state.windowId != null) { try { await chrome.windows.remove(state.windowId) } catch { /* already closed */ } }
+  else if (state && state.tabId != null) { try { await chrome.tabs.remove(state.tabId) } catch { /* already closed */ } }
+}
+
+// A crawl reached a terminal state. `reason` is what the content script (or the
+// watchdog) said; `counts` whatever it measured. Stamps the schedule, keeps the
+// history, sets/clears the badge problem, closes the window (kept open on 'login' so a
+// person can sign in by hand if they are at the machine).
+const GOOD_REASONS = new Set(['done', 'warm-ok', 'budget'])
+async function finishCrawl(c, reason, counts = {}) {
+  const st = await chrome.storage.local.get([c.stateKey, c.progressKey])
+  const state = st[c.stateKey]
+  chrome.alarms.clear(c.timeoutAlarm)
+  await chrome.storage.local.remove([c.stateKey, c.modeKey, c.progressKey])
+  if (reason !== 'login') await teardownCrawlTab(c, state)
+  // The Clopay doc-sync uses a hidden debugger-driven capture tab — detach + close it.
   if (c.name === 'clopay') { try { await teardownCaptureDebugger() } catch { /* ignore */ } }
-  console.log(`[${c.name}] crawl finished:`, reason)
+  const mode = state ? state.mode : null
+  const now = Date.now()
+  const stamp = { lastTouchedAt: now }
+  if (reason === 'done') {
+    if (mode === 'docs') stamp.lastDocsDoneDate = ptNow().date
+    else if (mode === 'full') { stamp.lastFullDoneDate = ptNow().date; stamp.lastIncrementalDoneAt = now }
+    else if (mode === 'incremental') stamp.lastIncrementalDoneAt = now
+  } else if (reason === 'budget' && mode === 'incremental') stamp.lastIncrementalDoneAt = now
+  await setStamp(c, stamp)
+  if (GOOD_REASONS.has(reason)) await clearProblem(`crawl:${c.name}`, `login:${c.name}`)
+  else if (mode !== 'warm' || reason === 'login') await setProblem(`crawl:${c.name}`, reason)
+  const entry = { kind: mode === 'warm' ? 'warm' : 'crawl', site: c.name, mode, reason, ok: GOOD_REASONS.has(reason), startedAt: state ? state.startedAt : null, finishedAt: now, ms: state ? now - state.startedAt : null, counts }
+  await pushHistory(entry)
+  await setStatus({ source: `${c.name}-schedule`, mode, state: reason, counts })
+  console.log(`[${c.name}] crawl finished:`, reason, counts)
+  return entry
+}
+
+// ── Badge: '!' while any problem is open, cleared when its cause succeeds ──────
+async function setProblem(key, detail) {
+  const { problems = {} } = await chrome.storage.local.get('problems')
+  problems[key] = { at: Date.now(), detail: detail || null }
+  await chrome.storage.local.set({ problems })
+  await refreshBadge()
+}
+async function clearProblem(...keys) {
+  const { problems = {} } = await chrome.storage.local.get('problems')
+  let changed = false
+  for (const k of keys) if (problems[k]) { delete problems[k]; changed = true }
+  if (changed) await chrome.storage.local.set({ problems })
+  await refreshBadge()
+}
+async function clearAllProblems() { await chrome.storage.local.set({ problems: {} }); await refreshBadge() }
+async function refreshBadge() {
+  const { problems = {} } = await chrome.storage.local.get('problems')
+  setBadge(Object.keys(problems).length ? '!' : '')
 }
 
 function setBadge(text) {
@@ -216,7 +325,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   ;(async () => {
     const cfg = await getConfig()
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'set Castle Admin URL + token in Options' }); return }
-    setBadge('')
+    await clearProblem(`crawl:${c.name}`)
     // force:true — a manual click always opens a fresh crawl tab, even if stale
     // crawl state is lingering from a previous run.
     const r = await startCrawl(c, 'full', { force: true })
@@ -234,7 +343,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   ;(async () => {
     const cfg = await getConfig()
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'set Castle Admin URL + token in Options' }); return }
-    setBadge('')
+    await clearProblem('crawl:clopay')
     const r = await startCrawl(CRAWLERS.clopay, 'docs', { force: true })
     sendResponse({ ok: !!r.started, error: r.started ? undefined : (r.reason || 'could not start') })
   })()
@@ -254,47 +363,95 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true
 })
 
-// Content scripts signal a scheduled crawl's outcome. 'genie-crawl-done',
-// 'clopay-crawl-done', …
+// Content scripts report PROGRESS ('genie-crawl-progress', …) and the OUTCOME
+// ('genie-crawl-done' with a reason and counts). Progress re-arms the inactivity
+// watchdog; the content script also writes it to storage, which onCrawlTimeout reads.
 chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
+  const prog = typeof msg?.type === 'string' && msg.type.endsWith('-crawl-progress') ? crawlerByName(msg.type.slice(0, -'-crawl-progress'.length)) : null
+  if (prog) {
+    ;(async () => {
+      const state = (await chrome.storage.local.get(prog.stateKey))[prog.stateKey]
+      if (!state || !sender.tab || sender.tab.id !== state.tabId) return
+      const now = Date.now()
+      await chrome.storage.local.set({ [prog.stateKey]: { ...state, lastProgressAt: now, progress: { phase: msg.phase, done: msg.done, total: msg.total } } })
+      chrome.alarms.create(prog.timeoutAlarm, { when: Math.min(now + inactivityFor(prog, state.mode), state.hardCapAt || Infinity) })
+    })()
+    return
+  }
   const done = typeof msg?.type === 'string' && msg.type.endsWith('-crawl-done') ? crawlerByName(msg.type.slice(0, -'-crawl-done'.length)) : null
   if (done) {
     ;(async () => {
       const state = (await chrome.storage.local.get(done.stateKey))[done.stateKey]
       // Only act on the crawl's own tab — a manual crawl in a user tab is ignored.
-      if (state && sender.tab && sender.tab.id === state.tabId) { setBadge(''); await finishCrawl(done, 'done') }
+      if (!state || !sender.tab || sender.tab.id !== state.tabId) return
+      const reason = msg.reason || 'done'
+      // Not signed in: that is a login problem, handled by the login-failure path below
+      // (fresh-tab retry, then one alert) rather than a silent end.
+      if (reason === 'no-token' || reason === 'unauthorized') { await onLoginFailure(done, sender.tab.id, reason, sender.url); return }
+      await finishCrawl(done, reason, msg.counts || {})
     })()
     return
   }
-  // A login page couldn't be signed into automatically (no saved credentials, or
-  // they didn't take / MFA). Badge + email so someone signs in by hand.
-  const LOGIN_ALERTS = {
-    'genie-login-detected': 'genie',
-    'clopay-login-detected': 'clopay',
-    'sf-login-detected': 'service_fusion',
-    'castle-login-detected': 'castle_admin',
+  // The login content script could not sign in ('<site>-login-detected' with a reason),
+  // or did ('<site>-login-ok').
+  const LOGIN_SITES = {
+    'genie-login-detected': 'genie', 'clopay-login-detected': 'clopay',
+    'sf-login-detected': 'service_fusion', 'castle-login-detected': 'castle_admin',
   }
-  if (msg?.type && LOGIN_ALERTS[msg.type]) {
-    const source = LOGIN_ALERTS[msg.type]
+  if (msg?.type && LOGIN_SITES[msg.type]) {
+    const source = LOGIN_SITES[msg.type]
+    const c = crawlerByLoginFlag(msg.type)
     ;(async () => {
-      await setStatus({ source: `${source}-login`, state: 'login_required' })
-      setBadge('!')
-      await notifyAlert(source, 'logged_out') // email chosen recipients (deduped server-side)
-      // If this login belongs to a crawler and the logged-out page IS that
-      // crawler's own tab, surface it for one-click login and end the crawl
-      // (keeping the tab open so re-auth can happen).
-      const c = crawlerByLoginFlag(msg.type)
-      if (c) {
-        const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
-        if (state && sender.tab && sender.tab.id === state.tabId) {
-          try { await chrome.tabs.update(state.tabId, { active: true }) } catch { /* ignore */ }
-          await finishCrawl(c, 'login')
-        }
-      }
+      if (c) { await onLoginFailure(c, sender.tab ? sender.tab.id : null, msg.reason || 'unknown', msg.url); return }
+      // SF / Castle Admin: no crawl to retry — badge + one alert with the reason.
+      await setStatus({ source: `${source}-login`, state: 'login_required', reason: msg.reason })
+      await setProblem(`login:${source}`, msg.reason)
+      await pushHistory({ kind: 'login', site: source, ok: false, reason: msg.reason, finishedAt: Date.now() })
+      await notifyAlert(source, 'logged_out', `auto-login failed: ${msg.reason || 'unknown'}`)
+    })()
+    return
+  }
+  if (typeof msg?.type === 'string' && msg.type.endsWith('-login-ok')) {
+    const site = msg.type.slice(0, -'-login-ok'.length)
+    ;(async () => {
+      const key = site === 'sf' ? 'service_fusion' : site === 'castle' ? 'castle_admin' : site
+      const { loginRetry = {} } = await chrome.storage.local.get('loginRetry')
+      delete loginRetry[key]
+      await chrome.storage.local.set({ loginRetry })
+      await clearProblem(`login:${key}`)
+      await pushHistory({ kind: 'login', site: key, ok: true, finishedAt: Date.now() })
     })()
     return
   }
 })
+
+// Unattended login did not take. The first time, the tab itself is the usual culprit
+// (a stale OIDC state, a form whose handler was not bound yet, the per-tab guard): close
+// it and start over in a FRESH tab, once. If that also fails, end the crawl, badge, and
+// send the ONE email that says what actually happened.
+async function onLoginFailure(c, tabId, reason, url) {
+  const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
+  if (!state || tabId == null || tabId !== state.tabId) return // not our tab: a user's own browsing
+  const { loginRetry = {} } = await chrome.storage.local.get('loginRetry')
+  const tries = (loginRetry[c.name] || 0) + 1
+  loginRetry[c.name] = tries
+  await chrome.storage.local.set({ loginRetry })
+  await pushHistory({ kind: 'login', site: c.name, ok: false, reason, attempt: tries, url: url || null, finishedAt: Date.now() })
+  if (tries < 2) {
+    console.log(`[${c.name}] login failed (${reason}) — retrying once in a fresh tab`)
+    const mode = state.mode
+    await teardownCrawlTab(c, state)
+    await chrome.storage.local.remove([c.stateKey, c.progressKey])
+    await startCrawl(c, mode, { force: true })
+    return
+  }
+  delete loginRetry[c.name]
+  await chrome.storage.local.set({ loginRetry })
+  await setStatus({ source: `${c.name}-login`, state: 'login_required', reason })
+  await setProblem(`login:${c.name}`, reason)
+  await finishCrawl(c, 'login', { reason })
+  await notifyAlert(c.alertSource, 'logged_out', `auto-login failed twice: ${reason}`)
+}
 
 // Proxy Clopay portal-API calls from the content script. The content script reads
 // the bearer token from the page's localStorage and asks us to make the request:
@@ -491,7 +648,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Castle Admin ingest. Independent of the SF poll loop; posts in the user's
 // session using the same base URL + token. The content script sends the crawler
 // name as `type` (e.g. 'genie', 'clopay') plus the vendor key.
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const c = crawlerByIngestType(msg?.type)
   if (!c) return
   ;(async () => {
@@ -500,6 +657,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!cfg.baseUrl || !cfg.token) { sendResponse({ ok: false, error: 'not configured' }); return }
     const orders = msg.kind === 'detail' ? [msg.payload] : (msg.payload || [])
     if (!orders.length) { sendResponse({ ok: true, skipped: 'no orders' }); return }
+    // While a scheduled crawl runs, only ITS tab's top frame may ingest: the content
+    // script also runs in other frames/tabs of the portal and was posting the list two
+    // or three times an hour.
+    const state = (await chrome.storage.local.get(c.stateKey))[c.stateKey]
+    if (state && sender.tab && (sender.tab.id !== state.tabId || (sender.frameId || 0) !== 0)) { sendResponse({ ok: true, skipped: 'not the crawl tab' }); return }
     try {
       const res = await postVendorOrders(cfg.baseUrl, cfg.token, msg.vendor, orders, { kind: msg.kind, mode: msg.mode })
       await setStatus({ source: c.name, vendor: msg.vendor, kind: msg.kind, ingest: res })
@@ -593,15 +755,6 @@ async function runJobLines(cfg, log) {
     res.ok ? posted++ : failed++
     await sleep(1500) // be gentle on SF
   }
-  // One report for the run: the app emails the office a single list of jobs to set by hand
-  // (each job at most once a day). Never in dry run — nothing was actually attempted.
-  if (!cfg.dryRun) {
-    const runFailures = log.filter(l => l.date && l.jobNumber && l.ok === false && l.orderId).map(l => ({ orderId: l.orderId, error: l.reason ?? l.error ?? null }))
-    if (runFailures.length) {
-      try { await postScheduleResult(cfg.baseUrl, cfg.token, { runFailures }) }
-      catch (e) { log.push({ scheduleReportError: String(e) }) }
-    }
-  }
   return { posted, failed }
 }
 
@@ -681,6 +834,11 @@ async function runDocumentUploads(cfg, log) {
 
 export async function run(source) {
   if (running) return { ok: false, error: 'already running' }
+  // The in-memory flag dies with the worker; a storage lock stops a second run from
+  // starting on top of one the worker was evicted from.
+  const { runLock } = await chrome.storage.local.get('runLock')
+  if (runLock && Date.now() - runLock.at < RUN_LOCK_MS && source !== 'manual') return { ok: false, error: 'a run is already in progress' }
+  await chrome.storage.local.set({ runLock: { at: Date.now(), source } })
   const cfg = await getConfig()
   // The "Enabled" toggle only gates the background poll; "Run now" always runs.
   if (source === 'alarm' && !cfg.enabled) { await setStatus({ source, skipped: 'background poll disabled' }); return { ok: false, error: 'disabled' } }
@@ -738,34 +896,38 @@ export async function run(source) {
     // Signed e-sign forms onto their SF jobs — discovery only until the upload request is captured.
     const docs = await runDocumentUploads(cfg, log)
 
-    // Alert on SF trouble: a login-looking failure → logged_out; any other apply
-    // failure → error. Deduped server-side so it's one email, not one per line.
+    // SF session trouble: a login-looking failure → warm the session and retry once,
+    // silently; only if the retry also fails is it a real logged-out alert. Per-item
+    // failures are NOT emailed — each is already recorded by its callback and shown in
+    // the app; the app's health check decides when a backlog matters.
+    let staleSf = false
     if (!cfg.dryRun) {
       const failures = log.filter(l => l.ok === false)
-      const staleSf = failures.some(l => isSfLogout(l.error))
+      staleSf = failures.some(l => isSfLogout(l.error))
       if (staleSf) {
-        setBadge('!')
         if (source === 'sf-recover') {
-          // Already refreshed once and it still failed → genuinely needs a human.
-          await notifyAlert('service_fusion', 'logged_out')
+          await setProblem('sf:logout', 'session expired and a refresh did not fix it')
+          await notifyAlert('service_fusion', 'logged_out', 'SF session expired; the automatic refresh did not bring it back')
         } else {
-          // Most often the SF session just needs a refresh — warm it and retry
-          // silently. No email unless the retry also fails (above).
           await warmSfSession({ retry: true })
         }
+      } else {
+        await clearProblem('sf:logout')
       }
-      else if (failures.length) { setBadge('!'); await notifyAlert('service_fusion', 'error', `${failures.length} remittance line(s) failed to post`) }
     }
 
+    await pushHistory({ kind: 'run', source, ok: !staleSf, dryRun: cfg.dryRun, queued: items.length, applied, failed, lines, schedule, notes, docs, finishedAt: Date.now() })
     await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, docs, log })
     console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log })
     return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
+    await pushHistory({ kind: 'run', source, ok: false, error, finishedAt: Date.now() })
     await setStatus({ source, error, log })
     console.error('[sf-remittance] run failed', error)
     return { ok: false, error }
   } finally {
     running = false
+    await chrome.storage.local.remove('runLock')
   }
 }
