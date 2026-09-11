@@ -30,10 +30,14 @@ export function isAutoReply(headers: Record<string, string>, subject: string): s
   return null
 }
 
-/** Newsletters, list mail, notification blasts. */
-export function isBulk(headers: Record<string, string>): string | null {
+/** Newsletters, list mail, notification blasts. Mail relayed by the office Google Group
+ *  carries Google's own list headers and Precedence: list — those say nothing about the
+ *  partner's message, so for a relay only a real bulk/junk precedence counts. */
+export function isBulk(headers: Record<string, string>, relayed = false): string | null {
   const prec = lower(headers['precedence'])
-  if (/^(bulk|junk|list)$/.test(prec)) return `Precedence: ${prec}`
+  if (/^(bulk|junk)$/.test(prec)) return `Precedence: ${prec}`
+  if (relayed) return null
+  if (prec === 'list') return `Precedence: ${prec}`
   if (headers['list-id'] !== undefined || headers['list-unsubscribe'] !== undefined) return 'mailing-list headers'
   return null
 }
@@ -86,7 +90,7 @@ export function applyHardFilters(email: InboundEmail, settings: AgentSettings, t
 
   const auto = isAutoReply(email.headers, email.subject)
   if (auto) return { pass: false, reason: 'auto_reply', detail: auto }
-  const bulk = isBulk(email.headers)
+  const bulk = isBulk(email.headers, !!email.relayedVia)
   if (bulk) return { pass: false, reason: 'bulk_mail', detail: bulk }
 
   if (!stripQuotedHistory(email.bodyText)) return { pass: false, reason: 'empty_body', detail: 'nothing but quoted history or empty' }
