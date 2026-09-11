@@ -169,11 +169,23 @@ export async function getSfLinesQueue(limit = 25): Promise<{ items: SfLinesQueue
       new Map(doors.map(d => [d.id, d.customer_po])),
     )
     if (!services.length) continue
+    // The extension finds the job by NUMBER (SF's global search). A job we created carries
+    // it; one linked by hand or by the matcher only has the id — read the number from the
+    // mirror. No number anywhere → the item cannot be posted; say so rather than send it.
+    let jobNumber = o.sf_created_job_number ?? null
+    if (!jobNumber) {
+      const { data: j } = await supabase.from('sf_jobs').select('number').eq('id', o.sf_job_id as string).maybeSingle()
+      jobNumber = (j?.number as string | null) ?? null
+    }
+    if (!jobNumber) {
+      await stamp(supabase, orderId, 'failed', `SF job id ${o.sf_job_id} is not in the mirror yet — no job number to post to (syncs hourly)`)
+      continue
+    }
     items.push({
       orderId,
       externalId: o.external_id as string,
       sfJobId: o.sf_job_id as string,
-      jobNumber: o.sf_created_job_number ?? null,
+      jobNumber,
       customerName: o.customer_name ?? null,
       lines: services.map(s => ({ code: s.service, description: s.description ?? '', quantity: s.multiplier, rate: s.rate })),
     })
