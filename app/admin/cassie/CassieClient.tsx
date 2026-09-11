@@ -16,8 +16,7 @@ import {
   saveAgentSettings, saveCharter, activateCharter,
   createInstruction, retireInstructionAction, reactivateInstructionAction,
   saveAnswer, setAnswerActiveAction,
-  createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail, testChatConnectionAction, checkKeyFileAction,
-} from './actions'
+  createStyleExample, pinStyleExample, removeStyleExample, replayPastedEmail, testChatConnectionAction, checkKeyFileAction, reprocessMessageAction } from './actions'
 
 export interface DraftRow {
   id: string; message_id: string; status: string; question_type: string | null; question_summary: string | null
@@ -164,6 +163,8 @@ function ActivityTab({ rows, drafts }: { rows: ActivityRow[]; drafts: DraftRow[]
   const [open, setOpen] = useState(false)
   const [f, setF] = useState({ from: 'store.manager@homedepot.com', to: 'info@castlegarage.com', cc: '', subject: 'PO 1020259181 status', body: SAMPLE_BODY, autoReply: false, threadId: '' })
   const [result, setResult] = useState<{ outcome: string; detail?: string } | null>(null)
+  const [reproc, setReproc] = useState<{ id: string; text: string } | null>(null)
+  const canReprocess = (r: ActivityRow) => r.delivery_path !== 'replay' && !!r.outcome && (r.outcome === 'human_reply' || r.outcome.startsWith('dropped_'))
   return (
     <div className="space-y-4">
       <div className={card}>
@@ -214,6 +215,16 @@ function ActivityTab({ rows, drafts }: { rows: ActivityRow[]; drafts: DraftRow[]
                   {d && d.unsourced_claims.length > 0 && <span className="ml-1 inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800">{d.unsourced_claims.length} unsourced</span>}
                   {r.outcome_detail && <div className="text-xs text-gray-500 mt-0.5 max-w-xs">{r.outcome_detail}</div>}
                   {d && <div className="text-[11px] text-gray-400 mt-0.5">{isOpen ? 'click to hide draft' : 'click to view draft'}</div>}
+                  {canReprocess(r) && (
+                    <div className="mt-1">
+                      <button className={btnGhost} disabled={pending} title="Fetch this message from Gmail again and run it through today's pipeline — a draft lands in Review if it is a partner inquiry"
+                        onClick={e => { e.stopPropagation(); if (!confirm('Run this message through the pipeline again? Its current record is replaced by the new outcome.')) return; start(async () => {
+                          const res = await reprocessMessageAction(r.id)
+                          setReproc({ id: r.id, text: res.error ?? `${res.outcome ?? 'done'}${res.detail ? ` — ${res.detail}` : ''}` })
+                          if (!res.error) router.refresh()
+                        }) }}>Reprocess</button>
+                      {reproc?.id === r.id && <span className="ml-2 text-xs text-gray-700">{reproc.text}</span>}
+                    </div>)}
                 </td>
               </tr>
               {d && isOpen && (
