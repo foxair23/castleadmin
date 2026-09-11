@@ -238,7 +238,15 @@ export async function addLinesToJob({ jobNumber, lines, dryRun = false }) {
   const res = await sfFetch(`/jobs/jobEdit?id=${enc(jobId)}`, { method: 'POST', body, follow: true })
   trace.push({ step: 'save', status: res.status, url: res.url })
   // A successful save redirects to jobView; landing back on jobEdit means SF rejected it.
-  const ok = /\/jobs\/jobView/.test(res.url || '')
-  if (!ok) throw new Error(`save did not land on jobView (status ${res.status}, url ${res.url || 'n/a'})`)
-  return { ok: true, jobId, posted: resolved.length, total, trace }
+  if (/\/jobs\/jobView/.test(res.url || '')) return { ok: true, jobId, posted: resolved.length, total, trace }
+  // SF sometimes SAVES and then fails to render the page (a 500 on jobEdit) — the lines are
+  // on the job even though the response says otherwise. Believe the job, not the response:
+  // re-read the form and count its service lines before calling this a failure.
+  const check = await sfFetch(`/jobs/jobEdit?id=${enc(jobId)}`)
+  const now = check.loginRedirect ? [] : parseFormFields(check.text).filter(([k]) => /^Estimate\[Services\]\[/.test(k) && /\[serviceId\]$/.test(k))
+  trace.push({ step: 'verify', status: check.status, serviceLines: now.length })
+  if (now.length >= resolved.length) {
+    return { ok: true, jobId, posted: resolved.length, total, trace, note: `SF answered ${res.status} on save but the job now carries ${now.length} service line(s) — treated as saved` }
+  }
+  throw new Error(`save did not land on jobView (status ${res.status}, url ${res.url || 'n/a'}) and the job still has ${now.length} service line(s)`)
 }
