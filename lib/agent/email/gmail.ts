@@ -186,6 +186,12 @@ export async function fetchNewMessages(token: string, sinceHistoryId: string | n
   return { emails, historyId, mode }
 }
 
+/** One message by Gmail id, normalised like a polled one (relay unwrapped). */
+export async function fetchMessageById(token: string, id: string): Promise<InboundEmail> {
+  const m = await gapi<GmailMessage>(token, `/messages/${encodeURIComponent(id)}?format=full`)
+  return toInboundEmail(m)
+}
+
 // ── Send ────────────────────────────────────────────────────────────────────
 
 export interface OutboundEmail {
