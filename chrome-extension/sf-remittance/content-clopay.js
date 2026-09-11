@@ -108,6 +108,9 @@
   // background only acts on its own crawl tab; in a user's tab this is a no-op there.
   function endCrawl(reason = 'done', counts = {}) {
     if (!ctxAlive()) return
+    // The app reloads itself after a crawl; the fresh copy of this script must not crawl
+    // the list again (that showed up as a second, 'manual' list crawl every hour).
+    try { sessionStorage.setItem('clopay-crawl-ended', String(Date.now())) } catch { /* ignore */ }
     try { chrome.storage.local.remove('clopayCrawlMode') } catch { /* ignore */ }
     try { chrome.runtime.sendMessage({ type: `${NAME}-crawl-done`, reason, counts }) } catch { /* SW asleep — the watchdog reads storage */ }
   }
@@ -593,6 +596,7 @@
     const mode = await getCrawlMode()
     const crawlTab = await isCrawlTab()
     if (!mode && !crawlTab) { LOG('hdprogram: not a crawl (no mode / not crawl tab) — idle'); return }
+    if (!mode && sessionStorage.getItem('clopay-crawl-ended')) { LOG('hdprogram: crawl already ended in this tab — idle'); return }
     started = true
     LOG('hdprogram:', reason, '— waiting for token')
     for (let i = 0; i < 240; i++) { // up to ~120s for the app to auth
