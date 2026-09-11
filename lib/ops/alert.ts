@@ -7,7 +7,7 @@ import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 // problem re-detected each run emails at most once per COOLDOWN window.
 
 const COOLDOWN_HOURS = 6
-const NOTIFICATION_KEY = 'automation_alert'
+const NOTIFICATION_KEY = 'automation_health'
 
 function db(): SupabaseClient {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
@@ -50,6 +50,9 @@ export interface AlertResult { ok: boolean; sent: number; skipped?: string; erro
 export async function sendAutomationAlert(input: AlertInput): Promise<AlertResult> {
   const { source, kind = 'error', detail } = input
   if (!source) return { ok: false, sent: 0, error: 'source required' }
+  // Only a failed unattended login is still an email from the machine; everything else
+  // is a run row on the Health page and the health cron decides whether it matters.
+  if (kind !== 'logged_out') return { ok: true, sent: 0, skipped: 'retired: see /admin/ops' }
   try {
     const supabase = db()
     const dedupKey = `${source}:${kind}`

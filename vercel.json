@@ -126,6 +126,14 @@
     {
       "path": "/api/cron/esign-sweep",
       "schedule": "10 15-23,0-2 * * *"
+    },
+    {
+      "path": "/api/cron/automation-health",
+      "schedule": "*/30 13-23,0-2 * * *"
+    },
+    {
+      "path": "/api/cron/automation-health-digest",
+      "schedule": "0 14,15 * * *"
     }
   ]
 }
