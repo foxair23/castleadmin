@@ -552,7 +552,7 @@ function AddLinesToSfJob({ orderId, jobNumber }: { orderId: string; jobNumber: s
           setMsg(null)
           start(async () => {
             const r = await addIpoLinesToSfJobAction(orderId)
-            if (!r.ok) setMsg({ tone: 'err', text: r.error ?? 'failed' })
+            if (!r.ok) setMsg({ tone: 'err', text: r.error ?? r.note ?? `failed (${r.status})` })
             else if (r.status === 'queued') setMsg({ tone: 'ok', text: `${r.added} line item(s) queued for SF job ${jobNumber} — the extension posts them on its next run.` })
             else if (r.status === 'already_has_lines') setMsg({ tone: 'warn', text: `SF job ${jobNumber} already has ${r.existing} line item(s) — left untouched so nothing hand-entered is lost.` })
             else setMsg({ tone: 'warn', text: r.note ?? r.status })
