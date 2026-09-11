@@ -98,6 +98,23 @@ export async function postDocsResult(baseUrl, token, payload) {
   return res.json()
 }
 
+/** Report a run / crawl / login / heartbeat. The response carries queued commands. */
+export async function postReport(baseUrl, token, payload) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ops/extension/report`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`report ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
+export async function ackCommand(baseUrl, token, payload) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ops/extension/commands/ack`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`ack ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
 export async function postVendorOrders(baseUrl, token, vendor, orders, { kind, mode } = {}) {
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/ingest`, {
     method: 'POST',

@@ -1,5 +1,5 @@
-import { getConfig, setStatus, pushHistory } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult } from './app-api.js'
+import { getConfig, setConfig, setStatus, pushHistory } from './store.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult, postReport, ackCommand } from './app-api.js'
 import { applyOne } from './sf.js'
 import { addLinesToJob } from './sf-lines.js'
 import { setJobSchedule } from './sf-schedule.js'
@@ -18,6 +18,8 @@ const SF_RECOVER_ALARM = 'sf-session-recover'
 const SF_KEEPALIVE_ALARM = 'sf-session-keepalive'
 const CRAWL_TZ = 'America/Los_Angeles'
 const SESSION_WARM_ALARM = 'session-warm'
+const HEARTBEAT_ALARM = 'ops-heartbeat'
+const REPORT_BACKLOG_MAX = 50
 const RUN_LOCK_MS = 15 * 60 * 1000
 const CRAWL_HARD_CAP_MS = 4 * 60 * 60 * 1000
 // Clopay's IAM login link with a baked-in OIDC state — the original entry point. Kept as
@@ -72,7 +74,7 @@ const crawlerByName = (name) => CRAWLERS[name] || null
 const crawlerByLoginFlag = (flag) => Object.values(CRAWLERS).find(c => c.loginFlag === flag) || null
 const crawlerByIngestType = (type) => CRAWLERS[type] || null // content scripts send type === crawler name
 
-function armAll() { scheduleAlarm(); scheduleAllCrawls(); scheduleSfKeepalive(); scheduleSessionWarm() }
+function armAll() { scheduleAlarm(); scheduleAllCrawls(); scheduleSfKeepalive(); scheduleSessionWarm(); chrome.alarms.create(HEARTBEAT_ALARM, { delayInMinutes: 1, periodInMinutes: 10 }) }
 chrome.runtime.onInstalled.addListener(armAll)
 chrome.runtime.onStartup.addListener(armAll)
 chrome.alarms.onAlarm.addListener(a => {
@@ -80,6 +82,7 @@ chrome.alarms.onAlarm.addListener(a => {
   if (a.name === SF_RECOVER_ALARM) return finishSfRecover()
   if (a.name === SF_KEEPALIVE_ALARM) return maybeSfKeepalive()
   if (a.name === SESSION_WARM_ALARM) return maybeWarmSessions()
+  if (a.name === HEARTBEAT_ALARM) return report({ kind: 'heartbeat', status: 'ok' })
   for (const c of Object.values(CRAWLERS)) {
     if (a.name === c.alarm) return maybeScheduledCrawl(c)
     if (a.name === c.timeoutAlarm) return onCrawlTimeout(c)
@@ -204,6 +207,7 @@ async function startCrawl(c, mode, { force = false } = {}) {
   await setStatus({ source: `${c.name}-schedule`, mode, state: 'running' })
   chrome.alarms.create(c.timeoutAlarm, { when: now + (mode === 'warm' ? 3 * 60 * 1000 : inactivityFor(c, mode)) })
   console.log(`[${c.name}] crawl started:`, mode, force ? '(forced)' : '')
+  if (mode !== 'warm') report({ kind: 'crawl', site: c.name, mode, status: 'started', source: force ? 'manual' : 'schedule', started_at: now }).catch(() => {})
   return { started: true }
 }
 
@@ -241,7 +245,88 @@ async function finishCrawl(c, reason, counts = {}) {
   await pushHistory(entry)
   await setStatus({ source: `${c.name}-schedule`, mode, state: reason, counts })
   console.log(`[${c.name}] crawl finished:`, reason, counts)
+  await report({ kind: mode === 'warm' ? 'warm' : 'crawl', site: c.name, mode, status: reason === 'warm-ok' ? 'done' : reason, reason, started_at: state ? state.startedAt : null, finished_at: now, counts })
   return entry
+}
+
+// ── Reporting to Castle Admin ────────────────────────────────────────────────
+// Every run, crawl, login and warm-up — and a heartbeat every 10 minutes — goes to
+// /api/ops/extension/report with this machine's state (flags, alarms, problems; never
+// credentials). The reply carries commands queued from the Health page, which run here.
+// A report that cannot be delivered waits in a storage backlog and goes with the next one.
+async function machineState(cfg) {
+  const { problems = {}, crawlStamps = {} } = await chrome.storage.local.get(['problems', 'crawlStamps'])
+  let alarms = []
+  try { alarms = (await chrome.alarms.getAll()).map(a => ({ name: a.name, scheduledTime: a.scheduledTime, periodInMinutes: a.periodInMinutes })) } catch { /* ignore */ }
+  return {
+    enabled: !!cfg.enabled, dryRun: !!cfg.dryRun, pollMinutes: cfg.pollMinutes,
+    genieScheduleEnabled: !!cfg.genieScheduleEnabled, clopayScheduleEnabled: !!cfg.clopayScheduleEnabled, clopayDocSyncEnabled: !!cfg.clopayDocSyncEnabled,
+    creds: { genie: !!(cfg.genieUser && cfg.geniePass), clopay: !!(cfg.clopayUser && cfg.clopayPass), sf: !!(cfg.sfUser && cfg.sfPass), castle: !!(cfg.castleUser && cfg.castlePass) },
+    alarms, problems, crawlStamps,
+  }
+}
+async function report(entry) {
+  const cfg = await getConfig()
+  if (!cfg.baseUrl || !cfg.token) return
+  const { reportBacklog = [] } = await chrome.storage.local.get('reportBacklog')
+  const version = chrome.runtime.getManifest().version
+  const chromeVersion = (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1] || null
+  const device = cfg.deviceName || 'office'
+  const payload = { device, version, chrome: chromeVersion, at: Date.now(), ...entry, state: await machineState(cfg) }
+  const queue = [...reportBacklog, payload]
+  const remaining = []
+  let commands = []
+  for (const p of queue) {
+    try {
+      const res = await postReport(cfg.baseUrl, cfg.token, p)
+      if (res && Array.isArray(res.commands)) commands = commands.concat(res.commands)
+    } catch (e) {
+      console.warn('[report] failed, keeping for later', e && e.message)
+      remaining.push(p)
+    }
+  }
+  await chrome.storage.local.set({ reportBacklog: remaining.slice(-REPORT_BACKLOG_MAX) })
+  if (commands.length) runCommands(commands).catch(e => console.warn('[commands]', e))
+}
+
+// Commands from the Health page. Each is acknowledged with what happened.
+async function runCommands(commands) {
+  const cfg = await getConfig()
+  for (const cmd of commands) {
+    let result
+    try {
+      result = await runCommand(cmd, cfg)
+    } catch (e) {
+      result = { ok: false, error: e && e.message ? e.message : String(e) }
+    }
+    try { await ackCommand(cfg.baseUrl, cfg.token, { id: cmd.id, ok: !!(result && result.ok !== false), result }) } catch (e) { console.warn('[commands] ack failed', e && e.message) }
+    await pushHistory({ kind: 'command', command: cmd.kind, args: cmd.args, ok: !!(result && result.ok !== false), result, finishedAt: Date.now() })
+    await report({ kind: 'command', site: cmd.args && cmd.args.site ? cmd.args.site : null, mode: cmd.args && cmd.args.mode ? cmd.args.mode : null, status: result && result.ok !== false ? 'done' : 'failed', reason: cmd.kind, source: `command:${cmd.id}`, counts: result })
+  }
+}
+async function runCommand(cmd, cfg) {
+  const a = cmd.args || {}
+  switch (cmd.kind) {
+    case 'run_now': { const r = await run(`command:${cmd.id}`); return { ok: !!r.ok, applied: r.applied, failed: r.failed, error: r.error } }
+    case 'crawl': { const c = crawlerByName(a.site); if (!c) return { ok: false, error: 'unknown site' }; if (a.mode === 'docs' && c.name !== 'clopay') return { ok: false, error: 'docs is Clopay only' }; return startCrawl(c, a.mode || 'incremental', { force: true }) }
+    case 'warm': { if (a.site === 'service_fusion') { await warmSfSession({ retry: false }); return { ok: true } } const c = crawlerByName(a.site); if (!c) return { ok: false, error: 'unknown site' }; return startCrawl(c, 'warm', { force: true }) }
+    case 'relogin': {
+      const { loginRetry = {} } = await chrome.storage.local.get('loginRetry'); delete loginRetry[a.site]; await chrome.storage.local.set({ loginRetry })
+      await clearProblem(`login:${a.site}`)
+      if (a.site === 'service_fusion') { await warmSfSession({ retry: true }); return { ok: true } }
+      const c = crawlerByName(a.site); if (!c) return { ok: false, error: 'unknown site' }
+      return startCrawl(c, 'warm', { force: true })
+    }
+    case 'clear_badge': await clearAllProblems(); return { ok: true }
+    case 'set_config': {
+      const allowed = ['enabled', 'dryRun', 'genieScheduleEnabled', 'clopayScheduleEnabled', 'clopayDocSyncEnabled', 'pollMinutes']
+      if (!allowed.includes(a.key)) return { ok: false, error: 'key not allowed' }
+      await setConfig({ [a.key]: a.value })
+      if (a.key === 'pollMinutes') await scheduleAlarm()
+      return { ok: true, [a.key]: a.value, was: cfg[a.key] }
+    }
+    default: return { ok: false, error: `unknown command ${cmd.kind}` }
+  }
 }
 
 // ── Badge: '!' while any problem is open, cleared when its cause succeeds ──────
@@ -407,6 +492,7 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
       await setStatus({ source: `${source}-login`, state: 'login_required', reason: msg.reason })
       await setProblem(`login:${source}`, msg.reason)
       await pushHistory({ kind: 'login', site: source, ok: false, reason: msg.reason, finishedAt: Date.now() })
+      await report({ kind: 'login', site: source, status: 'failed', reason: msg.reason || 'unknown', finished_at: Date.now() })
       await notifyAlert(source, 'logged_out', `auto-login failed: ${msg.reason || 'unknown'}`)
     })()
     return
@@ -420,6 +506,7 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
       await chrome.storage.local.set({ loginRetry })
       await clearProblem(`login:${key}`)
       await pushHistory({ kind: 'login', site: key, ok: true, finishedAt: Date.now() })
+      await report({ kind: 'login', site: key, status: 'ok', finished_at: Date.now() })
     })()
     return
   }
@@ -437,6 +524,7 @@ async function onLoginFailure(c, tabId, reason, url) {
   loginRetry[c.name] = tries
   await chrome.storage.local.set({ loginRetry })
   await pushHistory({ kind: 'login', site: c.name, ok: false, reason, attempt: tries, url: url || null, finishedAt: Date.now() })
+  await report({ kind: 'login', site: c.name, status: 'failed', reason, counts: { attempt: tries }, finished_at: Date.now() })
   if (tries < 2) {
     console.log(`[${c.name}] login failed (${reason}) — retrying once in a fresh tab`)
     const mode = state.mode
@@ -839,6 +927,7 @@ export async function run(source) {
   const { runLock } = await chrome.storage.local.get('runLock')
   if (runLock && Date.now() - runLock.at < RUN_LOCK_MS && source !== 'manual') return { ok: false, error: 'a run is already in progress' }
   await chrome.storage.local.set({ runLock: { at: Date.now(), source } })
+  const runStartedAt = Date.now()
   const cfg = await getConfig()
   // The "Enabled" toggle only gates the background poll; "Run now" always runs.
   if (source === 'alarm' && !cfg.enabled) { await setStatus({ source, skipped: 'background poll disabled' }); return { ok: false, error: 'disabled' } }
@@ -917,12 +1006,14 @@ export async function run(source) {
     }
 
     await pushHistory({ kind: 'run', source, ok: !staleSf, dryRun: cfg.dryRun, queued: items.length, applied, failed, lines, schedule, notes, docs, finishedAt: Date.now() })
+    await report({ kind: 'run', site: 'service_fusion', status: staleSf ? 'failed' : 'done', reason: staleSf ? 'SF session logged out' : null, source, started_at: runStartedAt, finished_at: Date.now(), counts: { dryRun: cfg.dryRun, queued: items.length, applied, failed, skipped: (skipped ?? []).length, lines, schedule, notes, docs }, log: log.slice(-100) })
     await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, docs, log })
     console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log })
     return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
     await pushHistory({ kind: 'run', source, ok: false, error, finishedAt: Date.now() })
+    await report({ kind: 'run', site: 'service_fusion', status: 'failed', reason: error.slice(0, 200), source, started_at: runStartedAt, finished_at: Date.now(), log: log.slice(-50) })
     await setStatus({ source, error, log })
     console.error('[sf-remittance] run failed', error)
     return { ok: false, error }

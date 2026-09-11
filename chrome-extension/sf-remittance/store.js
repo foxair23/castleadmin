@@ -20,6 +20,7 @@ export const DEFAULTS = {
   clopayStoreDocs: true,         // download + store Clopay document FILES on our server (via the doc-sync job)
   clopayDocSyncEnabled: true,    // run the nightly Clopay document-sync job (~2am PT) — office PC only
   clopayMaxDocsPerRun: 300,      // cap documents captured per doc-sync run (resumable across runs via dedup)
+  deviceName: 'office',      // how this machine shows up on the Health page (e.g. office-mac)
   clopayEntryUrl: '',            // where a Clopay crawl starts (blank = https://cca.clopay.com/, which begins a fresh OIDC login)
   // Saved logins for unattended re-login (this machine's local storage only).
   // Chrome won't let a script submit ITS autofilled password (anti-phishing), so

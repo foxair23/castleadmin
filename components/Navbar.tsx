@@ -18,6 +18,7 @@ export default function Navbar({ role, fullName }: NavbarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const settingsRef = useRef<HTMLDivElement>(null)
   const [syncStale, setSyncStale] = useState(false)
+  const [health, setHealth] = useState<'green' | 'amber' | 'red'>('green')
 
   const checkSyncHealth = useCallback(async () => {
     if (!isAdmin) return
@@ -27,6 +28,8 @@ export default function Navbar({ role, fullName }: NavbarProps) {
         const data = await res.json()
         setSyncStale(data.stale)
       }
+      const h = await fetch('/api/admin/ops/health-summary')
+      if (h.ok) { const d = await h.json(); if (d.overall) setHealth(d.overall) }
     } catch { /* non-critical, ignore */ }
   }, [isAdmin])
 
@@ -121,8 +124,8 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
-                  {syncStale && (
-                    <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-yellow-400 ring-2 ring-gray-950" />
+                  {(syncStale || health !== 'green') && (
+                    <span className={`absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full ring-2 ring-gray-950 ${health === 'red' ? 'bg-red-500' : 'bg-yellow-400'}`} />
                   )}
                 </button>
 
@@ -147,6 +150,16 @@ export default function Navbar({ role, fullName }: NavbarProps) {
                       <span className="flex items-center justify-between w-full">
                         Integrations
                         {syncStale && <span className="h-2 w-2 rounded-full bg-yellow-400 shrink-0" />}
+                      </span>
+                    </DropdownLink>
+                    <DropdownLink
+                      href="/admin/ops"
+                      active={pathname.startsWith('/admin/ops')}
+                      onClick={() => setSettingsOpen(false)}
+                    >
+                      <span className="flex items-center justify-between w-full">
+                        Automation Health
+                        {health !== 'green' && <span className={`h-2 w-2 rounded-full shrink-0 ${health === 'red' ? 'bg-red-500' : 'bg-yellow-400'}`} />}
                       </span>
                     </DropdownLink>
                     <DropdownLink
