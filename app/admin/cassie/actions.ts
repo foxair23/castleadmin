@@ -162,23 +162,64 @@ export async function escalateReplyAction(id: string, note: string): Promise<{ n
  *  path a Google Chat answer takes, with the reviewer as the human. The old draft is
  *  superseded, the note is kept as feedback so the learning loop sees it, and the new
  *  draft still needs a person to approve: a human-fed reply never auto-sends. */
-export async function reviseReplyAction(id: string, instruction: string): Promise<ActionResult & { replyId?: string }> {
+export async function reviseReplyAction(id: string, instruction: string): Promise<ActionResult & { replyId?: string; learned?: string[] }> {
   const text = instruction.trim()
   if (!text) return { error: 'Tell Cassie what to change first.' }
   return attempt(async () => {
     const { userId, userName } = await reviewer()
     const db = agentDb()
-    const { data: r } = await db.from('agent_email_replies').select('status').eq('id', id).single()
+    const { data: r } = await db.from('agent_email_replies').select('status, question_summary, composed_text, sf_job_number').eq('id', id).single()
     if (r?.status !== 'draft') throw new Error(`This reply is already ${r?.status ?? 'gone'}; it cannot be revised.`)
     await db.from('agent_email_feedback').insert({ reply_id: id, kind: 'revise', note: text, user_id: userId })
     const { recomposeReply } = await import('@/lib/agent/email/composer-stage')
     const { loadAgentSettings } = await import('@/lib/agent/settings')
-    const rc = await recomposeReply(db, await loadAgentSettings(db), id, `revised in review by ${userName ?? 'a reviewer'}`, {
-      chatAnswer: { text, responder: userName ?? 'Reviewer', channel: 'review' }, noChatAsk: true,
+    const { digestTeamMessage, saveLearnedInstructions } = await import('@/lib/agent/email/teach')
+    const settings = await loadAgentSettings(db)
+    // A reviewer's note can teach as well as correct: rules in it become standing instructions.
+    let learned: string[] = []
+    let answer = text
+    try {
+      const d = await digestTeamMessage(settings, { partnerQuestion: r.question_summary as string | null, askedFor: null, jobNumber: r.sf_job_number as string | null, currentDraft: r.composed_text as string | null, conversation: [], latest: { who: userName ?? 'Reviewer', text } })
+      learned = await saveLearnedInstructions(db, d.instructions, `review:${id}`)
+      if (d.facts.length) answer = [...d.facts, ...(d.instructions.length ? [`Apply: ${d.instructions.join(' ')}`] : [])].join('\n')
+    } catch (e) { console.error('[cassie] revise digest', e) }
+    const rc = await recomposeReply(db, settings, id, `revised in review by ${userName ?? 'a reviewer'}`, {
+      chatAnswer: { text: answer, responder: userName ?? 'Reviewer', channel: 'review' }, noChatAsk: true,
     })
     if (rc.outcome === 'error' || !rc.replyId) throw new Error(rc.detail ?? 'Cassie could not write the revised draft.')
     revalidatePath(PATH)
-    return { replyId: rc.replyId }
+    return { replyId: rc.replyId, learned }
+  })
+}
+
+/** "Ask the team about this" on a draft: Cassie takes the reviewer's note to the Chat space
+ *  and owns the conversation from there — back and forth as needed — until she has what she
+ *  needs to draft again. The draft stays; the answer supersedes it through Review. */
+export async function askTeamAction(id: string, note: string): Promise<ActionResult & { askId?: string }> {
+  const text = note.trim()
+  if (!text) return { error: 'Say what you want the team to weigh in on first.' }
+  return attempt(async () => {
+    const { userId, userName } = await reviewer()
+    const db = agentDb()
+    const { data: r } = await db.from('agent_email_replies').select('id, message_id, status, question_summary, sf_job_id, sf_job_number').eq('id', id).single()
+    if (r?.status !== 'draft') throw new Error(`This reply is already ${r?.status ?? 'gone'}.`)
+    const { data: m } = await db.from('agent_email_messages').select('*').eq('id', r.message_id as string).single()
+    if (!m) throw new Error('The inbound message is gone.')
+    const { postChatAsk, ASK_SKIP_REASON } = await import('@/lib/agent/email/chat-assist')
+    const { loadAgentSettings } = await import('@/lib/agent/settings')
+    const email = {
+      source: 'gmail' as const, gmailMessageId: m.gmail_message_id as string | null, gmailThreadId: m.gmail_thread_id as string | null,
+      internetMessageId: m.internet_message_id as string | null, inReplyTo: m.in_reply_to as string | null, references: (m.references_ids as string[]) ?? [],
+      from: { addr: m.from_addr as string, name: m.from_name as string | null }, to: [], cc: [], subject: (m.subject as string) ?? '', bodyText: (m.body_text as string) ?? '', headers: {}, receivedAt: (m.received_at as string) ?? new Date().toISOString(),
+    }
+    const res = await postChatAsk(db, await loadAgentSettings(db), {
+      replyId: id, messageId: r.message_id as string, email, questionSummary: (r.question_summary as string | null) ?? (m.subject as string) ?? 'the partner\'s question',
+      missing: text, sfJobNumber: r.sf_job_number as string | null, sfJobId: r.sf_job_id as string | null, askedBy: userName ?? 'A reviewer',
+    })
+    if (!res.posted) throw new Error(`Could not ask in Chat: ${ASK_SKIP_REASON[res.reason ?? ''] ?? res.reason}`)
+    await db.from('agent_email_feedback').insert({ reply_id: id, kind: 'note', note: `Asked the team in Google Chat (${userName ?? 'reviewer'}): ${text}`, user_id: userId })
+    revalidatePath(PATH)
+    return { askId: res.askId }
   })
 }
 export async function replyFeedbackAction(id: string, kind: 'post_send' | 'confused' | 'note', note: string): Promise<ActionResult> {

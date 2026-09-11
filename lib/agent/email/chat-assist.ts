@@ -24,6 +24,10 @@ export interface AskInput {
   missing: string
   sfJobNumber: string | null
   sfJobId: string | null
+  /** Set when a reviewer pressed "Ask the team" on the Review page: their name, and their
+   *  note is `missing`. A manual ask skips the rate cap, and joins an open ask on the same
+   *  thread instead of being refused as a duplicate. */
+  askedBy?: string | null
 }
 
 /** Post a specific, actionable ask. Deduplicates and rate-limits (PRD §11 noise control). */
@@ -33,28 +37,37 @@ export async function postChatAsk(db: SupabaseClient, settings: AgentSettings, a
   const domain = a.email.from.addr.split('@')[1] ?? ''
   const dedupeKey = a.email.gmailThreadId ? `thread:${a.email.gmailThreadId}` : `q:${a.missing.toLowerCase().replace(/\W+/g, ' ').trim().slice(0, 120)}`
 
-  // Dedup: one open ask per thread / same missing thing within 24h.
+  // Dedup: one open ask per thread / same missing thing within 24h. A reviewer's question
+  // for a thread that already has one goes INTO that thread.
   const since = new Date(Date.now() - 24 * 3600_000).toISOString()
-  const { data: dup } = await db.from('agent_chat_asks').select('id').eq('dedupe_key', dedupeKey).gte('posted_at', since).in('status', ['open', 'answered', 'composed']).limit(1)
-  if (dup?.length) return { posted: false, reason: 'duplicate_open_ask' }
-  // Rate cap: never more than N asks per hour.
-  const hourAgo = new Date(Date.now() - 3600_000).toISOString()
-  const { count } = await db.from('agent_chat_asks').select('id', { count: 'exact', head: true }).gte('posted_at', hourAgo)
-  if ((count ?? 0) >= settings.chat_max_asks_per_hour) return { posted: false, reason: 'rate_capped' }
+  const { data: dup } = await db.from('agent_chat_asks').select('id, space_name, thread_key, chat_thread_name').eq('dedupe_key', dedupeKey).gte('posted_at', since).in('status', ['open', 'answered', 'composed']).limit(1)
+  if (dup?.length) {
+    if (!a.askedBy) return { posted: false, reason: 'duplicate_open_ask' }
+    const d = dup[0]
+    await postText(d.space_name as string, d.thread_key as string, `${a.askedBy} asks from the review page: ${a.missing}`, d.chat_thread_name as string | null)
+    await db.from('agent_chat_asks').update({ status: 'open', asked_by: a.askedBy, question: a.missing }).eq('id', d.id)
+    return { posted: true, askId: d.id as string }
+  }
+  // Rate cap: never more than N asks per hour (not for a person's own ask).
+  if (!a.askedBy) {
+    const hourAgo = new Date(Date.now() - 3600_000).toISOString()
+    const { count } = await db.from('agent_chat_asks').select('id', { count: 'exact', head: true }).gte('posted_at', hourAgo)
+    if ((count ?? 0) >= settings.chat_max_asks_per_hour) return { posted: false, reason: 'rate_capped' }
+  }
 
   const { data: ask, error } = await db.from('agent_chat_asks').insert({
-    reply_id: a.replyId, message_id: a.messageId, space_name: settings.chat_space_name, thread_key: `cassie-${a.replyId}`, question: a.missing, dedupe_key: dedupeKey, status: 'open',
+    reply_id: a.replyId, message_id: a.messageId, space_name: settings.chat_space_name, thread_key: `cassie-${a.replyId}`, question: a.missing, dedupe_key: dedupeKey, status: 'open', asked_by: a.askedBy ?? null,
   }).select('id').single()
   if (error) throw new Error(error.message)
   const askId = ask.id as string
 
   const who = a.email.from.name ? `${a.email.from.name} (${companyFor(domain)})` : `${a.email.from.addr} (${companyFor(domain)})`
   const card = buildCard(`ask-${askId}`, {
-    header: 'Cassie needs a hand',
+    header: a.askedBy ? `${a.askedBy} wants a second look` : 'Cassie needs a hand',
     subheader: `${who} · "${a.email.subject}"`,
     paragraphs: [
       { label: 'They asked', text: a.questionSummary },
-      { label: 'What I need', text: a.missing },
+      { label: a.askedBy ? `${a.askedBy}'s note` : 'What I need', text: a.missing },
       ...(a.sfJobNumber ? [{ label: 'Job', text: `Job ${a.sfJobNumber}` }] : [{ label: 'Job', text: 'No job matched' }]),
       { text: 'Reply in this thread with the answer (mention @Cassie so I see it). I will write the partner reply and post it here for approval.' },
     ],
@@ -257,8 +270,44 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
 
   // The whole conversation is the answer, not just the latest line: "it might be PO
   // 74491444" followed by "look that up first" only makes sense together.
-  const conversation = [ask.response_text as string | null, text].filter(Boolean).join('\n')
+  const conversation = [ask.response_text as string | null, `${who.name}: ${text}`].filter(Boolean).join('\n')
   await db.from('agent_chat_asks').update({ status: 'answered', responder_name: who.name, responder_email: who.email, responder_id: who.id, response_text: conversation, responded_at: new Date().toISOString() }).eq('id', ask.id)
+
+  // Read what was said: facts for this reply, rules for the future, and whether she still
+  // needs to ask something. Rules are kept as standing instructions right away and said
+  // back, so the person sees what Cassie took from it.
+  const { digestTeamMessage, saveLearnedInstructions, MAX_FOLLOW_UPS } = await import('./teach')
+  const { data: replyRow } = await db.from('agent_email_replies').select('question_summary, composed_text, sf_job_number').eq('id', ask.reply_id as string).maybeSingle()
+  const priorTurns = String(ask.response_text ?? '').split('\n').filter(Boolean).map(l => { const m = /^([^:]{1,60}): (.*)$/.exec(l); return m ? { who: m[1], text: m[2] } : { who: 'team', text: l } })
+  let digest
+  try {
+    digest = await digestTeamMessage(settings, {
+      partnerQuestion: (replyRow?.question_summary as string | null) ?? null, askedFor: ask.question as string | null, jobNumber: (replyRow?.sf_job_number as string | null) ?? null,
+      currentDraft: stripWrapper((replyRow?.composed_text as string | null) ?? '') || null, conversation: priorTurns, latest: { who: who.name, text },
+    })
+  } catch (e) {
+    console.error('[cassie] digest failed', e)
+    digest = { facts: [text], instructions: [], followUp: null, readyToDraft: true, acknowledgement: `Thanks ${who.name}.` }
+  }
+  const learned = await saveLearnedInstructions(db, digest.instructions, `chat:${ask.id}`).catch(e => { console.error('[cassie] could not save instructions', e); return [] as string[] })
+  if (learned.length) {
+    await db.from('agent_chat_asks').update({ learned_instructions: Number(ask.learned_instructions ?? 0) + learned.length }).eq('id', ask.id)
+    await postText(ask.space_name, ask.thread_key, `Noted for next time — I have added ${learned.length === 1 ? 'this' : 'these'} to my standing instructions:\n${learned.map(r => `• ${r}`).join('\n')}`, ask.chat_thread_name as string | null)
+  }
+  const followUps = Number(ask.follow_ups ?? 0)
+  if (!digest.readyToDraft && digest.followUp && followUps < MAX_FOLLOW_UPS) {
+    await db.from('agent_chat_asks').update({ status: 'open', follow_ups: followUps + 1, response_text: `${conversation}\nCassie: ${digest.followUp}` }).eq('id', ask.id)
+    await postText(ask.space_name, ask.thread_key, `${digest.acknowledgement} ${digest.followUp}`.trim(), ask.chat_thread_name as string | null)
+    return 'asked follow-up'
+  }
+  if (!digest.readyToDraft && !digest.followUp) {
+    // The team said, in effect, "leave this to a person". Send it to the review queue.
+    await db.from('agent_chat_asks').update({ status: 'sent_to_review', resolved_at: new Date().toISOString() }).eq('id', ask.id)
+    await db.from('agent_email_feedback').insert({ reply_id: ask.reply_id, kind: 'note', note: `Team in Google Chat (${who.name}): ${text.slice(0, 500)}` })
+    await postText(ask.space_name, ask.thread_key, `${digest.acknowledgement} I will leave this one to a person: ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
+    return 'left to a person'
+  }
+  const answerText = digest.facts.length ? digest.facts.join('\n') : conversation
   // A previous draft card must not keep offering Approve for a reply that is about to be
   // superseded. Approving it would be refused anyway; better that it does not invite it.
   if (ask.draft_card_name) {
@@ -268,7 +317,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
   }
   // Compose a clean partner reply FROM the answer — never forward it.
   const { recomposeReply } = await import('./composer-stage')
-  const rc = await recomposeReply(db, settings, ask.reply_id as string, `answered in Google Chat by ${who.name}`, { chatAnswer: { askId: ask.id as string, text: conversation, responder: who.name }, noChatAsk: true })
+  const rc = await recomposeReply(db, settings, ask.reply_id as string, `answered in Google Chat by ${who.name}`, { chatAnswer: { askId: ask.id as string, text: answerText, responder: who.name }, noChatAsk: true })
   if (rc.outcome === 'error' || !rc.replyId) {
     await postText(ask.space_name, ask.thread_key, `Thanks ${who.name}. I could not write the reply (${rc.detail ?? 'unknown error'}). It is in the review queue: ${reviewUrl(ask.reply_id as string)}`)
     return 'compose failed'
