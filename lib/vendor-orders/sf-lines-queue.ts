@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { sfGet } from '@/lib/crm/service-fusion'
 import { loadIpoLines, toSfServices } from './ipo-services'
+import { resolveSfJobMatches } from './sf-match'
 
 // Queue of IPO line items for the Chrome extension to post onto existing SF jobs.
 //
@@ -96,8 +97,22 @@ export async function enqueueSfJobLines(orderId: string, opts: { source?: 'butto
       .select('id, customer_po, sf_job_id')
       .or(`id.eq.${rootId},parent_order_id.eq.${rootId}`)
     const doors = (rows ?? []) as Array<{ id: string; customer_po: string | null; sf_job_id: string | null }>
-    const jobId = doors.map(d => d.sf_job_id).find(Boolean) ?? null
-    if (!jobId) return { ok: false, status: 'no_job', note: 'no SF job on this order yet' }
+    let jobId = doors.map(d => d.sf_job_id).find(Boolean) ?? null
+    // No stored link (the job was made in SF by hand, before this existed): find it the way
+    // the HD Orders page does — PO, then name, email, phone — and keep it, if unambiguous.
+    if (!jobId) {
+      const { data: root } = await supabase.from('vendor_orders').select('id, external_id, customer_po, customer_name, email, phone').eq('id', rootId).maybeSingle()
+      const m = root ? (await resolveSfJobMatches(supabase, [{ ...root, sf_job_id: null } as never])).get(rootId) : undefined
+      if (m?.sfJobId && !m.ambiguous) {
+        const { data: other } = await supabase.from('vendor_orders').select('id').eq('sf_job_id', String(m.sfJobId)).neq('id', rootId).limit(1).maybeSingle()
+        if (!other) {
+          jobId = String(m.sfJobId)
+          await supabase.from('vendor_orders').update({ sf_job_id: jobId, updated_at: new Date().toISOString() }).eq('id', rootId)
+          await supabase.from('vendor_order_events').insert({ order_id: rootId, event_type: 'sf_job_linked', to_value: m.sfJobNumber, detail: { sf_job_id: jobId, method: m.method ?? 'match' } })
+        }
+      }
+    }
+    if (!jobId) return { ok: false, status: 'no_job', note: 'no SF job linked to this order yet — link the job number below, then try again' }
 
     const services = toSfServices(
       await loadIpoLines(supabase, doors.map(d => d.id)),
