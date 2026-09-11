@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { appUrl } from '@/lib/config/domains'
 import type { InboundEmail, EmailAddress } from './types'
+import { unwrapGroupRelay } from './relay'
 
 // Gmail for Cassie's mailbox (PRD §4). Read + send only, on ONE account. Raw REST
 // (same style as the Business Profile client) — no googleapis dependency.
@@ -134,14 +135,14 @@ export function toInboundEmail(m: GmailMessage): InboundEmail {
   const plain = findPart(m.payload, 'text/plain'), html = findPart(m.payload, 'text/html')
   const body = plain?.body?.data ? unb64url(plain.body.data) : html?.body?.data ? htmlToText(unb64url(html.body.data)) : ''
   const from = parseAddressList(headers['from'])[0] ?? { addr: '', name: null }
-  return {
+  return unwrapGroupRelay({
     source: 'gmail', gmailMessageId: m.id, gmailThreadId: m.threadId,
     internetMessageId: headers['message-id'] ?? null, inReplyTo: headers['in-reply-to'] ?? null,
     references: (headers['references'] ?? '').split(/\s+/).filter(Boolean),
     from, to: parseAddressList(headers['to']), cc: parseAddressList(headers['cc']),
     subject: headers['subject'] ?? '', bodyText: body, headers,
     receivedAt: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : new Date().toISOString(),
-  }
+  })
 }
 
 export interface FetchResult { emails: InboundEmail[]; historyId: string; mode: 'history' | 'search' }

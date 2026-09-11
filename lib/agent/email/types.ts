@@ -20,6 +20,9 @@ export interface InboundEmail {
   /** Header names lower-cased. Only the ones we filter on need to be present. */
   headers: Record<string, string>
   receivedAt: string
+  /** Set when the message reached us through the office Google Group (info@): `from` is
+   *  the partner's real address, restored from the relay headers; this is the group. */
+  relayedVia?: string | null
 }
 
 /** What we know about the thread before this message arrived. */

@@ -101,3 +101,32 @@ describe('extractIdentifiers', () => {
     expect(extractIdentifiers('')).toMatchObject({ pos: [], phones: [], emails: [], email: null, phone: null })
   })
 })
+
+// info@castlegarage.com is a Google Group: Google rewrites From to the group and moves the
+// partner to Reply-To / X-Original-Sender. Cassie must see the partner, not "Castle staff".
+describe('Google Group relay', () => {
+  const relayed = (over: Partial<Parameters<typeof replayEmail>[0]> = {}) => replayEmail({
+    from: 'info@castlegarage.com', fromName: "'DC St. Louis' via Info", to: 'info@castlegarage.com',
+    subject: 'Re: Store# 1018 PO# 18498073 STEVENS JENNIFER Ticket: [#5923818]',
+    body: 'Hello,\n\nDo you have an install date for this customer? If so, could you please update the ticket?\n\nThanks,\nKaylee',
+    headers: { 'Reply-To': '"DC St. Louis" <clopaystlorders@clopay.com>', 'X-Original-Sender': 'clopaystlorders@clopay.com', 'X-Google-Group-Id': '123456', 'List-Id': '<info.castlegarage.com>', 'List-Unsubscribe': '<mailto:info+unsubscribe@castlegarage.com>', 'Precedence': 'list', 'Mailing-list': 'list info@castlegarage.com' },
+    ...over,
+  })
+  it('restores the partner as the sender and notes the group', () => {
+    const e = relayed()
+    expect(e.from).toEqual({ addr: 'clopaystlorders@clopay.com', name: 'DC St. Louis' })
+    expect(e.relayedVia).toBe('info@castlegarage.com')
+  })
+  it('passes the hard filters as a partner inquiry despite the group list headers', () => {
+    expect(applyHardFilters(relayed(), settings, fresh)).toEqual({ pass: true, deliveryPath: 'distribution' })
+  })
+  it('still treats a real Castle person writing through the group as a human reply', () => {
+    const e = replayEmail({ from: 'info@castlegarage.com', fromName: "'Tiffany Christakes' via Info", to: 'info@castlegarage.com', subject: 'Re: color request', body: 'I will get an estimate prepared.', headers: { 'Reply-To': 'tiffany@castlegarage.com', 'X-Original-Sender': 'tiffany@castlegarage.com' } })
+    expect(e.from.addr).toBe('tiffany@castlegarage.com')
+    expect(applyHardFilters(e, settings, fresh)).toMatchObject({ pass: false, reason: 'human_reply' })
+  })
+  it('does not unwrap a plain Castle sender, and a relayed newsletter is still bulk', () => {
+    expect(replayEmail({ from: 'info@castlegarage.com', to: 'x@y.com', subject: 's', body: 'b' }).relayedVia).toBeUndefined()
+    expect(applyHardFilters(relayed({ headers: { 'Reply-To': 'news@clopay.com', 'X-Original-Sender': 'news@clopay.com', 'Precedence': 'bulk' } }), settings, fresh)).toMatchObject({ pass: false, reason: 'bulk_mail' })
+  })
+})

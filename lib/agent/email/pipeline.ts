@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { loadAgentSettings, type AgentSettings } from '@/lib/agent/settings'
+import { unwrapGroupRelay } from './relay'
 import { applyHardFilters, stripQuotedHistory } from './filters'
 import { extractIdentifiers } from './identifiers'
 import type { InboundEmail, ThreadState } from './types'
@@ -34,10 +35,14 @@ export interface IngestResult {
 export async function loadThreadState(db: SupabaseClient, threadId: string | null): Promise<ThreadState> {
   if (!threadId) return { agentReplied: false, humanRepliedAfterInquiry: false, priorInbound: 0 }
   const [{ data: msgs }, { data: sent }] = await Promise.all([
-    db.from('agent_email_messages').select('direction, received_at, outcome').eq('gmail_thread_id', threadId).order('received_at', { ascending: true }),
+    db.from('agent_email_messages').select('direction, received_at, outcome, from_addr, from_name').eq('gmail_thread_id', threadId).order('received_at', { ascending: true }),
     db.from('agent_email_replies').select('id').eq('gmail_thread_id', threadId).eq('status', 'sent').limit(1),
   ])
-  const rows = (msgs ?? []) as Array<{ direction: string; received_at: string | null; outcome: string | null }>
+  // A row recorded as "Castle staff wrote" whose sender is the office group with a "… via
+  // Info" name is a partner's message that arrived before group relays were unwrapped —
+  // not a person at Castle. It must not count as a human reply.
+  const rows = ((msgs ?? []) as Array<{ direction: string; received_at: string | null; outcome: string | null; from_addr: string | null; from_name: string | null }>)
+    .map(r => r.outcome === 'human_reply' && /\svia\s/i.test(r.from_name ?? '') ? { ...r, outcome: 'relayed_partner' } : r)
   const inbound = rows.filter(r => r.direction === 'inbound' && r.outcome !== 'human_reply')
   const lastInboundAt = inbound.at(-1)?.received_at ?? null
   const humanAfter = rows.some(r =>
@@ -137,7 +142,7 @@ export async function ingestEmail(
 /** Build an InboundEmail from a pasted message (admin replay / tests). */
 export function replayEmail(input: { from: string; fromName?: string | null; to?: string; cc?: string; subject: string; body: string; headers?: Record<string, string>; threadId?: string | null }): InboundEmail {
   const parseList = (s?: string) => (s ?? '').split(/[,;]+/).map(x => x.trim()).filter(Boolean).map(addr => ({ addr, name: null }))
-  return {
+  return unwrapGroupRelay({
     source: 'replay',
     gmailMessageId: null,
     gmailThreadId: input.threadId ?? null,
@@ -151,5 +156,5 @@ export function replayEmail(input: { from: string; fromName?: string | null; to?
     bodyText: input.body,
     headers: Object.fromEntries(Object.entries(input.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v])),
     receivedAt: new Date().toISOString(),
-  }
+  })
 }
