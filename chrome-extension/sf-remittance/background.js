@@ -185,8 +185,12 @@ async function startCrawl(c, mode, { force = false } = {}) {
     console.log(`[${c.name}] crawl already running`)
     return { started: false, reason: 'already running' }
   }
-  // Force, or leftover state — tear down anything stale before starting fresh.
-  if (state) await teardownCrawlTab(c, state)
+  // Force, or leftover state — tear down anything stale before starting fresh. A crawl
+  // that was still running is recorded as aborted, so it does not sit as 'started' forever.
+  if (state) {
+    if (await crawlActive(c)) await finishCrawl(c, 'aborted', { by: mode })
+    else await teardownCrawlTab(c, state)
+  }
   await chrome.storage.local.set({ [c.modeKey]: mode })
   await chrome.storage.local.remove(c.progressKey)
   // A window of its own, minimized: a background TAB in the user's window gets its timers

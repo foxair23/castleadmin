@@ -277,6 +277,7 @@
   // crawls (background ignores non-crawl tabs).
   function endCrawl(reason = 'done', counts = {}) {
     if (!ctxAlive()) return
+    try { sessionStorage.setItem('genie-crawl-ended', String(Date.now())) } catch { /* ignore */ }
     try { chrome.storage.local.remove('genieCrawlMode') } catch { /* ignore */ }
     try { chrome.runtime.sendMessage({ type: 'genie-crawl-done', reason, counts }) } catch { /* SW asleep — the watchdog reads storage */ }
   }
@@ -486,6 +487,8 @@
 
   async function main() {
     if (!ctxAlive()) { LOG('extension was reloaded — reload this tab (F5) to re-enable'); return }
+    // A crawl already ended in this tab (the portal reloaded afterwards): do nothing more.
+    if (sessionStorage.getItem('genie-crawl-ended') && !(await getCrawlMode()) && await isCrawlTab()) { LOG('crawl already ended in this tab — idle'); return }
     // On the clean URLs pageType() is known immediately; on opaque .jspx URLs it
     // depends on the ADF grid, which renders asynchronously — so poll briefly for
     // the content to appear before deciding the page is unclassifiable.
