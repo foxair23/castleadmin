@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     // The add-on envelope wants a different response shape for a synchronous message, and
     // a greeting is not worth a second format to get wrong. Stay quiet there.
     if (ev.addon) return NextResponse.json({})
-    return NextResponse.json({ text: "Hi, I'm Cassie. When I can't answer a partner email from our records I'll ask here. Reply in the thread (mention @Cassie) and I'll write the partner reply for you to approve." })
+    return NextResponse.json({ text: "Hi, I'm Cassie. Ask me about a job, an order or a customer any time (mention @Cassie, or message me directly). When I can't answer a partner email from our records I'll ask here too — reply in the thread and I'll write the partner reply for you to approve." })
   }
   if (ev.type === 'MESSAGE') {
     after(async () => {

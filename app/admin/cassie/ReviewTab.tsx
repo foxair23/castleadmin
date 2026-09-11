@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ReviewItem } from '@/lib/agent/email/review'
-import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase, deleteReplayAction, reviseReplyAction, type ActionResult } from './actions'
+import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase, deleteReplayAction, reviseReplyAction, askTeamAction, type ActionResult } from './actions'
 import type { AgentSettings } from '@/lib/agent/settings'
 import { AutoRespondSwitch } from './AutoSendControls'
 
@@ -185,10 +185,12 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
         </div>
         {actionable && (
           <div className="space-y-2">
-            <input className={input} placeholder="Optional note — “too formal”, “don’t promise dates”, “the PO is probably 74491444, look that up”. Travels with this example." value={note} onChange={e => setNote(e.target.value)} />
+            <input className={input} placeholder="Optional note — “too formal”, “the PO is probably 74491444, look that up”, or a rule: “anything marked waiting for Tiffany needs to be asked in chat”. Rules become standing instructions." value={note} onChange={e => setNote(e.target.value)} />
             <div className="flex flex-wrap gap-2 items-center">
-              <button className={btnGhost} disabled={pending || !note.trim()} title="Cassie writes the draft again from your note. The note is kept as feedback; the new draft still needs your approval."
-                onClick={() => run(() => reviseReplyAction(item.id, note), { done: false, onOk: r => { if (typeof r.replyId === 'string') onOpen(r.replyId) } })}>Revise with this</button>
+              <button className={btnGhost} disabled={pending || !note.trim()} title="Cassie writes the draft again from your note. Facts in it shape this reply; rules in it become standing instructions she keeps."
+                onClick={() => run(() => reviseReplyAction(item.id, note), { done: false, onOk: r => { if (typeof r.replyId === 'string') onOpen(r.replyId); const l = r.learned as string[] | undefined; if (l?.length) setMsg(`Cassie added to her standing instructions: ${l.join(' · ')}`) } })}>Revise with this</button>
+              <button className={btnGhost} disabled={pending || !note.trim()} title="Cassie takes your note to the team's Google Chat space and works it out with them — asking back and forth as needed — then drafts again. The new draft comes back here for approval."
+                onClick={() => run(() => askTeamAction(item.id, note), { done: false, ok: 'Asked the team in Google Chat. Cassie will draft again from their answer; the new draft comes back here.' })}>Ask the team about this</button>
               <span className="text-gray-300">|</span>
               <button className={btn} disabled={pending || !text.trim() || item.unsourced_claims.length > 0 && !edited} onClick={() => run(() => approveReplyAction(item.id, text, note))}>{edited ? 'Approve edited version' : 'Approve'}</button>
               <button className={btnGhost} disabled={pending} onClick={() => run(() => escalateReplyAction(item.id, note))}>Escalate to a person</button>
