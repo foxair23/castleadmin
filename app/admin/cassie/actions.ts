@@ -30,7 +30,7 @@ const EDITABLE: ReadonlyArray<keyof AgentSettings> = [
   'mailbox_address', 'from_display_name', 'reply_to_email', 'cc_office', 'signature_text', 'escape_hatch_text',
   'allowlist_domains', 'allowlist_addresses', 'blocklist_addresses',
   'confidence_threshold', 'auto_question_types', 'auto_match_tiers', 'hold_minutes', 'staleness_minutes', 'closed_window_days',
-  'confusion_threshold', 'confusion_min_sample', 'chat_space_name', 'chat_timeout_minutes', 'chat_max_asks_per_hour',
+  'confusion_threshold', 'confusion_min_sample', 'chat_space_name', 'chat_timeout_minutes', 'chat_max_asks_per_hour', 'chat_colleague_enabled',
   'escalation_extra_emails', 'paused_tiers',
 ]
 

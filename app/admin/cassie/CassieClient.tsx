@@ -307,7 +307,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
     cc_office: s.cc_office, signature_text: s.signature_text, escape_hatch_text: s.escape_hatch_text,
     allowlist_domains: lines(s.allowlist_domains), allowlist_addresses: lines(s.allowlist_addresses), blocklist_addresses: lines(s.blocklist_addresses),
     escalation_extra_emails: lines(s.escalation_extra_emails),
-    chat_space_name: s.chat_space_name ?? '', chat_timeout_minutes: s.chat_timeout_minutes, chat_max_asks_per_hour: s.chat_max_asks_per_hour,
+    chat_space_name: s.chat_space_name ?? '', chat_timeout_minutes: s.chat_timeout_minutes, chat_max_asks_per_hour: s.chat_max_asks_per_hour, chat_colleague_enabled: s.chat_colleague_enabled,
     staleness_minutes: s.staleness_minutes, closed_window_days: s.closed_window_days,
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF(x => ({ ...x, [k]: v }))
@@ -321,7 +321,7 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
         signature_text: f.signature_text.trim(), escape_hatch_text: f.escape_hatch_text.trim(),
         allowlist_domains: parseLines(f.allowlist_domains), allowlist_addresses: parseLines(f.allowlist_addresses),
         blocklist_addresses: parseLines(f.blocklist_addresses), escalation_extra_emails: parseLines(f.escalation_extra_emails),
-        chat_space_name: f.chat_space_name.trim() || null, chat_timeout_minutes: Number(f.chat_timeout_minutes), chat_max_asks_per_hour: Number(f.chat_max_asks_per_hour),
+        chat_space_name: f.chat_space_name.trim() || null, chat_timeout_minutes: Number(f.chat_timeout_minutes), chat_max_asks_per_hour: Number(f.chat_max_asks_per_hour), chat_colleague_enabled: f.chat_colleague_enabled,
         staleness_minutes: Number(f.staleness_minutes), closed_window_days: Number(f.closed_window_days),
       })
       setMsg('Saved.'); router.refresh()
@@ -417,6 +417,10 @@ function SettingsTab({ settings: s, gmailConfigured, gmail, gmailFlash, reviewIt
           <Field label="Reminder after (min)" hint="one nudge, then escalation by email at double this"><input type="number" min={5} className={input} value={f.chat_timeout_minutes} onChange={e => set('chat_timeout_minutes', Number(e.target.value))} /></Field>
           <Field label="Max asks per hour" hint="noise control"><input type="number" min={1} className={input} value={f.chat_max_asks_per_hour} onChange={e => set('chat_max_asks_per_hour', Number(e.target.value))} /></Field>
         </div>
+        <label className="mt-3 flex items-start gap-2 text-sm text-gray-800">
+          <input type="checkbox" className="mt-1" checked={f.chat_colleague_enabled} onChange={e => set('chat_colleague_enabled', e.target.checked)} />
+          <span>Answer the team in Chat like a colleague — anyone can DM her or mention @Cassie with a question about a job, order or customer (she looks it up live, read-only) or just to talk. Off means she only speaks in her own ask threads.</span>
+        </label>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button type="button" className={btnGhost} disabled={pending} onClick={() => start(async () => {
             setChatTest(null)

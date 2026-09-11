@@ -240,10 +240,14 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
   if (ev.user?.type === 'BOT' || ev.message?.sender?.type === 'BOT') return 'ignored bot'
   const ask = await askForThread(db, ev)
   if (!ask) {
-    // An @mention with no open question behind it. Say so, rather than looking broken.
+    // Not one of her ask threads: a coworker talking to her. Answer as a colleague — look
+    // the job up if it is work, just talk if it is not.
+    const { answerColleague } = await import('@/lib/agent/chat/colleague')
+    const r = await answerColleague(db, settings, ev)
+    if (r.replied) return `colleague reply${r.toolsUsed.length ? ` (${r.toolsUsed.join(', ')})` : ''}`
     const space = ev.space?.name
-    if (space) await postText(space, ev.message?.thread?.threadKey ?? null, "I do not have an open question in this thread. I will post here when I need a hand with a partner email.", ev.message?.thread?.name ?? null)
-    return 'no ask for this thread'
+    if (space && r.reason === 'colleague mode off') await postText(space, ev.message?.thread?.threadKey ?? null, "I do not have an open question in this thread. I will post here when I need a hand with a partner email.", ev.message?.thread?.name ?? null)
+    return `no ask for this thread (${r.reason ?? 'not answered'})`
   }
   const text = (ev.message?.argumentText ?? ev.message?.text ?? '').replace(/@\S*cassie\S*/gi, '').trim()
   if (!text) return 'empty'

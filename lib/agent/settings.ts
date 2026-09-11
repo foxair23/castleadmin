@@ -40,6 +40,8 @@ export interface AgentSettings {
   chat_space_name: string | null
   chat_timeout_minutes: number
   chat_max_asks_per_hour: number
+  /** Answer team members who message her outside an ask thread (DMs, @mentions). */
+  chat_colleague_enabled: boolean
 
   escalation_extra_emails: string[]
 
@@ -84,6 +86,7 @@ export const AGENT_DEFAULTS: AgentSettings = {
   chat_space_name: null,
   chat_timeout_minutes: 30,
   chat_max_asks_per_hour: 6,
+  chat_colleague_enabled: true,
 
   escalation_extra_emails: [],
 
