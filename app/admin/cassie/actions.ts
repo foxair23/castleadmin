@@ -255,24 +255,37 @@ export async function deleteReplayAction(messageId: string): Promise<ActionResul
 export async function reprocessMessageAction(messageId: string): Promise<ActionResult & { outcome?: string; detail?: string }> {
   await assertAdmin()
   return attempt(async () => {
+    const { userName } = await reviewer()
     const db = agentDb()
     const { data: m } = await db.from('agent_email_messages').select('id, delivery_path, gmail_message_id, outcome').eq('id', messageId).maybeSingle()
     if (!m) throw new Error('That message is gone.')
     if (m.delivery_path === 'replay' || !m.gmail_message_id) throw new Error('Only messages from the mailbox can be reprocessed — replay a pasted email instead.')
-    if (m.outcome === 'accepted' || m.outcome === 'composed' || m.outcome === 'sent') throw new Error('This message was already answered or drafted — reject or revise that draft instead.')
-    const { count: replies } = await db.from('agent_email_replies').select('id', { count: 'exact', head: true }).eq('message_id', messageId)
-    if (replies) throw new Error('This message already has a draft — work from the Review tab.')
+    const { data: replies } = await db.from('agent_email_replies').select('id, status, created_at').eq('message_id', messageId).order('created_at', { ascending: false })
+    const live = (replies ?? []).find(r => ['draft', 'queued', 'approved', 'sent'].includes(r.status as string))
+    if (live) throw new Error(live.status === 'sent' ? 'This message was already answered.' : `This message has a ${live.status} reply — work from the Review tab.`)
+    const { loadAgentSettings } = await import('@/lib/agent/settings')
+    const settings = { ...(await loadAgentSettings(db)), processing_enabled: true }
+    // Already drafted once (then escalated, rejected or cancelled): compose again from the
+    // same message with today's facts and rules; the old reply is superseded, and Cassie may
+    // ask the team in Chat if she cannot ground it.
+    if (replies?.length) {
+      const { recomposeReply } = await import('@/lib/agent/email/composer-stage')
+      const rc = await recomposeReply(db, settings, replies[0].id as string, `reprocessed from Activity by ${userName ?? 'a reviewer'}`)
+      if (rc.outcome === 'error') throw new Error(rc.detail ?? 'Cassie could not draft again.')
+      await db.from('agent_email_messages').update({ outcome: rc.outcome, outcome_detail: rc.detail ?? null }).eq('id', messageId)
+      revalidatePath(PATH)
+      return { outcome: rc.outcome, detail: rc.detail }
+    }
+    // Never drafted (dropped, or filed as a human reply): fetch it from Gmail again so it
+    // gets today's relay unwrapping and filters, replace its record, run the pipeline.
     const { loadGmailCredential, getAccessToken, fetchMessageById } = await import('@/lib/agent/email/gmail')
     const { ingestEmail } = await import('@/lib/agent/email/pipeline')
     const { makeComposerStage } = await import('@/lib/agent/email/composer-stage')
-    const { loadAgentSettings } = await import('@/lib/agent/settings')
     const cred = await loadGmailCredential(db)
     if (!cred) throw new Error('The mailbox is not connected.')
     const email = await fetchMessageById(await getAccessToken(cred), m.gmail_message_id as string)
     const { error } = await db.from('agent_email_messages').delete().eq('id', messageId)
     if (error) throw new Error(error.message)
-    // A deliberate act by an admin: the processing switch does not gate it; auto-send does.
-    const settings = { ...(await loadAgentSettings(db)), processing_enabled: true }
     const res = await ingestEmail(db, email, { settings, composer: makeComposerStage() })
     revalidatePath(PATH)
     return { outcome: res.outcome, detail: res.detail }
