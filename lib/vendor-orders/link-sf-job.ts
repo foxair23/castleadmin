@@ -36,7 +36,7 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string): P
   const { data: doors } = await supabase.from('vendor_orders').select('id, sf_job_id, sf_created_job_number').or(`id.eq.${rootId},parent_order_id.eq.${rootId}`)
   const taken = ((doors ?? []) as Array<{ sf_job_id: string | null; sf_created_job_number: string | null }>).find(d => d.sf_job_id || d.sf_created_job_number)
   if (taken && taken.sf_job_id !== job.id) {
-    return { ok: false, error: `This house is already linked to SF job #${taken.sf_created_job_number ?? taken.sf_job_id}. Unlink it in the database first if that is wrong.` }
+    return { ok: false, error: `This house is already linked to SF job #${taken.sf_created_job_number ?? taken.sf_job_id}. Press Unmatch on it first if that is wrong.` }
   }
   // And one job is one house: refuse to attach a job some other order already owns.
   const { data: other } = await supabase.from('vendor_orders').select('id, external_id').eq('sf_job_id', job.id).neq('id', rootId).limit(1).maybeSingle()
@@ -45,6 +45,11 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string): P
   const now = new Date().toISOString()
   const { error } = await supabase.from('vendor_orders').update({ sf_job_id: job.id, updated_at: now }).eq('id', rootId)
   if (error) return { ok: false, error: error.message }
+  // Typing the number is the office overruling an earlier Unmatch of this same job.
+  const { data: excl } = await supabase.from('vendor_orders').select('id, sf_match_excluded_job_ids').or(`id.eq.${rootId},parent_order_id.eq.${rootId}`).contains('sf_match_excluded_job_ids', [job.id])
+  for (const r of (excl ?? []) as Array<{ id: string; sf_match_excluded_job_ids: string[] }>) {
+    await supabase.from('vendor_orders').update({ sf_match_excluded_job_ids: r.sf_match_excluded_job_ids.filter(x => x !== job.id) }).eq('id', r.id)
+  }
   await supabase.from('vendor_order_events').insert({
     order_id: rootId, event_type: 'sf_job_linked', to_value: job.number, detail: { sf_job_id: job.id, method: 'manual', typed: rawJobNumber },
   })
