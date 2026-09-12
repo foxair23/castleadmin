@@ -164,7 +164,14 @@ function ActivityTab({ rows, drafts }: { rows: ActivityRow[]; drafts: DraftRow[]
   const [f, setF] = useState({ from: 'store.manager@homedepot.com', to: 'info@castlegarage.com', cc: '', subject: 'PO 1020259181 status', body: SAMPLE_BODY, autoReply: false, threadId: '' })
   const [result, setResult] = useState<{ outcome: string; detail?: string } | null>(null)
   const [reproc, setReproc] = useState<{ id: string; text: string } | null>(null)
-  const canReprocess = (r: ActivityRow) => r.delivery_path !== 'replay' && !!r.outcome && (r.outcome === 'human_reply' || r.outcome.startsWith('dropped_'))
+  // Mailbox messages that are not live: never drafted (dropped / filed as a human reply), or
+  // drafted and then escalated, rejected or cancelled. A live draft is worked from Review.
+  const canReprocess = (r: ActivityRow) => {
+    if (r.delivery_path === 'replay' || !r.outcome) return false
+    const d = draftByMessage.get(r.id)
+    if (d) return !['draft', 'queued', 'approved', 'sent'].includes(d.status)
+    return r.outcome === 'human_reply' || r.outcome.startsWith('dropped_')
+  }
   return (
     <div className="space-y-4">
       <div className={card}>
@@ -217,7 +224,7 @@ function ActivityTab({ rows, drafts }: { rows: ActivityRow[]; drafts: DraftRow[]
                   {d && <div className="text-[11px] text-gray-400 mt-0.5">{isOpen ? 'click to hide draft' : 'click to view draft'}</div>}
                   {canReprocess(r) && (
                     <div className="mt-1">
-                      <button className={btnGhost} disabled={pending} title="Fetch this message from Gmail again and run it through today's pipeline — a draft lands in Review if it is a partner inquiry"
+                      <button className={btnGhost} disabled={pending} title="Run this message through today's pipeline again — a draft lands in Review if it is a partner inquiry; a rejected or escalated draft is composed afresh"
                         onClick={e => { e.stopPropagation(); if (!confirm('Run this message through the pipeline again? Its current record is replaced by the new outcome.')) return; start(async () => {
                           const res = await reprocessMessageAction(r.id)
                           setReproc({ id: r.id, text: res.error ?? `${res.outcome ?? 'done'}${res.detail ? ` — ${res.detail}` : ''}` })
