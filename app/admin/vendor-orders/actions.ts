@@ -12,6 +12,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { clopayPaymentsByPo } from '@/lib/vendor-orders/payments'
 import { enqueueSfJobLines } from '@/lib/vendor-orders/sf-lines-queue'
 import { linkSfJobToOrder } from '@/lib/vendor-orders/link-sf-job'
+import { unmatchSfJobFromOrder } from '@/lib/vendor-orders/unlink-sf-job'
 
 async function isAllowed(): Promise<boolean> {
   const supabase = await createClient()
@@ -133,6 +134,17 @@ export async function addIpoLinesToSfJobAction(orderId: string): Promise<{ ok: b
 export async function linkSfJobAction(orderId: string, jobNumber: string): Promise<{ ok: boolean; error?: string; jobNumber?: string; customerName?: string | null; lines?: string }> {
   if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
   const r = await linkSfJobToOrder(orderId, jobNumber)
+  if (r.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
+  return r
+}
+
+/** The SF Job # shown for an order is wrong: drop the stored link and stop the matcher from
+ *  picking that job for this house again. The row goes back to Create / Link. */
+export async function unmatchSfJobAction(orderId: string): Promise<{ ok: boolean; error?: string; jobNumber?: string | null; warnings?: string[] }> {
+  if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const r = await unmatchSfJobFromOrder(orderId, user?.id ?? null)
   if (r.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
   return r
 }

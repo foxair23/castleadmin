@@ -33,6 +33,9 @@ export interface ExternalOrderKey {
   email?: string | null
   phone?: string | null
   linkedJobId?: string | null
+  /** SF job ids the office has rejected for this order ("unmatch") — never returned by any
+   *  method, however well the PO/name/email/phone lines up. */
+  excludedJobIds?: string[] | null
 }
 
 export interface SfJobLite { id: string; number: string | null; customer_name: string | null; customer_id: string | null; po_number: string | null }
@@ -96,14 +99,16 @@ export function matchToSfJob(index: SfJobIndex, key: ExternalOrderKey): SfJobMat
     const j = index.jobById.get(key.linkedJobId)
     if (j) return hit(j, 'linked')
   }
+  const excluded = new Set(key.excludedJobIds ?? [])
   // PO membership — split the order's PO too, in case a source lists several.
   for (const p of splitPos(key.po)) {
     const j = index.poToJob.get(p)
-    if (j) return hit(j, 'po')
+    if (j && !excluded.has(j.id)) return hit(j, 'po')
   }
 
   let ambiguous = false
-  const resolveUnique = (jobs: SfJobLite[] | undefined, method: SfMatchMethod): SfJobMatch | null => {
+  const resolveUnique = (candidates: SfJobLite[] | undefined, method: SfMatchMethod): SfJobMatch | null => {
+    const jobs = excluded.size ? candidates?.filter(j => !excluded.has(j.id)) : candidates
     if (!jobs || jobs.length === 0) return null
     if (jobs.length === 1) return hit(jobs[0], method)
     ambiguous = true

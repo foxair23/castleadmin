@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
-import { createSfJobAction, sendNudgeNowAction, getOrderDetailAction, addIpoLinesToSfJobAction, linkSfJobAction } from './actions'
+import { createSfJobAction, sendNudgeNowAction, getOrderDetailAction, addIpoLinesToSfJobAction, linkSfJobAction, unmatchSfJobAction } from './actions'
 import { sendEsignNowAction, notifyTechNowAction, prepareEsignDocAction, finalizeNowAction, markPortalUploadedAction, cancelEsignAction, resetSignatureAction, adoptAttachmentAsWaiverAction } from './esign-actions'
 import { statusChipStyle } from '@/lib/vendor-orders/status-style'
 
@@ -237,6 +237,37 @@ function LinkJobInput({ orderId }: { orderId: string }) {
         </button>
       </span>
       {msg && <span className={`text-[10px] max-w-[220px] whitespace-normal ${msg.ok ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</span>}
+    </span>
+  )
+}
+
+// The matcher (or an earlier link) put the wrong SF job on this house. One click clears the
+// link, tells the matcher never to pick that job for this order again, and the row goes back
+// to "+ Create SF Job / link Job #". Work already written into SF is reported, not undone.
+function UnmatchButton({ orderId, jobNumber }: { orderId: string; jobNumber: string }) {
+  const [pending, start] = useTransition()
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  return (
+    <span className="inline-flex flex-col gap-0.5">
+      <button
+        type="button"
+        disabled={pending}
+        title="Wrong job? Remove this match — the matcher will not pick this job for this order again"
+        onClick={() => {
+          if (!window.confirm(`Unmatch SF job #${jobNumber} from this order?\n\nThe row goes back to Create / Link. Line items or appointments already posted to the job in Service Fusion are not removed.`)) return
+          setMsg(null)
+          start(async () => {
+            const r = await unmatchSfJobAction(orderId)
+            setMsg(r.ok
+              ? { ok: true, text: r.warnings?.length ? r.warnings.join(' ') : `Unmatched #${r.jobNumber ?? jobNumber}` }
+              : { ok: false, text: r.error ?? 'failed' })
+          })
+        }}
+        className="text-[10px] text-gray-400 hover:text-red-600 underline disabled:opacity-50 disabled:cursor-progress"
+      >
+        {pending ? 'unmatching…' : 'unmatch'}
+      </button>
+      {msg && <span className={`text-[10px] max-w-[220px] whitespace-normal ${msg.ok ? 'text-amber-700' : 'text-red-600'}`}>{msg.text}</span>}
     </span>
   )
 }
@@ -950,6 +981,7 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                           {o.sf_match_method && !['po', 'linked', 'pending'].includes(o.sf_match_method) && (
                             <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
                           )}
+                          {o.sf_match_method !== 'pending' && <UnmatchButton orderId={o.id} jobNumber={o.sf_job_number} />}
                         </span>
                       ) : (
                         <span className="inline-flex flex-col gap-1">
