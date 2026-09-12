@@ -13,6 +13,8 @@
 
 export type CustomerStage = 'heads_up' | 'ask' | 'reminder'
 
+export type WorkPhase = 'inspection' | 'install' | 'delivery' | 'unknown'
+
 export interface DueInput {
   status: string
   created_at: string
@@ -20,8 +22,13 @@ export interface DueInput {
   customer_asked_at: string | null
   customer_reminded_at: string | null
   customer_signed_at: string | null
-  /** The SF job's start date, YYYY-MM-DD, or null when the job is not in the mirror yet. */
+  /** The date of the work that matters (the install / delivery visit), YYYY-MM-DD, or null. */
   start_date: string | null
+  /** What the job is at, read live from SF. 'inspection' = the site check; nothing is sent. */
+  phase?: WorkPhase
+  /** The work is done (a visit's tech status Completed, or the job completed / invoiced / closed).
+   *  undefined = not known (no live read) — then the ask waits. */
+  completed?: boolean
   /** Setting cutoff; documents found before it are never auto-sent. */
   enabled_at: string | null
   /** The sweep's clock, PT: calendar day YYYY-MM-DD and hour 0–23. */
@@ -46,17 +53,23 @@ export function customerStageDue(d: DueInput): CustomerStage | null {
   if (!['prepared', 'sent_customer'].includes(d.status)) return null
   if (d.customer_signed_at) return null
   if (!d.enabled_at || d.created_at < d.enabled_at) return null
+  // A site check is not the work. Nothing goes out until the job is at the install.
+  if (d.phase === 'inspection') return null
+  // The work is done: ask now, whether or not a heads-up ever went out (the link goes with it).
+  if (!d.customer_asked_at && d.completed === true) {
+    if (d.customer_sent_at && ptDay(d.customer_sent_at) >= d.today && d.hour < 17) return null   // heads-up went this morning; give the day
+    return 'ask'
+  }
   if (!d.start_date) return null
   const rel = daysBetween(d.start_date, d.today)          // 0 = the day itself, >0 = days after
   if (!d.customer_sent_at) {
-    if (rel > 0) return 'heads_up'                         // late: send the link now
-    if (rel === 0 && d.hour >= 8) return 'heads_up'
-    return null
+    if (rel === 0 && d.hour >= 8) return 'heads_up'        // the morning of the work
+    return null                                            // before the day, or the day has passed without completion: wait
   }
   if (!d.customer_asked_at) {
-    if (rel < 1) return null
-    if (ptDay(d.customer_sent_at) >= d.today) return null   // heads-up went today; ask tomorrow
-    return 'ask'
+    // No completion signal available (no live read): fall back to the day after the date.
+    if (d.completed === undefined && rel >= 1 && ptDay(d.customer_sent_at) < d.today) return 'ask'
+    return null
   }
   if (!d.customer_reminded_at) {
     return daysBetween(ptDay(d.customer_asked_at), d.today) >= 3 ? 'reminder' : null

@@ -11,6 +11,8 @@ import { customerStageDue, ptDay, ptHour, type CustomerStage } from './eligibili
 import { getEsignSettings } from './settings'
 import { prepareEsignDoc } from './prepare'
 import { linkMissingEsignJobs } from './job-link'
+import { refreshJob } from '@/lib/agent/live-refresh'
+import { deriveWork } from './work'
 
 // The customer sender. An hourly sweep (business hours PT) walks the documents that are
 // prepared or already with the customer, asks eligibility.ts which message — if any — is due
@@ -112,15 +114,26 @@ export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSwee
     const order = orderById.get(doc.order_id)
     if (!order || !isActive(order.status) || (!order.email && !order.phone)) { out.held++; continue }
     const jobId = doc.sf_job_id ?? order.sf_job_id ?? null
-    const start = jobId ? startByJob.get(String(jobId)) ?? null : null
+    let start = jobId ? startByJob.get(String(jobId)) ?? null : null
     let status = doc.status
+    // The work's real stage comes from the live job (its visits and their completion), not
+    // the mirror's single date: a Clopay install's site check must never trigger the form.
+    let phase: 'inspection' | 'install' | 'delivery' | 'unknown' | undefined
+    let completed: boolean | undefined
+    if (jobId) {
+      const live = await refreshJob(String(jobId))
+      if (live.status === 'fresh') {
+        const w = deriveWork(live.facts, templateByKey(doc.template_key)?.service ?? 'install')
+        phase = w.phase; completed = w.completed; start = w.workDate ?? start
+      } else { out.held++; out.errors.push(`order ${order.external_id}: live read failed (${live.error})`); continue }
+    }
     // A blank that has not been inspected yet is prepared inline, so a same-day install is not missed.
     if (status === 'found') {
       const r = await prepareEsignDoc(doc.id, supabase)
       if (!r.ok || r.status !== 'prepared') { out.held++; continue }
       status = 'prepared'; doc.template_key = r.template ?? doc.template_key
     }
-    const stage = customerStageDue({ ...doc, status, start_date: start, enabled_at: s.enabledAt, today, hour })
+    const stage = customerStageDue({ ...doc, status, start_date: start, phase, completed, enabled_at: s.enabledAt, today, hour })
     if (!stage) { out.held++; continue }
     try {
       const { channels, error } = await deliverToCustomer(supabase, { ...doc, sf_job_id: jobId }, order, stage)
