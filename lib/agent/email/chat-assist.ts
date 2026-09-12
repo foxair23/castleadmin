@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { appUrl } from '@/lib/config/domains'
 import type { AgentSettings } from '@/lib/agent/settings'
 import { buildCard, postCard, postText, updateCard, isChatConfigured } from '@/lib/agent/chat/google-chat'
+import { chatVoice } from '@/lib/agent/chat/voice'
 import type { InboundEmail } from './types'
 
 // Human assist via Google Chat (PRD §11). When Cassie cannot ground an answer she asks
@@ -35,6 +36,7 @@ export async function postChatAsk(db: SupabaseClient, settings: AgentSettings, a
   if (!settings.chat_space_name) return { posted: false, reason: 'no_space' }
   if (!isChatConfigured()) return { posted: false, reason: 'chat_not_configured' }
   const domain = a.email.from.addr.split('@')[1] ?? ''
+  const who = a.email.from.name ? `${a.email.from.name} (${companyFor(domain)})` : `${a.email.from.addr} (${companyFor(domain)})`
   const dedupeKey = a.email.gmailThreadId ? `thread:${a.email.gmailThreadId}` : `q:${a.missing.toLowerCase().replace(/\W+/g, ' ').trim().slice(0, 120)}`
 
   // Dedup: one open ask per thread / same missing thing within 24h. A reviewer's question
@@ -44,7 +46,8 @@ export async function postChatAsk(db: SupabaseClient, settings: AgentSettings, a
   if (dup?.length) {
     if (!a.askedBy) return { posted: false, reason: 'duplicate_open_ask' }
     const d = dup[0]
-    await postText(d.space_name as string, d.thread_key as string, `${a.askedBy} asks from the review page: ${a.missing}`, d.chat_thread_name as string | null)
+    const text = await chatVoice(settings, { purpose: 'reviewer_ask', partner: who, partnerAsked: a.questionSummary, jobNumber: a.sfJobNumber, need: a.missing, reviewer: a.askedBy })
+    await postText(d.space_name as string, d.thread_key as string, text, d.chat_thread_name as string | null)
     await db.from('agent_chat_asks').update({ status: 'open', asked_by: a.askedBy, question: a.missing }).eq('id', d.id)
     return { posted: true, askId: d.id as string }
   }
@@ -61,23 +64,10 @@ export async function postChatAsk(db: SupabaseClient, settings: AgentSettings, a
   if (error) throw new Error(error.message)
   const askId = ask.id as string
 
-  const who = a.email.from.name ? `${a.email.from.name} (${companyFor(domain)})` : `${a.email.from.addr} (${companyFor(domain)})`
-  const card = buildCard(`ask-${askId}`, {
-    header: a.askedBy ? `${a.askedBy} wants a second look` : 'Cassie needs a hand',
-    subheader: `${who} · "${a.email.subject}"`,
-    paragraphs: [
-      { label: 'They asked', text: a.questionSummary },
-      { label: a.askedBy ? `${a.askedBy}'s note` : 'What I need', text: a.missing },
-      ...(a.sfJobNumber ? [{ label: 'Job', text: `Job ${a.sfJobNumber}` }] : [{ label: 'Job', text: 'No job matched' }]),
-      { text: 'Reply in this thread with the answer (mention @Cassie so I see it). I will write the partner reply and post it here for approval.' },
-    ],
-    buttons: [
-      ...(a.sfJobId ? [{ text: 'Open job', fn: 'open', url: sfJobUrl(a.sfJobId) }] : []),
-      { text: 'Open in Castle Admin', fn: 'open', url: reviewUrl(a.replyId) },
-    ],
-  })
+  const text = await chatVoice(settings, { purpose: a.askedBy ? 'reviewer_ask' : 'ask', partner: who, partnerAsked: a.questionSummary, jobNumber: a.sfJobNumber, need: a.missing, reviewer: a.askedBy, extra: `Subject: "${a.email.subject}"` })
+  const links = [a.sfJobId ? `Job in SF: ${sfJobUrl(a.sfJobId)}` : null, `Review page: ${reviewUrl(a.replyId)}`].filter(Boolean).join('  ·  ')
   try {
-    const posted = await postCard(settings.chat_space_name, `cassie-${a.replyId}`, card, `Cassie needs a hand — ${who}: ${a.missing}`)
+    const posted = await postText(settings.chat_space_name, `cassie-${a.replyId}`, `${text}\n\n${links}`)
     await db.from('agent_chat_asks').update({ chat_message_name: posted.name, chat_thread_name: posted.thread?.name ?? null }).eq('id', askId)
     return { posted: true, askId }
   } catch (e) {
@@ -255,7 +245,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
 
   const plan = planForAsk(String(ask.status), Boolean(ask.awaiting_edit && ask.draft_reply_id))
   if (plan.act === 'explain') {
-    await postText(ask.space_name, ask.thread_key, `Thanks ${who.name}. ${plan.text} You can still open it here: ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
+    await postText(ask.space_name, ask.thread_key, `Thanks ${who.name.split(' ')[0]} — ${plan.text.charAt(0).toLowerCase()}${plan.text.slice(1)} It's here if you want it: ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
     return `ask is ${ask.status}`
   }
 
@@ -268,7 +258,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     await approveReply(db, ask.draft_reply_id as string, { text: full, note: `Edited in Google Chat by ${who.name}`, userId: null as unknown as string })
     await db.from('agent_email_replies').update({ approval_path: 'chat_approved' }).eq('id', ask.draft_reply_id)
     await db.from('agent_chat_asks').update({ status: 'approved', awaiting_edit: false, resolved_at: new Date().toISOString() }).eq('id', ask.id)
-    await postText(ask.space_name, ask.thread_key, `Got it — sending your edited version. Thanks, ${who.name}.`)
+    await postText(ask.space_name, ask.thread_key, `Got it — sending your version. Thanks, ${who.name.split(' ')[0]}.`)
     return 'edited and approved'
   }
 
@@ -296,7 +286,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
   const learned = await saveLearnedInstructions(db, digest.instructions, `chat:${ask.id}`).catch(e => { console.error('[cassie] could not save instructions', e); return [] as string[] })
   if (learned.length) {
     await db.from('agent_chat_asks').update({ learned_instructions: Number(ask.learned_instructions ?? 0) + learned.length }).eq('id', ask.id)
-    await postText(ask.space_name, ask.thread_key, `Noted for next time — I have added ${learned.length === 1 ? 'this' : 'these'} to my standing instructions:\n${learned.map(r => `• ${r}`).join('\n')}`, ask.chat_thread_name as string | null)
+    await postText(ask.space_name, ask.thread_key, await chatVoice(settings, { purpose: 'noted_rules', rules: learned, who: who.name }), ask.chat_thread_name as string | null)
   }
   const followUps = Number(ask.follow_ups ?? 0)
   if (!digest.readyToDraft && digest.followUp && followUps < MAX_FOLLOW_UPS) {
@@ -308,7 +298,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     // The team said, in effect, "leave this to a person". Send it to the review queue.
     await db.from('agent_chat_asks').update({ status: 'sent_to_review', resolved_at: new Date().toISOString() }).eq('id', ask.id)
     await db.from('agent_email_feedback').insert({ reply_id: ask.reply_id, kind: 'note', note: `Team in Google Chat (${who.name}): ${text.slice(0, 500)}` })
-    await postText(ask.space_name, ask.thread_key, `${digest.acknowledgement} I will leave this one to a person: ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
+    await postText(ask.space_name, ask.thread_key, `${await chatVoice(settings, { purpose: 'left_to_person', who: who.name })} ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
     return 'left to a person'
   }
   const answerText = digest.facts.length ? digest.facts.join('\n') : conversation
@@ -330,9 +320,10 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
   const body = stripWrapper((draft?.composed_text as string) ?? '')
   const unsourced = (draft?.unsourced_claims as string[]) ?? []
   const checked = describeLookup(draft as LookupSummary | null)
+  const intro = await chatVoice(settings, { purpose: 'draft_ready', who: who.name, jobNumber: (draft?.sf_job_number as string | null) ?? null })
   const card = buildCard(`draft-${rc.replyId}`, {
-    header: 'Here is what I would send',
-    subheader: `Based on ${who.name}'s answer`,
+    header: "Here's what I'd send",
+    subheader: `From ${who.name}'s answer`,
     paragraphs: [
       // Say what was looked up before showing the draft, so "no job under that PO" reads
       // as a result rather than a shrug.
@@ -347,7 +338,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
       { text: 'Save answer to library', fn: 'promote', params: { ask: ask.id as string } },
     ],
   })
-  const posted = await postCard(ask.space_name, ask.thread_key, card, `Draft reply based on ${who.name}'s answer`)
+  const posted = await postCard(ask.space_name, ask.thread_key, card, intro)
   await db.from('agent_chat_asks').update({
     status: 'composed', draft_reply_id: rc.replyId, draft_card_name: posted.name,
     ...(ask.chat_thread_name ? {} : { chat_thread_name: posted.thread?.name ?? null }),
@@ -379,7 +370,7 @@ export async function handleCardClick(db: SupabaseClient, settings: AgentSetting
     }
     case 'edit': {
       await db.from('agent_chat_asks').update({ awaiting_edit: true }).eq('id', ask.id)
-      await postText(ask.space_name, ask.thread_key, `Reply in this thread with the exact wording you want sent (mention @Cassie). I will send that instead.`)
+      await postText(ask.space_name, ask.thread_key, `Sure — reply here with the wording you want (mention @Cassie) and I'll send that instead.`)
       return 'awaiting edit'
     }
     case 'review': {
@@ -411,13 +402,13 @@ export async function runChatTimeouts(db: SupabaseClient, settings: AgentSetting
     const age = Date.now() - Date.parse(a.posted_at as string)
     try {
       if (!a.reminded_at) {
-        await postText(a.space_name as string, a.thread_key as string, `Still waiting on this one — anyone able to answer? "${a.question}"`)
+        await postText(a.space_name as string, a.thread_key as string, await chatVoice(settings, { purpose: 'reminder', need: a.question as string }))
         await db.from('agent_chat_asks').update({ reminded_at: new Date().toISOString() }).eq('id', a.id); out.reminded++
       } else if (age >= 2 * t) {
         const { escalateReply } = await import('./review')
         try { await escalateReply(db, a.reply_id as string, { note: 'No answer in Google Chat within the timeout.', userId: null as unknown as string, userName: 'Cassie (timeout)', settings }) } catch { /* reply may already be closed */ }
         await db.from('agent_chat_asks').update({ status: 'timed_out', resolved_at: new Date().toISOString() }).eq('id', a.id)
-        await postText(a.space_name as string, a.thread_key as string, `No answer in time — I have escalated this to the team by email so the partner is not left waiting.`)
+        await postText(a.space_name as string, a.thread_key as string, await chatVoice(settings, { purpose: 'timed_out' }))
         out.escalated++
       }
     } catch (e) { console.error('[cassie] chat timeout step failed:', e instanceof Error ? e.message : e) }
