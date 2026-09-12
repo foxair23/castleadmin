@@ -159,8 +159,8 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
   const bd = item.confidence_breakdown as { match?: number; coverage?: number; grounding?: number; freshness?: number } | null
 
   return (
-    <div className="border-t border-gray-200 px-4 py-4 grid lg:grid-cols-2 gap-5 text-sm">
-      {/* Left: what they asked, what Cassie wrote */}
+    <div className="border-t border-gray-200 px-4 py-4 grid lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-5 text-sm">
+      {/* Left: what they asked, what Cassie wrote, then how it is grounded */}
       <div className="space-y-3">
         <div>
           <div className="text-xs font-semibold text-gray-700 mb-1">Their email</div>
@@ -195,7 +195,6 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
             </div>
           </div>
         )}
-        {['draft', 'escalated', 'rejected', 'superseded'].includes(item.status) && <CassieConversation messageId={item.message_id} onDraftChanged={id => onOpen(id)} />}
         {item.status === 'queued' && (
           <div className="flex items-center gap-3">
             <span className="text-xs text-gray-600">Approved {fmt(item.send_after)}{item.approval_path ? ` (${item.approval_path})` : ''}. Waiting for the sender.</span>
@@ -222,10 +221,9 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
         )}
         {msg && <p className={`text-sm ${/^Saved/.test(msg) ? 'text-green-700' : 'text-red-700'}`}>{msg}</p>}
         {item.error && <p className="text-xs text-red-700">{item.error}</p>}
-      </div>
 
-      {/* Right: grounding, reasons, sources */}
-      <div className="space-y-3">
+        {/* Grounding, reasons, sources — under the draft */}
+        <div className="space-y-3 pt-3 border-t border-gray-100">
         <div className={`rounded border p-3 ${item.unsourced_claims.length ? 'border-red-300 bg-red-50' : 'border-green-200 bg-green-50'}`}>
           <div className={`text-xs font-semibold mb-1 ${item.unsourced_claims.length ? 'text-red-900' : 'text-green-900'}`}>
             Unsourced claims {item.unsourced_claims.length === 0 ? '— none. Every concrete statement traces to a record.' : `(${item.unsourced_claims.length}) — Cassie asserted these on her own authority`}
@@ -287,6 +285,14 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
             <ul className="space-y-1">{item.feedback.map((f, i) => <li key={i} className="text-xs text-gray-700"><span className="text-gray-400">{f.kind} · {fmt(f.created_at)}</span> {f.note}</li>)}</ul>
           </div>
         )}
+        </div>
+      </div>
+
+      {/* Right: the conversation with Cassie about this email */}
+      <div className="lg:sticky lg:top-4 self-start">
+        {['draft', 'escalated', 'rejected', 'superseded'].includes(item.status)
+          ? <CassieConversation messageId={item.message_id} onDraftChanged={id => onOpen(id)} />
+          : <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">This one is {item.status}; the conversation opens on drafts and on replies that were escalated or rejected.</div>}
       </div>
     </div>
   )
@@ -324,7 +330,7 @@ function CassieConversation({ messageId, onDraftChanged }: { messageId: string; 
         <div className="text-xs font-semibold text-gray-700">Talk to Cassie about this reply</div>
         <button className={btnGhost} disabled={pending} title="Cassie works out what she needs to ask, in her own words, and posts it to the team in Google Chat. Their answer comes back and she drafts again." onClick={askTeam}>Ask the team in Chat</button>
       </div>
-      <div className="max-h-80 overflow-y-auto px-3 py-3 space-y-2 bg-gray-50">
+      <div className="h-[62vh] min-h-[360px] overflow-y-auto px-3 py-3 space-y-2 bg-gray-50">
         {turns === null && <div className="text-xs text-gray-400">Loading…</div>}
         {turns?.length === 0 && <div className="text-xs text-gray-500">Nothing yet. Ask her why she wrote what she wrote, tell her what to change, or teach her a rule — “anything marked waiting for Tiffany means ask the team first”.</div>}
         {turns?.map(t => (
