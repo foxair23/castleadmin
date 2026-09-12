@@ -93,3 +93,27 @@ describe('matchToSfJob with excluded (unmatched) jobs', () => {
     expect(r).toMatchObject({ sfJobId: null, sfJobNumber: null, method: null, ambiguous: false })
   })
 })
+
+// A returning customer's old job shares the name, email and phone with the new order but is
+// not the new order. Name/email/phone only consider jobs created in the last 90 days; a PO
+// hit or a stored link is exact and ignores age.
+describe('matchToSfJob age gate on weak matches', () => {
+  const now = new Date('2026-09-12T12:00:00Z')
+  const old = { id: 'old', number: '1000', customer_name: 'Gloria Serrano', customer_id: 'c1', po_number: 'PO-OLD', created_at_sf: '2026-03-01T00:00:00Z' }
+  const fresh = { id: 'new', number: '2000', customer_name: 'Gloria Serrano', customer_id: 'c1', po_number: null, created_at_sf: '2026-09-01T00:00:00Z' }
+  it('does not name-match a job created over 90 days ago', () => {
+    const index = buildSfJobIndex([old], [{ id: 'c1', email: 'g@x.com', phone: '6195551234' }])
+    const r = matchToSfJob(index, { customerName: 'Serrano, Gloria', email: 'g@x.com', phone: '6195551234' }, { now })
+    expect(r).toMatchObject({ sfJobId: null, method: null, ambiguous: false })
+  })
+  it('an old job does not make the customer\'s new job ambiguous', () => {
+    const index = buildSfJobIndex([old, fresh], [{ id: 'c1', email: 'g@x.com', phone: '6195551234' }])
+    expect(matchToSfJob(index, { customerName: 'Gloria Serrano' }, { now })).toMatchObject({ sfJobId: 'new', method: 'name' })
+    expect(matchToSfJob(index, { email: 'g@x.com' }, { now })).toMatchObject({ sfJobId: 'new', method: 'email' })
+  })
+  it('a PO hit or a stored link still matches an old job', () => {
+    const index = buildSfJobIndex([old], [])
+    expect(matchToSfJob(index, { po: 'PO-OLD' }, { now })).toMatchObject({ sfJobId: 'old', method: 'po' })
+    expect(matchToSfJob(index, { linkedJobId: 'old' }, { now })).toMatchObject({ sfJobId: 'old', method: 'linked' })
+  })
+})
