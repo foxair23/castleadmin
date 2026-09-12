@@ -20,7 +20,7 @@ const MAX_TOOL_ROUNDS = 4
 const HISTORY_TURNS = 14
 
 // ── Tools ──────────────────────────────────────────────────────────────────
-const TOOLS: Anthropic.Tool[] = [
+export const LOOKUP_TOOLS: Anthropic.Tool[] = [
   {
     name: 'find_job',
     description: 'Find a Service Fusion job. Give whatever the person mentioned: a job number, a PO / Home Depot order number, a customer name, phone or email. Returns the match (or the candidates when more than one job could fit) with live status, schedule, tech and customer.',
@@ -56,7 +56,7 @@ async function liveSummary(jobId: string, label: string): Promise<string> {
   return factsFromLive(r.facts, label).map(f => f.text).join(' ')
 }
 
-async function runTool(db: SupabaseClient, settings: AgentSettings, name: string, input: Record<string, unknown>): Promise<string> {
+export async function runLookupTool(db: SupabaseClient, settings: AgentSettings, name: string, input: Record<string, unknown>): Promise<string> {
   if (name === 'find_job') {
     const jobNumber = num(input.job_number)
     if (jobNumber) {
@@ -92,6 +92,56 @@ async function runTool(db: SupabaseClient, settings: AgentSettings, name: string
     return hits.length ? hits.map(h => `${h.title}: ${h.answer_text}`).join('\n\n') : 'Nothing in the answer library for that.'
   }
   return `unknown tool ${name}`
+}
+
+// ── The turn engine: model + tools, bounded ─────────────────────────────────
+export interface TurnResult { text: string; toolsUsed: string[]; error?: string }
+/** One reply from Cassie: run the model with tools until it answers in prose (or the round
+ *  cap), executing each tool call through `runTool`. `forceTool` makes the first call use it. */
+export async function runCassieTurn(opts: {
+  model: string; system: string; messages: Anthropic.MessageParam[]; tools: Anthropic.Tool[]
+  runTool: (name: string, input: Record<string, unknown>) => Promise<string>
+  forceTool?: string; maxRounds?: number
+}): Promise<TurnResult> {
+  const messages = [...opts.messages]
+  const toolsUsed: string[] = []
+  const maxRounds = opts.maxRounds ?? MAX_TOOL_ROUNDS
+  try {
+    for (let round = 0; round <= maxRounds; round++) {
+      const res = await llm().messages.create({
+        model: opts.model, max_tokens: 1024, system: opts.system, tools: opts.tools, messages,
+        ...(round === 0 && opts.forceTool ? { tool_choice: { type: 'tool' as const, name: opts.forceTool } } : {}),
+        ...(isAdaptiveThinkingModel(opts.model) && !(round === 0 && opts.forceTool) ? { thinking: { type: 'adaptive' as const }, output_config: { effort: 'low' as const } } : {}),
+      })
+      const toolUses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
+      const textOut = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map(b => b.text).join('\n').trim()
+      if (!toolUses.length || round === maxRounds) return { text: textOut, toolsUsed }
+      messages.push({ role: 'assistant', content: res.content })
+      const results: Anthropic.ToolResultBlockParam[] = []
+      for (const tu of toolUses) {
+        toolsUsed.push(tu.name)
+        let out: string
+        try { out = await opts.runTool(tu.name, (tu.input ?? {}) as Record<string, unknown>) } catch (e) { out = `failed: ${e instanceof Error ? e.message : String(e)}` }
+        results.push({ type: 'tool_result', tool_use_id: tu.id, content: out })
+      }
+      messages.push({ role: 'user', content: results })
+    }
+  } catch (e) {
+    return { text: '', toolsUsed, error: describeLlmError(e) }
+  }
+  return { text: '', toolsUsed }
+}
+
+/** Consecutive same-role turns merged, and the list made to start with the user. */
+export function tidyHistory(turns: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const merged: Anthropic.MessageParam[] = []
+  for (const m of turns) {
+    const last = merged[merged.length - 1]
+    if (last && last.role === m.role && typeof last.content === 'string' && typeof m.content === 'string') last.content = `${last.content}\n${m.content}`
+    else merged.push({ ...m })
+  }
+  while (merged.length && merged[0].role !== 'user') merged.shift()
+  return merged
 }
 
 // ── Conversation ────────────────────────────────────────────────────────────
@@ -140,43 +190,12 @@ export async function answerColleague(db: SupabaseClient, settings: AgentSetting
       history.push(r.event_type === 'CASSIE_REPLY' ? { role: 'assistant', content: body } : { role: 'user', content: `${r.sender_name ?? 'someone'}: ${body}` })
     }
   }
-  // Consecutive same-role turns must be merged for the API.
-  const merged: Anthropic.MessageParam[] = []
-  for (const m of [...history, { role: 'user' as const, content: `${who}: ${text}` }]) {
-    const last = merged[merged.length - 1]
-    if (last && last.role === m.role && typeof last.content === 'string' && typeof m.content === 'string') last.content = `${last.content}\n${m.content}`
-    else merged.push({ ...m })
-  }
-  if (merged[0]?.role !== 'user') merged.shift()
-
+  const merged = tidyHistory([...history, { role: 'user' as const, content: `${who}: ${text}` }])
   const [charter, instructions] = await Promise.all([getActiveCharter(db), listInstructions(db)])
   const system = systemPrompt(charter.body, instructions.filter(i => i.channel === 'all' || i.channel === 'chat').map(i => i.text), new Date())
-  const model = settings.composer_model
-  const messages: Anthropic.MessageParam[] = merged
-  const toolsUsed: string[] = []
-  let reply = ''
-  try {
-    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const res = await llm().messages.create({
-        model, max_tokens: 1024, system, tools: TOOLS, messages,
-        ...(isAdaptiveThinkingModel(model) ? { thinking: { type: 'adaptive' as const }, output_config: { effort: 'low' as const } } : {}),
-      })
-      const toolUses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-      const textOut = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map(b => b.text).join('\n').trim()
-      if (!toolUses.length || round === MAX_TOOL_ROUNDS) { reply = textOut; break }
-      messages.push({ role: 'assistant', content: res.content })
-      const results: Anthropic.ToolResultBlockParam[] = []
-      for (const tu of toolUses) {
-        toolsUsed.push(tu.name)
-        let out: string
-        try { out = await runTool(db, settings, tu.name, (tu.input ?? {}) as Record<string, unknown>) } catch (e) { out = `lookup failed: ${e instanceof Error ? e.message : String(e)}` }
-        results.push({ type: 'tool_result', tool_use_id: tu.id, content: out })
-      }
-      messages.push({ role: 'user', content: results })
-    }
-  } catch (e) {
-    reply = `Sorry ${who.split(' ')[0]}, I hit a snag answering that (${describeLlmError(e)}). Try me again in a minute.`
-  }
+  const turn = await runCassieTurn({ model: settings.composer_model, system, messages: merged, tools: LOOKUP_TOOLS, runTool: (n, i) => runLookupTool(db, settings, n, i) })
+  const toolsUsed = turn.toolsUsed
+  let reply = turn.error ? `Sorry ${who.split(' ')[0]}, I hit a snag answering that (${turn.error}). Try me again in a minute.` : turn.text
   if (!reply) reply = "I looked but I do not have a good answer to that one. Can you give me a job number or PO?"
   const posted = await postText(space, null, reply, threadName)
   // Her side of the conversation, so the thread has memory next time.

@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ReviewItem } from '@/lib/agent/email/review'
-import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase, deleteReplayAction, reviseReplyAction, askTeamAction, type ActionResult } from './actions'
+import { approveReplyAction, rejectReplyAction, escalateReplyAction, replyFeedbackAction, unqueueReplyAction, saveAsRegressionCase, deleteReplayAction, askTeamAction, reviewChatAction, loadReviewChatAction, type ActionResult } from './actions'
 import type { AgentSettings } from '@/lib/agent/settings'
 import { AutoRespondSwitch } from './AutoSendControls'
 
@@ -185,12 +185,8 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
         </div>
         {actionable && (
           <div className="space-y-2">
-            <input className={input} placeholder="Optional note — “too formal”, “the PO is probably 74491444, look that up”, or a rule: “anything marked waiting for Tiffany needs to be asked in chat”. Rules become standing instructions." value={note} onChange={e => setNote(e.target.value)} />
+            <input className={input} placeholder="Optional note kept with your decision (approve / escalate / reject). To talk to Cassie about this reply, use the conversation below." value={note} onChange={e => setNote(e.target.value)} />
             <div className="flex flex-wrap gap-2 items-center">
-              <button className={btnGhost} disabled={pending || !note.trim()} title="Cassie writes the draft again from your note. Facts in it shape this reply; rules in it become standing instructions she keeps."
-                onClick={() => run(() => reviseReplyAction(item.id, note), { done: false, onOk: r => { if (typeof r.replyId === 'string') onOpen(r.replyId); const l = r.learned as string[] | undefined; if (l?.length) setMsg(`Cassie added to her standing instructions: ${l.join(' · ')}`) } })}>Revise with this</button>
-              <button className={btnGhost} disabled={pending || !note.trim()} title="Cassie takes your note to the team's Google Chat space and works it out with them — asking back and forth as needed — then drafts again. The new draft comes back here for approval."
-                onClick={() => run(() => askTeamAction(item.id, note), { done: false, ok: 'Asked the team in Google Chat. Cassie will draft again from their answer; the new draft comes back here.' })}>Ask the team about this</button>
               <span className="text-gray-300">|</span>
               <button className={btn} disabled={pending || !text.trim() || item.unsourced_claims.length > 0 && !edited} onClick={() => run(() => approveReplyAction(item.id, text, note))}>{edited ? 'Approve edited version' : 'Approve'}</button>
               <button className={btnGhost} disabled={pending} onClick={() => run(() => escalateReplyAction(item.id, note))}>Escalate to a person</button>
@@ -199,6 +195,7 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
             </div>
           </div>
         )}
+        {['draft', 'escalated', 'rejected', 'superseded'].includes(item.status) && <CassieConversation messageId={item.message_id} onDraftChanged={id => onOpen(id)} />}
         {item.status === 'queued' && (
           <div className="flex items-center gap-3">
             <span className="text-xs text-gray-600">Approved {fmt(item.send_after)}{item.approval_path ? ` (${item.approval_path})` : ''}. Waiting for the sender.</span>
@@ -291,6 +288,66 @@ function ReviewDetail({ item, onDone, onOpen }: { item: ReviewItem; onDone: () =
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+
+// ── Talk to Cassie about this email ─────────────────────────────────────────
+// A chat, not a form: the reviewer and Cassie go back and forth about one partner email.
+// She can look things up, revise the draft, ask the team in Google Chat (a question she
+// writes herself), or keep a rule for next time — and says what she did.
+interface ChatTurn { id: string; role: 'user' | 'cassie'; text: string; user_name: string | null; meta: Record<string, unknown> | null; created_at: string }
+function CassieConversation({ messageId, onDraftChanged }: { messageId: string; onDraftChanged: (replyId: string) => void }) {
+  const [turns, setTurns] = useState<ChatTurn[] | null>(null)
+  const [draft, setDraft] = useState('')
+  const [pending, start] = useTransition()
+  const [err, setErr] = useState<string | null>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
+  useEffect(() => { start(async () => { const r = await loadReviewChatAction(messageId); setTurns(r.turns) }) }, [messageId])
+  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [turns])
+  const apply = (r: ActionResult & { turns?: ChatTurn[] }) => {
+    if (r.error) { setErr(r.error); return }
+    setTurns(r.turns ?? [])
+    const last = [...(r.turns ?? [])].reverse().find(t => t.role === 'cassie')
+    const revised = last?.meta?.revisedReplyId
+    router.refresh()
+    if (typeof revised === 'string') onDraftChanged(revised)
+  }
+  const send = () => { const t = draft.trim(); if (!t) return; setErr(null); setDraft(''); setTurns(x => [...(x ?? []), { id: 'tmp', role: 'user', text: t, user_name: 'You', meta: null, created_at: new Date().toISOString() }]); start(async () => apply(await reviewChatAction(messageId, t))) }
+  const askTeam = () => { setErr(null); start(async () => apply(await askTeamAction(messageId))) }
+  const fmtT = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' })
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+        <div className="text-xs font-semibold text-gray-700">Talk to Cassie about this reply</div>
+        <button className={btnGhost} disabled={pending} title="Cassie works out what she needs to ask, in her own words, and posts it to the team in Google Chat. Their answer comes back and she drafts again." onClick={askTeam}>Ask the team in Chat</button>
+      </div>
+      <div className="max-h-80 overflow-y-auto px-3 py-3 space-y-2 bg-gray-50">
+        {turns === null && <div className="text-xs text-gray-400">Loading…</div>}
+        {turns?.length === 0 && <div className="text-xs text-gray-500">Nothing yet. Ask her why she wrote what she wrote, tell her what to change, or teach her a rule — “anything marked waiting for Tiffany means ask the team first”.</div>}
+        {turns?.map(t => (
+          <div key={t.id} className={`flex ${t.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${t.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm'}`}>
+              {t.text}
+              <div className={`mt-1 text-[10px] ${t.role === 'user' ? 'text-blue-100' : 'text-gray-400'}`}>
+                {t.role === 'user' ? (t.user_name ?? 'You') : 'Cassie'} · {fmtT(t.created_at)}
+                {t.role === 'cassie' && Array.isArray(t.meta?.toolsUsed) && (t.meta!.toolsUsed as string[]).length > 0 && <> · {(t.meta!.toolsUsed as string[]).join(', ')}</>}
+                {t.role === 'cassie' && typeof t.meta?.revisedReplyId === 'string' && <> · draft revised</>}
+                {t.role === 'cassie' && typeof t.meta?.askId === 'string' && <> · asked the team</>}
+                {t.role === 'cassie' && Array.isArray(t.meta?.learned) && (t.meta!.learned as string[]).length > 0 && <> · rule kept</>}
+              </div>
+            </div>
+          </div>))}
+        {pending && <div className="text-xs text-gray-400">Cassie is thinking…</div>}
+        <div ref={endRef} />
+      </div>
+      <div className="flex gap-2 p-2 border-t border-gray-100">
+        <input className={input} placeholder="Message Cassie…" value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} disabled={pending} />
+        <button className={btn} disabled={pending || !draft.trim()} onClick={send}>Send</button>
+      </div>
+      {err && <div className="px-3 pb-2 text-xs text-red-700">{err}</div>}
     </div>
   )
 }

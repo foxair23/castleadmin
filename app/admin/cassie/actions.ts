@@ -192,46 +192,56 @@ export async function reviseReplyAction(id: string, instruction: string): Promis
   })
 }
 
-/** "Ask the team about this" on a draft: Cassie takes the reviewer's note to the Chat space
- *  and owns the conversation from there — back and forth as needed — until she has what she
- *  needs to draft again. The draft stays; the answer supersedes it through Review. */
-export async function askTeamAction(id: string, note: string): Promise<ActionResult & { askId?: string }> {
-  const text = note.trim()
-  if (!text) return { error: 'Say what you want the team to weigh in on first.' }
+/** The conversation with Cassie about one partner email (Review page). */
+export async function loadReviewChatAction(messageId: string): Promise<{ turns: Array<{ id: string; role: 'user' | 'cassie'; text: string; user_name: string | null; meta: Record<string, unknown> | null; created_at: string }> }> {
+  await assertAdmin()
+  const { loadReviewChat } = await import('@/lib/agent/email/review-chat')
+  return { turns: await loadReviewChat(agentDb(), messageId) }
+}
+export async function reviewChatAction(messageId: string, text: string): Promise<ActionResult & { turns?: Array<{ id: string; role: 'user' | 'cassie'; text: string; user_name: string | null; meta: Record<string, unknown> | null; created_at: string }> }> {
+  const t = text.trim()
+  if (!t) return { error: 'Say something first.' }
   return attempt(async () => {
     const { userId, userName } = await reviewer()
-    const db = agentDb()
-    const { data: r } = await db.from('agent_email_replies').select('id, message_id, status, question_summary, sf_job_id, sf_job_number').eq('id', id).single()
-    if (r?.status !== 'draft') throw new Error(`This reply is already ${r?.status ?? 'gone'}.`)
-    const { data: m } = await db.from('agent_email_messages').select('*').eq('id', r.message_id as string).single()
-    if (!m) throw new Error('The inbound message is gone.')
-    const { postChatAsk, ASK_SKIP_REASON } = await import('@/lib/agent/email/chat-assist')
+    const { chatWithCassie } = await import('@/lib/agent/email/review-chat')
     const { loadAgentSettings } = await import('@/lib/agent/settings')
-    const email = {
-      source: 'gmail' as const, gmailMessageId: m.gmail_message_id as string | null, gmailThreadId: m.gmail_thread_id as string | null,
-      internetMessageId: m.internet_message_id as string | null, inReplyTo: m.in_reply_to as string | null, references: (m.references_ids as string[]) ?? [],
-      from: { addr: m.from_addr as string, name: m.from_name as string | null }, to: [], cc: [], subject: (m.subject as string) ?? '', bodyText: (m.body_text as string) ?? '', headers: {}, receivedAt: (m.received_at as string) ?? new Date().toISOString(),
-    }
-    const res = await postChatAsk(db, await loadAgentSettings(db), {
-      replyId: id, messageId: r.message_id as string, email, questionSummary: (r.question_summary as string | null) ?? (m.subject as string) ?? 'the partner\'s question',
-      missing: text, sfJobNumber: r.sf_job_number as string | null, sfJobId: r.sf_job_id as string | null, askedBy: userName ?? 'A reviewer',
-    })
-    if (!res.posted) throw new Error(`Could not ask in Chat: ${ASK_SKIP_REASON[res.reason ?? ''] ?? res.reason}`)
-    await db.from('agent_email_feedback').insert({ reply_id: id, kind: 'note', note: `Asked the team in Google Chat (${userName ?? 'reviewer'}): ${text}`, user_id: userId })
+    const db = agentDb()
+    const r = await chatWithCassie(db, await loadAgentSettings(db), messageId, t, { id: userId, name: userName })
+    if (r.error) throw new Error(r.error)
     revalidatePath(PATH)
-    return { askId: res.askId }
+    return { turns: r.turns }
   })
 }
+/** "Ask the team in Chat": Cassie works out the question herself from the email, her draft
+ *  and the conversation so far, posts it to the team, and says so in the thread. */
+export async function askTeamAction(messageId: string): Promise<ActionResult & { turns?: Array<{ id: string; role: 'user' | 'cassie'; text: string; user_name: string | null; meta: Record<string, unknown> | null; created_at: string }> }> {
+  return attempt(async () => {
+    const { userId, userName } = await reviewer()
+    const { chatWithCassie } = await import('@/lib/agent/email/review-chat')
+    const { loadAgentSettings } = await import('@/lib/agent/settings')
+    const db = agentDb()
+    const r = await chatWithCassie(db, await loadAgentSettings(db), messageId, '', { id: userId, name: userName }, { forceAskTeam: true })
+    if (r.error) throw new Error(r.error)
+    revalidatePath(PATH)
+    return { turns: r.turns }
+  })
+}
+
 export async function replyFeedbackAction(id: string, kind: 'post_send' | 'confused' | 'note', note: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { addReplyFeedback } = await import('@/lib/agent/email/review')
   return attempt(() => addReplyFeedback(agentDb(), id, { kind, note, userId }))
 }
+
 export async function unqueueReplyAction(id: string): Promise<ActionResult> {
   const { userId } = await reviewer()
   const { cancelQueuedReply } = await import('@/lib/agent/email/review')
   return attempt(() => cancelQueuedReply(agentDb(), id, userId))
 }
+
+/** Remove a replayed email and everything composed from it. Replays are test input pasted by
+ *  an admin, so they can simply go; a real partner email is a record and is never deleted
+ *  from here — close it with Reject or Escalate instead. */
 
 /** Remove a replayed email and everything composed from it. Replays are test input pasted by
  *  an admin, so they can simply go; a real partner email is a record and is never deleted
@@ -252,6 +262,7 @@ export async function deleteReplayAction(messageId: string): Promise<ActionResul
  *  is re-fetched from Gmail (so it gets today's relay unwrapping and filters), its old record
  *  is removed, and the result — a draft in Review, or a drop — replaces it. For messages
  *  filed wrongly before a fix, like partner mail recorded as "Castle staff wrote". */
+
 export async function reprocessMessageAction(messageId: string): Promise<ActionResult & { outcome?: string; detail?: string }> {
   await assertAdmin()
   return attempt(async () => {
