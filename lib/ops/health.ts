@@ -30,9 +30,9 @@ export interface Snapshot {
 }
 
 const TZ = 'America/Los_Angeles'
-export function ptParts(d: Date): { hour: number; weekday: string; date: string } {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', hour: '2-digit', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d).map(x => [x.type, x.value]))
-  return { hour: Number(p.hour) % 24, weekday: p.weekday, date: `${p.year}-${p.month}-${p.day}` }
+export function ptParts(d: Date): { hour: number; minute: number; weekday: string; date: string } {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d).map(x => [x.type, x.value]))
+  return { hour: Number(p.hour) % 24, minute: Number(p.minute), weekday: p.weekday, date: `${p.year}-${p.month}-${p.day}` }
 }
 const H = 3_600_000
 const ageMs = (iso: string | null | undefined, now: Date) => iso ? now.getTime() - new Date(iso).getTime() : Infinity
@@ -49,7 +49,12 @@ export const REQUIRED_ALARMS = ['sf-remittance-poll', 'genie-crawl', 'clopay-cra
 
 export function evaluateHealth(s: Snapshot): HealthReport {
   const now = s.now
-  const { hour, weekday, date: today } = ptParts(now)
+  const { hour, minute, weekday, date: today } = ptParts(now)
+  // The extension's hourly list crawls run 7 AM–6 PM; overnight there is only the full
+  // backfill (3–6 AM). So a list-freshness clock cannot start before 7 AM, or the 7 AM
+  // digest flags every morning for the overnight gap.
+  const HOURLY_START = 7
+  const sinceHourlyWindow = Math.max(0, ((hour - HOURLY_START) * 60 + minute) * 60_000)
   const business = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(weekday) && hour >= 6 && hour < 19
   const conds: Condition[] = []
   const add = (key: string, card: string, state: Colour, detail: string) => conds.push({ key, card, state, detail })
@@ -78,12 +83,18 @@ export function evaluateHealth(s: Snapshot): HealthReport {
 
   // ── Crawls, per vendor ──
   for (const [site, vendor, label] of [['genie', 'genie_thd', 'Genie'], ['clopay', 'clopay_hd', 'Clopay']] as const) {
+    const crawls = s.runs.filter(r => r.kind === 'crawl' && r.site === site && r.mode !== 'docs')
     const lists = s.listRuns.filter(r => r.vendor === vendor)
     const lastList = lists[0] ?? null
     const listAge = lastList ? ageMs(lastList.created_at, now) : Infinity
-    add(`${site}_list_stale`, site, business && listAge > 6 * H ? 'red' : business && listAge > 2.5 * H ? 'amber' : 'green',
-      lastList ? `last list crawl ${ago(lastList.created_at, now)} · ${lastList.received} orders (${lastList.mode ?? '?'})` : 'no list crawl recorded')
-    const crawls = s.runs.filter(r => r.kind === 'crawl' && r.site === site && r.mode !== 'docs')
+    // Fresh = the newest of: a recorded list crawl, any crawl that completed (a full crawl
+    // reads the list first, then spends hours on details), or the start of today's hourly
+    // window. Before 7 AM the nightly-full rule below is the one that matters.
+    const lastCrawlDone = crawls.find(r => ['done', 'budget'].includes(r.status) && r.finished_at)
+    const freshness = Math.min(listAge, lastCrawlDone ? ageMs(lastCrawlDone.finished_at, now) : Infinity, sinceHourlyWindow)
+    const overnightNote = listAge > 2.5 * H && freshness < listAge && sinceHourlyWindow < 2.5 * H ? ` · hourly scans resume at ${HOURLY_START} AM` : ''
+    add(`${site}_list_stale`, site, business && freshness > 6 * H ? 'red' : business && freshness > 2.5 * H ? 'amber' : 'green',
+      lastList ? `last list crawl ${ago(lastList.created_at, now)} · ${lastList.received} orders (${lastList.mode ?? '?'})${overnightNote}` : 'no list crawl recorded')
     const fullToday = crawls.find(r => r.mode === 'full' && r.status === 'done' && r.finished_at && ptParts(new Date(r.finished_at)).date === today)
     const fullTriedToday = crawls.find(r => r.mode === 'full' && r.finished_at && ptParts(new Date(r.finished_at)).date === today)
     const lastFullDone = crawls.find(r => r.mode === 'full' && r.status === 'done')

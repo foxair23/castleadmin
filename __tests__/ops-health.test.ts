@@ -62,9 +62,29 @@ describe('evaluateHealth', () => {
     const b = base(day); b.listRuns = b.listRuns.map(l => ({ ...l, created_at: minsAgo(day, 200) }))
     expect(state(evaluateHealth(b), 'genie_list_stale')).toBe('amber')
     b.listRuns = b.listRuns.map(l => ({ ...l, created_at: minsAgo(day, 400) }))
+    b.runs = b.runs.map(r => r.kind === 'crawl' ? { ...r, finished_at: minsAgo(day, 400) } : r)
     expect(state(evaluateHealth(b), 'clopay_list_stale')).toBe('red')
     const night = base(T('2026-09-15T22:00')); night.listRuns = night.listRuns.map(l => ({ ...l, created_at: minsAgo(night.now, 400) }))
     expect(state(evaluateHealth(night), 'genie_list_stale')).toBe('green')
+  })
+
+  it('list crawls: the overnight gap before the 7 AM hourly window is not stale', () => {
+    // Saturday 7:00 AM digest: nightly full crawl read the list at 3 AM and finished at 5 AM.
+    const seven = T('2026-09-12T07:00')
+    const b = base(seven)
+    b.listRuns = b.listRuns.map(l => ({ ...l, mode: 'full', created_at: minsAgo(seven, 240) }))
+    b.runs = b.runs.map(r => r.kind === 'crawl' && r.mode === 'full' ? { ...r, finished_at: minsAgo(seven, 120) } : r)
+    const r = evaluateHealth(b)
+    expect(state(r, 'genie_list_stale')).toBe('green')
+    expect(r.conditions.find(c => c.key === 'genie_list_stale')!.detail).toContain('hourly scans resume at 7 AM')
+    expect(r.overall).toBe('green')
+    // Same snapshot later in the morning with no hourly scan yet: amber at 9:45, red by 1:30 PM.
+    const late = base(T('2026-09-12T09:45'))
+    late.listRuns = late.listRuns.map(l => ({ ...l, created_at: minsAgo(seven, 240) }))
+    late.runs = late.runs.map(r => r.kind === 'crawl' && r.mode === 'full' ? { ...r, finished_at: minsAgo(seven, 120) } : r)
+    expect(state(evaluateHealth(late), 'genie_list_stale')).toBe('amber')
+    const noon = { ...late, now: T('2026-09-12T13:30') }
+    expect(state(evaluateHealth(noon), 'genie_list_stale')).toBe('red')
   })
   it('login: one failure amber, two red, a later success clears it', () => {
     const now = T('2026-09-15T10:00')
