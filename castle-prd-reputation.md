@@ -65,7 +65,7 @@ Every Google review, new or historical, gets a reply drafted by Claude from the 
 2. **Select.** Reviews with no reply on Google, not soft-deleted, and no reply row already in `draft`/`scheduled`/`posted`.
 3. **Context.** Review text, star rating, reviewer first name, the matched job (category, description, completion notes, services/items, city and ZIP), whether a feature 4 post exists for that job, review age. **Tech names are excluded from the context.**
 4. **Draft.** Claude (the composer model setting, currently Sonnet 5, same as Cassie) writes the reply from the Reply Charter (voice and hard rules), active standing instructions, and the 8–12 most relevant style examples, with separate example pools for 4–5 star and 1–3 star replies.
-5. **Guardrails (deterministic, before anything else).** No customer last name, no street address, no prices, no warranty promises, no arguing with a negative review, **no tech name or nickname** (checked against the full tech roster), length 40–120 words for 4–5 stars and 60–150 for 1–3 stars, must include the service type and the city or neighborhood when known (the "SEO keyword" enrichment Big Reputation advertises), signature from settings. A failed check redrafts once with the failure noted; a second failure lands in the queue flagged.
+5. **Guardrails (deterministic, before anything else).** No customer last name, no street address, no prices, no warranty promises, no arguing with a negative review, **no tech name or nickname** (checked against the full tech roster), length 40–120 words for 4–5 stars and 60–150 for 1–3 stars, must include the service type and the city or neighborhood when known (the "SEO keyword" enrichment Big Reputation advertises), signature from settings (decided: "Castle team"). A failed check redrafts once with the failure noted; a second failure lands in the queue flagged.
 6. **Old reviews with no matched job** get a shorter, generic-but-specific reply (service type inferred from the review text only, no job facts).
 
 ### 4.3 Two autopilot switches
@@ -142,7 +142,7 @@ All of this lives on the Insights sub-tab, with the same date and tech filters a
 ## 6. Feature 4 — Google Business Profile posts from yesterday's jobs, with photos
 
 ### 6.1 Photo source (decides the design)
-Service Fusion's API exposes a `pictures` list on each job (`expand=pictures`, documented in the API reference in this repo). The reference does not say what a picture object contains, so a **one-hour live test** against Castle's Service Fusion account is the first task: confirm URLs come back, whether they expire, and their size. If techs are already taking photos in the Service Fusion mobile app, this is the whole photo path. Fallback: a "Job photos" screen in the tech app (upload keyed by Service Fusion job number, Supabase Storage, same pattern as vendor-order attachments).
+Service Fusion's API exposes a `pictures` list on each job (`expand=pictures`, documented in the API reference in this repo). The reference does not say what a picture object contains, so a **one-hour live test** against Castle's Service Fusion account is the first task: confirm URLs come back, whether they expire, and their size. Techs already take photos in the Service Fusion mobile app (confirmed by the owner), so this is the intended photo path. Fallback only if the API does not return usable files: a "Job photos" screen in the tech app (upload keyed by Service Fusion job number, Supabase Storage, same pattern as vendor-order attachments).
 
 ### 6.2 Photo relevance scoring
 Every job photo is scored by Claude (vision) before anything else happens, and the score is kept whether or not a post is made:
@@ -156,7 +156,7 @@ Google requires a publicly reachable URL, JPG or PNG, 10 KB–5 MB, at least 250
 
 ### 6.4 Post pipeline
 1. Daily at a humanized morning time (dispatcher, §4.5): pick yesterday's completed jobs (mirror `work_completed_at`) in allowed categories (default: installs, spring and opener replacements, gate work; service calls and warranty excluded, editable), with at least one photo at or above threshold, not already posted.
-2. Choose up to the daily cap (default 1, weekly cap default 4), preferring before/after pairs, then job types and cities not posted recently.
+2. Choose up to the daily cap (default 1, weekly cap default 4; both to be set to match the posting cadence of the example profiles in §11), preferring before/after pairs, then job types and cities not posted recently.
 3. Claude drafts the post from job category, description, completion notes, services, city or neighborhood, and the Post Charter and style examples. Rules: 80–200 words, plain, no customer name, no street address, no price, **no tech name**, service type plus city in the first sentence, ends with a call to action. Button: "Learn more" or "Call now" with a link to the matching page on castlegaragedoors.com (mapping table by category, editable).
 4. Approval on the Posts sub-tab: preview exactly as Google will show it (photo or pair, text, button), Approve / Edit & Approve / Swap photo / Skip. A **Posts autopilot** switch, off at launch, lets approved-quality drafts schedule without review.
 5. Publish through the dispatcher: `POST accounts/{a}/locations/{l}/localPosts` with `topicType: STANDARD`, `media` (one or two photos by public URL), `callToAction`. Store the returned post name and state. Standard posts expire after 6 months on Google's side.
@@ -192,8 +192,11 @@ Until a second profile exists, everything behaves exactly as today. Doing this e
 ### 8.1 Data provider
 Google does not sell rank-grid data; every tool on the market, Big Reputation included, buys it from a provider that queries Google Maps from chosen coordinates. Recommended: **DataForSEO Google Maps SERP API**, Live mode, about $0.002 per request, accepts exact latitude/longitude and zoom, $50 minimum deposit. Alternative: Local Falcon's API at roughly $0.05 per grid point, 25× the cost, with a UI we would not use.
 
-### 8.2 Monitored list (weekly, week-over-week)
-- Settings hold a **monitored list** of entries, each: keyword, area (grid center as an address or map pin, grid size 5×5 / 7×7 / 9×9, point spacing in miles), and profile. Add, edit, pause, remove. Keywords are free text; the defaults are only a starting list and are expected to change.
+### 8.2 Monitored list (weekly, week-over-week), organized by city and ZIP
+The owner's framing is right: rank is high near the Escondido office and lower in nearby cities, so the unit to watch is the city or ZIP, not a county-wide grid. What Big Reputation does is the standard geogrid: a lattice of points around the address, colored by rank, reviewed as a heat map. We do that too, but the monitored list is built from places, not from a lattice:
+- Each entry is **keyword × place**, where a place is a city or a ZIP (or a dropped pin). The scan runs from the place's center point, with an optional 3×3 mini-grid around it (about a mile apart) so one bad point does not mislead. Add, edit, pause, remove. Keywords are free text; the defaults are only a starting list and are expected to change.
+- A **county-wide grid** (7×7 or 9×9 around the office) remains available as an entry type for the heat-map view, but is optional.
+- Suggested starting places, from the service-area list on the website: Escondido, San Marcos, Vista, Oceanside, Carlsbad, Encinitas, Poway, Rancho Bernardo, San Diego (central), Chula Vista, Fallbrook, Bonsall, Temecula, Murrieta, Corona. Fifteen places × 6 keywords with a 3×3 mini-grid is 810 requests a week, about $1.60.
 - Weekly cron (Monday early morning) scans every active entry. Each result stores our rank at every point (1–20 or none) and the top 20 businesses per point with rating and review count (feeds §5 item 7).
 - Cost example: one 9×9 grid × 8 keywords = 648 requests ≈ $1.30 per week. Ten entries at 7×7 ≈ $1 per week.
 
@@ -302,15 +305,29 @@ About seven weeks of build. Phases 1 and 2 deliver the two headline features. Ph
 
 ---
 
-## 11. Open questions for the owner
+## 11. Decisions recorded (owner, 2026-09-12) and what is still open
 
-1. Which 3–5 Google Business Profiles should be used as examples for replies (positive and negative), and which for posts? They can be the same.
-2. Who approves replies and posts while autopilot is off: all admins, or specific people?
-3. Working window for sends: is Monday–Friday 7:40am–6:20pm, Saturday 8:30am–2:10pm, Sunday off the right default?
-4. Backlog: reply to every unreplied historical review, or only the last N years? Is 3 backlog replies a day the right pace?
-5. Posting cadence: one a day, or 3–4 a week? Which job categories qualify? Where should the button link?
-6. Do techs already take job photos in the Service Fusion mobile app? If not, is a photo step in the tech app acceptable?
-7. Starting monitored list: which keywords and which areas (whole county grid, or several neighborhood grids)? Any competitors to name from the start?
-8. Keep sending the Google link only after a 5, or send it to everyone who replies? (§9.5)
-9. Is a second Google profile planned, and roughly when and where? This sets the priority of §7.
-10. How should replies be signed? For example "The Castle team" or the office's first name. (Never a tech.)
+| Topic | Decision |
+|---|---|
+| Example profiles for replies and posts | Four Google profiles supplied as share links (§11.1). Resolving them to business names and studying their reply style and posting cadence is the first task of the build; those findings seed the Reply Charter, the Post Charter, the posting caps, and the first style examples. |
+| Who approves while autopilot is off | Admins, to start. |
+| Reply speed | Governed by the humanized scheduler in §4.5: 1–6 hours after the review is seen, inside the working window, odd minutes, spaced out. Sync every 30 minutes. |
+| Posting cadence and categories | Match what the example profiles do; caps in §6.4 are placeholders until then. |
+| Photos | Techs already take photos in the Service Fusion app. Relevance and quality scoring (§6.2) is mandatory; nothing posts without a scored photo, and the photo-quality report feeds tech training. |
+| Rank tracking scope | City and ZIP based, not a county grid, because rank is strong near the office and weaker in nearby cities (§8.2). County heat map optional. |
+| Review link only after a 5 | Keep as is. The gating risk in §9.5 stays noted; no change. |
+| Second Google profile | Planned, likely within a few months. Phase 4 (§7) stays at week 7, which lands before the profile exists; it moves earlier if the office date firms up. Reminder: the address must be a real, staffed, signed office (§8.5 item 6). |
+| Reply signature | "Castle team". |
+
+### 11.1 Example profiles supplied
+- https://share.google/AQ2xmYkZpTEgFuQDr
+- https://share.google/4YqbMk6XNM2JKYffP
+- https://share.google/8qmO6ol57New3mGrv
+- https://share.google/GuEhzqsiK1SPxmC8C
+
+These could not be opened from the planning session's network, so the business names are not yet recorded here.
+
+### 11.2 Still open
+1. Working window default (§4.5): Monday–Friday 7:40am–6:20pm, Saturday 8:30am–2:10pm, Sunday off, unless told otherwise.
+2. Backlog scope and pace (§4.4): every unreplied historical review, at 3 a day, unless told otherwise.
+3. Starting keyword list and any competitors to name for the monitored list (§8.2). The suggested places are listed there.
