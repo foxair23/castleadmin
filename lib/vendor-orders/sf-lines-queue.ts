@@ -202,10 +202,31 @@ export async function recordSfLinesResult(
   if (!guard) return { ok: false, error: 'order not found' }
   if (guard.sf_lines_status === 'posted') return { ok: true } // idempotent — already recorded
 
-  await supabase.from('vendor_orders').update(
-    result.ok
-      ? { sf_lines_status: 'posted', sf_lines_synced_at: new Date().toISOString(), sf_lines_sync_note: `posted ${result.posted ?? 0} line item(s)` }
-      : { sf_lines_status: 'failed', sf_lines_sync_note: result.error ?? 'unknown error' },
-  ).eq('id', orderId)
+  if (result.ok) {
+    await supabase.from('vendor_orders').update({ sf_lines_status: 'posted', sf_lines_synced_at: new Date().toISOString(), sf_lines_sync_note: `posted ${result.posted ?? 0} line item(s)` }).eq('id', orderId)
+    return { ok: true }
+  }
+  // A job SF's global search cannot find yet is usually one autopilot created minutes ago:
+  // the lines are queued when the IPO lands, and SF's search index lags. That is a wait,
+  // not a failure — keep it queued and let the next runs try again, a bounded number of times.
+  const error = result.error ?? 'unknown error'
+  const { data: cur } = await supabase.from('vendor_orders').select('sf_lines_sync_note').eq('id', orderId).maybeSingle()
+  const attempt = transientLinesAttempt(error, cur?.sf_lines_sync_note as string | null)
+  if (attempt) {
+    await supabase.from('vendor_orders').update({ sf_lines_status: 'queued', sf_lines_sync_note: `${error} — will retry (attempt ${attempt} of ${MAX_TRANSIENT_ATTEMPTS})` }).eq('id', orderId)
+    return { ok: true }
+  }
+  await supabase.from('vendor_orders').update({ sf_lines_status: 'failed', sf_lines_sync_note: error }).eq('id', orderId)
   return { ok: true }
+}
+
+export const MAX_TRANSIENT_ATTEMPTS = 6
+const TRANSIENT = /not found in SF global search|session expired|redirected to login|failed to fetch|global search did not return json/i
+/** The next attempt number when this error is worth retrying (null = final). Counts from the
+ *  note left by the previous attempt, so no schema change is needed. */
+export function transientLinesAttempt(error: string, previousNote: string | null | undefined): number | null {
+  if (!TRANSIENT.test(error)) return null
+  const m = /attempt (\d+) of \d+/.exec(previousNote ?? '')
+  const next = (m ? Number(m[1]) : 0) + 1
+  return next <= MAX_TRANSIENT_ATTEMPTS ? next : null
 }
