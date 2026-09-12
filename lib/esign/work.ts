@@ -13,7 +13,7 @@ import type { TemplateService } from './templates'
 //   1020259079  Door/Segment Installation, visit 08-27          → install, date 08-27, not done
 //   1020258612  Invoiced, closed, visit tech status "Completed" → install, done
 
-export type WorkPhase = 'inspection' | 'install' | 'delivery' | 'unknown'
+export type WorkPhase = 'inspection' | 'waiting' | 'install' | 'delivery' | 'unknown'
 export interface WorkState {
   phase: WorkPhase
   /** The date of the visit that matters (the latest one), YYYY-MM-DD. */
@@ -25,6 +25,10 @@ export interface WorkState {
 
 const INSPECTION = /inspection|site\s*check|measure/i
 const INSTALL = /install/i
+// A job parked on a waiting status has NOT had its install scheduled, whatever the category
+// or the visit says: 1020259079 read "Door/Segment Installation" with a visit on the books
+// and was still only the site check ("Waiting on Clopay"). Nothing goes out on these.
+export const WAITING = /waiting|pending|on\s*hold|hold\b|unscheduled|need|awaiting/i
 
 export function deriveWork(f: LiveJobFacts, service: TemplateService): WorkState {
   const latest = [...f.visits].sort((a, b) => (b.startDate ?? '').localeCompare(a.startDate ?? ''))[0] ?? null
@@ -32,9 +36,11 @@ export function deriveWork(f: LiveJobFacts, service: TemplateService): WorkState
   const completed = !!f.completedAt || isCompletedish(f.status) || f.visits.some(v => isCompletedish(v.techStatus))
   const cat = f.category ?? ''
   let phase: WorkPhase = 'unknown'
-  if (service === 'delivery') phase = 'delivery'
-  else if (INSPECTION.test(cat) || (!INSTALL.test(cat) && latest?.notes && INSPECTION.test(latest.notes))) phase = 'inspection'
-  else if (INSTALL.test(cat) || INSTALL.test(latest?.notes ?? '') || INSTALL.test(f.description ?? '') || completed) phase = 'install'
+  if (completed) phase = service === 'delivery' ? 'delivery' : 'install'
+  else if (WAITING.test(f.status ?? '')) phase = 'waiting'
+  else if (service === 'delivery') phase = 'delivery'
+  else if (INSPECTION.test(cat) || INSPECTION.test(latest?.notes ?? '')) phase = 'inspection'
+  else if (INSTALL.test(cat) || INSTALL.test(latest?.notes ?? '') || INSTALL.test(f.description ?? '')) phase = 'install'
   const detail = [
     cat ? `category "${cat}"` : 'no category',
     latest ? `visit ${latest.startDate ?? '?'}${latest.notes ? ` "${latest.notes.split(/\r?\n/)[0].slice(0, 40)}"` : ''}${latest.techStatus ? ` (${latest.techStatus})` : ''}` : 'no visit',

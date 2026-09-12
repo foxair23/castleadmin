@@ -33,9 +33,10 @@ describe('customerStageDue', () => {
     expect(customerStageDue({ ...sentOnDay, today: '2026-09-15', hour: 17 })).toBeNull()
     expect(customerStageDue({ ...sentOnDay, today: '2026-09-16', hour: 9 })).toBe('ask')
   })
-  it('never sends during the site check', () => {
+  it('never sends during the site check or while the job is waiting', () => {
     expect(customerStageDue({ ...base, phase: 'inspection', completed: false, hour: 9 })).toBeNull()
     expect(customerStageDue({ ...base, phase: 'inspection', completed: true, hour: 9 })).toBeNull()
+    expect(customerStageDue({ ...base, phase: 'waiting', completed: false, hour: 9 })).toBeNull()
   })
   it('reminds once, three days after the ask, then stops', () => {
     const asked = { ...base, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-15'), customer_asked_at: ptNoon('2026-09-16'), phase: 'install' as const, completed: true }
@@ -101,18 +102,27 @@ const visit = (startDate: string, notes: string | null, techStatus: string) => (
 describe('deriveWork on real Clopay jobs', () => {
   it('1020256603: inspection visit, waiting — nothing is sent', () => {
     const w = deriveWork(job({ status: 'Waiting for Tiffany', category: 'CLOPAY: Inspection', startDate: '2026-08-25', description: 'HD cust door install', visits: [visit('2026-08-25', 'HD cust site inspection', 'Waiting for Tiffany')] }), 'install')
-    expect(w.phase).toBe('inspection'); expect(w.completed).toBe(false)
+    expect(['inspection', 'waiting']).toContain(w.phase); expect(w.completed).toBe(false)
+    expect(customerStageDue({ ...base, phase: w.phase, completed: w.completed, start_date: w.workDate, today: '2026-08-25', hour: 9 })).toBeNull()
   })
   it('1020259141: "Site Check" visit under Inspection — nothing is sent', () => {
     const w = deriveWork(job({ status: 'Waiting on Clopay', category: 'CLOPAY: Inspection', description: 'HD install', visits: [visit('2026-09-09', 'Site Check', 'Waiting on Clopay')] }), 'install')
-    expect(w.phase).toBe('inspection')
+    expect(['inspection', 'waiting']).toContain(w.phase)
+    expect(customerStageDue({ ...base, phase: w.phase, completed: w.completed, start_date: w.workDate, today: '2026-09-09', hour: 9 })).toBeNull()
+    // Even with a non-waiting status, an Inspection-category visit is the site check.
+    expect(deriveWork(job({ status: 'Scheduled', category: 'CLOPAY: Inspection', visits: [visit('2026-09-09', 'Site Check', 'Scheduled')] }), 'install').phase).toBe('inspection')
   })
-  it('1020259079: install visit 08-27, not done — heads-up on the 27th, no ask until complete', () => {
+  it('1020259079: category says Installation but the job is "Waiting on Clopay" — that visit was the site check; nothing is sent', () => {
     const w = deriveWork(job({ status: 'Waiting on Clopay', category: 'CLOPAY: Door/Segment Installation', description: 'HD door installation', visits: [visit('2026-08-27', null, 'Waiting on Clopay')] }), 'install')
-    expect(w).toMatchObject({ phase: 'install', workDate: '2026-08-27', completed: false })
+    expect(w.phase).toBe('waiting')
+    expect(customerStageDue({ ...base, phase: w.phase, completed: w.completed, start_date: w.workDate, today: '2026-08-27', hour: 9 })).toBeNull()
+  })
+  it('the same job once the install is scheduled (a non-waiting status) — heads-up that morning, no ask until complete', () => {
+    const w = deriveWork(job({ status: 'Scheduled', category: 'CLOPAY: Door/Segment Installation', description: 'HD door installation', visits: [visit('2026-09-20', 'HD door install', 'Scheduled')] }), 'install')
+    expect(w).toMatchObject({ phase: 'install', workDate: '2026-09-20', completed: false })
     const d = { ...base, phase: w.phase, completed: w.completed, start_date: w.workDate }
-    expect(customerStageDue({ ...d, today: '2026-08-27', hour: 9 })).toBe('heads_up')
-    expect(customerStageDue({ ...d, status: 'sent_customer', customer_sent_at: ptNoon('2026-08-27'), today: '2026-09-12', hour: 9 })).toBeNull()
+    expect(customerStageDue({ ...d, today: '2026-09-20', hour: 9 })).toBe('heads_up')
+    expect(customerStageDue({ ...d, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-20'), today: '2026-09-25', hour: 9 })).toBeNull()
   })
   it('1020258612: install complete (visit Completed, job Invoiced) — ask now', () => {
     const w = deriveWork(job({ status: 'Invoiced', startDate: '2026-08-14', completedAt: '2026-08-19T10:35:10+00:00', description: 'HD Customer Installation', visits: [visit('2026-07-07', 'HD Customer- Door install', 'Completed')] }), 'install')

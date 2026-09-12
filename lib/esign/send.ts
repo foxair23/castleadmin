@@ -118,7 +118,7 @@ export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSwee
     let status = doc.status
     // The work's real stage comes from the live job (its visits and their completion), not
     // the mirror's single date: a Clopay install's site check must never trigger the form.
-    let phase: 'inspection' | 'install' | 'delivery' | 'unknown' | undefined
+    let phase: 'inspection' | 'waiting' | 'install' | 'delivery' | 'unknown' | undefined
     let completed: boolean | undefined
     if (jobId) {
       const live = await refreshJob(String(jobId))

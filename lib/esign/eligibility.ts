@@ -13,7 +13,7 @@
 
 export type CustomerStage = 'heads_up' | 'ask' | 'reminder'
 
-export type WorkPhase = 'inspection' | 'install' | 'delivery' | 'unknown'
+export type WorkPhase = 'inspection' | 'waiting' | 'install' | 'delivery' | 'unknown'
 
 export interface DueInput {
   status: string
@@ -53,8 +53,10 @@ export function customerStageDue(d: DueInput): CustomerStage | null {
   if (!['prepared', 'sent_customer'].includes(d.status)) return null
   if (d.customer_signed_at) return null
   if (!d.enabled_at || d.created_at < d.enabled_at) return null
-  // A site check is not the work. Nothing goes out until the job is at the install.
-  if (d.phase === 'inspection') return null
+  // A site check is not the work, and a job on a waiting status has no install scheduled.
+  // Nothing goes out until the job is at the install. (Unknown phase = no live read: the
+  // old date rule applies below, which is what a delivery form without visits needs.)
+  if (d.phase === 'inspection' || d.phase === 'waiting') return null
   // The work is done: ask now, whether or not a heads-up ever went out (the link goes with it).
   if (!d.customer_asked_at && d.completed === true) {
     if (d.customer_sent_at && ptDay(d.customer_sent_at) >= d.today && d.hour < 17) return null   // heads-up went this morning; give the day
