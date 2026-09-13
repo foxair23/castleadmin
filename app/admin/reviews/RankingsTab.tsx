@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import type { MonitorOverview, ScanDetail, PlaceRow, ScanRow } from '@/lib/rank/scorecard'
 import type { ScorecardRow, Competitor } from '@/lib/rank/summary'
 import { bandFor, COST_PER_REQUEST_USD, type RankBand } from '@/lib/rank/grid'
+import RankMap, { type MapPin } from './RankMap'
 import {
   addPlaceAction, updatePlaceAction, removePlaceAction, addMonitorsAction, addStarterMonitorsAction, setMonitorActiveAction, removeMonitorAction,
   scanMonitorNowAction, liveCheckAction, monitorFromScanAction, upsertAreaPageAction, rankProviderStatusAction,
@@ -13,7 +14,7 @@ import {
 // week-over-week movement, a Check-now form, the grid view of one scan with
 // the competitor table, and the neighborhood scorecard with what to do next.
 
-interface Overview { configured: boolean; weekKey: string; overview: MonitorOverview[]; scorecard: ScorecardRow[]; liveScans: Array<ScanRow & { place_name: string | null }>; places: PlaceRow[]; areaPages: Array<{ place_id: string; url: string; notes: string | null; page_updated_at: string | null }> }
+interface Overview { configured: boolean; weekKey: string; overview: MonitorOverview[]; scorecard: ScorecardRow[]; liveScans: Array<ScanRow & { place_name: string | null }>; places: PlaceRow[]; areaPages: Array<{ place_id: string; url: string; notes: string | null; page_updated_at: string | null }>; us: { lat: number; lng: number } | null }
 interface Props { defaultKeywords: string[]; businessMatch: string; weeklyCap: number }
 
 const card = 'rounded-lg border border-gray-200 bg-white p-4'
@@ -55,12 +56,49 @@ export default function RankingsTab({ defaultKeywords, businessMatch, weeklyCap 
       )}
       {data?.err && <p className="text-sm text-red-600">{data.err}</p>}
       <CheckNowCard places={d?.places ?? []} defaultKeywords={defaultKeywords} configured={!!d?.configured} onDone={refresh} onOpen={setOpenScan} />
+      {d && d.overview.length > 0 && <OverviewMapCard d={d} onOpen={setOpenScan} />}
       <MonitoredCard d={d} loading={loading} defaultKeywords={defaultKeywords} weeklyCap={weeklyCap} businessMatch={businessMatch} onChange={refresh} onOpen={setOpenScan} />
       <ScorecardCard rows={d?.scorecard ?? []} areaPages={d?.areaPages ?? []} onChange={refresh} />
       <CompetitorsCard keywords={[...new Set((d?.overview ?? []).map(m => m.keyword))]} />
       <LiveHistoryCard scans={d?.liveScans ?? []} onOpen={setOpenScan} onChange={refresh} />
       <PlacesCard places={d?.places ?? []} onChange={refresh} />
       {openScan && <ScanModal scanId={openScan} onClose={() => setOpenScan(null)} />}
+    </div>
+  )
+}
+
+// ── Overview map: every monitored place, colored by position for one keyword ──
+
+function OverviewMapCard({ d, onOpen }: { d: Overview; onOpen: (id: string) => void }) {
+  const keywords = [...new Set(d.overview.map(m => m.keyword))]
+  const [kw, setKw] = useState('')
+  const chosen = keywords.includes(kw) ? kw : keywords[0] ?? ''
+  const pins = useMemo<MapPin[]>(() => { const out: MapPin[] = d.overview
+    .filter(m => m.keyword === chosen && m.place && m.is_active)
+    .map(m => {
+      const r = m.latest?.our_rank_avg ?? null
+      const scanned = !!m.latest
+      return {
+        id: m.id, lat: m.place!.lat, lng: m.place!.lng, kind: 'rank' as const,
+        label: !scanned ? '?' : r == null ? '20+' : String(Math.round(r)),
+        band: scanned ? bandFor(r == null ? null : Math.round(r)) : 'none',
+        delta: m.delta,
+        title: `${m.place!.name} · ${scanned ? (r == null ? 'not in the top 20' : `position ${r}`) : 'not scanned yet'}${m.latest?.found_share != null && m.grid_size > 1 ? ` · seen at ${Math.round(m.latest.found_share * 100)}% of points` : ''}`,
+        onClick: m.latest ? () => onOpen(m.latest!.id) : undefined,
+      }
+    })
+  if (d.us) out.push({ id: 'us', lat: d.us.lat, lng: d.us.lng, kind: 'us', title: 'Castle Garage Doors & Gates' })
+  return out }, [d, chosen, onOpen])
+  const scanned = pins.filter(p => p.kind === 'rank' && p.label !== '?').length
+  return (
+    <div className={card}>
+      <div className="flex flex-wrap items-center gap-3 mb-2">
+        <h2 className="text-sm font-semibold text-gray-900">Where Castle ranks</h2>
+        <select className={`${input} w-60`} value={chosen} onChange={e => setKw(e.target.value)}>{keywords.map(k => <option key={k} value={k}>{k}</option>)}</select>
+        <span className="text-xs text-gray-500">{scanned} of {pins.filter(p => p.kind === 'rank').length} places scanned · click a pin for its grid</span>
+      </div>
+      <RankMap pins={pins} height={460} fitKey={chosen} />
+      <p className="text-[11px] text-gray-400 mt-1">Each pin is a monitored city&rsquo;s average position for this keyword: green top 3, amber 4–10, red 11–20, grey not in the top 20. The red star is Castle&rsquo;s own listing. Arrows show movement since the previous scan.</p>
     </div>
   )
 }
@@ -216,9 +254,10 @@ function ScanModal({ scanId, onClose }: { scanId: string; onClose: () => void })
   }, [scanId])
   const s = detail?.scan
   const n = s?.grid_size ?? 1
+  const pins = useMemo(() => detail ? scanPins(detail) : [], [detail])
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full p-5" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full p-5" onClick={e => e.stopPropagation()}>
         <div className="flex items-start gap-3 mb-3">
           <div>
             <h2 className="text-base font-semibold text-gray-900">{s ? `“${s.keyword}”` : 'Scan'}</h2>
@@ -229,26 +268,18 @@ function ScanModal({ scanId, onClose }: { scanId: string; onClose: () => void })
         {err && <p className="text-sm text-red-600">{err}</p>}
         {!detail && !err && <p className="text-sm text-gray-400">Loading…</p>}
         {detail && (
-          <div className="grid md:grid-cols-[auto_1fr] gap-5">
-            <div>
-              <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
-                {detail.points.map(p => (
-                  <a key={`${p.row}-${p.col}`} href={`https://www.google.com/maps/search/${encodeURIComponent(s!.keyword)}/@${p.lat},${p.lng},14z`} target="_blank" rel="noreferrer" title={p.error ?? `${p.lat}, ${p.lng}${p.previous != null ? ` · was ${p.previous}` : ''}`}
-                    className={`relative flex flex-col items-center justify-center rounded ${n === 1 ? 'w-24 h-24' : n <= 3 ? 'w-16 h-16' : 'w-10 h-10'} ${p.error ? 'bg-gray-100 text-gray-400' : BAND_CLASS[p.band]}`}>
-                    <span className={`font-bold ${n >= 5 ? 'text-xs' : 'text-lg'}`}>{p.error ? '!' : p.our_rank ?? '—'}</span>
-                    {p.delta != null && p.delta !== 0 && n <= 5 && <span className="text-[10px] leading-none">{p.delta > 0 ? '▲' : '▼'}{Math.abs(p.delta)}</span>}
-                  </a>
-                ))}
-              </div>
-              <p className="text-[11px] text-gray-400 mt-1">Click a square to open that spot on Google Maps. North is up.</p>
-              {s?.source === 'live' && !s.monitor_id && (
-                <div className="mt-3 flex gap-2">
-                  <input className={`${input} w-40`} placeholder="Place name" value={name} onChange={e => setName(e.target.value)} />
-                  <button className={btnGhost} disabled={pending || !name.trim()} onClick={() => start(async () => { const r = await monitorFromScanAction(scanId, name); setMsg(r.error ?? 'Added to the monitored list. It will be scanned every Monday.') })}>Monitor this</button>
-                </div>
-              )}
-              {msg && <p className="text-xs text-gray-600 mt-1">{msg}</p>}
+          <div className="space-y-4">
+            <RankMap pins={pins} height={n === 1 ? 320 : 440} fitKey={scanId} />
+            <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-400">
+              <span>Each pin is one search made from that spot: green top 3, amber 4–10, red 11–20, grey not in the top 20. Arrows show movement since the previous scan. The red star is Castle&rsquo;s listing. Click a pin to open that spot on Google Maps.</span>
             </div>
+            {s?.source === 'live' && !s.monitor_id && (
+              <div className="flex gap-2">
+                <input className={`${input} w-40`} placeholder="Place name" value={name} onChange={e => setName(e.target.value)} />
+                <button className={btnGhost} disabled={pending || !name.trim()} onClick={() => start(async () => { const r = await monitorFromScanAction(scanId, name); setMsg(r.error ?? 'Added to the monitored list. It will be scanned every Monday.') })}>Monitor this</button>
+              </div>
+            )}
+            {msg && <p className="text-xs text-gray-600">{msg}</p>}
             <div>
               <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-1">Who holds the spots</h3>
               <CompetitorTable rows={detail.competitors} />
@@ -258,6 +289,18 @@ function ScanModal({ scanId, onClose }: { scanId: string; onClose: () => void })
       </div>
     </div>
   )
+}
+
+function scanPins(detail: ScanDetail): MapPin[] {
+  const pins: MapPin[] = detail.points.map(p => ({
+    id: `${p.row}-${p.col}`, lat: p.lat, lng: p.lng, kind: 'rank' as const,
+    label: p.error ? '!' : p.our_rank == null ? '20+' : String(p.our_rank), band: p.error ? 'none' : p.band, delta: p.delta,
+    title: p.error ?? `${p.our_rank == null ? 'Not in the top 20' : `Position ${p.our_rank}`}${p.previous != null ? ` · was ${p.previous}` : ''}`,
+    href: `https://www.google.com/maps/search/${encodeURIComponent(detail.scan.keyword)}/@${p.lat},${p.lng},14z`,
+  }))
+  if (detail.points.length > 1) pins.push({ id: 'center', lat: detail.scan.center_lat, lng: detail.scan.center_lng, kind: 'center', title: 'Scan center' })
+  if (detail.us) pins.push({ id: 'us', lat: detail.us.lat, lng: detail.us.lng, kind: 'us', title: 'Castle Garage Doors & Gates' })
+  return pins
 }
 
 function CompetitorTable({ rows }: { rows: Competitor[] }) {
