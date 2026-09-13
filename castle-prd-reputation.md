@@ -1,9 +1,10 @@
 # Castle Garage Doors & Gates — Piecework Payroll App
 ## PRD — Reputation Engine (Big Reputation parity, built in-house)
 
-**Status: Phase 1 MERGED (migration 135 applied); Phase 2 BUILT on branch `claude/big-reputation-analysis-wuuc8w` (2026-09-13); Phases 3–4 not started.**
+**Status: Phase 1 MERGED (migration 135 applied); Phases 2 and 3 BUILT on branch `claude/big-reputation-analysis-wuuc8w` (2026-09-13); Phase 4 not started.**
 Phase 1 covers §3 (reminders, per-customer review links), §4 (reply agent, autopilot switches, backlog, humanized send queue), §5 item 2 (AI tags) and the Settings sub-tab in §9.1.
 Phase 2 covers §6 (job photos from Service Fusion, photo scoring and before/after pairing, post drafting with guardrails, the Posts sub-tab, posts autopilot off by default, publishing through the send queue) and §5 items 1, 3, 4, 5, 8, 9 and 11 (the Insights sub-tab and the Monday digest email). Owner steps before it runs: apply `supabase/migrations/136_reputation_posts.sql` in the Supabase SQL editor, then use "Check a job's photos" on the Posts sub-tab with a recent job number to confirm Service Fusion returns picture files. Button links on posts point at castlegarage.com (the domain moved; §6.4 below says castlegaragedoors.com).
+Phase 3 covers §8 (monitored keyword × place list with 3×3 mini-grids, weekly Monday scans within a request cap, Check now with saved results, grid view with week-over-week arrows, competitor benchmark per keyword, neighborhood scorecard with movement rules and area pages) and §5 item 7 and the rank line of item 9. Owner steps: apply `supabase/migrations/137_rank_tracking.sql`; open a DataForSEO account and set `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` in the app environment; on the Rankings sub-tab press "Add starter list" (fifteen service-area cities × the default keywords, about $1.60 a week) or add places one at a time. Not built: the Leaflet map view (the grid is shown as colored squares that open Google Maps), the job-density overlay on the map (job counts by ZIP are on the scorecard instead), and the Performance API report (§5 item 6).
 Revision 2, 2026-09-12: incorporates owner feedback on autopilot switches, historical reviews, humanized send timing, tab layout, photo relevance, configurable and live rank queries, and no tech names.
 
 ---

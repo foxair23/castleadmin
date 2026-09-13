@@ -9,6 +9,7 @@ import { loadPostsNeedingApprovalCount } from '@/lib/reputation/post-actions'
 import { listCharterVersions } from '@/lib/agent/knowledge'
 import { loadAgentSettings } from '@/lib/agent/settings'
 import { isLlmConfigured } from '@/lib/agent/llm'
+import { isRankProviderConfigured } from '@/lib/rank/dataforseo'
 
 export const metadata = { title: 'Reviews' }
 export const dynamic = 'force-dynamic'
@@ -79,6 +80,7 @@ export default async function ReviewsPage() {
         charter, versions, instructions, styles,
         stats: approvalStats(statRows),
         postCharter, postVersions, postInstructions, postStyles, categories,
+        rankProviderConfigured: isRankProviderConfigured(),
       }}
     />
   )

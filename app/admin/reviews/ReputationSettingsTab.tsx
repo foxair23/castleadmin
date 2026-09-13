@@ -31,6 +31,8 @@ export interface Props {
   postInstructions: Instruction[]
   postStyles: StyleExample[]
   categories: string[]
+  // Rank tracking (Phase 3)
+  rankProviderConfigured: boolean
 }
 
 const input = 'w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 bg-white'
@@ -83,6 +85,8 @@ export default function ReputationSettingsTab(p: Props) {
       <CharterEditor title="Post Charter" blurb="How Castle writes profile posts: plain and local, one job per post, no names, no prices, no hashtags. Included in every post draft. Saving creates a new version; older versions stay." charter={p.postCharter} versions={p.postVersions} save={savePostCharter} activate={activatePostCharter} />
       <InstructionsCard title="Standing instructions for posts" blurb="Short rules applied to every post draft, e.g. “Mention same-day service when the job was booked and finished the same day.”" rows={p.postInstructions} create={createPostInstruction} />
       <PostStyleExamplesCard rows={p.postStyles} categories={p.categories} />
+      <h2 className="text-base font-semibold text-gray-900 pt-4">Map Pack rankings</h2>
+      <RankCard settings={p.settings} providerConfigured={p.rankProviderConfigured} />
       <ModelsCard settings={p.settings} models={p.models} llmConfigured={p.llmConfigured} />
     </div>
   )
@@ -443,6 +447,40 @@ function PostStyleExamplesCard({ rows, categories }: { rows: StyleExample[]; cat
         ))}
         {rows.length === 0 && <li className="py-2 text-sm text-gray-400">No examples yet.</li>}
       </ul>
+    </div>
+  )
+}
+
+// ── Rank tracking ───────────────────────────────────────────────────────────
+
+function RankCard({ settings: s, providerConfigured }: { settings: ReputationSettings; providerConfigured: boolean }) {
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [msg, setMsg] = useState<string | null>(null)
+  const [f, setF] = useState({ rank_business_match: s.rank_business_match, rank_weekly_request_cap: s.rank_weekly_request_cap, keywords: s.rank_default_keywords.join('\n') })
+  const flip = (v: boolean) => start(async () => { setMsg(null); const r = await saveReputationSettings({ rank_scans_enabled: v }); setMsg(r.error ?? null); if (!r.error) router.refresh() })
+  return (
+    <div className={card}>
+      <div className={`rounded-lg border p-3 ${s.rank_scans_enabled ? 'border-green-300 bg-green-50' : 'border-gray-200'}`}>
+        <Switch label="Weekly scans" on={s.rank_scans_enabled} disabled={pending} onChange={flip} />
+        <p className="text-xs text-gray-600 mt-2">On: every active monitored search runs each Monday. Off: nothing runs by itself; &ldquo;Check now&rdquo; and &ldquo;scan now&rdquo; still work.</p>
+        <p className={`text-xs mt-1 ${providerConfigured ? 'text-green-700' : 'text-amber-700'}`}>{providerConfigured ? 'Rank data provider connected (DataForSEO).' : 'Rank data provider not connected: set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD in the app environment.'}</p>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3 mt-4">
+        <Field label="How Castle is recognized in results" hint="Case-insensitive text matched against each business name in the Map Pack. Keep it short so a renamed profile still matches."><input className={input} value={f.rank_business_match} onChange={e => setF(x => ({ ...x, rank_business_match: e.target.value }))} /></Field>
+        <Field label="Searches per week, max" hint="Each grid point is one search at about $0.002. A 3×3 grid is 9 searches. The Monday run stops at this number."><input type="number" className={input} value={f.rank_weekly_request_cap} onChange={e => setF(x => ({ ...x, rank_weekly_request_cap: Number(e.target.value) }))} /></Field>
+      </div>
+      <div className="mt-3">
+        <Field label="Default keywords" hint="One per line. Offered when adding a place and used by “Add starter list”. Existing monitored searches are not changed."><textarea rows={6} className={input} value={f.keywords} onChange={e => setF(x => ({ ...x, keywords: e.target.value }))} /></Field>
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <button className={btn} disabled={pending} onClick={() => start(async () => {
+          setMsg(null)
+          const r = await saveReputationSettings({ rank_business_match: f.rank_business_match, rank_weekly_request_cap: f.rank_weekly_request_cap, rank_default_keywords: f.keywords.split('\n') })
+          setMsg(r.error ?? 'Saved.'); if (!r.error) router.refresh()
+        })}>Save ranking settings</button>
+        {msg && <span className="text-sm text-gray-600">{msg}</span>}
+      </div>
     </div>
   )
 }

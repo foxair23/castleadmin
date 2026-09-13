@@ -86,10 +86,17 @@ export async function loadScorecard(db: SupabaseClient, overview?: MonitorOvervi
   ])
   const jobRows = (jobs ?? []) as Array<{ id: string; postal_code: string | null }>
   const jobIds = jobRows.map(j => j.id)
-  const [{ data: reviews }, { data: surveys }] = await Promise.all([
-    jobIds.length ? db.from('google_reviews').select('id, matched_job_id, star_rating, reply_text, reply_updated_at, created_at_google').in('matched_job_id', jobIds).in('match_status', ['auto', 'confirmed']).is('deleted_at', null) : Promise.resolve({ data: [] }),
-    jobIds.length ? db.from('csat_surveys').select('sf_job_id, sent_at').in('sf_job_id', jobIds).eq('is_test', false).not('sent_at', 'is', null) : Promise.resolve({ data: [] }),
-  ])
+  // Chunked: a busy quarter can be thousands of jobs, more than one URL holds.
+  const reviews: Array<{ matched_job_id: string; star_rating: number; reply_text: string | null; reply_updated_at: string | null; created_at_google: string }> = []
+  const surveys: Array<{ sf_job_id: string }> = []
+  for (let i = 0; i < jobIds.length; i += 400) {
+    const ids = jobIds.slice(i, i + 400)
+    const [{ data: r }, { data: sv }] = await Promise.all([
+      db.from('google_reviews').select('matched_job_id, star_rating, reply_text, reply_updated_at, created_at_google').in('matched_job_id', ids).in('match_status', ['auto', 'confirmed']).is('deleted_at', null),
+      db.from('csat_surveys').select('sf_job_id').in('sf_job_id', ids).eq('is_test', false).not('sent_at', 'is', null),
+    ])
+    reviews.push(...((r ?? []) as typeof reviews)); surveys.push(...((sv ?? []) as typeof surveys))
+  }
   const pageByPlace = new Map(((pages ?? []) as Array<{ place_id: string; url: string; page_updated_at: string | null }>).map(p => [p.place_id, p]))
   // Four-weeks-ago rank per monitor from history.
   const fourWeeksKey = addPtDays(weekKeyFor(new Date()), -28)
@@ -104,10 +111,10 @@ export async function loadScorecard(db: SupabaseClient, overview?: MonitorOvervi
     const zipSet = new Set(place.zips)
     const myJobs = jobRows.filter(j => j.postal_code && zipSet.has(j.postal_code))
     const myJobIds = new Set(myJobs.map(j => j.id))
-    const myReviews = ((reviews ?? []) as Array<{ matched_job_id: string; star_rating: number; reply_text: string | null; reply_updated_at: string | null; created_at_google: string }>).filter(r => myJobIds.has(r.matched_job_id))
+    const myReviews = reviews.filter(r => myJobIds.has(r.matched_job_id))
     const replied = myReviews.filter(r => r.reply_text)
     const within48 = replied.filter(r => r.reply_updated_at && new Date(r.reply_updated_at).getTime() - new Date(r.created_at_google).getTime() <= 48 * 3_600_000)
-    const mySurveys = ((surveys ?? []) as Array<{ sf_job_id: string }>).filter(s => myJobIds.has(s.sf_job_id))
+    const mySurveys = surveys.filter(s => myJobIds.has(s.sf_job_id))
     const mons = ov.filter(m => m.place_id === place.id && m.is_active)
     const keywords = mons.map(m => ({
       keyword: m.keyword, now: m.latest?.our_rank_avg ?? null,
