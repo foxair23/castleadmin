@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { createClient as createAdminClient, type SupabaseClient } from '@supabase/supabase-js'
 
 async function requireAdmin() {
   const supabase = await createClient()
@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const status   = searchParams.get('status')
   const dateFrom = searchParams.get('date_from')
   const dateTo   = searchParams.get('date_to')
+  const reply    = searchParams.get('reply') // needs_approval | backlog | scheduled | posted | unreplied
 
   const db = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
   let query = db
     .from('google_reviews')
     .select(
-      'id, google_review_id, reviewer_name, star_rating, comment, created_at_google, reply_text, match_status, match_score, match_confidence, matched_customer_id, matched_job_id, matched_tech_user_id, deleted_at',
+      'id, google_review_id, reviewer_name, star_rating, comment, created_at_google, reply_text, reply_source, ai_sentiment, ai_themes, ai_mentioned_names, match_status, match_score, match_confidence, matched_customer_id, matched_job_id, matched_tech_user_id, deleted_at',
       { count: 'exact' }
     )
     .is('deleted_at', null)
@@ -45,6 +46,22 @@ export async function GET(req: NextRequest) {
   if (status && status !== 'all') query = query.eq('match_status', status)
   if (dateFrom) query = query.gte('created_at_google', dateFrom)
   if (dateTo)   query = query.lte('created_at_google', dateTo + 'T23:59:59Z')
+
+  // Reply-state filters resolve to review ids through review_replies.
+  if (reply && reply !== 'all') {
+    if (reply === 'unreplied') query = query.is('reply_text', null)
+    else {
+      let rq = db.from('review_replies').select('google_review_id').limit(5000)
+      if (reply === 'needs_approval') rq = rq.eq('status', 'draft')
+      else if (reply === 'backlog') rq = rq.eq('origin', 'backlog')
+      else if (reply === 'scheduled') rq = rq.in('status', ['approved', 'scheduled'])
+      else if (reply === 'posted') rq = rq.in('status', ['posted', 'verified'])
+      const { data: rr } = await rq
+      const ids = [...new Set(((rr ?? []) as Array<{ google_review_id: string }>).map(r => r.google_review_id))]
+      if (ids.length === 0) return NextResponse.json({ reviews: [], total: 0, page, pageSize, needsApproval: await needsApprovalCount(db) })
+      query = query.in('id', ids)
+    }
+  }
 
   const { data, error, count } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -113,8 +130,24 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Latest reply row per review (the live one wins when both exist).
+  const replyMap: Record<string, unknown> = {}
+  if (rows.length > 0) {
+    const { data: replies } = await db
+      .from('review_replies')
+      .select('id, google_review_id, status, origin, band, draft_text, final_text, scheduled_for, sent_at, push_reasons, guardrail_notes, error, approved_by, approved_at, created_at')
+      .in('google_review_id', rows.map(r => r.id as string))
+      .order('created_at', { ascending: false })
+    const LIVE = new Set(['draft', 'approved', 'scheduled', 'posted'])
+    for (const rp of (replies ?? []) as Array<{ google_review_id: string; status: string }>) {
+      const cur = replyMap[rp.google_review_id] as { status: string } | undefined
+      if (!cur || (!LIVE.has(cur.status) && LIVE.has(rp.status))) replyMap[rp.google_review_id] = rp
+    }
+  }
+
   const reviews = rows.map(r => ({
     ...r,
+    reply: replyMap[r.id as string] ?? null,
     matched_customer_name:
       (r.matched_customer_id ? customerNameMap[r.matched_customer_id] : null) ??
       (r.matched_job_id ? jobCustomerNameMap[r.matched_job_id] : null) ??
@@ -126,5 +159,10 @@ export async function GET(req: NextRequest) {
     matched_tech_overridden: r.matched_tech_user_id != null,
   }))
 
-  return NextResponse.json({ reviews, total: count ?? 0, page, pageSize })
+  return NextResponse.json({ reviews, total: count ?? 0, page, pageSize, needsApproval: await needsApprovalCount(db) })
+}
+
+async function needsApprovalCount(db: SupabaseClient): Promise<number> {
+  const { count } = await db.from('review_replies').select('id', { count: 'exact', head: true }).eq('status', 'draft')
+  return count ?? 0
 }

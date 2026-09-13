@@ -2,8 +2,13 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import ReviewsTabs from './ReviewsTabs'
 import { loadCsatSettings } from '@/lib/csat/config'
 import { getCsatRows } from '@/lib/csat/metrics'
+import { loadReputationSettings } from '@/lib/reputation/settings'
+import { loadNeedsApprovalCount } from '@/lib/reputation/reply-actions'
 
 export const metadata = { title: 'Reviews' }
+export const dynamic = 'force-dynamic'
+// Backlog drafting and tag backfill run as server actions from this page.
+export const maxDuration = 300
 
 export default async function ReviewsPage() {
   const db = createAdminClient(
@@ -39,7 +44,7 @@ export default async function ReviewsPage() {
   const techs = (techRows ?? []).map(t => ({ id: t.id as string, full_name: (t.full_name as string | null) ?? '' }))
 
   // CSAT sub-tab data.
-  const [csatSettings, csatRows] = await Promise.all([loadCsatSettings(), getCsatRows()])
+  const [csatSettings, csatRows, repSettings, needsApproval] = await Promise.all([loadCsatSettings(), getCsatRows(), loadReputationSettings(db), loadNeedsApprovalCount(db)])
 
   return (
     <ReviewsTabs
@@ -47,6 +52,8 @@ export default async function ReviewsPage() {
       google={{
         kpi: { total, avgRating, fiveStars, oneStar },
         lastRun: lastRun as { status: string; ended_at: string | null; reviews_new: number | null; reviews_seen: number | null; errors_json: string[] | null } | null,
+        needsApproval,
+        backlogCap: repSettings.cap_backlog_replies,
       }}
       techs={techs}
     />
