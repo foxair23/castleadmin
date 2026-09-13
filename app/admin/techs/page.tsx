@@ -14,7 +14,7 @@ export default async function TechsPage() {
     supabase
       .from('profiles')
       .select('id, full_name, role, is_active, created_at, weekly_bonus, gas_eligible, is_dispatch, sf_technician_id')
-      .in('role', ['technician', 'sales'])
+      .in('role', ['technician', 'sales', 'admin'])
       .order('full_name'),
     adminClient.auth.admin.listUsers({ perPage: 1000 }),
   ])

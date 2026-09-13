@@ -55,6 +55,24 @@ export async function PATCH(
     return NextResponse.json({ ok: true })
   }
 
+  // Handle role change. Two guards keep the admin seat safe: nobody changes their own
+  // role (so the last admin cannot demote themselves), and there is always at least one
+  // other active admin left when an admin is demoted.
+  if (typeof body.role === 'string') {
+    const role = body.role
+    if (!['technician', 'sales', 'admin'].includes(role)) return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+    if (id === admin.id) return NextResponse.json({ error: 'You cannot change your own role. Ask another admin.' }, { status: 400 })
+    const { data: current } = await adminClient.from('profiles').select('role, is_active').eq('id', id).maybeSingle()
+    if (!current) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    if (current.role === 'admin' && role !== 'admin') {
+      const { count } = await adminClient.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'admin').eq('is_active', true).neq('id', id)
+      if ((count ?? 0) < 1) return NextResponse.json({ error: 'That is the only other admin; make someone else an admin first.' }, { status: 400 })
+    }
+    const { data: profile, error } = await adminClient.from('profiles').update({ role }).eq('id', id).select().single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ profile })
+  }
+
   // Handle active toggle
   if (typeof body.is_active === 'boolean') {
     const { data: profile, error } = await adminClient

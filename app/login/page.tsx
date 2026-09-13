@@ -1,16 +1,18 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const expired = useSearchParams().get('error') === 'expired'
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -86,6 +88,11 @@ export default function LoginPage() {
               {error}
             </p>
           )}
+          {expired && !error && (
+            <p className="text-sm text-amber-300 bg-amber-950 border border-amber-800 rounded px-3 py-2">
+              That reset link has expired or was already used. Request a new one below.
+            </p>
+          )}
 
           <button
             type="submit"
@@ -94,8 +101,14 @@ export default function LoginPage() {
           >
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
+          <Link href="/login/forgot" className="block text-center text-sm text-gray-400 hover:text-gray-200">Forgot password?</Link>
         </form>
       </div>
     </div>
   )
+}
+
+// useSearchParams needs a Suspense boundary for the static shell to prerender.
+export default function LoginPage() {
+  return <Suspense fallback={null}><LoginForm /></Suspense>
 }
