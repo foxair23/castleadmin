@@ -111,6 +111,7 @@ const EDITABLE: ReadonlyArray<keyof ReputationSettings> = [
   'reply_delay_min_hours', 'reply_delay_max_hours', 'working_window', 'min_gap_minutes', 'max_gap_minutes', 'skip_hour_ratio',
   'cap_new_replies', 'cap_backlog_replies', 'cap_posts', 'ingest_interval_minutes',
   'autopilot_posts', 'cap_posts_weekly', 'post_allowed_categories', 'post_cta_map', 'photo_min_score',
+  'rank_scans_enabled', 'rank_business_match', 'rank_weekly_request_cap', 'rank_default_keywords',
 ]
 
 export async function saveReputationSettings(patch: Partial<ReputationSettings>): Promise<ActionResult> {
@@ -126,7 +127,9 @@ export async function saveReputationSettings(patch: Partial<ReputationSettings>)
     num('reply_delay_min_hours', 0, 72); num('reply_delay_max_hours', 0, 72)
     num('min_gap_minutes', 1, 600); num('max_gap_minutes', 1, 600); num('skip_hour_ratio', 0, 0.9)
     num('cap_new_replies', 0, 100); num('cap_backlog_replies', 0, 100); num('cap_posts', 0, 20); num('ingest_interval_minutes', 5, 1440)
-    num('cap_posts_weekly', 0, 50); num('photo_min_score', 0, 100)
+    num('cap_posts_weekly', 0, 50); num('photo_min_score', 0, 100); num('rank_weekly_request_cap', 0, 50000)
+    if ('rank_business_match' in row) { row.rank_business_match = String(row.rank_business_match).trim().toLowerCase(); if (!row.rank_business_match) throw new Error('The business match text cannot be empty') }
+    if ('rank_default_keywords' in row) row.rank_default_keywords = (Array.isArray(row.rank_default_keywords) ? row.rank_default_keywords : []).map(k => String(k).trim().toLowerCase()).filter(Boolean)
     if ('reply_delay_min_hours' in row && 'reply_delay_max_hours' in row && (row.reply_delay_min_hours as number) > (row.reply_delay_max_hours as number)) throw new Error('Reply delay: min must be ≤ max')
     if ('min_gap_minutes' in row && 'max_gap_minutes' in row && (row.min_gap_minutes as number) > (row.max_gap_minutes as number)) throw new Error('Gap: min must be ≤ max')
     if ('reply_signature' in row) { row.reply_signature = String(row.reply_signature).trim(); if (!row.reply_signature) throw new Error('The signature cannot be empty') }
@@ -284,5 +287,155 @@ export async function createPostStyleExample(input: { final_text: string; catego
     if (!input.final_text.trim()) throw new Error('Paste the post first')
     const { addStyleExample } = await import('@/lib/agent/knowledge')
     await addStyleExample(agentDb(), { inquiry_text: null, final_text: input.final_text, question_type: input.category || null, audience: 'post', source: 'staff' }, userId)
+  })
+}
+
+// ── Rank tracking (Phase 3) ─────────────────────────────────────────────────
+
+export async function addPlaceAction(input: { name: string; query?: string; lat?: number | null; lng?: number | null; zips?: string; kind?: 'city' | 'zip' | 'pin' }): Promise<ActionResult & { placeId?: string; lat?: number; lng?: number; label?: string }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const name = input.name.trim()
+    if (!name) throw new Error('Give the place a name')
+    let lat = input.lat ?? null, lng = input.lng ?? null, kind = input.kind ?? 'city', label = name
+    if (lat == null || lng == null) {
+      const { geocode } = await import('@/lib/rank/geocode')
+      const hit = await geocode(input.query?.trim() || name)
+      if (!hit) throw new Error(`Could not find "${input.query || name}" on the map. Try "City, CA", a ZIP, or "lat, lng".`)
+      lat = hit.lat; lng = hit.lng; kind = hit.kind; label = hit.label
+    }
+    const zips = (input.zips ?? '').split(/[\s,]+/).map(z => z.trim()).filter(z => /^\d{5}$/.test(z))
+    const { data, error } = await agentDb().from('rank_places').upsert({ name, kind, lat, lng, zips, is_active: true, updated_at: new Date().toISOString() }, { onConflict: 'name' }).select('id').single()
+    if (error) throw new Error(error.message)
+    return { placeId: data.id as string, lat, lng, label }
+  })
+}
+export async function updatePlaceAction(id: string, patch: { name?: string; lat?: number; lng?: number; zips?: string; is_active?: boolean }): Promise<ActionResult> {
+  await assertAdmin()
+  return attempt(async () => {
+    const row: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (patch.name != null) { row.name = patch.name.trim(); if (!row.name) throw new Error('Name cannot be empty') }
+    if (patch.lat != null) row.lat = Number(patch.lat)
+    if (patch.lng != null) row.lng = Number(patch.lng)
+    if (patch.zips != null) row.zips = patch.zips.split(/[\s,]+/).map(z => z.trim()).filter(z => /^\d{5}$/.test(z))
+    if (patch.is_active != null) row.is_active = patch.is_active
+    const { error } = await agentDb().from('rank_places').update(row).eq('id', id)
+    if (error) throw new Error(error.message)
+  })
+}
+export async function removePlaceAction(id: string): Promise<ActionResult> {
+  await assertAdmin()
+  return attempt(async () => { const { error } = await agentDb().from('rank_places').delete().eq('id', id); if (error) throw new Error(error.message) })
+}
+
+export async function addMonitorsAction(input: { placeId: string; keywords: string[]; gridSize: number; spacingMiles?: number }): Promise<ActionResult & { added?: number }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const keywords = [...new Set(input.keywords.map(k => k.trim().toLowerCase()).filter(Boolean))]
+    if (!keywords.length) throw new Error('Add at least one keyword')
+    if (![1, 3, 5, 7, 9].includes(input.gridSize)) throw new Error('Grid must be 1, 3, 5, 7 or 9')
+    const rows = keywords.map(keyword => ({ place_id: input.placeId, keyword, grid_size: input.gridSize, spacing_miles: input.spacingMiles ?? 1, is_active: true, updated_at: new Date().toISOString() }))
+    const { error } = await agentDb().from('rank_monitors').upsert(rows, { onConflict: 'place_id,keyword' })
+    if (error) throw new Error(error.message)
+    return { added: rows.length }
+  })
+}
+/** Every active place × the default keywords, as 3×3 mini-grids. Existing monitors are left alone. */
+export async function addStarterMonitorsAction(): Promise<ActionResult & { added?: number; places?: number }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const db = agentDb()
+    const { loadReputationSettings } = await import('@/lib/reputation/settings')
+    const s = await loadReputationSettings(db)
+    const { data: places } = await db.from('rank_places').select('id').eq('is_active', true)
+    const rows = ((places ?? []) as Array<{ id: string }>).flatMap(p => s.rank_default_keywords.map(keyword => ({ place_id: p.id, keyword, grid_size: 3, spacing_miles: 1, is_active: true, updated_at: new Date().toISOString() })))
+    if (!rows.length) throw new Error('No active places and/or no default keywords')
+    const { error } = await db.from('rank_monitors').upsert(rows, { onConflict: 'place_id,keyword', ignoreDuplicates: true })
+    if (error) throw new Error(error.message)
+    return { added: rows.length, places: (places ?? []).length }
+  })
+}
+export async function setMonitorActiveAction(id: string, active: boolean): Promise<ActionResult> {
+  await assertAdmin()
+  return attempt(async () => { const { error } = await agentDb().from('rank_monitors').update({ is_active: active, updated_at: new Date().toISOString() }).eq('id', id); if (error) throw new Error(error.message) })
+}
+export async function removeMonitorAction(id: string): Promise<ActionResult> {
+  await assertAdmin()
+  return attempt(async () => { const { error } = await agentDb().from('rank_monitors').delete().eq('id', id); if (error) throw new Error(error.message) })
+}
+/** Scan one monitor right now (counts against the weekly cap only by being recorded as a weekly scan for this week). */
+export async function scanMonitorNowAction(id: string): Promise<ActionResult & { scanId?: string; avgRank?: number | null; foundShare?: number; requests?: number; cost?: number }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const db = agentDb()
+    const { MONITOR_SELECT, runScan } = await import('@/lib/rank/scan')
+    const { data } = await db.from('rank_monitors').select(MONITOR_SELECT).eq('id', id).maybeSingle()
+    const m = data as unknown as { id: string; place_id: string; keyword: string; grid_size: number; spacing_miles: number; place: { lat: number; lng: number } | null } | null
+    if (!m?.place) throw new Error('Monitor not found')
+    const r = await runScan(db, { keyword: m.keyword, center: { lat: m.place.lat, lng: m.place.lng }, gridSize: m.grid_size, spacingMiles: Number(m.spacing_miles), source: 'weekly', monitorId: m.id, placeId: m.place_id }, undefined, { deadline: Date.now() + 240_000 })
+    if (r.status === 'failed') throw new Error(r.error ?? 'Scan failed')
+    return { scanId: r.scanId, avgRank: r.avgRank, foundShare: r.foundShare, requests: r.requests, cost: r.cost }
+  })
+}
+/** Check now: keyword at a typed location (place name, ZIP, address, or "lat, lng"), single point or a small grid. Saved as a live scan. */
+export async function liveCheckAction(input: { keyword: string; location: string; gridSize: number; placeId?: string | null }): Promise<ActionResult & { scanId?: string; label?: string; avgRank?: number | null; foundShare?: number; requests?: number; cost?: number }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const db = agentDb()
+    const keyword = input.keyword.trim().toLowerCase()
+    if (!keyword) throw new Error('Enter a keyword')
+    if (![1, 3, 5, 7].includes(input.gridSize)) throw new Error('Grid must be 1, 3, 5 or 7')
+    let center: { lat: number; lng: number } | null = null, label = input.location.trim(), placeId = input.placeId ?? null
+    if (placeId) {
+      const { data: p } = await db.from('rank_places').select('name, lat, lng').eq('id', placeId).maybeSingle()
+      if (p) { center = { lat: p.lat as number, lng: p.lng as number }; label = p.name as string }
+    }
+    if (!center) {
+      const { geocode } = await import('@/lib/rank/geocode')
+      const hit = await geocode(input.location)
+      if (!hit) throw new Error(`Could not find "${input.location}" on the map. Try "City, CA", a ZIP, or "lat, lng".`)
+      center = { lat: hit.lat, lng: hit.lng }; label = hit.label; placeId = null
+    }
+    const { runScan } = await import('@/lib/rank/scan')
+    const r = await runScan(db, { keyword, center, gridSize: input.gridSize, spacingMiles: 1, source: 'live', placeId }, undefined, { deadline: Date.now() + 240_000 })
+    if (r.status === 'failed') throw new Error(r.error ?? 'Check failed')
+    return { scanId: r.scanId, label, avgRank: r.avgRank, foundShare: r.foundShare, requests: r.requests, cost: r.cost }
+  })
+}
+/** Turn a live check into a monitored entry: creates the place from the scan center if needed. */
+export async function monitorFromScanAction(scanId: string, placeName: string): Promise<ActionResult & { monitorId?: string }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const db = agentDb()
+    const { data: scan } = await db.from('rank_scans').select('keyword, center_lat, center_lng, grid_size, place_id').eq('id', scanId).maybeSingle()
+    if (!scan) throw new Error('Scan not found')
+    let placeId = scan.place_id as string | null
+    if (!placeId) {
+      const name = placeName.trim(); if (!name) throw new Error('Name the place first')
+      const { data: p, error } = await db.from('rank_places').upsert({ name, kind: 'pin', lat: scan.center_lat, lng: scan.center_lng, is_active: true, updated_at: new Date().toISOString() }, { onConflict: 'name' }).select('id').single()
+      if (error) throw new Error(error.message)
+      placeId = p.id as string
+    }
+    const grid = [1, 3, 5, 7, 9].includes(scan.grid_size as number) ? (scan.grid_size as number) : 3
+    const { data: m, error } = await db.from('rank_monitors').upsert({ place_id: placeId, keyword: scan.keyword, grid_size: grid, spacing_miles: 1, is_active: true, updated_at: new Date().toISOString() }, { onConflict: 'place_id,keyword' }).select('id').single()
+    if (error) throw new Error(error.message)
+    await db.from('rank_scans').update({ monitor_id: m.id, place_id: placeId }).eq('id', scanId)
+    return { monitorId: m.id as string }
+  })
+}
+export async function upsertAreaPageAction(input: { placeId: string; url: string; pageUpdatedAt?: string | null; notes?: string | null }): Promise<ActionResult> {
+  await assertAdmin()
+  return attempt(async () => {
+    const url = input.url.trim()
+    if (!url) { const { error } = await agentDb().from('area_pages').delete().eq('place_id', input.placeId); if (error) throw new Error(error.message); return }
+    const { error } = await agentDb().from('area_pages').upsert({ place_id: input.placeId, url, page_updated_at: input.pageUpdatedAt || null, notes: input.notes?.trim() || null, updated_at: new Date().toISOString() }, { onConflict: 'place_id' })
+    if (error) throw new Error(error.message)
+  })
+}
+export async function rankProviderStatusAction(): Promise<ActionResult & { configured?: boolean; balance?: number | null }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const { isRankProviderConfigured, providerBalance } = await import('@/lib/rank/dataforseo')
+    return { configured: isRankProviderConfigured(), balance: await providerBalance() }
   })
 }

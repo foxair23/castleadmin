@@ -5,6 +5,7 @@ import ReviewsClient from './ReviewsClient'
 import CsatTab from './CsatTab'
 import PostsTab from './PostsTab'
 import InsightsTab from './InsightsTab'
+import RankingsTab from './RankingsTab'
 import ReputationSettingsTab, { type Props as ReputationProps } from './ReputationSettingsTab'
 import type { CsatRow } from '@/lib/csat/metrics'
 import type { CsatSettings } from '@/lib/csat/config'
@@ -21,11 +22,11 @@ interface Props {
   reputation: ReputationProps
 }
 
-type Sub = 'csat' | 'google' | 'posts' | 'insights' | 'settings'
+type Sub = 'csat' | 'google' | 'posts' | 'insights' | 'rankings' | 'settings'
 
 // Reviews tab shell. CSAT is the primary/default sub-tab; the existing Google
 // reviews UI lives under the second; profile posts under the third.
-// Deep-linked via ?sub=csat|google|posts|insights|settings.
+// Deep-linked via ?sub=csat|google|posts|insights|rankings|settings.
 export default function ReviewsTabs({ csat, google, posts, techs, reputation }: Props) {
   const [sub, setSub] = useState<Sub>('csat')
   const [needsApproval, setNeedsApproval] = useState(google.needsApproval)
@@ -34,7 +35,7 @@ export default function ReviewsTabs({ csat, google, posts, techs, reputation }: 
   const onPostsNeedApproval = useCallback((n: number) => setPostsNeedApproval(n), [])
   useEffect(() => {
     const s = new URLSearchParams(window.location.search).get('sub')
-    if (s === 'google' || s === 'csat' || s === 'posts' || s === 'insights' || s === 'settings') setSub(s)
+    if (s === 'google' || s === 'csat' || s === 'posts' || s === 'insights' || s === 'rankings' || s === 'settings') setSub(s)
   }, [])
 
   function select(next: Sub) {
@@ -49,6 +50,7 @@ export default function ReviewsTabs({ csat, google, posts, techs, reputation }: 
     { key: 'google', label: 'Google Reviews', count: needsApproval },
     { key: 'posts', label: 'Posts', count: postsNeedApproval },
     { key: 'insights', label: 'Insights' },
+    { key: 'rankings', label: 'Rankings' },
     { key: 'settings', label: 'Settings' },
   ]
 
@@ -71,6 +73,7 @@ export default function ReviewsTabs({ csat, google, posts, techs, reputation }: 
       {sub === 'google' && <ReviewsClient kpi={google.kpi} lastRun={google.lastRun} techs={techs} backlogCap={google.backlogCap} onNeedsApproval={onNeedsApproval} />}
       {sub === 'posts' && <PostsTab llmConfigured={reputation.llmConfigured} photoMinScore={reputation.settings.photo_min_score} onNeedsApproval={onPostsNeedApproval} />}
       {sub === 'insights' && <InsightsTab />}
+      {sub === 'rankings' && <RankingsTab defaultKeywords={reputation.settings.rank_default_keywords} businessMatch={reputation.settings.rank_business_match} weeklyCap={reputation.settings.rank_weekly_request_cap} />}
       {sub === 'settings' && <ReputationSettingsTab {...reputation} />}
     </div>
   )
