@@ -194,6 +194,39 @@ export async function createReviewStyleExample(input: { band: ReplyBand; inquiry
     await addStyleExample(agentDb(), { inquiry_text: input.inquiry_text || null, final_text: input.final_text, question_type: input.stars ? String(input.stars) : null, audience: `review_${input.band}`, source: 'staff' }, userId)
   })
 }
+/** Bulk import of owner replies from a CSV export (see lib/reputation/style-import.ts). Rows are already parsed and filtered in the browser. */
+export async function importReviewStyleExamples(rows: Array<{ stars: number | null; review: string | null; reply: string; business: string | null }>): Promise<ActionResult & { added?: number; duplicates?: number; positive?: number; negative?: number }> {
+  const userId = await assertAdmin()
+  return attempt(async () => {
+    if (!rows.length) throw new Error('Nothing to import')
+    if (rows.length > 1000) throw new Error('Import at most 1000 rows at a time')
+    const db = agentDb()
+    const { bandForStars } = await import('@/lib/reputation/style-import')
+    const { REVIEW_AUDIENCES } = await import('@/lib/reputation/knowledge')
+    const { data: existing } = await db.from('agent_style_examples').select('final_text').in('audience', REVIEW_AUDIENCES).eq('is_deleted', false).limit(5000)
+    const seen = new Set(((existing ?? []) as Array<{ final_text: string }>).map(e => e.final_text.toLowerCase().replace(/\s+/g, ' ').trim()))
+    const inserts: Array<Record<string, unknown>> = []
+    let duplicates = 0, positive = 0, negative = 0
+    for (const r of rows) {
+      const reply = String(r.reply ?? '').trim()
+      if (!reply) continue
+      const key = reply.toLowerCase().replace(/\s+/g, ' ')
+      if (seen.has(key)) { duplicates++; continue }
+      seen.add(key)
+      const band = bandForStars(r.stars)
+      if (band === 'positive') positive++; else negative++
+      inserts.push({
+        source: 'import', audience: `review_${band}`, question_type: r.stars != null ? String(r.stars) : null,
+        inquiry_text: r.review ? String(r.review).trim().slice(0, 2000) || null : null, final_text: reply.slice(0, 2000), created_by: userId,
+      })
+    }
+    for (let i = 0; i < inserts.length; i += 200) {
+      const { error } = await db.from('agent_style_examples').insert(inserts.slice(i, i + 200))
+      if (error) throw new Error(error.message)
+    }
+    return { added: inserts.length, duplicates, positive, negative }
+  })
+}
 export async function pinReviewStyleExample(id: string, pinned: boolean): Promise<ActionResult> {
   await assertAdmin()
   return attempt(async () => { const { setStylePinned } = await import('@/lib/agent/knowledge'); await setStylePinned(agentDb(), id, pinned) })
