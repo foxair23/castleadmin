@@ -113,6 +113,26 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
     }
   }
 
+  async function handleChangeRole(tech: Tech, role: string) {
+    if (role === tech.role) return
+    const label = role === 'admin' ? 'an Admin (full access to everything in Castle Admin)' : role === 'sales' ? 'a Sales user' : 'a Technician'
+    if (!confirm(`Make ${tech.full_name} ${label}?`)) return
+    setError('')
+    setSuccess('')
+    const res = await fetch(`/api/admin/techs/${tech.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    })
+    if (res.ok) {
+      setTechs(ts => ts.map(t => t.id === tech.id ? { ...t, role } : t))
+      setSuccess(`${tech.full_name} is now ${role === 'admin' ? 'an admin' : role === 'sales' ? 'a sales user' : 'a technician'}. It applies on their next page load.`)
+    } else {
+      const data = await res.json()
+      setError(data.error ?? 'Failed to change role')
+    }
+  }
+
   async function handleSaveBonus(techId: string) {
     const raw = bonusForm[techId]?.trim()
     const val = parseFloat(raw ?? '')
@@ -330,13 +350,18 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-sm">{tech.email}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
-                        tech.role === 'sales'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-gray-100 text-gray-600'
-                      }`}>
-                        {tech.role === 'sales' ? 'Sales' : 'Technician'}
-                      </span>
+                      <select
+                        value={tech.role}
+                        onChange={e => handleChangeRole(tech, e.target.value)}
+                        title="Change this person's role"
+                        className={`text-xs font-medium rounded-full px-2 py-0.5 border-0 cursor-pointer text-gray-900 ${
+                          tech.role === 'admin' ? 'bg-red-100 text-red-700' : tech.role === 'sales' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        <option value="technician">Technician</option>
+                        <option value="sales">Sales</option>
+                        <option value="admin">Admin</option>
+                      </select>
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
