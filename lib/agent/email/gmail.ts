@@ -209,7 +209,18 @@ export interface OutboundEmail {
 
 const encWord = (s: string) => /^[\x20-\x7e]*$/.test(s) ? s.replace(/"/g, '') : `=?UTF-8?B?${Buffer.from(s).toString('base64')}?=`
 
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+/** The plain text as simple HTML: one <p> per paragraph, line breaks kept, a normal
+ *  proportional font at full width. Gmail shows a text/plain-only message in a narrow
+ *  column with hard wraps at ~70 characters — which is what the office saw. */
+export function textToHtml(text: string): string {
+  const paras = text.replace(/\r\n/g, '\n').split(/\n{2,}/).map(p => escapeHtml(p).replace(/\n/g, '<br>'))
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222222">${paras.map(p => `<p style="margin:0 0 1em 0">${p}</p>`).join('')}</div>`
+}
+
 export function buildRfc822(o: OutboundEmail): string {
+  const boundary = `castle-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
   const lines = [
     `From: "${encWord(o.fromName)}" <${o.fromAddr}>`,
     `To: ${o.to}`,
@@ -219,11 +230,22 @@ export function buildRfc822(o: OutboundEmail): string {
     ...(o.inReplyTo ? [`In-Reply-To: ${o.inReplyTo}`] : []),
     ...(o.references.length ? [`References: ${o.references.join(' ')}`] : []),
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: 8bit',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     'X-Castle-Agent: cassie',
     '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: 8bit',
+    '',
     o.text,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    textToHtml(o.text),
+    '',
+    `--${boundary}--`,
   ]
   return lines.join('\r\n')
 }

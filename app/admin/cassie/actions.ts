@@ -178,13 +178,15 @@ export async function reviseReplyAction(id: string, instruction: string): Promis
     // A reviewer's note can teach as well as correct: rules in it become standing instructions.
     let learned: string[] = []
     let answer = text
+    let exactWording: string | null = null
     try {
       const d = await digestTeamMessage(settings, { partnerQuestion: r.question_summary as string | null, askedFor: null, jobNumber: r.sf_job_number as string | null, currentDraft: r.composed_text as string | null, conversation: [], latest: { who: userName ?? 'Reviewer', text } })
       learned = await saveLearnedInstructions(db, d.instructions, `review:${id}`)
       if (d.facts.length) answer = [...d.facts, ...(d.instructions.length ? [`Apply: ${d.instructions.join(' ')}`] : [])].join('\n')
+      exactWording = d.exactWording
     } catch (e) { console.error('[cassie] revise digest', e) }
     const rc = await recomposeReply(db, settings, id, `revised in review by ${userName ?? 'a reviewer'}`, {
-      chatAnswer: { text: answer, responder: userName ?? 'Reviewer', channel: 'review' }, noChatAsk: true,
+      chatAnswer: { text: answer, responder: userName ?? 'Reviewer', channel: 'review', exactWording }, noChatAsk: true,
     })
     if (rc.outcome === 'error' || !rc.replyId) throw new Error(rc.detail ?? 'Cassie could not write the revised draft.')
     revalidatePath(PATH)

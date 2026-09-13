@@ -54,10 +54,17 @@ export async function POST(req: NextRequest) {
         console.error('[cassie chat] click failed:', detail); await finishChatEvent(db, logged, 'failed', detail)
       }
     })
-    // Immediate feedback on the card so the tap never looks broken — classic envelope
-    // only; the add-on form uses a different action shape, and the work still lands.
-    if (ev.addon) return NextResponse.json({})
-    return NextResponse.json({ actionResponse: { type: 'UPDATE_MESSAGE' }, text: 'Working on it…' })
+    // Immediate feedback on the card so the tap never looks broken. The two envelopes want
+    // different shapes, and the add-on one does NOT accept an empty object for a click —
+    // Chat shows "Cassie is unable to process your request" under the card, even though
+    // the work behind it ran. So answer it with an update of the clicked message: same
+    // card, "Working on it…" above it. The real outcome replaces the card asynchronously.
+    if (ev.addon) {
+      return NextResponse.json({ hostAppDataAction: { chatDataAction: { updateMessageAction: { message: {
+        text: 'Working on it…', ...(ev.message?.cardsV2 ? { cardsV2: ev.message.cardsV2 } : {}),
+      } } } } })
+    }
+    return NextResponse.json({ actionResponse: { type: 'UPDATE_MESSAGE' }, text: 'Working on it…', ...(ev.message?.cardsV2 ? { cardsV2: ev.message.cardsV2 } : {}) })
   }
   // Anything we do not recognise is logged with its shape. Returning 200 and saying
   // nothing is what made the add-on envelope invisible for a day.

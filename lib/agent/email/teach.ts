@@ -18,6 +18,9 @@ export interface Digest {
   instructions: string[]
   /** What she still needs before she can write the reply, or null. */
   followUp: string | null
+  /** The team member handed her the reply text itself ("send this: …"). The reply is
+   *  that wording, not a paraphrase of it. Null when they answered in their own words. */
+  exactWording: string | null
   /** True when she has enough to draft now. */
   readyToDraft: boolean
   /** One short line to say back in the thread. */
@@ -43,11 +46,12 @@ const TOOL: Anthropic.Tool = {
     properties: {
       facts: { type: 'array', items: { type: 'string' }, description: 'Statements about THIS job or email that the partner reply should be based on. Verbatim meaning, no embellishment. Empty if none.' },
       instructions: { type: 'array', items: { type: 'string' }, description: 'Rules that apply to FUTURE emails too, each rewritten as one clear imperative sentence for Cassie (e.g. "When a job status says waiting for Tiffany, ask the team in chat before answering."). Empty if the message is only about this job.' },
+      exact_wording: { type: ['string', 'null'], description: 'When the team member dictated the reply itself ("send this:", "reply with:", "tell them: …", or a full reply pasted after a correction), that text exactly as given, minus any greeting or sign-off. Null when they answered in their own words for Cassie to write from.' },
       follow_up_question: { type: ['string', 'null'], description: 'The one thing Cassie still needs to ask the team before she can write a truthful reply, or null.' },
       ready_to_draft: { type: 'boolean', description: 'True when the facts now cover the partner question well enough to write the reply.' },
       acknowledgement: { type: 'string', description: 'One short, natural line Cassie says back in the thread (thanks, what she took from it, and the question if any). No more than two sentences.' },
     },
-    required: ['facts', 'instructions', 'follow_up_question', 'ready_to_draft', 'acknowledgement'],
+    required: ['facts', 'instructions', 'exact_wording', 'follow_up_question', 'ready_to_draft', 'acknowledgement'],
     additionalProperties: false,
   },
 }
@@ -57,11 +61,13 @@ const SYSTEM = `You are Cassie, Castle Garage Doors' AI agent, in a Google Chat 
 - An INSTRUCTION is a rule that should change how you handle future emails as well ("always", "anything marked", "never", "from now on", "when X, do Y"). Rewrite each as one clear sentence addressed to yourself. Do not turn a one-off fact into a rule.
 - If what you have still does not answer the partner's question truthfully, ask ONE follow-up question — the most useful one — and say you are not ready to draft.
 - If the team says to ask them / wait / let a person handle it, you are not ready to draft; set the follow-up to null only if there is nothing more to ask.
+- If the team member wrote the reply out for you ("send this:", "reply with:", a full reply after "No."), that is EXACT WORDING: put it in exact_wording as written, list its content as facts too, and you are ready to draft. Do not soften or expand it.
+- A correction of your draft ("don't mention X", "July 30 is in the past") is BOTH a fact for this reply and, when it would apply again, an instruction.
 - Never invent facts. A guess from the team ("probably", "I think") is a fact to check, not to state.`
 
 /** Read a team member's message in context. Without a model key: everything is a fact and she drafts. */
 export async function digestTeamMessage(settings: AgentSettings, ctx: DigestContext): Promise<Digest> {
-  if (!isLlmConfigured()) return { facts: [ctx.latest.text], instructions: [], followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
+  if (!isLlmConfigured()) return { facts: [ctx.latest.text], instructions: [], exactWording: null, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
   const model = settings.classifier_model
   const user = [
     ctx.partnerQuestion ? `PARTNER'S QUESTION: ${ctx.partnerQuestion}` : null,
@@ -77,11 +83,12 @@ export async function digestTeamMessage(settings: AgentSettings, ctx: DigestCont
     messages: [{ role: 'user', content: user }],
   })
   const tu = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-  if (!tu) return { facts: [ctx.latest.text], instructions: [], followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
-  const i = tu.input as { facts?: string[]; instructions?: string[]; follow_up_question?: string | null; ready_to_draft?: boolean; acknowledgement?: string }
+  if (!tu) return { facts: [ctx.latest.text], instructions: [], exactWording: null, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
+  const i = tu.input as { facts?: string[]; instructions?: string[]; exact_wording?: string | null; follow_up_question?: string | null; ready_to_draft?: boolean; acknowledgement?: string }
   const clean = (a: unknown) => (Array.isArray(a) ? a : []).map(s => String(s).trim()).filter(Boolean)
   return {
     facts: clean(i.facts), instructions: clean(i.instructions).map(normalizeRule),
+    exactWording: i.exact_wording?.trim() || null,
     followUp: i.follow_up_question?.trim() || null, readyToDraft: !!i.ready_to_draft,
     acknowledgement: (i.acknowledgement ?? '').trim() || `Thanks ${ctx.latest.who}.`,
   }

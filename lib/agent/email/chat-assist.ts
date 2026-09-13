@@ -94,7 +94,7 @@ export interface ChatEvent {
   type: 'MESSAGE' | 'CARD_CLICKED' | 'ADDED_TO_SPACE' | 'REMOVED_FROM_SPACE' | string
   space?: { name?: string }
   user?: ChatUser
-  message?: { name?: string; text?: string; argumentText?: string; thread?: { name?: string; threadKey?: string }; sender?: ChatUser; space?: { name?: string } }
+  message?: { name?: string; text?: string; argumentText?: string; thread?: { name?: string; threadKey?: string }; sender?: ChatUser; space?: { name?: string }; cardsV2?: unknown[] }
   common?: { invokedFunction?: string; parameters?: Record<string, string> }
   action?: { actionMethodName?: string; parameters?: Array<{ key: string; value: string }> }
   /** True when the event arrived in the Workspace add-on envelope. The synchronous reply
@@ -281,7 +281,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     })
   } catch (e) {
     console.error('[cassie] digest failed', e)
-    digest = { facts: [text], instructions: [], followUp: null, readyToDraft: true, acknowledgement: `Thanks ${who.name}.` }
+    digest = { facts: [text], instructions: [], exactWording: null, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${who.name}.` }
   }
   const learned = await saveLearnedInstructions(db, digest.instructions, `chat:${ask.id}`).catch(e => { console.error('[cassie] could not save instructions', e); return [] as string[] })
   if (learned.length) {
@@ -309,9 +309,12 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
       header: 'Superseded — a newer answer came in', subheader: `${who.name} added more; the current draft is below.`, paragraphs: [{ text: ' ' }],
     }), 'Superseded by a newer answer').catch(() => { /* the card may already be gone */ })
   }
-  // Compose a clean partner reply FROM the answer — never forward it.
+  // Compose a clean partner reply FROM the answer — never forward it. Supersede the draft
+  // the team is looking at NOW (the last one she wrote from this thread), not the reply the
+  // ask was opened for: that one was superseded on the first answer, and re-superseding it
+  // left every later draft sitting in the review queue as a live duplicate.
   const { recomposeReply } = await import('./composer-stage')
-  const rc = await recomposeReply(db, settings, ask.reply_id as string, `answered in Google Chat by ${who.name}`, { chatAnswer: { askId: ask.id as string, text: answerText, responder: who.name }, noChatAsk: true })
+  const rc = await recomposeReply(db, settings, (ask.draft_reply_id as string | null) ?? (ask.reply_id as string), `answered in Google Chat by ${who.name}`, { chatAnswer: { askId: ask.id as string, text: answerText, responder: who.name, exactWording: digest.exactWording }, noChatAsk: true })
   if (rc.outcome === 'error' || !rc.replyId) {
     await postText(ask.space_name, ask.thread_key, `Thanks ${who.name}. I could not write the reply (${rc.detail ?? 'unknown error'}). It is in the review queue: ${reviewUrl(ask.reply_id as string)}`)
     return 'compose failed'
