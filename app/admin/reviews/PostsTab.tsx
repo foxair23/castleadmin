@@ -298,12 +298,24 @@ function TestPhotosCard() {
         <div className="mt-3 text-xs text-gray-700 space-y-1">
           {out.error ? <p className="text-red-600">{out.error}</p> : (
             <>
-              <p>{out.found} picture{out.found === 1 ? '' : 's'} on the job · {out.imported} imported now{out.importErrors?.length ? ` · ${out.importErrors.length} failed` : ''}</p>
+              <p>{out.found} picture{out.found === 1 ? '' : 's'} on the job · {out.absoluteUrls ?? 0} with a web address · {out.imported} imported now{out.importErrors?.length ? ` · ${out.importErrors.length} failed` : ''}</p>
+              {out.found ? (out.absoluteUrls ?? 0) === 0 && <p className="text-amber-700">Service Fusion lists the pictures by file name only, with no web address, so nothing can be downloaded yet. The probes below show which file endpoints answer; send this whole block to Claude.</p> : null}
               {out.rawKeys && out.rawKeys.length > 0 && <p className="text-gray-400">picture-like fields on the job: {out.rawKeys.join(', ')}</p>}
               {out.rawKeys && out.rawKeys.length === 0 && <p className="text-amber-700">The job payload has no picture fields at all. Service Fusion may need the pictures expand enabled on the API key.</p>}
               <ul className="list-disc pl-4">
-                {out.pictures?.map((p, i) => <li key={i}>{p.name ?? '(no name)'}{p.docType ? ` · ${p.docType}` : ''} · <a className="underline" href={p.url} target="_blank" rel="noreferrer">open</a></li>)}
+                {out.pictures?.map((p, i) => <li key={i}>{p.name ?? '(no name)'}{p.docType ? ` · ${p.docType}` : ''}{/^https?:\/\//i.test(p.url) ? <> · <a className="underline" href={p.url} target="_blank" rel="noreferrer">open</a></> : <span className="text-gray-400"> · {p.url}</span>}</li>)}
               </ul>
+              {out.samples && out.samples.length > 0 && (
+                <details className="mt-2"><summary className="cursor-pointer text-gray-600">Raw picture objects (first {out.samples.length})</summary>
+                  {out.samples.map((sm, i) => <pre key={i} className="mt-1 whitespace-pre-wrap break-all rounded bg-gray-50 border border-gray-200 p-2 text-[11px] text-gray-800">{sm}</pre>)}
+                </details>
+              )}
+              {out.probes && out.probes.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-gray-600 font-medium">File endpoint probes</p>
+                  <ul className="list-disc pl-4">{out.probes.map((pr, i) => <li key={i}><span className="font-mono">{pr.what}</span> → {pr.result}</li>)}</ul>
+                </div>
+              )}
               {out.importErrors?.map((e, i) => <p key={i} className="text-red-600">{e}</p>)}
             </>
           )}
