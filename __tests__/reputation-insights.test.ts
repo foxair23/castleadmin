@@ -147,3 +147,14 @@ describe('reputation digest', () => {
     expect(renderReputationDigest({ thisWeek: insights(), lastWeek: insights(), weekLabel: 'W' }).subject.startsWith('🟢')).toBe(true)
   })
 })
+
+describe('reputation digest rank section', () => {
+  it('adds a rankings section only when scans exist', () => {
+    const base = { thisWeek: insights(), lastWeek: insights(), weekLabel: 'W' }
+    expect(digestLines(base).sections.map(s => s.title)).not.toContain('Map Pack rankings')
+    const withRank = digestLines({ ...base, rank: { avgNow: 4.2, avgBefore: 5.1, up: [{ label: 'Vista · garage door repair', delta: 2 }], down: [], scanned: 12 } })
+    const sec = withRank.sections.find(s => s.title === 'Map Pack rankings')!
+    expect(sec.lines[0]).toBe('Average Map Pack position across 12 monitored searches: 4.2 (up from 5.1)')
+    expect(sec.lines[1]).toBe('Moved up: Vista · garage door repair +2')
+  })
+})

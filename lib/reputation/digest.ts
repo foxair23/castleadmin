@@ -4,6 +4,7 @@ import { renderReputationDigest } from '@/lib/notifications/templates/reputation
 import { loadInsights } from './insights'
 import { loadReputationSettings } from './settings'
 import { ptDateKey, ptWallToUtc, addPtDays } from './pt-time'
+import { loadWeekMovement } from '@/lib/rank/scorecard'
 
 // Monday 7am PT: one email with last week's numbers next to the week before.
 // Subscribers are the admins with the reputation_weekly_digest type on.
@@ -43,7 +44,8 @@ export async function runReputationDigest(now = new Date()): Promise<{ queued: n
     loadInsights(supabase, weeks.thisWeek, settings.photo_min_score),
     loadInsights(supabase, weeks.lastWeek, settings.photo_min_score),
   ])
-  const mail = renderReputationDigest({ thisWeek, lastWeek, weekLabel: weeks.weekLabel })
+  const rank = await loadWeekMovement(supabase, weeks.key, addPtDays(weeks.key, -7)).catch(() => null)
+  const mail = renderReputationDigest({ thisWeek, lastWeek, weekLabel: weeks.weekLabel, rank })
   const queued = await enqueueForSubscribers({ notificationTypeKey: TYPE, subject: mail.subject, bodyHtml: mail.bodyHtml, bodyText: mail.bodyText, relatedEntityType: 'reputation_digest', relatedEntityId: weeks.key })
   return { queued, week: weeks.key }
 }

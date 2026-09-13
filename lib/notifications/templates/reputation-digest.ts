@@ -11,11 +11,12 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 const pct = (n: number, d: number) => d ? `${Math.round(n / d * 100)}%` : '—'
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
-export interface DigestInput { thisWeek: Insights; lastWeek: Insights; weekLabel: string }
+export interface RankMovement { avgNow: number | null; avgBefore: number | null; up: Array<{ label: string; delta: number }>; down: Array<{ label: string; delta: number }>; scanned: number }
+export interface DigestInput { thisWeek: Insights; lastWeek: Insights; weekLabel: string; rank?: RankMovement | null }
 
 /** Pure: the sections of the digest as short lines, so the email and the tests share one source. */
 export function digestLines(input: DigestInput): { headline: string; sections: Array<{ title: string; lines: string[] }> } {
-  const { thisWeek: t, lastWeek: l, weekLabel } = input
+  const { thisWeek: t, lastWeek: l, weekLabel, rank } = input
   const delta = (a: number, b: number) => a === b ? 'same as the week before' : a > b ? `up from ${b}` : `down from ${b}`
   const avg = t.reviews.avg != null ? `${t.reviews.avg.toFixed(2)} average` : 'no rating yet'
   const headline = `${plural(t.reviews.count, 'new Google review')} (${delta(t.reviews.count, l.reviews.count)}), ${avg}`
@@ -53,11 +54,17 @@ export function digestLines(input: DigestInput): { headline: string; sections: A
     ...(ph.byTech.length ? [`Best photos: ${ph.byTech.slice(0, 3).map(x => `${x.tech} (${x.avgScore ?? '—'})`).join(', ')}`] : []),
     ...(ph.byTech.length > 1 ? [`Needs work: ${[...ph.byTech].reverse().slice(0, 2).map(x => `${x.tech} (${x.avgScore ?? '—'}${x.topReasons[0] ? `, ${x.topReasons[0].reason}` : ''})`).join('; ')}`] : []),
   ]
+  const ranks = rank && rank.scanned ? [
+    `Average Map Pack position across ${plural(rank.scanned, 'monitored search', 'monitored searches')}: ${rank.avgNow ?? '—'}${rank.avgBefore != null && rank.avgNow != null ? ` (${rank.avgNow < rank.avgBefore ? 'up' : rank.avgNow > rank.avgBefore ? 'down' : 'same'} from ${rank.avgBefore})` : ''}`,
+    ...(rank.up.length ? [`Moved up: ${rank.up.map(m => `${m.label} +${m.delta}`).join(', ')}`] : []),
+    ...(rank.down.length ? [`Slipped: ${rank.down.map(m => `${m.label} ${m.delta}`).join(', ')}`] : []),
+  ] : null
   return {
     headline: `${weekLabel}: ${headline}`,
     sections: [
       { title: 'Reviews', lines: reviews }, { title: 'Survey funnel', lines: funnel }, { title: 'Replies', lines: replies },
       { title: 'What customers said', lines: themes }, { title: 'Profile posts', lines: posts }, { title: 'Job photos', lines: photos },
+      ...(ranks ? [{ title: 'Map Pack rankings', lines: ranks }] : []),
     ],
   }
 }
