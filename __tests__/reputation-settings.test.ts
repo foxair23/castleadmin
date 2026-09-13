@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeReputationSettings, normalizeWindow, bandFor, capFor, REPUTATION_DEFAULTS, DEFAULT_WORKING_WINDOW } from '@/lib/reputation/settings'
+import { mergeReputationSettings, normalizeWindow, normalizeCtaMap, ctaFor, bandFor, capFor, REPUTATION_DEFAULTS, DEFAULT_WORKING_WINDOW, DEFAULT_CTA_MAP } from '@/lib/reputation/settings'
 
 describe('mergeReputationSettings', () => {
   it('returns defaults for a missing row', () => {
@@ -38,5 +38,20 @@ describe('bands and caps', () => {
     expect(capFor(s, 'review_reply', 'backlog')).toBe(3)
     expect(capFor(s, 'gbp_post', null)).toBe(1)
     expect(capFor(s, 'csat_reminder', null)).toBeNull()
+  })
+})
+
+describe('CTA map', () => {
+  it('drops bad rules, keeps order, and falls back to the defaults when empty', () => {
+    const rules = normalizeCtaMap([{ match: 'gate', path: 'services/gate-services/', cta: 'CALL' }, { match: '[', path: '/x' }, { match: '', path: '/y' }, 7])
+    expect(rules).toEqual([{ match: 'gate', path: '/services/gate-services/', cta: 'CALL' }])
+    expect(normalizeCtaMap([])).toEqual(DEFAULT_CTA_MAP)
+    expect(normalizeCtaMap('nope')).toEqual(DEFAULT_CTA_MAP)
+  })
+  it('picks the first matching rule for a category, else the catch-all', () => {
+    expect(ctaFor(DEFAULT_CTA_MAP, 'Gate Opener Install')).toMatchObject({ path: '/services/gate-services/' })
+    expect(ctaFor(DEFAULT_CTA_MAP, 'Torsion Spring Repair')).toMatchObject({ path: '/services/garage-door-repair/' })
+    expect(ctaFor(DEFAULT_CTA_MAP, 'Something Else')).toMatchObject({ path: '/services/' })
+    expect(ctaFor(DEFAULT_CTA_MAP, null)).toMatchObject({ path: '/services/' })
   })
 })

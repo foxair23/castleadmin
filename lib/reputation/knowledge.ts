@@ -4,6 +4,7 @@ import {
   type Charter, type Instruction, type StyleExample,
 } from '@/lib/agent/knowledge'
 import { DEFAULT_REVIEW_CHARTER } from './charter.default'
+import { DEFAULT_POST_CHARTER } from './post-charter.default'
 import { bandFor, type ReplyBand } from './settings'
 
 // The reply agent's knowledge: its own charter, standing instructions and style
@@ -64,6 +65,36 @@ export async function captureReplyStyleExample(db: SupabaseClient, input: {
     ai_text: input.draftText,
     final_text: input.finalText,
     google_review_id: input.reviewId,
+    created_by: input.userId,
+  })
+}
+
+// ── Profile posts (Phase 2) — same tables, channel 'post' / audience 'post' ──
+
+export const POST_CHANNEL = 'post'
+export const POST_AUDIENCE = 'post'
+
+export async function getPostCharter(db: SupabaseClient): Promise<Charter> {
+  return getActiveCharter(db, POST_CHANNEL, { body: DEFAULT_POST_CHARTER, note: 'Seeded from the Reputation Engine PRD' })
+}
+
+export async function listPostInstructions(db: SupabaseClient, opts: { includeRetired?: boolean } = {}): Promise<Instruction[]> {
+  return listInstructions(db, { ...opts, channel: POST_CHANNEL })
+}
+
+export async function listPostStyleExamples(db: SupabaseClient): Promise<StyleExample[]> {
+  return listStyleExamplesByAudience(db, [POST_AUDIENCE])
+}
+
+/** A human approve/edit of a post becomes a style example (autopilot approvals do not). */
+export async function capturePostStyleExample(db: SupabaseClient, input: { jobId: string; category: string | null; draftText: string; finalText: string; edited: boolean; userId: string }): Promise<void> {
+  await db.from('agent_style_examples').insert({
+    source: input.edited ? 'human_edit' : 'human_approved',
+    audience: POST_AUDIENCE,
+    question_type: input.category,
+    inquiry_text: null,
+    ai_text: input.draftText,
+    final_text: input.finalText,
     created_by: input.userId,
   })
 }
