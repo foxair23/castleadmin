@@ -614,7 +614,8 @@ function ReviewDetailModal({
 
         {/* Reply (drafted by the reply agent) */}
         <div className="px-6 py-4 border-b border-gray-100">
-          <ReplyPanel reviewId={review.id} reply={review.reply} replyOnGoogle={review.reply_text} replySource={review.reply_source} onChanged={onReplyChanged} />
+          {/* Keyed on the reply row so the editable text resets when a draft first appears (Draft now) or is replaced. */}
+          <ReplyPanel key={review.reply?.id ?? 'none'} reviewId={review.id} reply={review.reply} replyOnGoogle={review.reply_text} replySource={review.reply_source} onChanged={onReplyChanged} />
         </div>
 
         {/* Match info + actions */}
