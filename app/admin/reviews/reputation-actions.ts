@@ -227,6 +227,17 @@ export async function importReviewStyleExamples(rows: Array<{ stars: number | nu
     return { added: inserts.length, duplicates, positive, negative }
   })
 }
+/** Soft-delete every example that came in through the CSV import (one band, or both). */
+export async function removeImportedStyleExamples(band?: ReplyBand): Promise<ActionResult & { removed?: number }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const { REVIEW_AUDIENCES, audienceFor } = await import('@/lib/reputation/knowledge')
+    const { data, error } = await agentDb().from('agent_style_examples').update({ is_deleted: true, is_pinned: false })
+      .eq('source', 'import').eq('is_deleted', false).in('audience', band ? [audienceFor(band)] : REVIEW_AUDIENCES).select('id')
+    if (error) throw new Error(error.message)
+    return { removed: (data ?? []).length }
+  })
+}
 export async function pinReviewStyleExample(id: string, pinned: boolean): Promise<ActionResult> {
   await assertAdmin()
   return attempt(async () => { const { setStylePinned } = await import('@/lib/agent/knowledge'); await setStylePinned(agentDb(), id, pinned) })
