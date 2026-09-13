@@ -290,8 +290,11 @@ export async function preparePostsAction(input: { dateKey?: string; from?: strin
   })
 }
 
-/** Diagnostic: what Service Fusion returns for one job's pictures, and what we would import. */
-export async function testJobPhotosAction(jobRef: string): Promise<ActionResult & { sfJobId?: string; found?: number; pictures?: Array<{ name: string | null; url: string; docType: string | null }>; rawKeys?: string[]; imported?: number; importErrors?: string[] }> {
+/** Diagnostic: what Service Fusion returns for one job's pictures, what the raw objects look like, and which file endpoints answer. */
+export async function testJobPhotosAction(jobRef: string): Promise<ActionResult & {
+  sfJobId?: string; found?: number; pictures?: Array<{ name: string | null; url: string; docType: string | null }>; rawKeys?: string[]
+  samples?: string[]; probes?: Array<{ what: string; result: string }>; absoluteUrls?: number; imported?: number; importErrors?: string[]
+}> {
   await assertAdmin()
   return attempt(async () => {
     const db = agentDb()
@@ -307,8 +310,16 @@ export async function testJobPhotosAction(jobRef: string): Promise<ActionResult 
     const j: any = raw
     const job = j?.items ? j.items[0] : j
     const rawKeys = job && typeof job === 'object' ? Object.keys(job).filter(k => /pic|doc|photo|image|file/i.test(k)) : []
-    const imp = await importJobPhotos(db, sfJobId)
-    return { sfJobId, found: pictures.length, pictures: pictures.map(p => ({ name: p.name, url: p.fileLocation, docType: p.docType })), rawKeys, imported: imp.imported, importErrors: imp.errors }
+    const rawList: unknown[] = Array.isArray(job?.pictures) ? job.pictures : Array.isArray(job?.pictures?.items) ? job.pictures.items : []
+    const samples = rawList.slice(0, 2).map(o => JSON.stringify(o, null, 1).slice(0, 700))
+
+    // The public API has no file endpoint (service-fusion-api-docs_.pdf lists none; typ.Picture's
+    // file_location is a bare file name). Nothing to probe: the bytes must come through the
+    // office extension's Service Fusion web session, like documents, payments and line items.
+    const probes: Array<{ what: string; result: string }> = []
+    const absoluteUrls = pictures.filter(p => /^https?:\/\//i.test(p.fileLocation)).length
+    const imp = absoluteUrls ? await importJobPhotos(db, sfJobId) : { imported: 0, errors: [] as string[] }
+    return { sfJobId, found: pictures.length, pictures: pictures.map(p => ({ name: p.name, url: p.fileLocation, docType: p.docType })), rawKeys, samples, probes, absoluteUrls, imported: imp.imported, importErrors: imp.errors }
   })
 }
 

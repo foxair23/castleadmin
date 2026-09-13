@@ -26,6 +26,7 @@ const round6 = (n: number) => Math.round(n * 1e6) / 1e6
 export interface RankResult {
   rank: number; title: string; rating: number | null; reviews: number | null
   place_id: string | null; cid: string | null; address: string | null; category: string | null; is_us: boolean
+  lat?: number | null; lng?: number | null
 }
 
 /** Case-insensitive, punctuation-insensitive test for Castle's own listing. */
@@ -51,6 +52,7 @@ export function parseMapsItems(raw: unknown, match: string, depth = 20): RankRes
     out.push({
       rank, title, rating: num(rating.value), reviews: num(rating.votes_count),
       place_id: str(o.place_id), cid: str(o.cid), address: str(o.address), category: str(o.category), is_us: isOurListing(title, match),
+      lat: num(o.latitude), lng: num(o.longitude),
     })
   }
   return out.sort((a, b) => a.rank - b.rank)
