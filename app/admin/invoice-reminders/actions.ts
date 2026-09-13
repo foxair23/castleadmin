@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { testConnection, sendSms, registerInboundWebhook, toE164 } from '@/lib/dialpad/client'
+import { testConnection, sendSms, registerInboundWebhook, listWebhooks, listSmsSubscriptions, deleteWebhook, isStaleHook, toE164 } from '@/lib/dialpad/client'
 import { getPlannedSends, loadSettings, type CadenceStage, type PlannedSend } from '@/lib/invoice-reminders/engine'
 
 async function assertAdmin(): Promise<string> {
@@ -88,10 +88,37 @@ export async function testDialpad(toNumber: string): Promise<{ conn: Awaited<Ret
   return { conn, send }
 }
 
-export async function registerWebhook(): Promise<Awaited<ReturnType<typeof registerInboundWebhook>>> {
+/** Where Dialpad should deliver incoming texts: this deployment's address. */
+function currentHookUrl(): string {
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app').replace(/\/+$/, '')
+  return `${appUrl}/api/dialpad/sms-webhook`
+}
+
+export async function registerWebhook(): Promise<Awaited<ReturnType<typeof registerInboundWebhook>> & { hookUrl: string }> {
   await assertAdmin()
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://castleadmin.vercel.app'
-  return registerInboundWebhook(`${appUrl}/api/dialpad/sms-webhook`)
+  const hookUrl = currentHookUrl()
+  return { ...(await registerInboundWebhook(hookUrl)), hookUrl }
+}
+
+export interface WebhookRow { id: string; hookUrl: string; stale: boolean; subscriptions: number }
+
+/** Every webhook Dialpad has for the company, flagged when it points somewhere other than this app. */
+export async function listDialpadWebhooks(): Promise<{ hookUrl: string; webhooks: WebhookRow[]; error?: string }> {
+  await assertAdmin()
+  const hookUrl = currentHookUrl()
+  const [wh, subs] = await Promise.all([listWebhooks(), listSmsSubscriptions()])
+  if (!wh.ok) return { hookUrl, webhooks: [], error: `Dialpad refused the webhook list (${wh.status}): ${typeof wh.detail === 'string' ? wh.detail : JSON.stringify(wh.detail)}` }
+  const webhooks = wh.webhooks.map(w => ({
+    id: w.id, hookUrl: w.hookUrl, stale: isStaleHook(w.hookUrl, hookUrl),
+    subscriptions: subs.subscriptions.filter(s => s.webhookId === w.id).length,
+  }))
+  return { hookUrl, webhooks }
+}
+
+export async function deleteDialpadWebhook(id: string): Promise<{ ok: boolean; error?: string }> {
+  await assertAdmin()
+  const res = await deleteWebhook(id)
+  return res.ok ? { ok: true } : { ok: false, error: `Dialpad refused the delete (${res.status}): ${typeof res.detail === 'string' ? res.detail : JSON.stringify(res.detail)}` }
 }
 
 export async function setSkip(sfInvoiceId: string, skip: boolean) {

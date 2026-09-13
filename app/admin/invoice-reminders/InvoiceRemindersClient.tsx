@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { setEnabled, saveSettings, previewPlan, testDialpad, registerWebhook } from './actions'
+import DialpadWebhooksPanel from './DialpadWebhooksPanel'
 import { renderInvoiceReminderEmail } from '@/lib/notifications/templates/invoice-reminder-email'
 
 // Sample data for previews, so placeholders resolve to something realistic.
@@ -183,11 +184,15 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
       setTestOut(parts.join('\n'))
     } catch (e) { setTestOut(e instanceof Error ? e.message : String(e)) }
   }
+  const [webhookTick, setWebhookTick] = useState(0)
   async function runRegisterWebhook() {
-    setTestOut('Registering webhook…')
+    setTestOut('Pointing Dialpad at this app…')
     try {
       const r = await registerWebhook()
-      setTestOut(`Webhook ${r.ok ? 'registered' : 'FAILED'} — webhook ${r.webhookId ?? '—'}, subscription ${r.subscriptionId ?? '—'}`)
+      setTestOut(r.ok
+        ? `Dialpad now delivers incoming texts to ${r.hookUrl} (webhook ${r.webhookId ?? '—'}, subscription ${r.subscriptionId ?? '—'}${r.reused ? ', already in place' : ''}).`
+        : `FAILED — ${JSON.stringify(r.detail).slice(0, 400)}`)
+      setWebhookTick(t => t + 1)
     } catch (e) { setTestOut(e instanceof Error ? e.message : String(e)) }
   }
 
@@ -225,9 +230,10 @@ export default function InvoiceRemindersClient({ settings: initial, sources, rec
             <input value={testNum} onChange={e => setTestNum(e.target.value)} placeholder="(760) 555-1234" className={input} />
           </div>
           <button onClick={runTest} className="px-3 py-2 text-sm rounded border border-gray-400 text-gray-800 hover:bg-gray-100">Test connection + send</button>
-          <button onClick={runRegisterWebhook} className="px-3 py-2 text-sm rounded border border-gray-400 text-gray-800 hover:bg-gray-100">Register STOP webhook</button>
+          <button onClick={runRegisterWebhook} title="Create (or reuse) the Dialpad webhook that delivers incoming texts to this app" className="px-3 py-2 text-sm rounded border border-gray-400 text-gray-800 hover:bg-gray-100">Re-point webhook to this app</button>
         </div>
         {testOut && <pre className="mt-3 text-xs bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre-wrap">{testOut}</pre>}
+        <DialpadWebhooksPanel configured={dialpadConfigured} refreshKey={webhookTick} />
       </section>
 
       {/* Global settings */}
