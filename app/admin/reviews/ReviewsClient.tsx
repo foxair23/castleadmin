@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import dynamic from 'next/dynamic'
+import ReplyPanel, { ReplyStatusPill, type ReplyInfo } from './ReplyPanel'
+import BacklogDraftDialog from './BacklogDraftDialog'
 
 const ReviewsCharts = dynamic(() => import('./ReviewsCharts'), { ssr: false })
 
@@ -15,6 +17,11 @@ interface Review {
   comment: string | null
   created_at_google: string
   reply_text: string | null
+  reply_source: string | null
+  reply: ReplyInfo | null
+  ai_sentiment: string | null
+  ai_themes: string[] | null
+  ai_mentioned_names: string[] | null
   match_status: string
   match_score: number | null
   match_confidence: string | null
@@ -74,6 +81,8 @@ interface Props {
   kpi: KPI
   lastRun: LastRun | null
   techs: Tech[]
+  backlogCap: number
+  onNeedsApproval?: (n: number) => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -564,6 +573,7 @@ function ReviewDetailModal({
   onAction,
   onSearch,
   onSetTech,
+  onReplyChanged,
 }: {
   review: Review
   techs: Tech[]
@@ -571,11 +581,12 @@ function ReviewDetailModal({
   onAction: (id: string, action: 'confirm' | 'skip' | 'unmatch') => void
   onSearch: (review: Review) => void
   onSetTech: (id: string, techUserId: string | null) => void
+  onReplyChanged: () => void
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
+        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -599,6 +610,11 @@ function ReviewDetailModal({
             ? <p className="text-sm text-gray-700 leading-relaxed">{review.comment}</p>
             : <p className="text-sm text-gray-400 italic">No comment</p>
           }
+        </div>
+
+        {/* Reply (drafted by the reply agent) */}
+        <div className="px-6 py-4 border-b border-gray-100">
+          <ReplyPanel reviewId={review.id} reply={review.reply} replyOnGoogle={review.reply_text} replySource={review.reply_source} onChanged={onReplyChanged} />
         </div>
 
         {/* Match info + actions */}
@@ -701,7 +717,7 @@ function fmtDate(iso: string) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
+export default function ReviewsClient({ kpi, lastRun, techs, backlogCap, onNeedsApproval }: Props) {
   const [reviews, setReviews]   = useState<Review[]>([])
   const [total, setTotal]       = useState(0)
   const [page, setPage]         = useState(1)
@@ -718,13 +734,17 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
   const [matchingStatus, setMatchingStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [matchError, setMatchError]         = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
-  const [matchResult, setMatchResult]       = useState<{ reviewsNew: number; reviewsUpdated: number; matched: number; candidates: number; noMatch: number } | null>(null)
+  const [matchResult, setMatchResult]       = useState<{ reviewsNew: number; reviewsUpdated: number; matched: number; candidates: number; noMatch: number; drafted?: number } | null>(null)
 
   // Tab
   const [tab, setTab] = useState<'list' | 'charts'>('list')
 
   // Detail modal
   const [detailReview, setDetailReview] = useState<Review | null>(null)
+
+  // Reply-state filter + backlog dialog
+  const [replyFilter, setReplyFilter] = useState('all')
+  const [showBacklog, setShowBacklog] = useState(false)
 
   // Manual match modal
   const [searchTarget, setSearchTarget] = useState<Review | null>(null)
@@ -741,20 +761,24 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
       if (status && status !== 'all') params.set('status', status)
       if (dateFrom)                   params.set('date_from', dateFrom)
       if (dateTo)                     params.set('date_to', dateTo)
+      if (replyFilter !== 'all')      params.set('reply', replyFilter)
 
       const res = await fetch(`/api/admin/reviews?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
       setReviews(json.reviews)
       setTotal(json.total)
+      if (typeof json.needsApproval === 'number') onNeedsApproval?.(json.needsApproval)
+      // Keep an open detail modal in step with the fresh rows.
+      setDetailReview(d => d ? ((json.reviews as Review[]).find(r => r.id === d.id) ?? d) : d)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load reviews')
     } finally {
       setLoading(false)
     }
-  }, [stars, status, dateFrom, dateTo])
+  }, [stars, status, dateFrom, dateTo, replyFilter, onNeedsApproval])
 
-  useEffect(() => { setPage(1) }, [stars, status, dateFrom, dateTo])
+  useEffect(() => { setPage(1) }, [stars, status, dateFrom, dateTo, replyFilter])
   useEffect(() => { load(page) }, [load, page])
 
   async function runSyncAndMatch() {
@@ -765,7 +789,7 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
       const res = await fetch('/api/admin/reviews/run-matching', { method: 'POST' })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
-      setMatchResult({ reviewsNew: json.reviewsNew, reviewsUpdated: json.reviewsUpdated, matched: json.matched, candidates: json.candidates, noMatch: json.noMatch })
+      setMatchResult({ reviewsNew: json.reviewsNew, reviewsUpdated: json.reviewsUpdated, matched: json.matched, candidates: json.candidates, noMatch: json.noMatch, drafted: json.drafted })
       setMatchingStatus('done')
       setBannerDismissed(true) // a successful sync clears the prior failure banner
       load(page)
@@ -813,7 +837,12 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
           onAction={(id, action) => { handleAction(id, action); setDetailReview(null) }}
           onSearch={(r) => { setDetailReview(null); setSearchTarget(r) }}
           onSetTech={handleSetTech}
+          onReplyChanged={() => load(page)}
         />
+      )}
+
+      {showBacklog && (
+        <BacklogDraftDialog defaultCap={backlogCap} onClose={() => setShowBacklog(false)} onDone={() => load(page)} />
       )}
 
       {/* Manual match modal */}
@@ -837,6 +866,12 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
           </span>
         )}
         <button
+          onClick={() => setShowBacklog(true)}
+          className="text-sm px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 text-gray-700"
+        >
+          Draft replies for old reviews
+        </button>
+        <button
           onClick={runSyncAndMatch}
           disabled={matchingStatus === 'running'}
           className="text-sm px-3 py-1.5 rounded border border-red-300 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700"
@@ -845,7 +880,7 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
         </button>
         {matchingStatus === 'done' && matchResult && (
           <span className="text-xs text-gray-500">
-            +{matchResult.reviewsNew} new · {matchResult.matched} auto-matched · {matchResult.candidates} candidates
+            +{matchResult.reviewsNew} new · {matchResult.matched} auto-matched · {matchResult.candidates} candidates{matchResult.drafted ? ` · ${matchResult.drafted} replies drafted` : ''}
           </span>
         )}
         {matchingStatus === 'error' && (
@@ -977,9 +1012,24 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
             className="text-sm border border-gray-300 rounded-md px-2 py-1.5 text-gray-900"
           />
         </div>
-        {(stars || status !== 'all' || dateFrom || dateTo) && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Reply</label>
+          <select
+            value={replyFilter}
+            onChange={e => setReplyFilter(e.target.value)}
+            className="text-sm border border-gray-300 rounded-md px-2 py-1.5 text-gray-900 bg-white"
+          >
+            <option value="all">All</option>
+            <option value="needs_approval">Needs approval</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="posted">Posted</option>
+            <option value="backlog">Backlog</option>
+            <option value="unreplied">No reply on Google</option>
+          </select>
+        </div>
+        {(stars || status !== 'all' || dateFrom || dateTo || replyFilter !== 'all') && (
           <button
-            onClick={() => { setStars(''); setStatus('all'); setDateFrom(''); setDateTo('') }}
+            onClick={() => { setStars(''); setStatus('all'); setDateFrom(''); setDateTo(''); setReplyFilter('all') }}
             className="text-sm text-gray-500 hover:text-gray-700 underline"
           >
             Clear filters
@@ -1000,7 +1050,7 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
             No reviews found.
             {kpi.total === 0 && (
               <span className="block mt-1 text-gray-400">
-                Reviews are ingested daily. Run the cron manually or wait for the next scheduled run.
+                Reviews sync every 30 minutes. Use Sync &amp; Match to pull them in now.
               </span>
             )}
           </div>
@@ -1017,6 +1067,7 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Match</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tech</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Reply</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -1045,6 +1096,9 @@ export default function ReviewsClient({ kpi, lastRun, techs }: Props) {
                   </td>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                     {r.matched_tech_name ?? <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <ReplyStatusPill reply={r.reply} replyOnGoogle={r.reply_text} replySource={r.reply_source} />
                   </td>
                 </tr>
               ))}

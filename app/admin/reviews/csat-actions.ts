@@ -50,6 +50,9 @@ export interface CsatSettingsInput {
   ack_low_sms: string
   clarify_sms: string
   alert_extra_recipient_emails: string[]
+  reminder_delay_hours: number
+  survey_reminder_sms: string
+  review_reminder_sms: string
 }
 
 export async function saveCsatSettings(input: CsatSettingsInput) {
@@ -70,6 +73,9 @@ export async function saveCsatSettings(input: CsatSettingsInput) {
     clarify_sms: input.clarify_sms,
     alert_extra_recipient_emails: (input.alert_extra_recipient_emails ?? [])
       .map(e => e.trim().toLowerCase()).filter(Boolean),
+    reminder_delay_hours: Math.min(168, Math.max(1, Math.round(input.reminder_delay_hours || 48))),
+    survey_reminder_sms: input.survey_reminder_sms,
+    review_reminder_sms: input.review_reminder_sms,
     updated_at: new Date().toISOString(),
     updated_by: userId,
   }).eq('id', 1)

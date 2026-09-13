@@ -27,6 +27,7 @@ describe('isPublicPath', () => {
       '/api/genie-scheduler/book',
       '/sign/abc123',                  // e-sign links: token in the path, no login
       '/api/sign/abc123',
+      '/r/00000000-0000-0000-0000-000000000000', // review-link bouncer a customer taps from a text
     ]) expect(isPublicPath(p), p).toBe(true)
   })
 
