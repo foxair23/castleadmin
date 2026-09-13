@@ -137,3 +137,42 @@ export async function postReviewReply(googleReviewId: string, comment: string): 
     return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) }
   }
 }
+
+export interface LocalPostInput {
+  summary: string
+  /** Public JPEG/PNG URLs, at most 2 in our use. */
+  mediaUrls: string[]
+  callToAction?: { actionType: 'LEARN_MORE' | 'CALL'; url?: string }
+}
+export type CreatePostResult =
+  | { ok: true; name: string | null; state: string | null; mock?: true }
+  | { ok: false; status: number; error: string }
+
+/** Publish a STANDARD post on the configured profile (v4 localPosts). Never throws on an API error. */
+export async function createLocalPost(input: LocalPostInput): Promise<CreatePostResult> {
+  if (!isConfigured()) return { ok: true, name: `mock/localPosts/${Date.now()}`, state: 'LIVE', mock: true }
+  let token: string
+  try { token = await refreshAccessToken() } catch (e) { return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) } }
+  const location = `${process.env.GOOGLE_BUSINESS_ACCOUNT_ID}/${process.env.GOOGLE_BUSINESS_LOCATION_ID}`
+  const body: Record<string, unknown> = {
+    languageCode: 'en-US',
+    topicType: 'STANDARD',
+    summary: input.summary,
+    media: input.mediaUrls.slice(0, 2).map(u => ({ mediaFormat: 'PHOTO', sourceUrl: u })),
+  }
+  if (input.callToAction) {
+    body.callToAction = input.callToAction.actionType === 'CALL'
+      ? { actionType: 'CALL' }
+      : { actionType: 'LEARN_MORE', url: input.callToAction.url }
+  }
+  try {
+    const res = await fetch(`${GBP_BASE}/${location}/localPosts`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    if (!res.ok) return { ok: false, status: res.status, error: `GBP localPosts POST failed ${res.status}: ${(await res.text()).slice(0, 500)}` }
+    const json = await res.json().catch(() => ({})) as { name?: string; state?: string }
+    return { ok: true, name: json.name ?? null, state: json.state ?? null }
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) }
+  }
+}

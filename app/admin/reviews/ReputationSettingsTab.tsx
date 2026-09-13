@@ -2,13 +2,14 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ReputationSettings, WorkingWindow, WeekdayKey, ReplyBand } from '@/lib/reputation/settings'
+import type { ReputationSettings, WorkingWindow, WeekdayKey, ReplyBand, CtaRule } from '@/lib/reputation/settings'
 import type { Charter, Instruction, StyleExample } from '@/lib/agent/knowledge'
 import type { ApprovalStats, BandStats } from '@/lib/reputation/reply-actions'
 import {
   saveReputationSettings, saveReviewCharter, activateReviewCharter,
   createReviewInstruction, retireReviewInstruction, reactivateReviewInstruction,
   createReviewStyleExample, pinReviewStyleExample, removeReviewStyleExample, backfillTagsAction,
+  savePostCharter, activatePostCharter, createPostInstruction, createPostStyleExample,
 } from './reputation-actions'
 
 // Reviews → Settings (PRD §9.1): the two autopilot switches with their stats, the
@@ -24,6 +25,12 @@ export interface Props {
   instructions: Instruction[]
   styles: StyleExample[]
   stats: ApprovalStats
+  // Profile posts (Phase 2)
+  postCharter: Charter
+  postVersions: Charter[]
+  postInstructions: Instruction[]
+  postStyles: StyleExample[]
+  categories: string[]
 }
 
 const input = 'w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 bg-white'
@@ -68,9 +75,14 @@ export default function ReputationSettingsTab(p: Props) {
       <AutopilotCard settings={p.settings} stats={p.stats} />
       <WorkingWindowEditor settings={p.settings} />
       <StaggerCard settings={p.settings} />
-      <ReplyCharterEditor charter={p.charter} versions={p.versions} />
-      <ReviewInstructionsCard rows={p.instructions} />
+      <CharterEditor title="Reply Charter" blurb="How Castle answers reviews: voice, what to thank for, how to handle a 3-star, the no-names rule. Included in every draft. Saving creates a new version; older versions stay." charter={p.charter} versions={p.versions} save={saveReviewCharter} activate={activateReviewCharter} />
+      <InstructionsCard title="Standing instructions for replies" blurb="Short rules applied to every draft, e.g. “Invite gate customers to ask about maintenance plans.” These are separate from Cassie’s email rules." rows={p.instructions} create={createReviewInstruction} />
       <ReviewStyleExamplesCard rows={p.styles} />
+      <h2 className="text-base font-semibold text-gray-900 pt-4">Profile posts</h2>
+      <PostsCard settings={p.settings} categories={p.categories} />
+      <CharterEditor title="Post Charter" blurb="How Castle writes profile posts: plain and local, one job per post, no names, no prices, no hashtags. Included in every post draft. Saving creates a new version; older versions stay." charter={p.postCharter} versions={p.postVersions} save={savePostCharter} activate={activatePostCharter} />
+      <InstructionsCard title="Standing instructions for posts" blurb="Short rules applied to every post draft, e.g. “Mention same-day service when the job was booked and finished the same day.”" rows={p.postInstructions} create={createPostInstruction} />
+      <PostStyleExamplesCard rows={p.postStyles} categories={p.categories} />
       <ModelsCard settings={p.settings} models={p.models} llmConfigured={p.llmConfigured} />
     </div>
   )
@@ -186,7 +198,7 @@ function StaggerCard({ settings: s }: { settings: ReputationSettings }) {
         {num('skip_hour_pct', 'Skipped hours (%)', 'share of each day’s hours with no sends at all')}
         {num('cap_new_replies', 'New replies per day')}
         {num('cap_backlog_replies', 'Backlog replies per day')}
-        {num('cap_posts', 'Profile posts per day', 'used once posting is built')}
+        {num('cap_posts', 'Profile posts per day', 'the weekly cap is under Profile posts below')}
       </div>
       <div className="mt-3 max-w-sm">
         <Field label="Reply signature" hint="Added after every reply as “— signature”. Never a person’s name."><input className={input} value={f.reply_signature} onChange={e => set('reply_signature', e.target.value)} /></Field>
@@ -207,9 +219,12 @@ function StaggerCard({ settings: s }: { settings: ReputationSettings }) {
   )
 }
 
-// ── Reply Charter ───────────────────────────────────────────────────────────
+// ── Charter editor (replies and posts) ──────────────────────────────────────
 
-function ReplyCharterEditor({ charter, versions }: { charter: Charter; versions: Charter[] }) {
+function CharterEditor({ title, blurb, charter, versions, save, activate }: {
+  title: string; blurb: string; charter: Charter; versions: Charter[]
+  save: (body: string, note: string) => Promise<{ error?: string }>; activate: (id: string) => Promise<{ error?: string }>
+}) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [body, setBody] = useState(charter.body)
@@ -219,12 +234,12 @@ function ReplyCharterEditor({ charter, versions }: { charter: Charter; versions:
   return (
     <div className="space-y-4">
       <div className={card}>
-        <h2 className="text-sm font-semibold text-gray-900">Reply Charter — version {charter.version}</h2>
-        <p className="text-xs text-gray-500 mb-2">How Castle answers reviews: voice, what to thank for, how to handle a 3-star, the no-names rule. Included in every draft. Saving creates a new version; older versions stay.</p>
+        <h2 className="text-sm font-semibold text-gray-900">{title} — version {charter.version}</h2>
+        <p className="text-xs text-gray-500 mb-2">{blurb}</p>
         <textarea className={`${input} font-mono text-xs leading-relaxed`} rows={22} value={body} onChange={e => setBody(e.target.value)} />
         <div className="mt-3 flex items-center gap-3">
           <input className={`${input} max-w-md`} placeholder="What changed? (shown in version history)" value={note} onChange={e => setNote(e.target.value)} />
-          <button className={btn} disabled={pending || !dirty} onClick={() => start(async () => { setMsg(null); const r = await saveReviewCharter(body, note); setMsg(r.error ?? 'Saved as a new version.'); if (!r.error) { setNote(''); router.refresh() } })}>Save new version</button>
+          <button className={btn} disabled={pending || !dirty} onClick={() => start(async () => { setMsg(null); const r = await save(body, note); setMsg(r.error ?? 'Saved as a new version.'); if (!r.error) { setNote(''); router.refresh() } })}>Save new version</button>
           {dirty && <button className={btnGhost} disabled={pending} onClick={() => setBody(charter.body)}>Discard</button>}
           {msg && <span className="text-sm text-gray-600">{msg}</span>}
         </div>
@@ -240,7 +255,7 @@ function ReplyCharterEditor({ charter, versions }: { charter: Charter; versions:
                   <td className="py-1.5 text-gray-900">v{v.version} {v.is_active && <span className="ml-1 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-800">active</span>}</td>
                   <td className="text-gray-700">{v.note ?? '—'}</td>
                   <td className="text-gray-500">{fmt(v.created_at)}</td>
-                  <td className="text-right">{!v.is_active && <button className={btnGhost} disabled={pending} onClick={() => start(async () => { await activateReviewCharter(v.id); router.refresh() })}>Make active</button>}</td>
+                  <td className="text-right">{!v.is_active && <button className={btnGhost} disabled={pending} onClick={() => start(async () => { await activate(v.id); router.refresh() })}>Make active</button>}</td>
                 </tr>
               ))}
             </tbody>
@@ -251,9 +266,9 @@ function ReplyCharterEditor({ charter, versions }: { charter: Charter; versions:
   )
 }
 
-// ── Standing instructions ───────────────────────────────────────────────────
+// ── Standing instructions (replies and posts) ───────────────────────────────
 
-function ReviewInstructionsCard({ rows }: { rows: Instruction[] }) {
+function InstructionsCard({ title, blurb, rows, create }: { title: string; blurb: string; rows: Instruction[]; create: (text: string) => Promise<{ error?: string }> }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [text, setText] = useState('')
@@ -261,11 +276,11 @@ function ReviewInstructionsCard({ rows }: { rows: Instruction[] }) {
   const active = rows.filter(r => r.is_active), retired = rows.filter(r => !r.is_active)
   return (
     <div className={card}>
-      <h2 className="text-sm font-semibold text-gray-900 mb-1">Standing instructions for replies</h2>
-      <p className="text-xs text-gray-500 mb-3">Short rules applied to every draft, e.g. “Invite gate customers to ask about maintenance plans.” These are separate from Cassie’s email rules.</p>
+      <h2 className="text-sm font-semibold text-gray-900 mb-1">{title}</h2>
+      <p className="text-xs text-gray-500 mb-3">{blurb}</p>
       <div className="flex gap-2 mb-3">
         <input className={input} placeholder="Write a rule…" value={text} onChange={e => setText(e.target.value)} />
-        <button className={btn} disabled={pending || !text.trim()} onClick={() => start(async () => { setErr(null); const r = await createReviewInstruction(text); if (r.error) setErr(r.error); else { setText(''); router.refresh() } })}>Add</button>
+        <button className={btn} disabled={pending || !text.trim()} onClick={() => start(async () => { setErr(null); const r = await create(text); if (r.error) setErr(r.error); else { setText(''); router.refresh() } })}>Add</button>
       </div>
       {err && <p className="text-xs text-red-600 mb-2">{err}</p>}
       <ul className="divide-y divide-gray-100">
@@ -330,6 +345,103 @@ function ReviewStyleExamplesCard({ rows }: { rows: StyleExample[] }) {
           </li>
         ))}
         {list.length === 0 && <li className="py-2 text-sm text-gray-400">No examples in this band yet.</li>}
+      </ul>
+    </div>
+  )
+}
+
+// ── Profile posts: switch, caps, categories, buttons ────────────────────────
+
+function PostsCard({ settings: s, categories }: { settings: ReputationSettings; categories: string[] }) {
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [msg, setMsg] = useState<string | null>(null)
+  const [f, setF] = useState({ cap_posts_weekly: s.cap_posts_weekly, photo_min_score: s.photo_min_score, allowed: s.post_allowed_categories, rules: s.post_cta_map as CtaRule[] })
+  const allCats = [...new Set([...categories, ...f.allowed])].sort()
+  const toggleCat = (c: string) => setF(x => ({ ...x, allowed: x.allowed.includes(c) ? x.allowed.filter(a => a !== c) : [...x.allowed, c] }))
+  const setRule = (i: number, patch: Partial<CtaRule>) => setF(x => ({ ...x, rules: x.rules.map((r, j) => j === i ? { ...r, ...patch } : r) }))
+  const flip = (v: boolean) => start(async () => { setMsg(null); const r = await saveReputationSettings({ autopilot_posts: v }); setMsg(r.error ?? null); if (!r.error) router.refresh() })
+  return (
+    <div className={card}>
+      <div className={`rounded-lg border p-3 ${s.autopilot_posts ? 'border-green-300 bg-green-50' : 'border-gray-200'}`}>
+        <Switch label="Autopilot: profile posts" on={s.autopilot_posts} disabled={pending} onChange={flip} />
+        <p className="text-xs text-gray-600 mt-2">On: a post whose photo scores above the bar and whose text passes every check is scheduled without approval. Off: every post waits under the Posts tab. Turning it off pulls back anything autopilot had scheduled. Every post is drafted either way.</p>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3 mt-4">
+        <Field label="Posts per week, max" hint="Google profiles that post 1–4 times a week look active without looking automated. The daily cap under Send timing still applies."><input type="number" className={input} value={f.cap_posts_weekly} onChange={e => setF(x => ({ ...x, cap_posts_weekly: Number(e.target.value) }))} /></Field>
+        <Field label="Photo bar (0–100)" hint="A photo must score at least this to be used without a person allowing it. Scores judge sharpness, framing, whether the work is the subject, and whether a customer, plate or address is visible."><input type="number" className={input} value={f.photo_min_score} onChange={e => setF(x => ({ ...x, photo_min_score: Number(e.target.value) }))} /></Field>
+      </div>
+      <div className="mt-4">
+        <span className="block text-sm text-gray-700 font-medium mb-1">Job categories that can become posts</span>
+        <p className="text-xs text-gray-400 mb-2">Leave every box unticked to allow all categories except warranty, estimate, service-call, callback and no-charge jobs, which never post.</p>
+        <div className="flex flex-wrap gap-2">
+          {allCats.map(c => (
+            <label key={c} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs cursor-pointer ${f.allowed.includes(c) ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-700'}`}>
+              <input type="checkbox" className="hidden" checked={f.allowed.includes(c)} onChange={() => toggleCat(c)} />{c}
+            </label>
+          ))}
+          {allCats.length === 0 && <span className="text-xs text-gray-400">No categories mirrored from Service Fusion yet.</span>}
+        </div>
+      </div>
+      <div className="mt-4">
+        <span className="block text-sm text-gray-700 font-medium mb-1">Button on each post</span>
+        <p className="text-xs text-gray-400 mb-2">Rules are tried top to bottom against the job category. The first match wins; the last rule is the fallback. Paths are on castlegarage.com.</p>
+        <div className="space-y-2">
+          {f.rules.map((r, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-xs text-gray-400 w-4">{i + 1}.</span>
+              <input className={`${input} w-52`} placeholder="category matches… (regex)" value={r.match} onChange={e => setRule(i, { match: e.target.value })} />
+              <span className="text-gray-400">→</span>
+              <input className={`${input} w-64`} placeholder="/services/…" value={r.path} onChange={e => setRule(i, { path: e.target.value })} />
+              <select className={`${input} w-32`} value={r.cta} onChange={e => setRule(i, { cta: e.target.value === 'CALL' ? 'CALL' : 'LEARN_MORE' })}><option value="LEARN_MORE">Learn more</option><option value="CALL">Call now</option></select>
+              <button className="text-xs text-gray-500 underline" onClick={() => setF(x => ({ ...x, rules: x.rules.filter((_, j) => j !== i) }))}>remove</button>
+            </div>
+          ))}
+        </div>
+        <button className={`${btnGhost} mt-2`} onClick={() => setF(x => ({ ...x, rules: [...x.rules.slice(0, -1), { match: '', path: '/services/', cta: 'LEARN_MORE' }, ...x.rules.slice(-1)] }))}>Add rule</button>
+      </div>
+      <div className="mt-4 flex items-center gap-3">
+        <button className={btn} disabled={pending} onClick={() => start(async () => {
+          setMsg(null)
+          const r = await saveReputationSettings({ cap_posts_weekly: f.cap_posts_weekly, photo_min_score: f.photo_min_score, post_allowed_categories: f.allowed, post_cta_map: f.rules })
+          setMsg(r.error ?? 'Saved.'); if (!r.error) router.refresh()
+        })}>Save posting rules</button>
+        {msg && <span className="text-sm text-gray-600">{msg}</span>}
+      </div>
+    </div>
+  )
+}
+
+function PostStyleExamplesCard({ rows, categories }: { rows: StyleExample[]; categories: string[] }) {
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [f, setF] = useState({ final_text: '', category: '' })
+  const [err, setErr] = useState<string | null>(null)
+  return (
+    <div className={card}>
+      <h2 className="text-sm font-semibold text-gray-900 mb-1">Post style examples</h2>
+      <p className="text-xs text-gray-500 mb-3">Paste posts from the Google profiles you admire. Every post a person edits or approves is added here too, so the drafter learns Castle&rsquo;s voice.</p>
+      <Field label="The post"><textarea rows={4} className={input} value={f.final_text} onChange={e => setF(x => ({ ...x, final_text: e.target.value }))} /></Field>
+      <div className="mt-3 flex gap-3 items-center">
+        <select className={`${input} w-56`} value={f.category} onChange={e => setF(x => ({ ...x, category: e.target.value }))}><option value="">Any job type</option>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+        <button className={btn} disabled={pending || !f.final_text.trim()} onClick={() => start(async () => { setErr(null); const r = await createPostStyleExample({ final_text: f.final_text, category: f.category || null }); if (r.error) setErr(r.error); else { setF({ final_text: '', category: '' }); router.refresh() } })}>Add example</button>
+        {err && <span className="text-xs text-red-600">{err}</span>}
+      </div>
+      <ul className="divide-y divide-gray-100 mt-4">
+        {rows.map(r => (
+          <li key={r.id} className="py-3 flex items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">{SOURCE[r.source] ?? r.source}{r.question_type ? ` · ${r.question_type}` : ''}{r.is_pinned ? ' · pinned' : ''}</div>
+              {r.ai_text && r.ai_text !== r.final_text && <p className="text-xs text-red-700/70 line-through mb-1">{r.ai_text.slice(0, 300)}</p>}
+              <p className="text-sm text-gray-900 whitespace-pre-wrap">{r.final_text}</p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button className={btnGhost} disabled={pending} onClick={() => start(async () => { await pinReviewStyleExample(r.id, !r.is_pinned); router.refresh() })}>{r.is_pinned ? 'Unpin' : 'Pin'}</button>
+              <button className={btnGhost} disabled={pending} onClick={() => { if (confirm('Remove this example?')) start(async () => { await removeReviewStyleExample(r.id); router.refresh() }) }}>Delete</button>
+            </div>
+          </li>
+        ))}
+        {rows.length === 0 && <li className="py-2 text-sm text-gray-400">No examples yet.</li>}
       </ul>
     </div>
   )

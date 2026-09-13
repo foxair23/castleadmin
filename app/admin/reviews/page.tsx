@@ -4,7 +4,8 @@ import { loadCsatSettings } from '@/lib/csat/config'
 import { getCsatRows } from '@/lib/csat/metrics'
 import { loadReputationSettings } from '@/lib/reputation/settings'
 import { approvalStats, loadApprovalStatRows, loadNeedsApprovalCount } from '@/lib/reputation/reply-actions'
-import { getReviewCharter, listReviewInstructions, listReviewStyleExamples, REVIEW_CHANNEL } from '@/lib/reputation/knowledge'
+import { getReviewCharter, listReviewInstructions, listReviewStyleExamples, REVIEW_CHANNEL, getPostCharter, listPostInstructions, listPostStyleExamples, POST_CHANNEL } from '@/lib/reputation/knowledge'
+import { loadPostsNeedingApprovalCount } from '@/lib/reputation/post-actions'
 import { listCharterVersions } from '@/lib/agent/knowledge'
 import { loadAgentSettings } from '@/lib/agent/settings'
 import { isLlmConfigured } from '@/lib/agent/llm'
@@ -53,6 +54,12 @@ export default async function ReviewsPage() {
     loadAgentSettings(db), getReviewCharter(db), listCharterVersions(db, REVIEW_CHANNEL),
     listReviewInstructions(db, { includeRetired: true }), listReviewStyleExamples(db), loadApprovalStatRows(db),
   ])
+  // Profile posts (Phase 2): charter, rules, examples, the category list for the settings, and the badge count.
+  const [postCharter, postVersions, postInstructions, postStyles, postsNeedingApproval, { data: catRows }] = await Promise.all([
+    getPostCharter(db), listCharterVersions(db, POST_CHANNEL), listPostInstructions(db, { includeRetired: true }), listPostStyleExamples(db),
+    loadPostsNeedingApprovalCount(db), db.from('sf_job_categories').select('name').eq('is_deleted', false).order('name'),
+  ])
+  const categories = [...new Set(((catRows ?? []) as Array<{ name: string | null }>).map(c => (c.name ?? '').trim()).filter(Boolean))]
 
   return (
     <ReviewsTabs
@@ -63,6 +70,7 @@ export default async function ReviewsPage() {
         needsApproval,
         backlogCap: repSettings.cap_backlog_replies,
       }}
+      posts={{ needsApproval: postsNeedingApproval }}
       techs={techs}
       reputation={{
         settings: repSettings,
@@ -70,6 +78,7 @@ export default async function ReviewsPage() {
         llmConfigured: isLlmConfigured(),
         charter, versions, instructions, styles,
         stats: approvalStats(statRows),
+        postCharter, postVersions, postInstructions, postStyles, categories,
       }}
     />
   )
