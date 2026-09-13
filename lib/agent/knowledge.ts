@@ -154,11 +154,20 @@ export async function listStyleExamples(db: SupabaseClient, opts: { includeDelet
 }
 
 /** Style examples for specific audiences (e.g. the review agent's bands). No seeding. */
-export async function listStyleExamplesByAudience(db: SupabaseClient, audiences: string[]): Promise<StyleExample[]> {
-  const { data } = await db.from('agent_style_examples').select('*')
-    .in('audience', audiences).eq('is_deleted', false)
-    .order('is_pinned', { ascending: false }).order('created_at', { ascending: false })
-  return (data ?? []) as StyleExample[]
+export async function listStyleExamplesByAudience(db: SupabaseClient, audiences: string[], max = 5000): Promise<StyleExample[]> {
+  // Paged: PostgREST caps a single request at 1000 rows, and a CSV import can add thousands.
+  const out: StyleExample[] = []
+  const page = 1000
+  for (let from = 0; from < max; from += page) {
+    const { data } = await db.from('agent_style_examples').select('*')
+      .in('audience', audiences).eq('is_deleted', false)
+      .order('is_pinned', { ascending: false }).order('created_at', { ascending: false })
+      .range(from, Math.min(from + page, max) - 1)
+    const rows = (data ?? []) as StyleExample[]
+    out.push(...rows)
+    if (rows.length < page) break
+  }
+  return out
 }
 
 export async function addStyleExample(db: SupabaseClient, input: { inquiry_text: string | null; final_text: string; question_type: string | null; audience?: string; source?: string }, userId: string | null): Promise<StyleExample> {

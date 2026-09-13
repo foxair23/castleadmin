@@ -9,7 +9,7 @@ import { extractReviewExamples, filterExamples, DEFAULT_IMPORT_FILTER, bandForSt
 import {
   saveReputationSettings, saveReviewCharter, activateReviewCharter,
   createReviewInstruction, retireReviewInstruction, reactivateReviewInstruction,
-  createReviewStyleExample, pinReviewStyleExample, removeReviewStyleExample, backfillTagsAction, importReviewStyleExamples,
+  createReviewStyleExample, pinReviewStyleExample, removeReviewStyleExample, backfillTagsAction, importReviewStyleExamples, removeImportedStyleExamples,
   savePostCharter, activatePostCharter, createPostInstruction, createPostStyleExample,
 } from './reputation-actions'
 
@@ -40,6 +40,7 @@ const input = 'w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gr
 const btn = 'rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50'
 const btnGhost = 'rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50'
 const card = 'rounded-lg border border-gray-200 bg-white p-4'
+const link = 'text-xs text-gray-500 underline hover:text-gray-800 disabled:opacity-50'
 const DAYS: Array<{ key: WeekdayKey; label: string }> = [
   { key: 'mon', label: 'Monday' }, { key: 'tue', label: 'Tuesday' }, { key: 'wed', label: 'Wednesday' }, { key: 'thu', label: 'Thursday' },
   { key: 'fri', label: 'Friday' }, { key: 'sat', label: 'Saturday' }, { key: 'sun', label: 'Sunday' },
@@ -365,7 +366,9 @@ function ReviewStyleExamplesCard({ rows }: { rows: StyleExample[] }) {
   const [band, setBand] = useState<ReplyBand>('positive')
   const [f, setF] = useState({ inquiry_text: '', final_text: '', stars: '' })
   const [err, setErr] = useState<string | null>(null)
+  const [shown, setShown] = useState(40)
   const list = rows.filter(r => r.audience === `review_${band}`)
+  const imported = list.filter(r => r.source === 'import').length
   return (
     <div className={card}>
       <h2 className="text-sm font-semibold text-gray-900 mb-1">Style examples</h2>
@@ -385,8 +388,12 @@ function ReviewStyleExamplesCard({ rows }: { rows: StyleExample[] }) {
         <button className={btn} disabled={pending || !f.final_text.trim()} onClick={() => start(async () => { setErr(null); const r = await createReviewStyleExample({ band, inquiry_text: f.inquiry_text, final_text: f.final_text, stars: f.stars ? Number(f.stars) : null }); if (r.error) setErr(r.error); else { setF({ inquiry_text: '', final_text: '', stars: '' }); router.refresh() } })}>Add example</button>
         {err && <span className="text-xs text-red-600">{err}</span>}
       </div>
-      <ul className="divide-y divide-gray-100 mt-4">
-        {list.map(r => (
+      <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+        <span>{list.length} example{list.length === 1 ? '' : 's'} in this band{imported ? ` · ${imported} imported from CSV` : ''}. The drafter picks the 12 closest to each review, pinned ones always included.</span>
+        {imported > 0 && <button className={link} disabled={pending} onClick={() => { if (confirm(`Remove all ${imported} imported examples from the ${band === 'positive' ? '4–5 star' : '1–3 star'} list? Pasted, edited and approved examples stay.`)) start(async () => { await removeImportedStyleExamples(band); router.refresh() }) }}>remove all imported</button>}
+      </div>
+      <ul className="divide-y divide-gray-100 mt-2">
+        {list.slice(0, shown).map(r => (
           <li key={r.id} className="py-3 flex items-start gap-3">
             <div className="flex-1 min-w-0">
               <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">{SOURCE[r.source] ?? r.source}{r.question_type ? ` · ${r.question_type} ★` : ''}{r.is_pinned ? ' · pinned' : ''}</div>
@@ -402,6 +409,7 @@ function ReviewStyleExamplesCard({ rows }: { rows: StyleExample[] }) {
         ))}
         {list.length === 0 && <li className="py-2 text-sm text-gray-400">No examples in this band yet.</li>}
       </ul>
+      {list.length > shown && <button className={`${btnGhost} mt-2`} onClick={() => setShown(n => n + 100)}>Show more ({list.length - shown} more)</button>}
     </div>
   )
 }
