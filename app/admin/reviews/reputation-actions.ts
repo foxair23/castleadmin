@@ -314,29 +314,10 @@ export async function testJobPhotosAction(jobRef: string): Promise<ActionResult 
     const rawList: unknown[] = Array.isArray(job?.pictures) ? job.pictures : Array.isArray(job?.pictures?.items) ? job.pictures.items : []
     const samples = rawList.slice(0, 2).map(o => JSON.stringify(o, null, 1).slice(0, 700))
 
-    // Read-only probes of the endpoints that could serve the file itself.
+    // The public API has no file endpoint (service-fusion-api-docs_.pdf lists none; typ.Picture's
+    // file_location is a bare file name). Nothing to probe: the bytes must come through the
+    // office extension's Service Fusion web session, like documents, payments and line items.
     const probes: Array<{ what: string; result: string }> = []
-    const describe = (v: unknown): string => {
-      if (v == null) return 'empty'
-      if (typeof v !== 'object') return String(v).slice(0, 200)
-      const o = v as Record<string, unknown>
-      const items = Array.isArray(o.items) ? o.items : Array.isArray(v) ? (v as unknown[]) : null
-      if (items) return `${items.length} item(s); first has keys: ${items[0] && typeof items[0] === 'object' ? Object.keys(items[0] as object).join(', ') : typeof items[0]}`
-      return `keys: ${Object.keys(o).join(', ')}${typeof o.url === 'string' ? ` · url=${(o.url as string).slice(0, 120)}` : ''}${typeof o.file_url === 'string' ? ` · file_url=${(o.file_url as string).slice(0, 120)}` : ''}`
-    }
-    const probe = async (what: string, path: string, params?: Record<string, string>) => {
-      try { probes.push({ what, result: describe(await sfMirrorGet(path, params)) }) }
-      catch (e) { probes.push({ what, result: `error: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}` }) }
-    }
-    const first = (rawList[0] ?? null) as Record<string, unknown> | null
-    const picId = first && (typeof first.id === 'string' || typeof first.id === 'number') ? String(first.id) : null
-    await probe(`GET /jobs/${sfJobId}/pictures`, `/jobs/${encodeURIComponent(sfJobId)}/pictures`)
-    if (picId) {
-      await probe(`GET /jobs/${sfJobId}/pictures/${picId}`, `/jobs/${encodeURIComponent(sfJobId)}/pictures/${encodeURIComponent(picId)}`)
-      await probe(`GET /pictures/${picId}`, `/pictures/${encodeURIComponent(picId)}`)
-    }
-    await probe(`GET /jobs/${sfJobId}?expand=documents`, `/jobs/${encodeURIComponent(sfJobId)}`, { expand: 'documents' })
-
     const absoluteUrls = pictures.filter(p => /^https?:\/\//i.test(p.fileLocation)).length
     const imp = absoluteUrls ? await importJobPhotos(db, sfJobId) : { imported: 0, errors: [] as string[] }
     return { sfJobId, found: pictures.length, pictures: pictures.map(p => ({ name: p.name, url: p.fileLocation, docType: p.docType })), rawKeys, samples, probes, absoluteUrls, imported: imp.imported, importErrors: imp.errors }

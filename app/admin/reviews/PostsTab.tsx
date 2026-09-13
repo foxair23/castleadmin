@@ -299,7 +299,7 @@ function TestPhotosCard() {
           {out.error ? <p className="text-red-600">{out.error}</p> : (
             <>
               <p>{out.found} picture{out.found === 1 ? '' : 's'} on the job · {out.absoluteUrls ?? 0} with a web address · {out.imported} imported now{out.importErrors?.length ? ` · ${out.importErrors.length} failed` : ''}</p>
-              {out.found ? (out.absoluteUrls ?? 0) === 0 && <p className="text-amber-700">Service Fusion lists the pictures by file name only, with no web address, so nothing can be downloaded yet. The probes below show which file endpoints answer; send this whole block to Claude.</p> : null}
+              {out.found ? (out.absoluteUrls ?? 0) === 0 && <p className="text-amber-700">Service Fusion&rsquo;s API lists the pictures by file name only and has no way to download the file itself. The pictures have to come through the office Chrome extension&rsquo;s Service Fusion session, the same route documents and payments already use. Until that is built, no posts can be drafted from photos.</p> : null}
               {out.rawKeys && out.rawKeys.length > 0 && <p className="text-gray-400">picture-like fields on the job: {out.rawKeys.join(', ')}</p>}
               {out.rawKeys && out.rawKeys.length === 0 && <p className="text-amber-700">The job payload has no picture fields at all. Service Fusion may need the pictures expand enabled on the API key.</p>}
               <ul className="list-disc pl-4">
