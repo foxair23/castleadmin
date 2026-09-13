@@ -55,6 +55,12 @@ export interface ReputationSettings {
   photo_min_score: number
   posts_since: string
 
+  // Rank tracking (Phase 3)
+  rank_scans_enabled: boolean
+  rank_business_match: string
+  rank_weekly_request_cap: number
+  rank_default_keywords: string[]
+
   updated_at: string | null
   updated_by: string | null
 }
@@ -92,6 +98,11 @@ export const REPUTATION_DEFAULTS: ReputationSettings = {
   post_cta_map: DEFAULT_CTA_MAP,
   photo_min_score: 70,
   posts_since: '1970-01-01T00:00:00.000Z',
+
+  rank_scans_enabled: true,
+  rank_business_match: 'castle garage',
+  rank_weekly_request_cap: 2000,
+  rank_default_keywords: ['garage door repair', 'garage door installation', 'garage door opener repair', 'garage door spring repair', 'gate repair', 'garage door company'],
 
   updated_at: null,
   updated_by: null,
