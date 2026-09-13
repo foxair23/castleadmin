@@ -27,6 +27,9 @@ export interface ComposeInput {
   body: string
   /** Earlier messages in the thread, oldest first, already trimmed. */
   thread: Array<{ from: string; text: string }>
+  /** From the self-check: what the previous draft got wrong against the standing
+   *  instructions. The rewrite must fix every one. */
+  reviewNotes?: string[]
 }
 
 export interface ComposeOutput {
@@ -52,7 +55,10 @@ Hard rules for this channel — these override anything else:
 8. Do not include a greeting line or sign-off name; those are added around your sentences. Do not include the signature.
 9. Do not ask the sender for information already in the email or the thread.
 10. If the facts do not answer the question, set could_not_answer = true and describe what is missing in one line. Still write the best honest reply you can (what you do see, and that the team will follow up).
-11. The standing instructions may tell you to check with the team in certain situations (a status word, a date that has already passed, a kind of request). When one applies, set could_not_answer = true and put what you would ask the team in "missing" — do not answer around it.`.trim()
+11. The standing instructions may tell you to check with the team in certain situations (a status word, a date that has already passed, a kind of request). When one applies, set could_not_answer = true and put what you would ask the team in "missing" — do not answer around it.
+12. A fact labelled EXACT WORDING is the reply itself, dictated by a Castle team member. Use it as the body — the same sentences, in order, minus greeting and sign-off. Do not add sentences, soften it, or restate it; only split it into the sentence list and cite that fact.
+13. Internal status words and names from our system (a status like "waiting for Tiffany", a team member's name, a note to ourselves) never go to a partner. Say what it means for them in plain terms, or check with the team (rule 11).
+14. Before returning, re-read every standing instruction and check each sentence against it. If REVIEW NOTES are given, they name what the last draft got wrong — every one must be fixed.`.trim()
 
 const TOOL: Anthropic.Tool = {
   name: 'compose_reply',
@@ -105,7 +111,7 @@ INQUIRY from ${input.partner.fromName ?? input.partner.fromAddr} (${input.partne
 ${input.body}
 
 Question type: ${input.questionType}. In one line: ${input.questionSummary}
-
+${input.reviewNotes?.length ? `\nREVIEW NOTES — your previous draft broke these standing instructions; fix every one:\n${input.reviewNotes.map(n => `- ${n}`).join('\n')}\n` : ''}
 Compose the reply now using compose_reply.`
   return { system, user }
 }

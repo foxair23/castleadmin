@@ -44,7 +44,11 @@ export interface ComposerOptions {
   noChatAsk?: boolean
 }
 
-export interface HumanAnswer { askId?: string | null; text: string; responder: string; channel?: 'chat' | 'review' }
+export interface HumanAnswer {
+  askId?: string | null; text: string; responder: string; channel?: 'chat' | 'review'
+  /** The person dictated the reply itself. The composer uses it as the body, not as a hint. */
+  exactWording?: string | null
+}
 
 /** How a human answer is recorded, by where it came from. One place, so the fact source,
  *  the auto-send blocker and the supersede reason can never disagree with each other. */
@@ -104,6 +108,9 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
       // A team member's answer is written FROM, never quoted — so it carries no values the
       // reply may repeat. A number they mention reaches the partner only via a job it matched.
       ...(opts.chatAnswer ? [{ source: humanAnswerMeta(opts.chatAnswer).source, refId: opts.chatAnswer.askId ?? null, label: humanAnswerMeta(opts.chatAnswer).label, text: opts.chatAnswer.text, values: [] }] : []),
+      // "Send this:" — the person wrote the reply. It goes out as written (a human approves
+      // it either way); the composer's job shrinks to fitting it, not rephrasing it.
+      ...(opts.chatAnswer?.exactWording ? [{ source: humanAnswerMeta(opts.chatAnswer).source, refId: opts.chatAnswer.askId ?? null, label: `EXACT WORDING from ${opts.chatAnswer.responder} — send as written`, text: opts.chatAnswer.exactWording, values: [] }] : []),
     ] })
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
@@ -134,6 +141,26 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
     await db.from('agent_email_replies').insert({ ...base, question_type: questionType, question_summary: summary, identifiers, status: 'failed', error: 'composer returned nothing' })
     return { outcome: 'error', detail: 'composer returned nothing' }
   }
+
+  // Self-check against the standing instructions, then one rewrite. A rule the team gave
+  // ("never say 'waiting for Tiffany' to a partner") sits in the system prompt, but a long
+  // prompt is exactly where a rule gets missed; a second, narrow read of the draft against
+  // the rules catches it before a person has to. The rewrite carries the specific misses.
+  let selfCheck: string[] = []
+  try {
+    const { checkInstructions } = await import('./instruction-check')
+    const active = instructions.filter(i => i.is_active && (i.channel === 'all' || i.channel === 'email'))
+    const v = await checkInstructions(settings, { draft: renderBody(composed.claims), instructions: active.map(i => i.text), exactWording: opts.chatAnswer?.exactWording ?? null })
+    if (v.length) {
+      selfCheck = v.map(x => `${x.problem} (rule: ${x.rule})`)
+      const again = await composeReply({
+        settings, charter, instructions, styleExamples, facts: pack.facts, gaps: pack.gaps, questionType, questionSummary: summary,
+        partner: { fromName: a.email.from.name, fromAddr: a.email.from.addr, company: companyFor(fromDomain) },
+        subject: a.email.subject, body: a.cleanBody, thread, reviewNotes: selfCheck,
+      })
+      if (again) composed = again
+    }
+  } catch (e) { console.error('[cassie] instruction self-check failed:', e instanceof Error ? e.message : e) }
 
   // Grounding check — in code.
   const report = checkGrounding(composed.claims, pack.facts)
@@ -185,6 +212,13 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
   }).select('id').single()
   if (error) return { outcome: 'error', detail: `reply insert: ${error.message}` }
   const replyId = reply.id as string
+  // One live draft per inbound email. Whatever path led here (a Chat answer, a revision, a
+  // reprocess), an older draft for the same message is now stale — and two drafts for one
+  // email in the review queue is how the same partner gets answered twice.
+  await db.from('agent_email_replies').update({ status: 'superseded', cancel_reason: 'recomposed', updated_at: new Date().toISOString() })
+    .eq('message_id', a.messageId).eq('status', 'draft').neq('id', replyId)
+
+  if (selfCheck.length) await db.from('agent_email_feedback').insert({ reply_id: replyId, kind: 'note', note: `Self-check: first draft broke a standing instruction, rewritten — ${selfCheck.join('; ')}` })
 
   // Source attribution (PRD §12), retained indefinitely.
   const sources = [

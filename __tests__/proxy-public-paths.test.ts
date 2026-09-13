@@ -9,6 +9,9 @@ import { isPublicPath } from '@/proxy'
 describe('isPublicPath', () => {
   it('exempts endpoints that carry their own authorization', () => {
     for (const p of [
+      '/login/forgot',                // forgot-password form
+      '/auth/callback',               // where Supabase's emailed reset link lands
+      '/auth/reset',                  // set the new password (recovery session)
       '/api/cassie/chat/events',      // Google-signed bearer token
       '/api/leads/inbound',           // shared secret
       '/api/dialpad/webhook',         // provider signature

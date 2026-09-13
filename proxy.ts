@@ -9,6 +9,10 @@ import { marketingUrl } from '@/lib/config/domains'
 export function isPublicPath(pathname: string): boolean {
   return (
     pathname === '/login' ||
+    // Forgot-password form, and where Supabase's emailed links land (the link itself is
+    // the authorization; the person has no session yet).
+    pathname === '/login/forgot' ||
+    pathname.startsWith('/auth/') ||
     pathname.startsWith('/embed/') ||
     pathname.startsWith('/p/') ||
     // Per-customer Google review bouncer (/r/<surveyId>): stamps the click, then redirects.

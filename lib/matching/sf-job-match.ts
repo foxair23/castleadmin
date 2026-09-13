@@ -15,7 +15,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 //   5. phone     — the order's phone → its SF customer
 // name/email/phone resolve ONLY when they point at a single job — otherwise we
 // report `ambiguous` and no number, never a guess (same caution as the remittance
-// matcher's money path).
+// matcher's money path). They also only consider jobs created in the last 90 days:
+// a returning customer's old job shares the name and phone but is not this order.
 
 export type SfMatchMethod = 'linked' | 'po' | 'name' | 'email' | 'phone'
 
@@ -33,9 +34,15 @@ export interface ExternalOrderKey {
   email?: string | null
   phone?: string | null
   linkedJobId?: string | null
+  /** SF job ids the office has rejected for this order ("unmatch") — never returned by any
+   *  method, however well the PO/name/email/phone lines up. */
+  excludedJobIds?: string[] | null
 }
 
-export interface SfJobLite { id: string; number: string | null; customer_name: string | null; customer_id: string | null; po_number: string | null }
+/** A weak (name/email/phone) match never picks a job older than this. */
+export const WEAK_MATCH_MAX_AGE_DAYS = 90
+
+export interface SfJobLite { id: string; number: string | null; customer_name: string | null; customer_id: string | null; po_number: string | null; created_at_sf?: string | null }
 export interface SfCustomerContact { id: string; email: string | null; phone: string | null }
 
 // ── Normalizers (exported for tests / reuse) ────────────────────────────────
@@ -91,19 +98,25 @@ export function buildSfJobIndex(jobs: SfJobLite[], customers: SfCustomerContact[
 
 const hit = (job: SfJobLite, method: SfMatchMethod): SfJobMatch => ({ sfJobId: job.id, sfJobNumber: job.number, method, ambiguous: false })
 
-export function matchToSfJob(index: SfJobIndex, key: ExternalOrderKey): SfJobMatch {
+export function matchToSfJob(index: SfJobIndex, key: ExternalOrderKey, opts: { now?: Date } = {}): SfJobMatch {
   if (key.linkedJobId) {
     const j = index.jobById.get(key.linkedJobId)
     if (j) return hit(j, 'linked')
   }
+  const excluded = new Set(key.excludedJobIds ?? [])
   // PO membership — split the order's PO too, in case a source lists several.
   for (const p of splitPos(key.po)) {
     const j = index.poToJob.get(p)
-    if (j) return hit(j, 'po')
+    if (j && !excluded.has(j.id)) return hit(j, 'po')
   }
 
+  // Weak methods: an old job is not a candidate at all — it neither matches nor makes the
+  // pick ambiguous. A job with no creation date in the mirror is not known to be old.
+  const cutoff = (opts.now ?? new Date()).getTime() - WEAK_MATCH_MAX_AGE_DAYS * 86_400_000
+  const recent = (j: SfJobLite) => !j.created_at_sf || new Date(j.created_at_sf).getTime() >= cutoff
   let ambiguous = false
-  const resolveUnique = (jobs: SfJobLite[] | undefined, method: SfMatchMethod): SfJobMatch | null => {
+  const resolveUnique = (candidates: SfJobLite[] | undefined, method: SfMatchMethod): SfJobMatch | null => {
+    const jobs = candidates?.filter(j => !excluded.has(j.id) && recent(j))
     if (!jobs || jobs.length === 0) return null
     if (jobs.length === 1) return hit(jobs[0], method)
     ambiguous = true
@@ -191,7 +204,7 @@ export function loadSfJobIndex(db: SupabaseClient, opts: { withContacts?: boolea
 async function loadSfJobIndexUncached(db: SupabaseClient, opts: { withContacts?: boolean } = {}): Promise<SfJobIndex> {
   const jobs = await fetchAll<SfJobLite>(async (from, to) => {
     const { data } = await db.from('sf_jobs')
-      .select('id, number, customer_name, customer_id, po_number')
+      .select('id, number, customer_name, customer_id, po_number, created_at_sf')
       .eq('is_deleted', false).order('id').range(from, to)
     return (data ?? []) as SfJobLite[]
   })

@@ -21,11 +21,27 @@ export interface LiveTech { id: string; name: string }
 /** The facts a reply may state about a job — nothing more. Field names are stable
  *  because the composer's grounding annotations and the send-time re-verify both
  *  refer to them. */
+export interface LiveVisit {
+  startDate: string | null
+  windowStart: string | null
+  windowEnd: string | null
+  notes: string | null
+  techs: LiveTech[]
+  /** The assigned techs' visit status as SF reports it ("Completed", "Waiting on Clopay", …). */
+  techStatus: string | null
+}
+
 export interface LiveJobFacts {
   jobId: string
   jobNumber: string | null
   status: string | null
   subStatus: string | null
+  /** SF job category, e.g. "CLOPAY: Inspection" / "CLOPAY: Door/Segment Installation". */
+  category: string | null
+  description: string | null
+  /** Every visit on the job, oldest first. A Clopay install's site check and install are
+   *  separate visits in time (SF keeps one at a time; the category says which). */
+  visits: LiveVisit[]
   customerName: string | null
   poNumber: string | null
   /** Scheduled start/end (ISO or SF's 'YYYY-MM-DD HH:mm:ss'). */
@@ -85,11 +101,23 @@ export function mapLiveJob(raw: Raw, fetchedAt = new Date().toISOString()): Live
   for (const v of visits) for (const t of Array.isArray(v.techs_assigned) ? v.techs_assigned : []) {
     if (!techs.has(String(t.id))) techs.set(String(t.id), { id: String(t.id), name: techName(t) })
   }
+  const mappedVisits: LiveVisit[] = visits.map(v => {
+    const vt = (Array.isArray(v.techs_assigned) ? v.techs_assigned : []) as Raw[]
+    return {
+      startDate: str(v.start_date), windowStart: str(v.time_frame_promised_start), windowEnd: str(v.time_frame_promised_end),
+      notes: str(v.notes_for_techs) ?? str(v.notes) ?? str(v.description),
+      techs: vt.map(t => ({ id: String(t.id), name: techName(t) })),
+      techStatus: vt.map(t => str(t.status)).find(Boolean) ?? null,
+    }
+  }).sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''))
   return {
     jobId: String(raw.id),
     jobNumber: str(raw.number),
     status: str(raw.status),
     subStatus: str(raw.sub_status),
+    category: str(raw.category),
+    description: str(raw.description),
+    visits: mappedVisits,
     customerName: str(raw.customer_name),
     poNumber: str(raw.po_number),
     startDate: str(raw.start_date),
