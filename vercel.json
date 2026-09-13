@@ -72,6 +72,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/gbp-posts-prepare",
+      "schedule": "10 13,14 * * *"
+    },
+    {
       "path": "/api/cron/scheduler-partial-leads",
       "schedule": "*/5 * * * *"
     },
