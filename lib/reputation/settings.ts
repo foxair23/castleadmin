@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { agentDb } from '@/lib/agent/settings'
 
 // Reputation Engine settings — one row (reputation_settings id=1). Defaults here
-// MUST match migration 134 so a missing row (or a new column) behaves the same as
+// MUST match migration 135 so a missing row (or a new column) behaves the same as
 // a freshly seeded one. Safety defaults: both autopilot switches off.
 
 export type WeekdayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'

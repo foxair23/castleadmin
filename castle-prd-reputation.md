@@ -2,7 +2,7 @@
 ## PRD — Reputation Engine (Big Reputation parity, built in-house)
 
 **Status: Phase 1 BUILT on branch `claude/big-reputation-analysis-wuuc8w` (2026-09-13); Phases 2–4 not started.**
-Phase 1 covers §3 (reminders, per-customer review links), §4 (reply agent, autopilot switches, backlog, humanized send queue), §5 item 2 (AI tags) and the Settings sub-tab in §9.1. One owner step remains before it runs: apply `supabase/migrations/134_reputation_engine.sql` in the Supabase SQL editor.
+Phase 1 covers §3 (reminders, per-customer review links), §4 (reply agent, autopilot switches, backlog, humanized send queue), §5 item 2 (AI tags) and the Settings sub-tab in §9.1. One owner step remains before it runs: apply `supabase/migrations/135_reputation_engine.sql` in the Supabase SQL editor.
 Revision 2, 2026-09-12: incorporates owner feedback on autopilot switches, historical reviews, humanized send timing, tab layout, photo relevance, configurable and live rank queries, and no tech names.
 
 ---

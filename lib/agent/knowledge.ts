@@ -20,7 +20,7 @@ export interface StyleExample {
 
 // ── Charter ─────────────────────────────────────────────────────────────────
 
-// Charters are per channel (migration 134): 'email' is Cassie's, 'review' is the
+// Charters are per channel (migration 135): 'email' is Cassie's, 'review' is the
 // Google-review reply agent's. Every function below defaults to 'email' so the
 // existing Cassie callers are unchanged.
 const DEFAULT_CHANNEL = 'email'
