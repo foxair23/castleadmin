@@ -72,6 +72,14 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/gbp-posts-prepare",
+      "schedule": "10 13,14 * * *"
+    },
+    {
+      "path": "/api/cron/reputation-digest",
+      "schedule": "5 14,15 * * 1"
+    },
+    {
       "path": "/api/cron/scheduler-partial-leads",
       "schedule": "*/5 * * * *"
     },

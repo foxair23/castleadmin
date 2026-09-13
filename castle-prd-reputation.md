@@ -1,8 +1,9 @@
 # Castle Garage Doors & Gates — Piecework Payroll App
 ## PRD — Reputation Engine (Big Reputation parity, built in-house)
 
-**Status: Phase 1 BUILT on branch `claude/big-reputation-analysis-wuuc8w` (2026-09-13); Phases 2–4 not started.**
-Phase 1 covers §3 (reminders, per-customer review links), §4 (reply agent, autopilot switches, backlog, humanized send queue), §5 item 2 (AI tags) and the Settings sub-tab in §9.1. One owner step remains before it runs: apply `supabase/migrations/135_reputation_engine.sql` in the Supabase SQL editor.
+**Status: Phase 1 MERGED (migration 135 applied); Phase 2 BUILT on branch `claude/big-reputation-analysis-wuuc8w` (2026-09-13); Phases 3–4 not started.**
+Phase 1 covers §3 (reminders, per-customer review links), §4 (reply agent, autopilot switches, backlog, humanized send queue), §5 item 2 (AI tags) and the Settings sub-tab in §9.1.
+Phase 2 covers §6 (job photos from Service Fusion, photo scoring and before/after pairing, post drafting with guardrails, the Posts sub-tab, posts autopilot off by default, publishing through the send queue) and §5 items 1, 3, 4, 5, 8, 9 and 11 (the Insights sub-tab and the Monday digest email). Owner steps before it runs: apply `supabase/migrations/136_reputation_posts.sql` in the Supabase SQL editor, then use "Check a job's photos" on the Posts sub-tab with a recent job number to confirm Service Fusion returns picture files. Button links on posts point at castlegarage.com (the domain moved; §6.4 below says castlegaragedoors.com).
 Revision 2, 2026-09-12: incorporates owner feedback on autopilot switches, historical reviews, humanized send timing, tab layout, photo relevance, configurable and live rank queries, and no tech names.
 
 ---

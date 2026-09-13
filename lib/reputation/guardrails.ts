@@ -6,7 +6,7 @@ import type { ReplyBand } from './settings'
 
 export type GuardrailCheck =
   | 'tech_name' | 'customer_last_name' | 'address' | 'price' | 'warranty' | 'arguing'
-  | 'length' | 'service_type' | 'city' | 'signature'
+  | 'length' | 'service_type' | 'city' | 'signature' | 'format'
 
 export interface GuardrailFailure { check: GuardrailCheck; detail: string }
 export interface GuardrailResult { passed: boolean; failures: GuardrailFailure[]; wordCount: number }
@@ -104,25 +104,21 @@ export function serviceTermsFor(category: string | null, itemNames: string[] = [
   return [...out]
 }
 
-export function checkReplyGuardrails(body: string, ctx: GuardrailContext): GuardrailResult {
+/** The checks every public text shares: no staff names, no customer surname, no address. */
+function identityChecks(text: string, ctx: Pick<GuardrailContext, 'roster' | 'mentionedNames' | 'reviewerName' | 'customerName' | 'contactLastName' | 'street'>): GuardrailFailure[] {
   const failures: GuardrailFailure[] = []
-  const text = body ?? ''
-  const lower = text.toLowerCase()
-
   // Tech / staff names, and names the reviewer used, except the reviewer's own first name.
   const reviewerFirst = ctx.reviewerName?.trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z'-]/g, '') ?? ''
   for (const tok of forbiddenNameTokens(ctx.roster, ctx.mentionedNames)) {
     if (tok === reviewerFirst) continue
     if (hasWord(text, tok)) { failures.push({ check: 'tech_name', detail: `names "${tok}"` }); break }
   }
-
   // Customer surname (from the job or the reviewer's own display name).
   const surnames = new Set<string>()
   for (const s of [surnameOf(ctx.customerName), surnameOf(ctx.reviewerName), ctx.contactLastName?.trim().toLowerCase() ?? null]) {
     if (s && s.length >= 3 && !NAME_STOPLIST.has(s)) surnames.add(s)
   }
   for (const s of surnames) if (hasWord(text, s)) { failures.push({ check: 'customer_last_name', detail: `mentions "${s}"` }); break }
-
   // Street address.
   if (ADDRESS_RE.test(text)) failures.push({ check: 'address', detail: 'contains a street address' })
   else if (ctx.street) {
@@ -130,6 +126,13 @@ export function checkReplyGuardrails(body: string, ctx: GuardrailContext): Guard
     const hit = toks.find(t => hasWord(text, t))
     if (hit) failures.push({ check: 'address', detail: `mentions the street ("${hit}")` })
   }
+  return failures
+}
+
+export function checkReplyGuardrails(body: string, ctx: GuardrailContext): GuardrailResult {
+  const text = body ?? ''
+  const lower = text.toLowerCase()
+  const failures: GuardrailFailure[] = identityChecks(text, ctx)
 
   if (PRICE_RE.test(text)) failures.push({ check: 'price', detail: 'mentions a price' })
   const w = WARRANTY_TERMS.find(t => lower.includes(t))
@@ -154,6 +157,36 @@ export function checkReplyGuardrails(body: string, ctx: GuardrailContext): Guard
   if (ctx.signature && lower.includes(ctx.signature.toLowerCase())) failures.push({ check: 'signature', detail: 'includes the signature (it is added automatically)' })
   else if (/^\s*[-–—]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s*$/m.test(text)) failures.push({ check: 'signature', detail: 'signs off with a name' })
 
+  return { passed: failures.length === 0, failures, wordCount: wc }
+}
+
+export const POST_LENGTH: [number, number] = [80, 200]
+const HASHTAG_RE = /(^|\s)#[A-Za-z0-9_]+/
+const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
+
+export interface PostGuardrailContext {
+  roster: string[]
+  customerName: string | null
+  contactLastName: string | null
+  street: string | null
+  serviceTerms: string[]
+  city: string | null
+}
+
+/** Rules for a profile post (PRD §6.4): the shared identity checks, no prices or promises, 80–200 words, service and city named, no hashtags or emoji. */
+export function checkPostGuardrails(body: string, ctx: PostGuardrailContext): GuardrailResult {
+  const text = body ?? ''
+  const lower = text.toLowerCase()
+  const failures: GuardrailFailure[] = identityChecks(text, { ...ctx, mentionedNames: [], reviewerName: null })
+  if (PRICE_RE.test(text)) failures.push({ check: 'price', detail: 'mentions a price' })
+  const w = WARRANTY_TERMS.find(t => lower.includes(t))
+  if (w) failures.push({ check: 'warranty', detail: `promises or discusses "${w}"` })
+  const wc = wordCount(text)
+  if (wc < POST_LENGTH[0] || wc > POST_LENGTH[1]) failures.push({ check: 'length', detail: `${wc} words; needs ${POST_LENGTH[0]}–${POST_LENGTH[1]}` })
+  if (ctx.serviceTerms.length && !ctx.serviceTerms.some(t => lower.includes(t.toLowerCase()))) failures.push({ check: 'service_type', detail: `does not name the service (${ctx.serviceTerms.slice(0, 3).join(', ')})` })
+  if (ctx.city && !lower.includes(ctx.city.toLowerCase())) failures.push({ check: 'city', detail: `does not mention ${ctx.city}` })
+  if (HASHTAG_RE.test(text)) failures.push({ check: 'format', detail: 'uses hashtags' })
+  if (EMOJI_RE.test(text)) failures.push({ check: 'format', detail: 'uses emoji' })
   return { passed: failures.length === 0, failures, wordCount: wc }
 }
 

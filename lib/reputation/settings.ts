@@ -14,6 +14,17 @@ export type WorkingWindow = Record<WeekdayKey, [number, number] | null>
 export type ReplyBand = 'positive' | 'negative'
 export type OutboundKind = 'review_reply' | 'gbp_post' | 'csat_reminder'
 export type ReplyOrigin = 'new' | 'backlog'
+export type CtaType = 'LEARN_MORE' | 'CALL'
+/** Button link rule: first rule whose `match` regex hits the job category wins. */
+export interface CtaRule { match: string; path: string; cta: CtaType }
+
+export const DEFAULT_CTA_MAP: CtaRule[] = [
+  { match: 'gate', path: '/services/gate-services/', cta: 'LEARN_MORE' },
+  { match: 'opener', path: '/services/garage-door-openers/', cta: 'LEARN_MORE' },
+  { match: 'install|new door|replacement', path: '/services/garage-door-installation/', cta: 'LEARN_MORE' },
+  { match: 'repair|spring|cable|roller|panel|service', path: '/services/garage-door-repair/', cta: 'LEARN_MORE' },
+  { match: '.*', path: '/services/', cta: 'LEARN_MORE' },
+]
 
 export interface ReputationSettings {
   autopilot_positive: boolean
@@ -35,6 +46,14 @@ export interface ReputationSettings {
   draft_since: string
   pre_existing_imported_at: string | null
   prompt_version: number
+
+  // Profile posts (Phase 2)
+  autopilot_posts: boolean
+  cap_posts_weekly: number
+  post_allowed_categories: string[]
+  post_cta_map: CtaRule[]
+  photo_min_score: number
+  posts_since: string
 
   updated_at: string | null
   updated_by: string | null
@@ -67,6 +86,13 @@ export const REPUTATION_DEFAULTS: ReputationSettings = {
   pre_existing_imported_at: null,
   prompt_version: 1,
 
+  autopilot_posts: false,
+  cap_posts_weekly: 4,
+  post_allowed_categories: [],
+  post_cta_map: DEFAULT_CTA_MAP,
+  photo_min_score: 70,
+  posts_since: '1970-01-01T00:00:00.000Z',
+
   updated_at: null,
   updated_by: null,
 }
@@ -84,6 +110,7 @@ export function mergeReputationSettings(row: Partial<Record<keyof ReputationSett
     out[k] = typeof REPUTATION_DEFAULTS[k] === 'number' ? Number(v) : v
   }
   out.working_window = normalizeWindow(out.working_window)
+  out.post_cta_map = normalizeCtaMap(out.post_cta_map)
   for (const k of NULLABLE) if (k in row) out[k] = row[k] ?? null
   return out as unknown as ReputationSettings
 }
@@ -103,6 +130,30 @@ export function normalizeWindow(raw: unknown): WorkingWindow {
     }
   }
   return out
+}
+
+/** Accepts a loosely shaped CTA map (from JSON or a form) and returns valid rules; empty → defaults. */
+export function normalizeCtaMap(raw: unknown): CtaRule[] {
+  if (!Array.isArray(raw)) return DEFAULT_CTA_MAP
+  const out: CtaRule[] = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    const match = typeof o.match === 'string' ? o.match.trim() : ''
+    const path = typeof o.path === 'string' ? o.path.trim() : ''
+    if (!match || !path) continue
+    try { new RegExp(match, 'i') } catch { continue }
+    out.push({ match, path: path.startsWith('/') ? path : `/${path}`, cta: o.cta === 'CALL' ? 'CALL' : 'LEARN_MORE' })
+  }
+  return out.length ? out : DEFAULT_CTA_MAP
+}
+
+/** The button for a job category: first matching rule, else the last rule, else the services page. */
+export function ctaFor(rules: CtaRule[], category: string | null): { path: string; cta: CtaType } {
+  const cat = (category ?? '').trim()
+  for (const r of rules) { try { if (new RegExp(r.match, 'i').test(cat)) return { path: r.path, cta: r.cta } } catch { /* skip bad rule */ } }
+  const last = rules[rules.length - 1]
+  return last ? { path: last.path, cta: last.cta } : { path: '/services/', cta: 'LEARN_MORE' }
 }
 
 export async function loadReputationSettings(db: SupabaseClient = agentDb()): Promise<ReputationSettings> {
