@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendSms, toE164, isDialpadConfigured } from '@/lib/dialpad/client'
-import { ensureShortLink } from '@/lib/short-links'
+import { ensureReviewLink } from './review-link'
+import { runReminderPass } from './reminders'
 import { enqueueForSubscribers } from '@/lib/notifications/enqueue'
 import { sendEmail } from '@/lib/notifications/resend'
 import { renderLowCsatAlert } from '@/lib/notifications/templates/low-csat-alert'
@@ -246,15 +247,18 @@ export async function runDueSurveys(settings: CsatSettings): Promise<{ sent: num
   return { sent, failed }
 }
 
-export interface CsatRunResult { enabled: boolean; scheduled: number; sent: number; failed: number }
+export interface CsatRunResult { enabled: boolean; scheduled: number; sent: number; failed: number; remindersQueued: number }
 
 /** Top-level cron entry: schedule newly-eligible jobs, then send anything due. */
 export async function runCsatSurveys(): Promise<CsatRunResult> {
   const settings = await loadCsatSettings()
-  if (!settings.enabled) return { enabled: false, scheduled: 0, sent: 0, failed: 0 }
+  if (!settings.enabled) return { enabled: false, scheduled: 0, sent: 0, failed: 0, remindersQueued: 0 }
   const scheduled = await scheduleEligibleSurveys(settings)
   const { sent, failed } = await runDueSurveys(settings)
-  return { enabled: true, scheduled, sent, failed }
+  // 2-day reminders are queued here (same texting-window gate as the survey sends)
+  // and go out through the reputation dispatcher at a humanized time.
+  const remindersQueued = await runReminderPass(settings).catch(err => { console.error('[csat] reminder pass failed:', err); return 0 })
+  return { enabled: true, scheduled, sent, failed, remindersQueued }
 }
 
 // ── inbound reply ─────────────────────────────────────────────────────────────
@@ -372,7 +376,7 @@ export async function handleCsatReply(from: string, text: string, providerMsgId:
 
   const settings = await loadCsatSettings()
   if (rating === 5) {
-    const reviewUrl = await ensureShortLink(settings.google_review_url).catch(() => settings.google_review_url)
+    const reviewUrl = await ensureReviewLink(db, survey.id).catch(() => settings.google_review_url)
     const res = await sendSms(from, renderCsatTemplate(settings.thanks_5_sms, { review_url: reviewUrl })).catch(() => null)
     await db.from('csat_surveys').update({ review_requested_at: new Date().toISOString(), review_msg_status: res?.ok ? 'sent' : 'failed', updated_at: new Date().toISOString() }).eq('id', survey.id)
     return 'csat_rating_5'
@@ -447,7 +451,7 @@ export async function sendHeldReviewRequest(surveyId: string): Promise<{ ok: boo
   if ((cur?.rating as number | null) !== 5) return { ok: false, error: 'Current rating is not 5.' }
 
   const settings = await loadCsatSettings()
-  const reviewUrl = await ensureShortLink(settings.google_review_url).catch(() => settings.google_review_url)
+  const reviewUrl = await ensureReviewLink(db, surveyId).catch(() => settings.google_review_url)
   const res = await sendSms(survey.phone_e164, renderCsatTemplate(settings.thanks_5_sms, { review_url: reviewUrl })).catch(() => null)
   await db.from('csat_surveys').update({
     review_requested_at: new Date().toISOString(),

@@ -11,6 +11,8 @@ export function isPublicPath(pathname: string): boolean {
     pathname === '/login' ||
     pathname.startsWith('/embed/') ||
     pathname.startsWith('/p/') ||
+    // Per-customer Google review bouncer (/r/<surveyId>): stamps the click, then redirects.
+    pathname.startsWith('/r/') ||
     // Customer-facing approval: tokenized no-login link (the unguessable token in
     // the path is the authorization). Page + its accept API are both public.
     pathname.startsWith('/approve/') ||
