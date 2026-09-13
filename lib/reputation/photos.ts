@@ -111,6 +111,8 @@ export async function importJobPhotos(db: SupabaseClient, sfJobId: string): Prom
   const seen = new Set(((have ?? []) as Array<{ source_ref: string }>).map(h => h.source_ref))
   for (const p of pictures) {
     if (seen.has(p.fileLocation)) { report.skipped++; continue }
+    // Service Fusion may list a bare file name with no web address; nothing to fetch until we know its file endpoint.
+    if (!/^https?:\/\//i.test(p.fileLocation)) { report.errors.push(`${p.name ?? p.fileLocation}: no web address (file name only)`); continue }
     const nowIso = new Date().toISOString()
     try {
       const { bytes } = await downloadPicture(p.fileLocation)
