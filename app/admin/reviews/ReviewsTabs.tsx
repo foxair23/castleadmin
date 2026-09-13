@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import ReviewsClient from './ReviewsClient'
 import CsatTab from './CsatTab'
+import ReputationSettingsTab, { type Props as ReputationProps } from './ReputationSettingsTab'
 import type { CsatRow } from '@/lib/csat/metrics'
 import type { CsatSettings } from '@/lib/csat/config'
 
@@ -14,19 +15,20 @@ interface Props {
   csat: { settings: CsatSettings; rows: CsatRow[] }
   google: { kpi: GoogleKpi; lastRun: LastRun | null; needsApproval: number; backlogCap: number }
   techs: Tech[]
+  reputation: ReputationProps
 }
 
-type Sub = 'csat' | 'google'
+type Sub = 'csat' | 'google' | 'settings'
 
 // Reviews tab shell. CSAT is the primary/default sub-tab; the existing Google
 // reviews UI lives under the second. Deep-linked via ?sub=csat|google.
-export default function ReviewsTabs({ csat, google, techs }: Props) {
+export default function ReviewsTabs({ csat, google, techs, reputation }: Props) {
   const [sub, setSub] = useState<Sub>('csat')
   const [needsApproval, setNeedsApproval] = useState(google.needsApproval)
   const onNeedsApproval = useCallback((n: number) => setNeedsApproval(n), [])
   useEffect(() => {
     const s = new URLSearchParams(window.location.search).get('sub')
-    if (s === 'google' || s === 'csat') setSub(s)
+    if (s === 'google' || s === 'csat' || s === 'settings') setSub(s)
   }, [])
 
   function select(next: Sub) {
@@ -39,6 +41,7 @@ export default function ReviewsTabs({ csat, google, techs }: Props) {
   const TABS: { key: Sub; label: string; count?: number }[] = [
     { key: 'csat', label: 'CSAT' },
     { key: 'google', label: 'Google Reviews', count: needsApproval },
+    { key: 'settings', label: 'Settings' },
   ]
 
   return (
@@ -56,9 +59,9 @@ export default function ReviewsTabs({ csat, google, techs }: Props) {
         ))}
       </div>
 
-      {sub === 'csat'
-        ? <CsatTab settings={csat.settings} rows={csat.rows} techs={techs} />
-        : <ReviewsClient kpi={google.kpi} lastRun={google.lastRun} techs={techs} backlogCap={google.backlogCap} onNeedsApproval={onNeedsApproval} />}
+      {sub === 'csat' && <CsatTab settings={csat.settings} rows={csat.rows} techs={techs} />}
+      {sub === 'google' && <ReviewsClient kpi={google.kpi} lastRun={google.lastRun} techs={techs} backlogCap={google.backlogCap} onNeedsApproval={onNeedsApproval} />}
+      {sub === 'settings' && <ReputationSettingsTab {...reputation} />}
     </div>
   )
 }

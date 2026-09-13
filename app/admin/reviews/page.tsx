@@ -3,7 +3,11 @@ import ReviewsTabs from './ReviewsTabs'
 import { loadCsatSettings } from '@/lib/csat/config'
 import { getCsatRows } from '@/lib/csat/metrics'
 import { loadReputationSettings } from '@/lib/reputation/settings'
-import { loadNeedsApprovalCount } from '@/lib/reputation/reply-actions'
+import { approvalStats, loadApprovalStatRows, loadNeedsApprovalCount } from '@/lib/reputation/reply-actions'
+import { getReviewCharter, listReviewInstructions, listReviewStyleExamples, REVIEW_CHANNEL } from '@/lib/reputation/knowledge'
+import { listCharterVersions } from '@/lib/agent/knowledge'
+import { loadAgentSettings } from '@/lib/agent/settings'
+import { isLlmConfigured } from '@/lib/agent/llm'
 
 export const metadata = { title: 'Reviews' }
 export const dynamic = 'force-dynamic'
@@ -44,7 +48,11 @@ export default async function ReviewsPage() {
   const techs = (techRows ?? []).map(t => ({ id: t.id as string, full_name: (t.full_name as string | null) ?? '' }))
 
   // CSAT sub-tab data.
-  const [csatSettings, csatRows, repSettings, needsApproval] = await Promise.all([loadCsatSettings(), getCsatRows(), loadReputationSettings(db), loadNeedsApprovalCount(db)])
+  const [csatSettings, csatRows, repSettings, needsApproval, agentSettings, charter, versions, instructions, styles, statRows] = await Promise.all([
+    loadCsatSettings(), getCsatRows(), loadReputationSettings(db), loadNeedsApprovalCount(db),
+    loadAgentSettings(db), getReviewCharter(db), listCharterVersions(db, REVIEW_CHANNEL),
+    listReviewInstructions(db, { includeRetired: true }), listReviewStyleExamples(db), loadApprovalStatRows(db),
+  ])
 
   return (
     <ReviewsTabs
@@ -56,6 +64,13 @@ export default async function ReviewsPage() {
         backlogCap: repSettings.cap_backlog_replies,
       }}
       techs={techs}
+      reputation={{
+        settings: repSettings,
+        models: { composer: agentSettings.composer_model, classifier: agentSettings.classifier_model },
+        llmConfigured: isLlmConfigured(),
+        charter, versions, instructions, styles,
+        stats: approvalStats(statRows),
+      }}
     />
   )
 }
