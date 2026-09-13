@@ -20,6 +20,10 @@ export interface CsatSettings {
   clarify_sms: string
   alert_extra_recipient_emails: string[]
   template_version: number
+  /** 2-day reminders (PRD §3): hours after the survey / review link before the one follow-up. */
+  reminder_delay_hours: number
+  survey_reminder_sms: string
+  review_reminder_sms: string
 }
 
 export const CSAT_DEFAULTS: CsatSettings = {
@@ -42,6 +46,11 @@ export const CSAT_DEFAULTS: CsatSettings = {
   clarify_sms: 'Thanks! Please reply with one number from 1 to 5, where 5 means Very Satisfied and 1 means Very Dissatisfied.',
   alert_extra_recipient_emails: [],
   template_version: 1,
+  reminder_delay_hours: 48,
+  survey_reminder_sms:
+    'Castle Garage Doors: Just checking in — how satisfied were you with your recent service? Reply with a number from 1 to 5 (5 = Very Satisfied). Reply STOP to opt out.',
+  review_reminder_sms:
+    'Thanks again for choosing Castle! If you have a minute, a quick Google review helps our family-owned business a lot: {{review_url}}',
 }
 
 export function csatDb() {
@@ -72,6 +81,9 @@ export async function loadCsatSettings(): Promise<CsatSettings> {
     clarify_sms: s.clarify_sms ?? CSAT_DEFAULTS.clarify_sms,
     alert_extra_recipient_emails: s.alert_extra_recipient_emails ?? [],
     template_version: s.template_version ?? 1,
+    reminder_delay_hours: s.reminder_delay_hours ?? CSAT_DEFAULTS.reminder_delay_hours,
+    survey_reminder_sms: s.survey_reminder_sms ?? CSAT_DEFAULTS.survey_reminder_sms,
+    review_reminder_sms: s.review_reminder_sms ?? CSAT_DEFAULTS.review_reminder_sms,
   }
 }
 

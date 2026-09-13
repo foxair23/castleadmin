@@ -170,6 +170,9 @@ export interface CsatRow {
   feedback_text: string | null
   responded_at: string | null
   review_requested_at: string | null
+  survey_reminder_sent_at: string | null
+  review_reminder_sent_at: string | null
+  review_link_clicked_at: string | null
   follow_up_status: string | null
   /** Provenance of the CURRENT rating: 'ai_correction' | 'admin_edit' | null (sms). */
   rating_source: string | null
@@ -184,7 +187,7 @@ export async function getCsatRows(limit = 2000): Promise<CsatRow[]> {
   const db = csatDb()
   const { data: surveyData } = await db
     .from('csat_surveys')
-    .select('id, sf_job_id, customer_name, phone_e164, status, sent_at, work_completed_at, primary_tech_user_id, primary_tech_name, job_category, job_source, city, postal_code, review_requested_at, review_pending_confirm')
+    .select('id, sf_job_id, customer_name, phone_e164, status, sent_at, work_completed_at, primary_tech_user_id, primary_tech_name, job_category, job_source, city, postal_code, review_requested_at, review_pending_confirm, survey_reminder_sent_at, review_reminder_sent_at, review_link_clicked_at')
     .eq('is_test', false)
     .order('sent_at', { ascending: false, nullsFirst: false })
     .limit(limit)
@@ -231,6 +234,9 @@ export async function getCsatRows(limit = 2000): Promise<CsatRow[]> {
       feedback_text: c?.feedback_text ?? null,
       responded_at: c?.received_at ?? null,
       review_requested_at: (s.review_requested_at as string) ?? null,
+      survey_reminder_sent_at: (s.survey_reminder_sent_at as string) ?? null,
+      review_reminder_sent_at: (s.review_reminder_sent_at as string) ?? null,
+      review_link_clicked_at: (s.review_link_clicked_at as string) ?? null,
       follow_up_status: followUp.get(s.id as string) ?? null,
       rating_source: c?.source ?? null,
       review_pending_confirm: (s.review_pending_confirm as boolean) ?? false,

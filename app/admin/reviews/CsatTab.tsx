@@ -18,6 +18,15 @@ function fmtDate(s: string | null): string {
   return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+/** "survey Sep 14 · link clicked Sep 15" — what follow-ups happened on this survey. */
+function reminderLabel(r: CsatRow): string {
+  const parts: string[] = []
+  if (r.survey_reminder_sent_at) parts.push(`survey ${fmtDate(r.survey_reminder_sent_at)}`)
+  if (r.review_reminder_sent_at) parts.push(`review ${fmtDate(r.review_reminder_sent_at)}`)
+  if (r.review_link_clicked_at) parts.push(`link clicked ${fmtDate(r.review_link_clicked_at)}`)
+  return parts.length ? parts.join(' · ') : '—'
+}
+
 function Tile({ big, label, tone = 'gray' }: { big: string; label: string; tone?: 'green' | 'amber' | 'red' | 'gray' | 'blue' }) {
   const tones: Record<string, string> = {
     green: 'bg-green-50 border-green-200 text-green-700',
@@ -93,10 +102,10 @@ export default function CsatTab({ settings, rows, techs }: Props) {
       const s = v == null ? '' : String(v)
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
     }
-    const headers = ['Customer', 'Phone', 'Job', 'Sent', 'Responded', 'Rating', 'Feedback', 'Tech', 'Job Type', 'Source', 'City', 'ZIP', 'Follow-up']
+    const headers = ['Customer', 'Phone', 'Job', 'Sent', 'Responded', 'Rating', 'Feedback', 'Tech', 'Job Type', 'Source', 'City', 'ZIP', 'Follow-up', 'Survey reminder', 'Review reminder', 'Link clicked']
     const lines = [headers.join(',')]
     for (const r of filtered) {
-      lines.push([r.customer_name, r.phone_e164, r.sf_job_id, r.sent_at, r.responded_at, r.rating, r.feedback_text, r.primary_tech_name, r.job_category, r.job_source, r.city, r.postal_code, r.follow_up_status].map(esc).join(','))
+      lines.push([r.customer_name, r.phone_e164, r.sf_job_id, r.sent_at, r.responded_at, r.rating, r.feedback_text, r.primary_tech_name, r.job_category, r.job_source, r.city, r.postal_code, r.follow_up_status, r.survey_reminder_sent_at, r.review_reminder_sent_at, r.review_link_clicked_at].map(esc).join(','))
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
@@ -208,7 +217,7 @@ export default function CsatTab({ settings, rows, techs }: Props) {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-y border-gray-200">
               <tr>
-                {['Customer', 'Job', 'Sent', 'Rating', 'Conversation', 'Feedback', 'Tech', 'Job type', 'Status'].map(h => (
+                {['Customer', 'Job', 'Sent', 'Rating', 'Conversation', 'Feedback', 'Tech', 'Job type', 'Status', 'Reminder'].map(h => (
                   <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -225,6 +234,7 @@ export default function CsatTab({ settings, rows, techs }: Props) {
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r.primary_tech_name ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r.job_category ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{r.status}</td>
+                  <td className="px-3 py-2 text-gray-500 whitespace-nowrap text-xs">{reminderLabel(r)}</td>
                 </tr>
               ))}
             </tbody>
@@ -376,6 +386,9 @@ function SettingsPanel({ settings, onSaved }: { settings: CsatSettings; onSaved:
     ack_low_sms: settings.ack_low_sms,
     clarify_sms: settings.clarify_sms,
     alert_extra_recipient_emails: settings.alert_extra_recipient_emails,
+    reminder_delay_hours: settings.reminder_delay_hours,
+    survey_reminder_sms: settings.survey_reminder_sms,
+    review_reminder_sms: settings.review_reminder_sms,
   })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -402,6 +415,9 @@ function SettingsPanel({ settings, onSaved }: { settings: CsatSettings; onSaved:
           <input type="number" value={form.send_end_hour_pt} onChange={e => set({ send_end_hour_pt: Number(e.target.value) })} className={INPUT} />
         </label>
       </div>
+      <label className="text-xs text-gray-600 block">Reminder delay (hours) — one follow-up text when a survey gets no reply, and one when the review link is not tapped
+        <input type="number" value={form.reminder_delay_hours} onChange={e => set({ reminder_delay_hours: Number(e.target.value) })} className={INPUT} />
+      </label>
       <label className="text-xs text-gray-600 block">Low-score alert delay (min) — waits this long before emailing the team so the customer’s reply detail is included
         <input type="number" value={form.alert_delay_minutes} onChange={e => set({ alert_delay_minutes: Number(e.target.value) })} className={INPUT} />
       </label>
@@ -423,6 +439,8 @@ function SettingsPanel({ settings, onSaved }: { settings: CsatSettings; onSaved:
         ['4-star follow-up', 'ask_4_sms'],
         ['1–3 acknowledgment', 'ack_low_sms'],
         ['Clarification', 'clarify_sms'],
+        ['Survey reminder', 'survey_reminder_sms'],
+        ['Review reminder (use {{review_url}})', 'review_reminder_sms'],
       ] as const).map(([label, key]) => (
         <label key={key} className="text-xs text-gray-600 block">{label}
           <textarea value={form[key] as string} onChange={e => set({ [key]: e.target.value } as Partial<CsatSettingsInput>)} rows={2} className={`${INPUT} font-mono`} />
