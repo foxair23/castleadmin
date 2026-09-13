@@ -78,3 +78,33 @@ describe('helpers', () => {
     expect(scrubNames(null, [])).toBeNull()
   })
 })
+
+import { checkPostGuardrails, type PostGuardrailContext } from '@/lib/reputation/guardrails'
+
+const pctx = (over: Partial<PostGuardrailContext> = {}): PostGuardrailContext => ({
+  roster: ['Danny Ortiz'], customerName: 'Sarah Johnson', contactLastName: 'Johnson', street: '1291 Simpson Way',
+  serviceTerms: ['garage door', 'install'], city: 'Carlsbad', ...over,
+})
+const GOOD_POST = 'New double garage door installed in Carlsbad this week. The old door had a cracked panel and a tired opener, so our team replaced it with an insulated steel door and a quiet belt-drive unit, then tuned the springs and safety sensors before we left. The homeowner wanted something that matched the trim of the house, and the finished door above shows how it came together. Castle has been installing garage doors across San Diego County since 1981, and most installs like this one are done in a single visit. Need a hand with yours? Tap Learn more.'
+const pchecks = (body: string, over: Partial<PostGuardrailContext> = {}) => checkPostGuardrails(body, pctx(over)).failures.map(f => f.check)
+
+describe('checkPostGuardrails', () => {
+  it('passes a good post', () => {
+    expect(checkPostGuardrails(GOOD_POST, pctx())).toMatchObject({ passed: true, failures: [] })
+  })
+  it('applies the shared identity checks and the no-price rule', () => {
+    expect(pchecks(GOOD_POST.replace('our team', 'Danny'))).toContain('tech_name')
+    expect(pchecks(GOOD_POST.replace('The homeowner', 'The Johnsons'))).not.toContain('customer_last_name') // plural form is not the surname token
+    expect(pchecks(GOOD_POST.replace('The homeowner', 'Mrs. Johnson'))).toContain('customer_last_name')
+    expect(pchecks(GOOD_POST + ' Find us at 1291 Simpson Way.')).toContain('address')
+    expect(pchecks(GOOD_POST.replace('single visit', 'single visit for $1,200'))).toContain('price')
+    expect(pchecks(GOOD_POST + ' Lifetime warranty included.')).toContain('warranty')
+  })
+  it('enforces length, service, city, and format', () => {
+    expect(pchecks('Garage door installed in Carlsbad. Tap Learn more.')).toContain('length')
+    expect(pchecks(GOOD_POST.replace(/garage door/g, 'thing').replace('installing', 'doing').replace('installs', 'jobs').replace('installed', 'done'))).toContain('service_type')
+    expect(pchecks(GOOD_POST.replace(/Carlsbad/g, 'town'))).toContain('city')
+    expect(pchecks(GOOD_POST + ' #garagedoor')).toContain('format')
+    expect(pchecks(GOOD_POST + ' 🚪')).toContain('format')
+  })
+})

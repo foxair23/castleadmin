@@ -108,5 +108,8 @@ async function propagateFailure(db: SupabaseClient, kind: OutboundKind, refId: s
   if (kind === 'review_reply') {
     const { failReviewReply } = await import('./reply-send')
     await failReviewReply(db, refId, error)
+  } else if (kind === 'gbp_post') {
+    const { failGbpPost } = await import('./post-send')
+    await failGbpPost(db, refId, error)
   }
 }
