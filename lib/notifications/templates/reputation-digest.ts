@@ -1,5 +1,6 @@
 import { appUrl } from '@/lib/config/domains'
-import { THEME_LABEL, type Insights } from '@/lib/reputation/insights'
+import type { Insights } from '@/lib/reputation/insights'
+import { THEME_LABEL } from '@/lib/reputation/theme-labels'
 
 // The Monday reputation email (PRD §5 item 9): last week's reviews, the survey
 // funnel, replies waiting, posts published, the top theme, and photo quality.

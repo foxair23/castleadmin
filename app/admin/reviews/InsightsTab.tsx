@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { THEME_LABEL, type Insights } from '@/lib/reputation/insights'
+import type { Insights } from '@/lib/reputation/insights'
+import { THEME_LABEL } from '@/lib/reputation/theme-labels'
 
 // Reviews → Insights (PRD §5): the review funnel, reply performance, what
 // customers talk about, which techs they name, posts, and photo quality by

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { THEMES } from './tagging'
 import { PHOTO_SELECT, isUsable, type JobPhotoRow } from './photos'
+export { THEME_LABEL } from './theme-labels'
 
 // Insights (PRD §5): the review funnel, what customers talk about, which techs
 // they name, how fast we answer, and how good the job photos are. Everything is
@@ -51,11 +52,6 @@ export interface TaggedReviewRow {
   ai_themes: string[] | null; ai_mentioned_names: string[] | null; matched_job_id: string | null; reviewer_name: string | null
 }
 export interface ThemeRow { theme: string; positive: number; negative: number; quotes: Array<{ stars: number; text: string }> }
-
-export const THEME_LABEL: Record<string, string> = {
-  punctuality: 'Punctuality', price_value: 'Price and value', communication: 'Communication', quality_of_work: 'Quality of work', cleanliness: 'Cleanliness',
-  professionalism: 'Professionalism', scheduling: 'Scheduling', warranty_follow_up: 'Warranty and follow-up', emergency_response: 'Emergency response',
-}
 
 /** Pure: how often each theme shows up in 4–5 star vs 1–3 star reviews, with a couple of short quotes each. */
 export function summarizeThemes(reviews: TaggedReviewRow[]): { themes: ThemeRow[]; tagged: number; untagged: number } {
