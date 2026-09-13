@@ -7,8 +7,8 @@
 //   GOOGLE_BUSINESS_ACCOUNT_ID  — GBP account segment, e.g. "accounts/123456789"
 //   GOOGLE_BUSINESS_LOCATION_ID — location segment, e.g. "locations/987654321"
 //
-// When any of the five vars are absent the client returns `null` from
-// `isConfigured()` and callers fall back to mock data.
+// When any of the five vars are absent `isConfigured()` is false: reads fall back
+// to mock data and `postReviewReply` reports a mock success without calling Google.
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GBP_BASE  = 'https://mybusiness.googleapis.com/v4'
@@ -39,7 +39,7 @@ export function isConfigured(): boolean {
   )
 }
 
-async function refreshAccessToken(): Promise<string> {
+export async function refreshAccessToken(): Promise<string> {
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -107,4 +107,33 @@ export async function fetchAllReviews(): Promise<GbpReview[]> {
   }
 
   return out
+}
+
+export type PostReplyResult =
+  | { ok: true; replyUpdatedAt: string | null; mock?: true }
+  | { ok: false; status: number; error: string }
+
+/**
+ * Create or replace the owner reply on one review (the reply object on Google is
+ * text only). Never throws on an API error — the dispatcher decides whether to
+ * retry. Requires the `business.manage` scope on the refresh token.
+ */
+export async function postReviewReply(googleReviewId: string, comment: string): Promise<PostReplyResult> {
+  if (!isConfigured()) return { ok: true, replyUpdatedAt: new Date().toISOString(), mock: true }
+  let token: string
+  try { token = await refreshAccessToken() } catch (e) { return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) } }
+  const location = `${process.env.GOOGLE_BUSINESS_ACCOUNT_ID}/${process.env.GOOGLE_BUSINESS_LOCATION_ID}`
+  const url = `${GBP_BASE}/${location}/reviews/${encodeURIComponent(googleReviewId)}/reply`
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment }),
+    })
+    if (!res.ok) return { ok: false, status: res.status, error: `GBP reply PUT failed ${res.status}: ${(await res.text()).slice(0, 500)}` }
+    const json = await res.json().catch(() => ({})) as { updateTime?: string }
+    return { ok: true, replyUpdatedAt: json.updateTime ?? null }
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) }
+  }
 }
