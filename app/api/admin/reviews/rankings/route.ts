@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { loadMonitorOverview, loadScorecard, loadLiveScans } from '@/lib/rank/scorecard'
+import { loadMonitorOverview, loadScorecard, loadLiveScans, ourLocation } from '@/lib/rank/scorecard'
 import { isRankProviderConfigured } from '@/lib/rank/dataforseo'
 import { weekKeyFor } from '@/lib/rank/scan'
 
@@ -27,5 +27,9 @@ export async function GET() {
     db.from('area_pages').select('place_id, url, notes, page_updated_at'),
   ])
   const weekKey = weekKeyFor(new Date())
-  return NextResponse.json({ configured: isRankProviderConfigured(), weekKey, overview, scorecard, liveScans, places: places ?? [], areaPages: pages ?? [] })
+  // Castle's own pin: first stored result that is us with coordinates, from the newest scans.
+  const latestIds = overview.filter(m => m.latest).map(m => m.latest!.id).slice(0, 20)
+  const { data: pts } = latestIds.length ? await db.from('rank_scan_points').select('results').in('scan_id', latestIds).limit(200) : { data: [] }
+  const us = ourLocation((pts ?? []) as Array<{ results: never[] }>)
+  return NextResponse.json({ configured: isRankProviderConfigured(), weekKey, overview, scorecard, liveScans, places: places ?? [], areaPages: pages ?? [], us })
 }

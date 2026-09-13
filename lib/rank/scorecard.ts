@@ -37,7 +37,13 @@ export async function loadMonitorOverview(db: SupabaseClient): Promise<MonitorOv
   })
 }
 
-export interface ScanDetail { scan: ScanRow; points: PointCompare[]; previous: ScanRow | null; competitors: Competitor[] }
+export interface ScanDetail { scan: ScanRow; points: PointCompare[]; previous: ScanRow | null; competitors: Competitor[]; us: { lat: number; lng: number } | null }
+
+/** Castle's own map position, from the first result that is us and carries coordinates. */
+export function ourLocation(points: Array<{ results: PointRow['results'] }>): { lat: number; lng: number } | null {
+  for (const p of points) for (const r of p.results ?? []) if (r.is_us && r.lat != null && r.lng != null) return { lat: r.lat, lng: r.lng }
+  return null
+}
 
 /** One scan with its points compared to the previous finished scan of the same monitor (or same keyword+center for live checks). */
 export async function loadScanDetail(db: SupabaseClient, scanId: string): Promise<ScanDetail | null> {
@@ -53,7 +59,7 @@ export async function loadScanDetail(db: SupabaseClient, scanId: string): Promis
   const previous = prevRaw ? normScan(prevRaw as Record<string, unknown>) : null
   const prevPts = previous ? (await db.from('rank_scan_points').select('row, col, lat, lng, our_rank, results, error').eq('scan_id', previous.id)).data : null
   const points = comparePoints((pts ?? []) as PointRow[], (prevPts ?? null) as PointRow[] | null)
-  return { scan, points, previous, competitors: competitorTable(points) }
+  return { scan, points, previous, competitors: competitorTable(points), us: ourLocation(points) }
 }
 
 /** Competitor table across the latest scan of every monitor for one keyword. */
