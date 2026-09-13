@@ -305,7 +305,6 @@ export async function testJobPhotosAction(jobRef: string): Promise<ActionResult 
     const sfJobId = ((byId ?? byNum) as { id: string } | null)?.id
     if (!sfJobId) throw new Error(`No mirrored job matches "${ref}"`)
     const { fetchJobPictures, importJobPhotos } = await import('@/lib/reputation/photos')
-    const { sfMirrorGet } = await import('@/lib/sf-mirror/client')
     const { pictures, raw } = await fetchJobPictures(sfJobId)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const j: any = raw
