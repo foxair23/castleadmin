@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation'
 import type { ReputationSettings, WorkingWindow, WeekdayKey, ReplyBand, CtaRule } from '@/lib/reputation/settings'
 import type { Charter, Instruction, StyleExample } from '@/lib/agent/knowledge'
 import type { ApprovalStats, BandStats } from '@/lib/reputation/reply-actions'
+import { extractReviewExamples, filterExamples, DEFAULT_IMPORT_FILTER, bandForStars } from '@/lib/reputation/style-import'
 import {
   saveReputationSettings, saveReviewCharter, activateReviewCharter,
   createReviewInstruction, retireReviewInstruction, reactivateReviewInstruction,
-  createReviewStyleExample, pinReviewStyleExample, removeReviewStyleExample, backfillTagsAction,
+  createReviewStyleExample, pinReviewStyleExample, removeReviewStyleExample, backfillTagsAction, importReviewStyleExamples,
   savePostCharter, activatePostCharter, createPostInstruction, createPostStyleExample,
 } from './reputation-actions'
 
@@ -304,9 +305,59 @@ function InstructionsCard({ title, blurb, rows, create }: { title: string; blurb
   )
 }
 
+// ── CSV import of another business's replies ───────────────────────────────
+
+function CsvImport() {
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [minWords, setMinWords] = useState(DEFAULT_IMPORT_FILTER.minReplyWords)
+  const [preview, setPreview] = useState<{ name: string; rows: ReturnType<typeof filterExamples>['keep']; skipped: ReturnType<typeof filterExamples>['skipped']; columns: string; businesses: string[]; error?: string } | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+  async function pick(file: File | undefined) {
+    setMsg(null); setPreview(null)
+    if (!file) return
+    const text = await file.text()
+    const ex = extractReviewExamples(text)
+    if (ex.error) { setPreview({ name: file.name, rows: [], skipped: { short: 0, noStars: 0, duplicate: 0 }, columns: '', businesses: [], error: ex.error }); return }
+    const { keep, skipped } = filterExamples(ex.rows, { ...DEFAULT_IMPORT_FILTER, minReplyWords: minWords })
+    setPreview({ name: file.name, rows: keep, skipped, columns: `reply: ${ex.columns.reply}${ex.columns.review ? ` · review: ${ex.columns.review}` : ''}${ex.columns.stars ? ` · stars: ${ex.columns.stars}` : ''}`, businesses: [...new Set(ex.rows.map(r => r.business).filter((b): b is string => !!b))] })
+  }
+  const pos = preview?.rows.filter(r => bandForStars(r.stars) === 'positive').length ?? 0
+  return (
+    <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-3 mb-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-gray-600">CSV file<br /><input type="file" accept=".csv,text/csv" className="text-sm text-gray-900" onChange={e => pick(e.target.files?.[0])} /></label>
+        <label className="text-xs text-gray-600">Skip replies shorter than<br /><input type="number" className={`${input} w-20`} value={minWords} onChange={e => setMinWords(Math.max(0, Number(e.target.value)))} /> words</label>
+        {preview && !preview.error && (
+          <button className={btn} disabled={pending || preview.rows.length === 0} onClick={() => start(async () => {
+            let added = 0, dup = 0
+            for (let i = 0; i < preview.rows.length; i += 200) {
+              const r = await importReviewStyleExamples(preview.rows.slice(i, i + 200))
+              if (r.error) { setMsg(r.error); return }
+              added += r.added ?? 0; dup += r.duplicates ?? 0
+            }
+            setMsg(`Imported ${added} repl${added === 1 ? 'y' : 'ies'}${dup ? ` (${dup} already in the list)` : ''}.`)
+            setPreview(null); router.refresh()
+          })}>{pending ? 'Importing…' : `Import ${preview.rows.length} replies`}</button>
+        )}
+      </div>
+      {preview && (
+        <p className={`text-xs mt-2 ${preview.error ? 'text-red-600' : 'text-gray-600'}`}>
+          {preview.error ? preview.error : <>
+            <b>{preview.name}</b>{preview.businesses.length ? ` · ${preview.businesses.slice(0, 3).join(', ')}` : ''} · {preview.rows.length} usable replies ({pos} for 4–5 star, {preview.rows.length - pos} for 1–3 star)
+            {preview.skipped.short + preview.skipped.noStars + preview.skipped.duplicate > 0 && <> · skipped {preview.skipped.short} short, {preview.skipped.noStars} without a star rating, {preview.skipped.duplicate} duplicates</>}
+            <span className="block text-gray-400">columns used: {preview.columns}. Replies that name an employee are fine; the drafter is told never to use names.</span>
+          </>}
+        </p>
+      )}
+      {msg && <p className="text-xs text-gray-700 mt-2">{msg}</p>}
+    </div>
+  )
+}
+
 // ── Style examples ──────────────────────────────────────────────────────────
 
-const SOURCE: Record<string, string> = { pre_existing: 'Existing Google reply', staff: 'Pasted', human_edit: 'Edited draft', human_approved: 'Approved draft' }
+const SOURCE: Record<string, string> = { pre_existing: 'Existing Google reply', staff: 'Pasted', import: 'Imported from CSV', human_edit: 'Edited draft', human_approved: 'Approved draft' }
 
 function ReviewStyleExamplesCard({ rows }: { rows: StyleExample[] }) {
   const router = useRouter()
@@ -318,7 +369,8 @@ function ReviewStyleExamplesCard({ rows }: { rows: StyleExample[] }) {
   return (
     <div className={card}>
       <h2 className="text-sm font-semibold text-gray-900 mb-1">Style examples</h2>
-      <p className="text-xs text-gray-500 mb-3">Paste 10–20 replies from the Google profiles you admire, one band at a time. Castle’s own existing replies were imported automatically, and every draft a person edits or approves is added here.</p>
+      <p className="text-xs text-gray-500 mb-3">Replies from the Google profiles you admire, so the drafter learns the tone you want. Import a CSV export of another business&rsquo;s reviews (any file with an owner-reply column, such as the Apify Google Maps Reviews export), or paste replies one at a time. Castle&rsquo;s own existing replies were imported automatically, and every draft a person edits or approves is added here.</p>
+      <CsvImport />
       <div className="flex gap-1 mb-3">
         {(['positive', 'negative'] as ReplyBand[]).map(b => (
           <button key={b} onClick={() => setBand(b)} className={`px-3 py-1 text-sm rounded-full border ${band === b ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-700'}`}>{b === 'positive' ? '4–5 star' : '1–3 star'} ({rows.filter(r => r.audience === `review_${b}`).length})</button>
