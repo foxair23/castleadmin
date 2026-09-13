@@ -90,7 +90,7 @@ describe('rendering', () => {
   })
   it('composer prompt lists facts by id and caches the charter block', () => {
     const { system, user } = buildComposeMessages({
-      settings: AGENT_DEFAULTS, charter: { id: 'c', version: 3, body: 'CHARTER TEXT', note: null, is_active: true, created_at: '' },
+      settings: AGENT_DEFAULTS, charter: { id: 'c', version: 3, body: 'CHARTER TEXT', note: null, is_active: true, created_at: '', channel: 'email' },
       instructions: [{ id: 'i1', text: 'Always give the arrival window.', channel: 'email', is_active: true, created_at: '', retired_at: null }, { id: 'i2', text: 'Phone only rule', channel: 'phone', is_active: true, created_at: '', retired_at: null }],
       styleExamples: [], facts, gaps: [], questionType: 'schedule', questionSummary: 'When is PO 1020259181 scheduled?',
       partner: { fromName: 'Jane Doe', fromAddr: 'jane@homedepot.com', company: 'Home Depot' }, subject: 'PO status', body: 'When is it?', thread: [],

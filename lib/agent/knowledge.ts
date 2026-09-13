@@ -7,7 +7,7 @@ import { DEFAULT_CHARTER } from './charter.default'
 // app/admin/cassie. Read paths seed sensible defaults into an empty table so a
 // fresh install has a working charter and a few voice examples on day one.
 
-export interface Charter { id: string; version: number; body: string; note: string | null; is_active: boolean; created_at: string }
+export interface Charter { id: string; version: number; body: string; note: string | null; is_active: boolean; created_at: string; channel: string }
 export interface Instruction { id: string; text: string; channel: string; is_active: boolean; created_at: string; retired_at: string | null }
 export interface AnswerEntry {
   id: string; title: string; question_examples: string[]; question_type: string | null; answer_text: string
@@ -20,50 +20,60 @@ export interface StyleExample {
 
 // ── Charter ─────────────────────────────────────────────────────────────────
 
-/** The active charter, seeding version 1 from the Cassie spec if the table is empty. */
-export async function getActiveCharter(db: SupabaseClient): Promise<Charter> {
-  const { data } = await db.from('agent_charter').select('*').eq('is_active', true).maybeSingle()
+// Charters are per channel (migration 134): 'email' is Cassie's, 'review' is the
+// Google-review reply agent's. Every function below defaults to 'email' so the
+// existing Cassie callers are unchanged.
+const DEFAULT_CHANNEL = 'email'
+
+/** The active charter for a channel, seeding version 1 (from the Cassie spec, or the given seed) if the channel has no rows. */
+export async function getActiveCharter(db: SupabaseClient, channel: string = DEFAULT_CHANNEL, seed?: { body: string; note: string }): Promise<Charter> {
+  const { data } = await db.from('agent_charter').select('*').eq('channel', channel).eq('is_active', true).maybeSingle()
   if (data) return data as Charter
-  const { count } = await db.from('agent_charter').select('id', { count: 'exact', head: true })
+  const { count } = await db.from('agent_charter').select('id', { count: 'exact', head: true }).eq('channel', channel)
   if ((count ?? 0) === 0) {
+    const s = seed ?? { body: DEFAULT_CHARTER, note: 'Seeded from Cassie_Castle_AI_Agent_Spec.md' }
     const { data: seeded, error } = await db.from('agent_charter')
-      .insert({ version: 1, body: DEFAULT_CHARTER, note: 'Seeded from Cassie_Castle_AI_Agent_Spec.md', is_active: true })
+      .insert({ version: 1, body: s.body, note: s.note, is_active: true, channel })
       .select('*').single()
     if (error) throw new Error(`Charter seed failed: ${error.message}`)
     return seeded as Charter
   }
   // Rows exist but none active (someone deactivated) — fall back to the newest.
-  const { data: latest } = await db.from('agent_charter').select('*').order('version', { ascending: false }).limit(1).single()
+  const { data: latest } = await db.from('agent_charter').select('*').eq('channel', channel).order('version', { ascending: false }).limit(1).single()
   return latest as Charter
 }
 
-export async function listCharterVersions(db: SupabaseClient): Promise<Charter[]> {
-  const { data } = await db.from('agent_charter').select('id, version, note, is_active, created_at, body').order('version', { ascending: false })
+export async function listCharterVersions(db: SupabaseClient, channel: string = DEFAULT_CHANNEL): Promise<Charter[]> {
+  const { data } = await db.from('agent_charter').select('id, version, note, is_active, created_at, body, channel').eq('channel', channel).order('version', { ascending: false })
   return (data ?? []) as Charter[]
 }
 
 /** Save an edit as a NEW version and make it active. Older versions stay for attribution. */
-export async function saveCharterVersion(db: SupabaseClient, body: string, note: string | null, userId: string | null): Promise<Charter> {
-  const { data: top } = await db.from('agent_charter').select('version').order('version', { ascending: false }).limit(1).maybeSingle()
+export async function saveCharterVersion(db: SupabaseClient, body: string, note: string | null, userId: string | null, channel: string = DEFAULT_CHANNEL): Promise<Charter> {
+  const { data: top } = await db.from('agent_charter').select('version').eq('channel', channel).order('version', { ascending: false }).limit(1).maybeSingle()
   const version = ((top?.version as number | undefined) ?? 0) + 1
-  await db.from('agent_charter').update({ is_active: false }).eq('is_active', true)
+  await db.from('agent_charter').update({ is_active: false }).eq('channel', channel).eq('is_active', true)
   const { data, error } = await db.from('agent_charter')
-    .insert({ version, body, note, is_active: true, created_by: userId }).select('*').single()
+    .insert({ version, body, note, is_active: true, created_by: userId, channel }).select('*').single()
   if (error) throw new Error(error.message)
   return data as Charter
 }
 
+/** Activate one version; only its own channel's active row is deactivated. */
 export async function activateCharterVersion(db: SupabaseClient, id: string): Promise<void> {
-  await db.from('agent_charter').update({ is_active: false }).eq('is_active', true)
+  const { data: row } = await db.from('agent_charter').select('channel').eq('id', id).maybeSingle()
+  const channel = (row?.channel as string | undefined) ?? DEFAULT_CHANNEL
+  await db.from('agent_charter').update({ is_active: false }).eq('channel', channel).eq('is_active', true)
   const { error } = await db.from('agent_charter').update({ is_active: true }).eq('id', id)
   if (error) throw new Error(error.message)
 }
 
 // ── Standing instructions ───────────────────────────────────────────────────
 
-export async function listInstructions(db: SupabaseClient, opts: { includeRetired?: boolean } = {}): Promise<Instruction[]> {
+export async function listInstructions(db: SupabaseClient, opts: { includeRetired?: boolean; channel?: string } = {}): Promise<Instruction[]> {
   let q = db.from('agent_instructions').select('*').order('created_at', { ascending: true })
   if (!opts.includeRetired) q = q.eq('is_active', true)
+  if (opts.channel) q = q.eq('channel', opts.channel)
   const { data } = await q
   return (data ?? []) as Instruction[]
 }
@@ -129,7 +139,8 @@ export const SEED_STYLE_EXAMPLES: Array<Pick<StyleExample, 'question_type' | 'in
 ]
 
 export async function listStyleExamples(db: SupabaseClient, opts: { includeDeleted?: boolean } = {}): Promise<StyleExample[]> {
-  let q = db.from('agent_style_examples').select('*').order('is_pinned', { ascending: false }).order('created_at', { ascending: false })
+  // Cassie's corpus only — the review agent's examples live under review_* audiences.
+  let q = db.from('agent_style_examples').select('*').not('audience', 'like', 'review_%').order('is_pinned', { ascending: false }).order('created_at', { ascending: false })
   if (!opts.includeDeleted) q = q.eq('is_deleted', false)
   const { data } = await q
   const rows = (data ?? []) as StyleExample[]
@@ -142,9 +153,17 @@ export async function listStyleExamples(db: SupabaseClient, opts: { includeDelet
   return ((seeded ?? []) as StyleExample[]).sort((a, b) => b.created_at.localeCompare(a.created_at))
 }
 
-export async function addStyleExample(db: SupabaseClient, input: { inquiry_text: string | null; final_text: string; question_type: string | null; audience?: string }, userId: string | null): Promise<StyleExample> {
+/** Style examples for specific audiences (e.g. the review agent's bands). No seeding. */
+export async function listStyleExamplesByAudience(db: SupabaseClient, audiences: string[]): Promise<StyleExample[]> {
+  const { data } = await db.from('agent_style_examples').select('*')
+    .in('audience', audiences).eq('is_deleted', false)
+    .order('is_pinned', { ascending: false }).order('created_at', { ascending: false })
+  return (data ?? []) as StyleExample[]
+}
+
+export async function addStyleExample(db: SupabaseClient, input: { inquiry_text: string | null; final_text: string; question_type: string | null; audience?: string; source?: string }, userId: string | null): Promise<StyleExample> {
   const { data, error } = await db.from('agent_style_examples')
-    .insert({ source: 'staff', audience: input.audience ?? 'partner', question_type: input.question_type || null, inquiry_text: input.inquiry_text?.trim() || null, final_text: input.final_text.trim(), created_by: userId })
+    .insert({ source: input.source ?? 'staff', audience: input.audience ?? 'partner', question_type: input.question_type || null, inquiry_text: input.inquiry_text?.trim() || null, final_text: input.final_text.trim(), created_by: userId })
     .select('*').single()
   if (error) throw new Error(error.message)
   return data as StyleExample
