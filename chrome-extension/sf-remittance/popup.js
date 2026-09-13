@@ -22,9 +22,11 @@ async function render() {
   const schedLine = (sc.posted || sc.failed) ? `\nappointments · posted ${sc.posted ?? 0} · failed ${sc.failed ?? 0}` : ''
   const dc = s.docs || {}
   const docsLine = (dc.discovered || dc.posted || dc.failed || dc.pending) ? `\nsigned forms · ${dc.pending ?? 0} queued · discovered ${dc.discovered ?? 0} · uploaded ${dc.posted ?? 0} · failed ${dc.failed ?? 0}` : ''
+  const ph = s.photos || {}
+  const photosLine = (ph.fetched || ph.discovered || ph.failed || ph.pending) ? `\njob photos · ${ph.pending ?? 0} queued · pulled ${ph.fetched ?? 0} · looked only ${ph.discovered ?? 0} · failed ${ph.failed ?? 0}` : ''
   const head = s.error
     ? `Error: ${s.error}`
-    : `Last run: ${fmt(s.at)}\nqueued ${s.queued ?? 0} · applied ${s.applied ?? 0} · failed ${s.failed ?? 0} · skipped ${skipped.length}${s.dryRun ? ' (dry run)' : ''}${notesLine}${linesLine}${schedLine}${docsLine}`
+    : `Last run: ${fmt(s.at)}\nqueued ${s.queued ?? 0} · applied ${s.applied ?? 0} · failed ${s.failed ?? 0} · skipped ${skipped.length}${s.dryRun ? ' (dry run)' : ''}${notesLine}${linesLine}${schedLine}${docsLine}${photosLine}`
   const outcome = (l) => l.ok ? (l.dryRun ? 'would post' : 'posted') : (l.skipped ? 'skipped: ' + (l.reason || '') : 'FAIL: ' + (l.reason || l.error || ''))
   const detail = (s.log || [])
     .map(l => {

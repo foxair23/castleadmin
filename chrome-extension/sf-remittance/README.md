@@ -142,3 +142,14 @@ The old per-event emails ("crawl timed out", "N lines failed", "is logged out") 
 go red for "extension not reporting" within 90 minutes (8 hours overnight), you will get one
 email, and the 7am summary will keep saying so. Everything the extension would have written is
 queued in Castle Admin and posts when it comes back.
+
+## Job photos out of SF (0.9.19)
+
+Google profile posts (Castle Admin → Reviews → Posts) want the pictures techs take on a job.
+SF's API lists them by file name only and has no file endpoint, so the extension pulls them:
+the app queues finished jobs (`/api/vendor-orders/sf-photos-queue`), each run opens the job
+view page in the SF session, finds the picture files (matched against the API's file names),
+shrinks them to 1600px JPEG in the worker, and posts them back one per request
+(`/api/vendor-orders/sf-photos-callback`). If nothing on the page matches, the item reports
+what it saw and stays queued; Castle Admin shows that under Posts → "Check a job's photos".
+Dry run reads the page and reports, sends nothing. Update: reload the unpacked extension.

@@ -98,6 +98,25 @@ export async function postDocsResult(baseUrl, token, payload) {
   return res.json()
 }
 
+// ── Job pictures out of SF (for Google profile posts) ───────────────────────
+//
+// SF's API lists a job's pictures by file name and has no file endpoint, so the app queues
+// jobs and the extension pulls the pictures off the job page. One callback per picture.
+
+export async function fetchPhotosQueue(baseUrl, token) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-photos-queue`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`photos queue ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json() // { items: [{ id, sfJobId, jobNumber, known: [...], discovered, attempts }] }
+}
+
+export async function postPhotosResult(baseUrl, token, payload) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-photos-callback`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`photos callback ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
 /** Report a run / crawl / login / heartbeat. The response carries queued commands. */
 export async function postReport(baseUrl, token, payload) {
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ops/extension/report`, {
