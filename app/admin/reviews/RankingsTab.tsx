@@ -57,7 +57,7 @@ export default function RankingsTab({ defaultKeywords, businessMatch, weeklyCap 
       )}
       {data?.err && <p className="text-sm text-red-600">{data.err}</p>}
       <CheckNowCard places={d?.places ?? []} defaultKeywords={defaultKeywords} configured={!!d?.configured} onDone={refresh} onOpen={setOpenScan} />
-      {d && d.overview.length > 0 && <OverviewMapCard d={d} onOpen={setOpenScan} />}
+      {d && d.places.some(p => p.is_active) && <OverviewMapCard d={d} defaultKeywords={defaultKeywords} onOpen={setOpenScan} />}
       <MonitoredCard d={d} loading={loading} defaultKeywords={defaultKeywords} weeklyCap={weeklyCap} businessMatch={businessMatch} onChange={refresh} onOpen={setOpenScan} />
       <TrendCard tick={tick} />
       <ScorecardCard rows={d?.scorecard ?? []} areaPages={d?.areaPages ?? []} onChange={refresh} />
@@ -71,22 +71,24 @@ export default function RankingsTab({ defaultKeywords, businessMatch, weeklyCap 
 
 // ── Overview map: every monitored place, colored by position for one keyword ──
 
-function OverviewMapCard({ d, onOpen }: { d: Overview; onOpen: (id: string) => void }) {
-  const keywords = [...new Set(d.overview.map(m => m.keyword))]
+function OverviewMapCard({ d, defaultKeywords, onOpen }: { d: Overview; defaultKeywords: string[]; onOpen: (id: string) => void }) {
+  // Every active place is a pin, monitored or not, so the map is there from day one; the keyword list falls back to the defaults until something is monitored.
+  const keywords = [...new Set([...d.overview.map(m => m.keyword), ...(d.overview.length ? [] : defaultKeywords)])]
   const [kw, setKw] = useState('')
   const chosen = keywords.includes(kw) ? kw : keywords[0] ?? ''
-  const pins = useMemo<MapPin[]>(() => { const out: MapPin[] = d.overview
-    .filter(m => m.keyword === chosen && m.place && m.is_active)
-    .map(m => {
-      const r = m.latest?.our_rank_avg ?? null
-      const scanned = !!m.latest
+  const pins = useMemo<MapPin[]>(() => { const out: MapPin[] = d.places
+    .filter(p => p.is_active)
+    .map(p => {
+      const m = d.overview.find(m => m.place_id === p.id && m.keyword === chosen && m.is_active) ?? null
+      const r = m?.latest?.our_rank_avg ?? null
+      const scanned = !!m?.latest
       return {
-        id: m.id, lat: m.place!.lat, lng: m.place!.lng, kind: 'rank' as const,
+        id: p.id, lat: p.lat, lng: p.lng, kind: 'rank' as const,
         label: !scanned ? '?' : r == null ? '20+' : String(Math.round(r)),
         band: scanned ? bandFor(r == null ? null : Math.round(r)) : 'none',
-        delta: m.delta,
-        title: `${m.place!.name} · ${scanned ? (r == null ? 'not in the top 20' : `position ${r}`) : 'not scanned yet'}${m.latest?.found_share != null && m.grid_size > 1 ? ` · seen at ${Math.round(m.latest.found_share * 100)}% of points` : ''}`,
-        onClick: m.latest ? () => onOpen(m.latest!.id) : undefined,
+        delta: m?.delta ?? null,
+        title: `${p.name} · ${!m ? 'not monitored for this keyword yet' : scanned ? (r == null ? 'not in the top 20' : `position ${r}`) : 'monitored, not scanned yet'}${m?.latest?.found_share != null && m.grid_size > 1 ? ` · seen at ${Math.round(m.latest.found_share * 100)}% of points` : ''}`,
+        onClick: m?.latest ? () => onOpen(m.latest!.id) : undefined,
       }
     })
   if (d.us) out.push({ id: 'us', lat: d.us.lat, lng: d.us.lng, kind: 'us', title: 'Castle Garage Doors & Gates' })
@@ -97,10 +99,10 @@ function OverviewMapCard({ d, onOpen }: { d: Overview; onOpen: (id: string) => v
       <div className="flex flex-wrap items-center gap-3 mb-2">
         <h2 className="text-sm font-semibold text-gray-900">Where Castle ranks</h2>
         <select className={`${input} w-60`} value={chosen} onChange={e => setKw(e.target.value)}>{keywords.map(k => <option key={k} value={k}>{k}</option>)}</select>
-        <span className="text-xs text-gray-500">{scanned} of {pins.filter(p => p.kind === 'rank').length} places scanned · click a pin for its grid</span>
+        <span className="text-xs text-gray-500">{scanned} of {pins.filter(p => p.kind === 'rank').length} places scanned · click a pin for its grid{!d.overview.length ? ' · pins fill in once a place is monitored and scanned (Monitored searches below, or Add starter list)' : ''}</span>
       </div>
       <RankMap pins={pins} height={460} fitKey={chosen} />
-      <p className="text-[11px] text-gray-400 mt-1">Each pin is a monitored city&rsquo;s average position for this keyword: green top 3, amber 4–10, red 11–20, grey not in the top 20. The red star is Castle&rsquo;s own listing. Arrows show movement since the previous scan.</p>
+      <p className="text-[11px] text-gray-400 mt-1">Each pin is a city&rsquo;s average position for this keyword: green top 3, amber 4–10, red 11–20, grey not in the top 20, &ldquo;?&rdquo; not scanned yet. The red star is Castle&rsquo;s own listing. Arrows show movement since the previous scan.</p>
     </div>
   )
 }

@@ -5,12 +5,13 @@ import { useRouter } from 'next/navigation'
 import type { ReputationSettings, WorkingWindow, WeekdayKey, ReplyBand, CtaRule } from '@/lib/reputation/settings'
 import type { Charter, Instruction, StyleExample } from '@/lib/agent/knowledge'
 import type { ApprovalStats, BandStats } from '@/lib/reputation/reply-actions'
-import { extractReviewExamples, filterExamples, DEFAULT_IMPORT_FILTER, bandForStars } from '@/lib/reputation/style-import'
+import { extractReviewExamples, filterExamples, DEFAULT_IMPORT_FILTER, bandForStars, extractPostExamples, filterPostExamples, DEFAULT_POST_MIN_WORDS } from '@/lib/reputation/style-import'
 import {
   saveReputationSettings, saveReviewCharter, activateReviewCharter,
   createReviewInstruction, retireReviewInstruction, reactivateReviewInstruction,
   createReviewStyleExample, pinReviewStyleExample, removeReviewStyleExample, backfillTagsAction, importReviewStyleExamples, removeImportedStyleExamples,
   savePostCharter, activatePostCharter, createPostInstruction, createPostStyleExample,
+  importPostStyleExamples, removeImportedPostStyleExamples,
 } from './reputation-actions'
 
 // Reviews → Settings (PRD §9.1): the two autopilot switches with their stats, the
@@ -484,7 +485,8 @@ function PostStyleExamplesCard({ rows, categories }: { rows: StyleExample[]; cat
   return (
     <div className={card}>
       <h2 className="text-sm font-semibold text-gray-900 mb-1">Post style examples</h2>
-      <p className="text-xs text-gray-500 mb-3">Paste posts from the Google profiles you admire. Every post a person edits or approves is added here too, so the drafter learns Castle&rsquo;s voice.</p>
+      <p className="text-xs text-gray-500 mb-3">Paste posts from the Google profiles you admire, or import a CSV of posts scraped from other home-service profiles. Every post a person edits or approves is added here too, so the drafter learns Castle&rsquo;s voice.</p>
+      <PostCsvImport imported={rows.filter(r => r.source === 'import').length} />
       <Field label="The post"><textarea rows={4} className={input} value={f.final_text} onChange={e => setF(x => ({ ...x, final_text: e.target.value }))} /></Field>
       <div className="mt-3 flex gap-3 items-center">
         <select className={`${input} w-56`} value={f.category} onChange={e => setF(x => ({ ...x, category: e.target.value }))}><option value="">Any job type</option>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
@@ -495,7 +497,7 @@ function PostStyleExamplesCard({ rows, categories }: { rows: StyleExample[]; cat
         {rows.map(r => (
           <li key={r.id} className="py-3 flex items-start gap-3">
             <div className="flex-1 min-w-0">
-              <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">{SOURCE[r.source] ?? r.source}{r.question_type ? ` · ${r.question_type}` : ''}{r.is_pinned ? ' · pinned' : ''}</div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">{SOURCE[r.source] ?? r.source}{r.source === 'import' && r.inquiry_text ? ` · ${r.inquiry_text}` : ''}{r.question_type ? ` · ${r.question_type}` : ''}{r.is_pinned ? ' · pinned' : ''}</div>
               {r.ai_text && r.ai_text !== r.final_text && <p className="text-xs text-red-700/70 line-through mb-1">{r.ai_text.slice(0, 300)}</p>}
               <p className="text-sm text-gray-900 whitespace-pre-wrap">{r.final_text}</p>
             </div>
@@ -507,6 +509,59 @@ function PostStyleExamplesCard({ rows, categories }: { rows: StyleExample[]; cat
         ))}
         {rows.length === 0 && <li className="py-2 text-sm text-gray-400">No examples yet.</li>}
       </ul>
+    </div>
+  )
+}
+
+// Upload a CSV of posts from other profiles (any home-service trade). The browser
+// parses it and sends only the text and the business name; the server tags each
+// post with the closest Castle job category and stores it as an imported example.
+function PostCsvImport({ imported }: { imported: number }) {
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [minWords, setMinWords] = useState(DEFAULT_POST_MIN_WORDS)
+  const [preview, setPreview] = useState<{ name: string; rows: ReturnType<typeof filterPostExamples>['keep']; skipped: ReturnType<typeof filterPostExamples>['skipped']; columns: string; businesses: string[]; error?: string } | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [progress, setProgress] = useState<string | null>(null)
+  async function pick(file: File | undefined) {
+    setMsg(null); setPreview(null)
+    if (!file) return
+    const ex = extractPostExamples(await file.text())
+    if (ex.error) { setPreview({ name: file.name, rows: [], skipped: { short: 0, long: 0, duplicate: 0 }, columns: '', businesses: [], error: ex.error }); return }
+    const { keep, skipped } = filterPostExamples(ex.rows, minWords)
+    setPreview({ name: file.name, rows: keep, skipped, columns: `text: ${ex.columns.text}${ex.columns.business ? ` · business: ${ex.columns.business}` : ''}`, businesses: [...new Set(ex.rows.map(r => r.business).filter((b): b is string => !!b))] })
+  }
+  return (
+    <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-3 mb-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-gray-600">CSV of posts<br /><input type="file" accept=".csv,text/csv" className="text-sm text-gray-900" onChange={e => pick(e.target.files?.[0])} /></label>
+        <label className="text-xs text-gray-600">Skip posts shorter than<br /><input type="number" className={`${input} w-20`} value={minWords} onChange={e => setMinWords(Math.max(0, Number(e.target.value)))} /> words</label>
+        {preview && !preview.error && (
+          <button className={btn} disabled={pending || preview.rows.length === 0} onClick={() => start(async () => {
+            let added = 0, dup = 0, cat = 0
+            for (let i = 0; i < preview.rows.length; i += 50) {
+              setProgress(`Importing ${Math.min(i + 50, preview.rows.length)} of ${preview.rows.length}…`)
+              const r = await importPostStyleExamples(preview.rows.slice(i, i + 50))
+              if (r.error) { setMsg(r.error); setProgress(null); return }
+              added += r.added ?? 0; dup += r.duplicates ?? 0; cat += r.categorized ?? 0
+            }
+            setProgress(null)
+            setMsg(`Imported ${added} post${added === 1 ? '' : 's'}, ${cat} tagged with a job type${dup ? ` (${dup} already in the list)` : ''}.`)
+            setPreview(null); router.refresh()
+          })}>{progress ?? (pending ? 'Importing…' : `Import ${preview.rows.length} posts`)}</button>
+        )}
+        {imported > 0 && <button className={btnGhost} disabled={pending} onClick={() => { if (confirm(`Remove all ${imported} imported post examples? Pasted and approved posts stay.`)) start(async () => { const r = await removeImportedPostStyleExamples(); setMsg(r.error ?? `Removed ${r.removed} imported posts.`); router.refresh() }) }}>Remove {imported} imported</button>}
+      </div>
+      {preview && (
+        <p className={`text-xs mt-2 ${preview.error ? 'text-red-600' : 'text-gray-600'}`}>
+          {preview.error ? preview.error : <>
+            <b>{preview.name}</b>{preview.businesses.length ? ` · ${preview.businesses.slice(0, 3).join(', ')}${preview.businesses.length > 3 ? ` +${preview.businesses.length - 3} more` : ''}` : ''} · {preview.rows.length} usable posts
+            {preview.skipped.short + preview.skipped.long + preview.skipped.duplicate > 0 && <> · skipped {preview.skipped.short} short, {preview.skipped.long} too long, {preview.skipped.duplicate} duplicates</>}
+            <span className="block text-gray-400">columns used: {preview.columns}. The AI tags each post with the closest Castle job type as it imports (about a second per 25 posts). Other trades are fine; the drafter copies the shape, never the words.</span>
+          </>}
+        </p>
+      )}
+      {msg && <p className="text-xs text-gray-700 mt-2">{msg}</p>}
     </div>
   )
 }
