@@ -199,9 +199,10 @@ export function buildCard(cardId: string, c: CardSpec): Record<string, unknown> 
 export interface PostedMessage { name: string; thread?: { name: string } }
 
 /** Post a card (and optional fallback text) into a space, threaded by key. */
-export async function postCard(space: string, threadKey: string, card: Record<string, unknown>, text?: string): Promise<PostedMessage> {
+export async function postCard(space: string, threadKey: string, card: Record<string, unknown>, text?: string, threadName?: string | null): Promise<PostedMessage> {
   const q = new URLSearchParams({ messageReplyOption: 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD' })
-  return capi<PostedMessage>(`/${space}/messages?${q}`, { method: 'POST', body: JSON.stringify({ text: text ?? '', cardsV2: [card], thread: { threadKey } }) })
+  const thread = threadName ? { name: threadName } : { threadKey }
+  return capi<PostedMessage>(`/${space}/messages?${q}`, { method: 'POST', body: JSON.stringify({ text: text ?? '', cardsV2: [card], thread }) })
 }
 
 /** Post into a thread. Prefer the thread's resource name when we have it — that is what

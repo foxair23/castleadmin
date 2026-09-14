@@ -21,6 +21,9 @@ export interface Digest {
   /** The team member handed her the reply text itself ("send this: …"). The reply is
    *  that wording, not a paraphrase of it. Null when they answered in their own words. */
   exactWording: string | null
+  /** The team member said the current draft is fine to send ("good to go", "send it",
+   *  "you can reply now") and gave no new facts. Same authority as pressing Approve. */
+  approveDraft: boolean
   /** True when she has enough to draft now. */
   readyToDraft: boolean
   /** One short line to say back in the thread. */
@@ -48,10 +51,11 @@ const TOOL: Anthropic.Tool = {
       instructions: { type: 'array', items: { type: 'string' }, description: 'Rules that apply to FUTURE emails too, each rewritten as one clear imperative sentence for Cassie (e.g. "When a job status says waiting for Tiffany, ask the team in chat before answering."). Empty if the message is only about this job.' },
       exact_wording: { type: ['string', 'null'], description: 'When the team member dictated the reply itself ("send this:", "reply with:", "tell them: …", or a full reply pasted after a correction), that text exactly as given, minus any greeting or sign-off. Null when they answered in their own words for Cassie to write from.' },
       follow_up_question: { type: ['string', 'null'], description: 'The one thing Cassie still needs to ask the team before she can write a truthful reply, or null.' },
+      approve_draft: { type: 'boolean', description: 'True ONLY when the team member says the CURRENT draft is fine to send as it is ("good to go", "send it", "approved", "you can reply now") and gives no new facts or changes. False whenever anything should change first.' },
       ready_to_draft: { type: 'boolean', description: 'True when the facts now cover the partner question well enough to write the reply.' },
       acknowledgement: { type: 'string', description: 'One short, natural line Cassie says back in the thread (thanks, what she took from it, and the question if any). No more than two sentences.' },
     },
-    required: ['facts', 'instructions', 'exact_wording', 'follow_up_question', 'ready_to_draft', 'acknowledgement'],
+    required: ['facts', 'instructions', 'exact_wording', 'approve_draft', 'follow_up_question', 'ready_to_draft', 'acknowledgement'],
     additionalProperties: false,
   },
 }
@@ -63,11 +67,12 @@ const SYSTEM = `You are Cassie, Castle Garage Doors' AI agent, in a Google Chat 
 - If the team says to ask them / wait / let a person handle it, you are not ready to draft; set the follow-up to null only if there is nothing more to ask.
 - If the team member wrote the reply out for you ("send this:", "reply with:", a full reply after "No."), that is EXACT WORDING: put it in exact_wording as written, list its content as facts too, and you are ready to draft. Do not soften or expand it.
 - A correction of your draft ("don't mention X", "July 30 is in the past") is BOTH a fact for this reply and, when it would apply again, an instruction.
+- If they say the current draft is good to send as it is ("good to go", "send it", "you can reply now") and change nothing, set approve_draft true: that is them approving it, not a request for another draft.
 - Never invent facts. A guess from the team ("probably", "I think") is a fact to check, not to state.`
 
 /** Read a team member's message in context. Without a model key: everything is a fact and she drafts. */
 export async function digestTeamMessage(settings: AgentSettings, ctx: DigestContext): Promise<Digest> {
-  if (!isLlmConfigured()) return { facts: [ctx.latest.text], instructions: [], exactWording: null, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
+  if (!isLlmConfigured()) return { facts: [ctx.latest.text], instructions: [], exactWording: null, approveDraft: false, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
   const model = settings.classifier_model
   const user = [
     ctx.partnerQuestion ? `PARTNER'S QUESTION: ${ctx.partnerQuestion}` : null,
@@ -83,12 +88,13 @@ export async function digestTeamMessage(settings: AgentSettings, ctx: DigestCont
     messages: [{ role: 'user', content: user }],
   })
   const tu = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-  if (!tu) return { facts: [ctx.latest.text], instructions: [], exactWording: null, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
-  const i = tu.input as { facts?: string[]; instructions?: string[]; exact_wording?: string | null; follow_up_question?: string | null; ready_to_draft?: boolean; acknowledgement?: string }
+  if (!tu) return { facts: [ctx.latest.text], instructions: [], exactWording: null, approveDraft: false, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${ctx.latest.who}.` }
+  const i = tu.input as { facts?: string[]; instructions?: string[]; exact_wording?: string | null; approve_draft?: boolean; follow_up_question?: string | null; ready_to_draft?: boolean; acknowledgement?: string }
   const clean = (a: unknown) => (Array.isArray(a) ? a : []).map(s => String(s).trim()).filter(Boolean)
   return {
     facts: clean(i.facts), instructions: clean(i.instructions).map(normalizeRule),
     exactWording: i.exact_wording?.trim() || null,
+    approveDraft: !!i.approve_draft && clean(i.facts).length === 0,
     followUp: i.follow_up_question?.trim() || null, readyToDraft: !!i.ready_to_draft,
     acknowledgement: (i.acknowledgement ?? '').trim() || `Thanks ${ctx.latest.who}.`,
   }
