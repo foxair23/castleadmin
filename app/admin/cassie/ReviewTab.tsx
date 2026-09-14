@@ -342,7 +342,7 @@ function CassieConversation({ messageId, onDraftChanged }: { messageId: string; 
                 {t.role === 'cassie' && Array.isArray(t.meta?.toolsUsed) && (t.meta!.toolsUsed as string[]).length > 0 && <> · {(t.meta!.toolsUsed as string[]).join(', ')}</>}
                 {t.role === 'cassie' && typeof t.meta?.revisedReplyId === 'string' && <> · draft revised</>}
                 {t.role === 'cassie' && typeof t.meta?.askId === 'string' && <> · asked the team</>}
-                {t.role === 'cassie' && Array.isArray(t.meta?.learned) && (t.meta!.learned as string[]).length > 0 && <> · rule kept</>}
+                {t.role === 'cassie' && Array.isArray(t.meta?.learned) && (t.meta!.learned as string[]).length > 0 && <> · rule kept (see Instructions tab)</>}
               </div>
             </div>
           </div>))}
