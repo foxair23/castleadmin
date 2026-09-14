@@ -4,6 +4,7 @@ import type { AgentSettings } from '@/lib/agent/settings'
 import { buildCard, postCard, postText, updateCard, isChatConfigured } from '@/lib/agent/chat/google-chat'
 import { chatVoice } from '@/lib/agent/chat/voice'
 import type { InboundEmail } from './types'
+import { extractIdentifiers } from './identifiers'
 
 // Human assist via Google Chat (PRD §11). When Cassie cannot ground an answer she asks
 // the team in a dedicated space, a person replies in the thread, and she composes a
@@ -183,12 +184,36 @@ async function askForThread(db: SupabaseClient, ev: ChatEvent) {
   if (threadName) {
     const { data } = await db.from('agent_chat_asks').select('*').eq('chat_thread_name', threadName).order('posted_at', { ascending: false }).limit(1).maybeSingle()
     if (data) return data
+    // A thread the team started themselves that Cassie later tied to this ask (see askByReference).
+    const { data: linked } = await db.from('agent_chat_asks').select('*').contains('linked_thread_names', [threadName]).order('posted_at', { ascending: false }).limit(1).maybeSingle()
+    if (linked) return linked
   }
   if (threadKey) {
     const { data } = await db.from('agent_chat_asks').select('*').eq('thread_key', threadKey).order('posted_at', { ascending: false }).limit(1).maybeSingle()
     if (data) return data
   }
   return null
+}
+
+/** A message OUTSIDE any ask thread that answers an open ask anyway — a team member wrote
+ *  a new top-level message in the space instead of replying in Cassie's thread. Matched on
+ *  the PO / job number in what they wrote against the open asks of the last three days;
+ *  exactly one match, or nothing (a guess here attaches an answer to the wrong partner). */
+async function askByReference(db: SupabaseClient, text: string) {
+  const pos = extractIdentifiers(text).pos
+  if (!pos.length) return null
+  const since = new Date(Date.now() - 72 * 3600_000).toISOString()
+  const { data: asks } = await db.from('agent_chat_asks').select('*').in('status', ['open', 'answered', 'composed', 'timed_out']).gte('posted_at', since).order('posted_at', { ascending: false }).limit(40)
+  if (!asks?.length) return null
+  const replyIds = [...new Set(asks.flatMap(a => [a.reply_id, a.draft_reply_id]).filter((x): x is string => !!x))]
+  const { data: replies } = await db.from('agent_email_replies').select('id, identifiers, sf_job_number').in('id', replyIds)
+  const byReply = new Map((replies ?? []).map(r => [r.id as string, r]))
+  const hits = asks.filter(a => [a.reply_id, a.draft_reply_id].some(id => {
+    const r = id ? byReply.get(id as string) : undefined
+    const known = new Set([...(((r?.identifiers as { pos?: string[] } | null)?.pos) ?? []), ...(r?.sf_job_number ? [String(r.sf_job_number)] : [])])
+    return pos.some(p => known.has(p))
+  }))
+  return hits.length === 1 ? hits[0] : null
 }
 
 const responderOf = (u: ChatUser | undefined) => ({ name: u?.displayName ?? u?.email ?? 'a team member', email: u?.email ?? null, id: u?.name ?? null })
@@ -228,7 +253,13 @@ export function describeLookup(d: LookupSummary | null | undefined): string | nu
 /** A person wrote in an ask's thread: either the answer, or the edited text we asked for. */
 export async function handleChatMessage(db: SupabaseClient, settings: AgentSettings, ev: ChatEvent): Promise<string> {
   if (ev.user?.type === 'BOT' || ev.message?.sender?.type === 'BOT') return 'ignored bot'
-  const ask = await askForThread(db, ev)
+  const rawText = (ev.message?.argumentText ?? ev.message?.text ?? '').replace(/@\S*cassie\S*/gi, '').trim()
+  let ask = await askForThread(db, ev)
+  let joined = false
+  if (!ask && rawText) {
+    ask = await askByReference(db, rawText)
+    joined = !!ask
+  }
   if (!ask) {
     // Not one of her ask threads: a coworker talking to her. Answer as a colleague — look
     // the job up if it is work, just talk if it is not.
@@ -239,13 +270,22 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     if (space && r.reason === 'colleague mode off') await postText(space, ev.message?.thread?.threadKey ?? null, "I do not have an open question in this thread. I will post here when I need a hand with a partner email.", ev.message?.thread?.name ?? null)
     return `no ask for this thread (${r.reason ?? 'not answered'})`
   }
-  const text = (ev.message?.argumentText ?? ev.message?.text ?? '').replace(/@\S*cassie\S*/gi, '').trim()
+  const text = rawText
   if (!text) return 'empty'
   const who = responderOf(ev.user ?? ev.message?.sender)
+  // Answer where the person is reading — their thread if they started one, else the ask's.
+  // A thread they started is remembered on the ask, so the rest of the conversation there
+  // keeps finding it instead of falling back to small talk.
+  const replyThread = (ev.message?.thread?.name as string | undefined) ?? (ask.chat_thread_name as string | null) ?? null
+  if (joined && replyThread && replyThread !== ask.chat_thread_name) {
+    const names = Array.from(new Set([...((ask.linked_thread_names as string[] | null) ?? []), replyThread]))
+    await db.from('agent_chat_asks').update({ linked_thread_names: names }).eq('id', ask.id)
+  }
+  const post = (t: string) => postText(ask.space_name, ask.thread_key, t, replyThread)
 
   const plan = planForAsk(String(ask.status), Boolean(ask.awaiting_edit && ask.draft_reply_id))
   if (plan.act === 'explain') {
-    await postText(ask.space_name, ask.thread_key, `Thanks ${who.name.split(' ')[0]} — ${plan.text.charAt(0).toLowerCase()}${plan.text.slice(1)} It's here if you want it: ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
+    await post(`Thanks ${who.name.split(' ')[0]} — ${plan.text.charAt(0).toLowerCase()}${plan.text.slice(1)} It's here if you want it: ${reviewUrl(ask.reply_id as string)}`)
     return `ask is ${ask.status}`
   }
 
@@ -258,7 +298,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     await approveReply(db, ask.draft_reply_id as string, { text: full, note: `Edited in Google Chat by ${who.name}`, userId: null as unknown as string })
     await db.from('agent_email_replies').update({ approval_path: 'chat_approved' }).eq('id', ask.draft_reply_id)
     await db.from('agent_chat_asks').update({ status: 'approved', awaiting_edit: false, resolved_at: new Date().toISOString() }).eq('id', ask.id)
-    await postText(ask.space_name, ask.thread_key, `Got it — sending your version. Thanks, ${who.name.split(' ')[0]}.`)
+    await post(`Got it — sending your version. Thanks, ${who.name.split(' ')[0]}.`)
     return 'edited and approved'
   }
 
@@ -281,24 +321,38 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     })
   } catch (e) {
     console.error('[cassie] digest failed', e)
-    digest = { facts: [text], instructions: [], exactWording: null, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${who.name}.` }
+    digest = { facts: [text], instructions: [], exactWording: null, approveDraft: false, followUp: null, readyToDraft: true, acknowledgement: `Thanks ${who.name}.` }
+  }
+  // "That's good to go" / "you can reply now" on a composed draft is an approval, not a
+  // request for another draft — the same authority as the Approve button.
+  if (digest.approveDraft && ask.status === 'composed' && ask.draft_reply_id) {
+    const { approveReply } = await import('./review')
+    const { data: r } = await db.from('agent_email_replies').select('composed_text, status').eq('id', ask.draft_reply_id).single()
+    if (r?.status === 'draft') {
+      await approveReply(db, ask.draft_reply_id as string, { text: r.composed_text as string, note: `Approved in Google Chat by ${who.name}`, userId: null as unknown as string })
+      await db.from('agent_email_replies').update({ approval_path: 'chat_approved' }).eq('id', ask.draft_reply_id)
+      await db.from('agent_chat_asks').update({ status: 'approved', resolved_at: new Date().toISOString() }).eq('id', ask.id)
+      if (ask.draft_card_name) await updateCard(ask.draft_card_name as string, buildCard(`done-${ask.id}`, { header: 'Approved — sending', subheader: `${who.name} · in chat`, paragraphs: [{ text: `Castle Admin → Cassie → Review: ${reviewUrl(ask.draft_reply_id as string)}` }] }), `Approved by ${who.name}`).catch(() => {})
+      await post(`Got it, ${who.name.split(' ')[0]} — sending that to the partner now.`)
+      return 'approved by message'
+    }
   }
   const learned = await saveLearnedInstructions(db, digest.instructions, `chat:${ask.id}`).catch(e => { console.error('[cassie] could not save instructions', e); return [] as string[] })
   if (learned.length) {
     await db.from('agent_chat_asks').update({ learned_instructions: Number(ask.learned_instructions ?? 0) + learned.length }).eq('id', ask.id)
-    await postText(ask.space_name, ask.thread_key, await chatVoice(settings, { purpose: 'noted_rules', rules: learned, who: who.name }), ask.chat_thread_name as string | null)
+    await post(await chatVoice(settings, { purpose: 'noted_rules', rules: learned, who: who.name }))
   }
   const followUps = Number(ask.follow_ups ?? 0)
   if (!digest.readyToDraft && digest.followUp && followUps < MAX_FOLLOW_UPS) {
     await db.from('agent_chat_asks').update({ status: 'open', follow_ups: followUps + 1, response_text: `${conversation}\nCassie: ${digest.followUp}` }).eq('id', ask.id)
-    await postText(ask.space_name, ask.thread_key, `${digest.acknowledgement} ${digest.followUp}`.trim(), ask.chat_thread_name as string | null)
+    await post(`${digest.acknowledgement} ${digest.followUp}`.trim())
     return 'asked follow-up'
   }
   if (!digest.readyToDraft && !digest.followUp) {
     // The team said, in effect, "leave this to a person". Send it to the review queue.
     await db.from('agent_chat_asks').update({ status: 'sent_to_review', resolved_at: new Date().toISOString() }).eq('id', ask.id)
     await db.from('agent_email_feedback').insert({ reply_id: ask.reply_id, kind: 'note', note: `Team in Google Chat (${who.name}): ${text.slice(0, 500)}` })
-    await postText(ask.space_name, ask.thread_key, `${await chatVoice(settings, { purpose: 'left_to_person', who: who.name })} ${reviewUrl(ask.reply_id as string)}`, ask.chat_thread_name as string | null)
+    await post(`${await chatVoice(settings, { purpose: 'left_to_person', who: who.name })} ${reviewUrl(ask.reply_id as string)}`)
     return 'left to a person'
   }
   const answerText = digest.facts.length ? digest.facts.join('\n') : conversation
@@ -316,7 +370,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
   const { recomposeReply } = await import('./composer-stage')
   const rc = await recomposeReply(db, settings, (ask.draft_reply_id as string | null) ?? (ask.reply_id as string), `answered in Google Chat by ${who.name}`, { chatAnswer: { askId: ask.id as string, text: answerText, responder: who.name, exactWording: digest.exactWording }, noChatAsk: true })
   if (rc.outcome === 'error' || !rc.replyId) {
-    await postText(ask.space_name, ask.thread_key, `Thanks ${who.name}. I could not write the reply (${rc.detail ?? 'unknown error'}). It is in the review queue: ${reviewUrl(ask.reply_id as string)}`)
+    await post(`Thanks ${who.name}. I could not write the reply (${rc.detail ?? 'unknown error'}). It is in the review queue: ${reviewUrl(ask.reply_id as string)}`)
     return 'compose failed'
   }
   const { data: draft } = await db.from('agent_email_replies').select('composed_text, unsourced_claims, resolve_status, sf_job_number, identifiers').eq('id', rc.replyId).single()
@@ -341,7 +395,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
       { text: 'Save answer to library', fn: 'promote', params: { ask: ask.id as string } },
     ],
   })
-  const posted = await postCard(ask.space_name, ask.thread_key, card, intro)
+  const posted = await postCard(ask.space_name, ask.thread_key, card, intro, replyThread)
   await db.from('agent_chat_asks').update({
     status: 'composed', draft_reply_id: rc.replyId, draft_card_name: posted.name,
     ...(ask.chat_thread_name ? {} : { chat_thread_name: posted.thread?.name ?? null }),
@@ -357,6 +411,7 @@ export async function handleCardClick(db: SupabaseClient, settings: AgentSetting
   const { data: ask } = params.ask ? await db.from('agent_chat_asks').select('*').eq('id', params.ask).single() : { data: null }
   if (!ask) return 'no ask'
   const replyId = params.reply ?? (ask.draft_reply_id as string | null)
+  const clickThread = (ev.message?.thread?.name as string | undefined) ?? (ask.chat_thread_name as string | null) ?? null
   const done = (title: string) => buildCard(`done-${ask.id}`, { header: title, subheader: `${who.name} · ${new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}`, paragraphs: [{ text: replyId ? `Castle Admin → Cassie → Review: ${reviewUrl(replyId)}` : '' }] })
 
   switch (fn) {
@@ -364,7 +419,7 @@ export async function handleCardClick(db: SupabaseClient, settings: AgentSetting
       if (!replyId) return 'no reply'
       const { approveReply } = await import('./review')
       const { data: r } = await db.from('agent_email_replies').select('composed_text, status').eq('id', replyId).single()
-      if (r?.status !== 'draft') { await postText(ask.space_name, ask.thread_key, `That draft is already ${r?.status}.`); return 'not draft' }
+      if (r?.status !== 'draft') { await postText(ask.space_name, ask.thread_key, `That draft is already ${r?.status}.`, clickThread); return 'not draft' }
       await approveReply(db, replyId, { text: r.composed_text as string, note: `Approved in Google Chat by ${who.name}`, userId: null as unknown as string })
       await db.from('agent_email_replies').update({ approval_path: 'chat_approved' }).eq('id', replyId)
       await db.from('agent_chat_asks').update({ status: 'approved', resolved_at: new Date().toISOString() }).eq('id', ask.id)
@@ -373,7 +428,7 @@ export async function handleCardClick(db: SupabaseClient, settings: AgentSetting
     }
     case 'edit': {
       await db.from('agent_chat_asks').update({ awaiting_edit: true }).eq('id', ask.id)
-      await postText(ask.space_name, ask.thread_key, `Sure — reply here with the wording you want (mention @Cassie) and I'll send that instead.`)
+      await postText(ask.space_name, ask.thread_key, `Sure — reply here with the wording you want (mention @Cassie) and I'll send that instead.`, clickThread)
       return 'awaiting edit'
     }
     case 'review': {
@@ -387,7 +442,7 @@ export async function handleCardClick(db: SupabaseClient, settings: AgentSetting
         title: (ask.question as string).slice(0, 120), question_examples: [ask.question], answer_text: ask.response_text, audience: 'partner', is_active: true, source_chat_ask_id: ask.id,
       }).select('id').single()
       await db.from('agent_chat_asks').update({ promoted_library_id: entry?.id ?? null }).eq('id', ask.id)
-      await postText(ask.space_name, ask.thread_key, `Saved to the answer library. Next time this comes up I will answer it myself. You can tidy the wording under Castle Admin → Cassie → Answer Library.`)
+      await postText(ask.space_name, ask.thread_key, `Saved to the answer library. Next time this comes up I will answer it myself. You can tidy the wording under Castle Admin → Cassie → Answer Library.`, clickThread)
       return 'promoted'
     }
     default:
