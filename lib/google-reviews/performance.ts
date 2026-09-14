@@ -5,7 +5,8 @@ import { isConfigured, refreshAccessToken } from './gbp-client'
 // Maps and Search, calls, website clicks, direction requests, conversations and
 // bookings. Same OAuth connection as the review sync; the API itself has to be
 // enabled once in the Google Cloud project. Google finalizes numbers a few days
-// late, so the daily sync re-reads the last 30 days and upserts.
+// late, so the daily sync re-reads the last 30 days and upserts; days Google has
+// not finalized yet come back as zeros and are dropped until they are real.
 
 const PERF_BASE = 'https://businessprofileperformance.googleapis.com/v1'
 
@@ -72,7 +73,30 @@ export async function fetchDailyMetrics(start: Date, end: Date): Promise<DailyMe
   return parseMultiDailyMetrics(json)
 }
 
+/** Pure: Google reports a day it has not finalized yet as all zeros. Drop those trailing days so they are neither stored nor drawn as a false drop. */
+export function trimUnfinalized(rows: DailyMetricRow[]): DailyMetricRow[] {
+  const totals = new Map<string, number>()
+  for (const r of rows) totals.set(r.date, (totals.get(r.date) ?? 0) + r.value)
+  const dates = [...totals.keys()].sort()
+  let lastReal = dates.length - 1
+  while (lastReal >= 0 && (totals.get(dates[lastReal]) ?? 0) === 0) lastReal--
+  const keep = new Set(dates.slice(0, lastReal + 1))
+  return rows.filter(r => keep.has(r.date))
+}
+
 export interface PerfSyncReport { ok: boolean; days: number; rows: number; error?: string; runId?: string }
+
+async function upsertRows(db: SupabaseClient, rows: DailyMetricRow[]): Promise<void> {
+  const loc = process.env.GOOGLE_BUSINESS_LOCATION_ID!.replace(/^\/+/, '')
+  const now = new Date().toISOString()
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await db.from('gbp_daily_metrics').upsert(rows.slice(i, i + 500).map(r => ({ location_id: loc, date: r.date, metric: r.metric, value: r.value, fetched_at: now })), { onConflict: 'location_id,date,metric' })
+    if (error) throw new Error(error.message)
+  }
+}
+
+/** Google finalizes a day about three days late; the newest day worth asking for. */
+const latestFinalDay = () => new Date(Date.now() - 3 * 86_400_000)
 
 /** Re-read the last `days` days (Google backfills late) and upsert. Records a run row either way. */
 export async function syncPerformance(db: SupabaseClient, opts: { days?: number } = {}): Promise<PerfSyncReport> {
@@ -81,22 +105,45 @@ export async function syncPerformance(db: SupabaseClient, opts: { days?: number 
   const runId = (run as { id: string } | null)?.id
   const finish = async (patch: Record<string, unknown>) => { if (runId) await db.from('gbp_performance_runs').update({ ...patch, finished_at: new Date().toISOString() }).eq('id', runId) }
   try {
-    // Google's numbers lag ~3 days; end two days ago so the last point is not a partial day.
-    const end = new Date(Date.now() - 2 * 86_400_000)
+    const end = latestFinalDay()
     const start = new Date(end.getTime() - (days - 1) * 86_400_000)
-    const rows = await fetchDailyMetrics(start, end)
-    const loc = process.env.GOOGLE_BUSINESS_LOCATION_ID!.replace(/^\/+/, '')
-    const now = new Date().toISOString()
-    for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await db.from('gbp_daily_metrics').upsert(rows.slice(i, i + 500).map(r => ({ location_id: loc, date: r.date, metric: r.metric, value: r.value, fetched_at: now })), { onConflict: 'location_id,date,metric' })
-      if (error) throw new Error(error.message)
-    }
+    const rows = trimUnfinalized(await fetchDailyMetrics(start, end))
+    await upsertRows(db, rows)
+    // A day stored as zeros before Google finalized it is overwritten by the upsert above once real numbers arrive.
     await finish({ status: 'done', rows_written: rows.length, error: null })
     return { ok: true, days, rows: rows.length, runId }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     await finish({ status: 'failed', error: msg.slice(0, 500) })
     return { ok: false, days, rows: 0, error: msg, runId }
+  }
+}
+
+/** One-time pull of everything Google keeps (about 18 months), in 90-day requests, oldest first. */
+export async function backfillPerformance(db: SupabaseClient, opts: { months?: number; deadline?: number } = {}): Promise<PerfSyncReport & { from?: string; to?: string; requests?: number }> {
+  const months = opts.months ?? 18
+  const end = latestFinalDay()
+  const start = new Date(end); start.setUTCMonth(start.getUTCMonth() - months); start.setUTCDate(start.getUTCDate() + 1)
+  const totalDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1
+  const { data: run } = await db.from('gbp_performance_runs').insert({ status: 'running', days: totalDays }).select('id').single()
+  const runId = (run as { id: string } | null)?.id
+  const finish = async (patch: Record<string, unknown>) => { if (runId) await db.from('gbp_performance_runs').update({ ...patch, finished_at: new Date().toISOString() }).eq('id', runId) }
+  let rows = 0, requests = 0
+  try {
+    let all: DailyMetricRow[] = []
+    for (let s = new Date(start); s <= end; s = new Date(s.getTime() + 90 * 86_400_000)) {
+      if (opts.deadline && Date.now() > opts.deadline) throw new Error('Ran out of time; press the button again to continue')
+      const e = new Date(Math.min(s.getTime() + 89 * 86_400_000, end.getTime()))
+      all = all.concat(await fetchDailyMetrics(s, e)); requests++
+    }
+    const kept = trimUnfinalized(all)
+    await upsertRows(db, kept); rows = kept.length
+    await finish({ status: 'done', rows_written: rows, error: null })
+    return { ok: true, days: totalDays, rows, runId, requests, from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    await finish({ status: 'failed', rows_written: rows, error: msg.slice(0, 500) })
+    return { ok: false, days: totalDays, rows, error: msg, runId, requests }
   }
 }
 
@@ -136,7 +183,7 @@ export async function loadPerformance(db: SupabaseClient, fromDate: string, toDa
     db.from('gbp_daily_metrics').select('date, metric, value').gte('date', fromDate).lte('date', toDate).limit(5000),
     db.from('gbp_performance_runs').select('status, finished_at, error').order('started_at', { ascending: false }).limit(1),
   ])
-  const days = foldDailyMetrics((rows ?? []) as DailyMetricRow[])
+  const days = foldDailyMetrics(trimUnfinalized((rows ?? []) as DailyMetricRow[]))
   const last = ((runs ?? []) as Array<{ status: string; finished_at: string | null; error: string | null }>)[0]
   return { days, totals: sumDays(days), lastFetchedAt: last?.status === 'done' ? last.finished_at : null, lastError: last?.status === 'failed' ? last.error : null }
 }

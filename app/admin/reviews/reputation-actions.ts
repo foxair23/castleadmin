@@ -509,3 +509,16 @@ export async function syncPerformanceAction(): Promise<ActionResult & { rows?: n
     return { rows: r.rows, days: r.days }
   })
 }
+
+/** "Pull full history" on the Insights tab: everything Google keeps (about 18 months), one time. */
+export async function backfillPerformanceAction(): Promise<ActionResult & { rows?: number; days?: number; from?: string; to?: string }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const { isConfigured } = await import('@/lib/google-reviews/gbp-client')
+    if (!isConfigured()) throw new Error('Google Business Profile is not connected (GOOGLE_* environment variables).')
+    const { backfillPerformance } = await import('@/lib/google-reviews/performance')
+    const r = await backfillPerformance(agentDb(), { months: 18, deadline: Date.now() + 240_000 })
+    if (!r.ok) throw new Error(r.error ?? 'Backfill failed')
+    return { rows: r.rows, days: r.days, from: r.from, to: r.to }
+  })
+}

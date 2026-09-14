@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from 'react'
 import type { Insights } from '@/lib/reputation/insights'
 import { THEME_LABEL } from '@/lib/reputation/theme-labels'
 import LineChart, { type ChartMarker } from './LineChart'
-import { syncPerformanceAction } from './reputation-actions'
+import { syncPerformanceAction, backfillPerformanceAction } from './reputation-actions'
 
 // Reviews → Insights (PRD §5): the review funnel, reply performance, what
 // customers talk about, which techs they name, posts, and photo quality by
@@ -252,16 +252,24 @@ function PerformanceCard({ ins, onSynced }: { ins: Insights; onSynced: () => voi
     setMsg(`Pulled ${r.days} days from Google (${r.rows} metric rows).`)
     onSynced()
   })
+  const backfill = () => start(async () => {
+    setMsg(null)
+    const r = await backfillPerformanceAction()
+    if (r.error) { setMsg(r.error); return }
+    setMsg(`Pulled the full history from Google: ${r.from} to ${r.to} (${r.rows} metric rows). Days Google reported as empty are not stored.`)
+    onSynced()
+  })
   return (
     <div className={card}>
       <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
         <div>
           <h2 className="text-sm font-semibold text-gray-900">How the Google profile is doing</h2>
-          <p className="text-xs text-gray-500">Straight from Google: how often the Castle listing was seen on Maps and in Search, and what people did next. Ticks under the charts mark days with new reviews (gray) and published posts (red), so you can see whether the work moves the numbers. Google finalizes a day about three days late.</p>
+          <p className="text-xs text-gray-500">Straight from Google: how often the Castle listing was seen on Maps and in Search, and what people did next. Ticks under the charts mark days with new reviews (gray) and published posts (red), so you can see whether the work moves the numbers. Google finalizes a day about three days late, so the newest days appear once they are real.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {perf?.lastFetchedAt && <span className="text-xs text-gray-400">updated {new Date(perf.lastFetchedAt).toLocaleString('en-US', { timeZone: PT, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>}
           <button className={btnGhost} disabled={pending} onClick={fetchNow}>{pending ? 'Fetching…' : 'Fetch now'}</button>
+          <button className={btnGhost} disabled={pending} onClick={backfill} title="One-time pull of everything Google keeps, about 18 months. Safe to press again; it overwrites nothing real.">{pending ? 'Fetching…' : 'Pull full history'}</button>
         </div>
       </div>
       {msg && <p className={`text-xs mb-2 ${/^Pulled/.test(msg) ? 'text-green-700' : 'text-red-600'}`}>{msg}</p>}
