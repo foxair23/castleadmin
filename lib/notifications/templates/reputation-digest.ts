@@ -72,7 +72,12 @@ export function digestLines(input: DigestInput): { headline: string; sections: A
     ...(rank.up.length ? [`Moved up: ${rank.up.map(m => `${m.label} +${m.delta}`).join(', ')}`] : []),
     ...(rank.down.length ? [`Slipped: ${rank.down.map(m => `${m.label} ${m.delta}`).join(', ')}`] : []),
   ] : null
-  const perf = t.performance && t.performance.days.length ? googleProfileLines(t.performance.totals, l.performance?.days.length ? l.performance.totals : null) : null
+  // The Monday email runs before Google has finalized the weekend, so say how much of the week the numbers cover.
+  const perfDays = t.performance?.days.length ?? 0
+  const perf = t.performance && perfDays ? [
+    ...googleProfileLines(t.performance.totals, l.performance?.days.length === 7 && perfDays === 7 ? l.performance.totals : null),
+    ...(perfDays < 7 ? [`Google has finalized ${perfDays} of the 7 days so far; the rest fill in on the Insights tab over the next few days`] : []),
+  ] : null
   return {
     headline: `${weekLabel}: ${headline}`,
     sections: [

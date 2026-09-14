@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMultiDailyMetrics, foldDailyMetrics, sumDays, describePerformanceError } from '@/lib/google-reviews/performance'
+import { parseMultiDailyMetrics, foldDailyMetrics, sumDays, describePerformanceError, trimUnfinalized } from '@/lib/google-reviews/performance'
 import { foldHistory } from '@/lib/rank/scorecard'
 import { googleProfileLines } from '@/lib/notifications/templates/reputation-digest'
 
@@ -33,6 +33,17 @@ describe('Google performance parsing', () => {
     expect(days[0]).toMatchObject({ impressionsMaps: 42, impressionsSearch: 100, calls: 0, website: 4, directions: 0 })
     expect(days[1]).toMatchObject({ impressionsMaps: 7, impressionsSearch: 0, calls: 3 })
     expect(sumDays(days)).toMatchObject({ impressionsMaps: 49, impressionsSearch: 100, calls: 3, website: 4 })
+  })
+  it('drops trailing days Google has not finalized (all zeros) but keeps zero days in the middle', () => {
+    const rows = [
+      { date: '2026-09-10', metric: 'CALL_CLICKS', value: 2 }, { date: '2026-09-10', metric: 'WEBSITE_CLICKS', value: 0 },
+      { date: '2026-09-09', metric: 'CALL_CLICKS', value: 0 }, { date: '2026-09-09', metric: 'WEBSITE_CLICKS', value: 0 },
+      { date: '2026-09-11', metric: 'CALL_CLICKS', value: 0 }, { date: '2026-09-12', metric: 'CALL_CLICKS', value: 0 },
+      { date: '2026-09-08', metric: 'CALL_CLICKS', value: 1 },
+    ]
+    expect([...new Set(trimUnfinalized(rows).map(r => r.date))].sort()).toEqual(['2026-09-08', '2026-09-09', '2026-09-10'])
+    expect(trimUnfinalized([{ date: '2026-09-12', metric: 'CALL_CLICKS', value: 0 }])).toEqual([])
+    expect(trimUnfinalized([])).toEqual([])
   })
   it('explains the "API not enabled" 403 in plain words', () => {
     expect(describePerformanceError(403, '{"error":{"status":"PERMISSION_DENIED","message":"Business Profile Performance API has not been used in project 123 before or it is disabled."}}')).toMatch(/not enabled in the Google Cloud project/)
