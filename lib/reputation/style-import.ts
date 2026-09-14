@@ -85,3 +85,48 @@ export function filterExamples(rows: ImportedExample[], filter: ImportFilter): {
 }
 
 export const bandForStars = (stars: number | null): 'positive' | 'negative' => (stars ?? 5) >= 4 ? 'positive' : 'negative'
+
+// ── Profile posts ───────────────────────────────────────────────────────────
+// Posts scraped from other businesses' Google profiles (for example the Apify
+// "Google Maps Business Posts Scraper" export: author, date, images, placeName,
+// placeUrl, section, text). Only the text and who wrote it matter.
+
+export interface ImportedPost { text: string; business: string | null }
+
+const POST_TEXT_COLS = ['text', 'post', 'post_text', 'posttext', 'body', 'content', 'caption', 'description', 'message']
+const POST_BUSINESS_COLS = ['author', 'placename', 'place_name', 'business', 'business_name', 'title', 'name']
+
+/** Rows that carry a post. Returns an error message when no text column can be found. */
+export function extractPostExamples(csvText: string): { rows: ImportedPost[]; error?: string; columns: { text: string | null; business: string | null } } {
+  const table = parseCsv(csvText)
+  if (table.length < 2) return { rows: [], error: 'The file has no data rows.', columns: { text: null, business: null } }
+  const headers = table[0]
+  const ti = findCol(headers, POST_TEXT_COLS), bi = findCol(headers, POST_BUSINESS_COLS)
+  const columns = { text: ti >= 0 ? headers[ti] : null, business: bi >= 0 ? headers[bi] : null }
+  if (ti < 0) return { rows: [], error: `No post text column found. Expected one of: ${POST_TEXT_COLS.slice(0, 5).join(', ')}.`, columns }
+  const rows: ImportedPost[] = []
+  for (const r of table.slice(1)) {
+    const text = (r[ti] ?? '').replace(/\r/g, '').trim()
+    if (!text) continue
+    rows.push({ text, business: bi >= 0 ? (r[bi] ?? '').trim() || null : null })
+  }
+  return { rows, columns }
+}
+
+export const DEFAULT_POST_MIN_WORDS = 15
+const MAX_POST_CHARS = 1500
+
+/** Drop stubs (a bare "Happy Friday!"), walls of text, and duplicates. */
+export function filterPostExamples(rows: ImportedPost[], minWords = DEFAULT_POST_MIN_WORDS): { keep: ImportedPost[]; skipped: { short: number; long: number; duplicate: number } } {
+  const seen = new Set<string>()
+  const skipped = { short: 0, long: 0, duplicate: 0 }
+  const keep: ImportedPost[] = []
+  for (const r of rows) {
+    if (wordCount(r.text) < minWords) { skipped.short++; continue }
+    if (r.text.length > MAX_POST_CHARS) { skipped.long++; continue }
+    const key = norm(r.text)
+    if (seen.has(key)) { skipped.duplicate++; continue }
+    seen.add(key); keep.push(r)
+  }
+  return { keep, skipped }
+}

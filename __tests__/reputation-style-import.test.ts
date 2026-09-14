@@ -50,3 +50,35 @@ describe('filterExamples', () => {
     expect([bandForStars(5), bandForStars(4), bandForStars(3), bandForStars(null)]).toEqual(['positive', 'positive', 'negative', 'positive'])
   })
 })
+
+import { extractPostExamples, filterPostExamples } from '@/lib/reputation/style-import'
+import { normalizeAssignments } from '@/lib/reputation/post-categorize'
+
+describe('post CSV import', () => {
+  const csv = '"author","date","images/0","placeName","placeUrl","section","text"\n' +
+    '"Wilson Plumbing","12 hours ago","https://x/1.jpg","Wilson Plumbing","https://maps","From the owner","AC not cooling? In Stow we inspected an older Carrier system and found the outdoor compressor had failed, which explained the warm air. We walked the homeowners through options."\n' +
+    '"Wilson Plumbing","1 day ago","","Wilson Plumbing","","From the owner","Happy Friday everyone!"\n' +
+    '"Wilson Plumbing","2 days ago","","Wilson Plumbing","","From the owner","AC not cooling? In Stow we inspected an older Carrier system and found the outdoor compressor had failed, which explained the warm air. We walked the homeowners through options."\n' +
+    '"Acme Doors","3 days ago","","Acme Doors","","From the owner",""\n'
+  it('reads the text and business columns from the scraper export', () => {
+    const ex = extractPostExamples(csv)
+    expect(ex.error).toBeUndefined()
+    expect(ex.columns).toEqual({ text: 'text', business: 'author' })
+    expect(ex.rows).toHaveLength(3)
+    expect(ex.rows[0].business).toBe('Wilson Plumbing')
+  })
+  it('drops stubs and duplicates', () => {
+    const { keep, skipped } = filterPostExamples(extractPostExamples(csv).rows)
+    expect(keep).toHaveLength(1)
+    expect(skipped).toEqual({ short: 1, long: 0, duplicate: 1 })
+    expect(filterPostExamples([{ text: 'word '.repeat(400), business: null }]).skipped.long).toBe(1)
+  })
+  it('explains a file without a text column', () => {
+    expect(extractPostExamples('"a","b"\n"1","2"\n').error).toMatch(/No post text column/)
+  })
+  it('maps the AI assignments back by index and only to known categories', () => {
+    const out = normalizeAssignments({ assignments: [{ index: 0, category: 'repair' }, { index: 1, category: 'Snow removal' }, { index: 7, category: 'Repair' }, { index: 2, category: null }] }, 3, ['Repair', 'Install'])
+    expect(out).toEqual(['Repair', null, null])
+    expect(normalizeAssignments(null, 2, ['Repair'])).toEqual([null, null])
+  })
+})

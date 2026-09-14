@@ -522,3 +522,52 @@ export async function backfillPerformanceAction(): Promise<ActionResult & { rows
     return { rows: r.rows, days: r.days, from: r.from, to: r.to }
   })
 }
+
+// ── Post style examples from a CSV of other profiles' posts ─────────────────
+
+/** Import posts scraped from other businesses' profiles as post style examples, each tagged with the closest Castle job category by the AI. */
+export async function importPostStyleExamples(rows: Array<{ text: string; business: string | null }>): Promise<ActionResult & { added?: number; duplicates?: number; categorized?: number }> {
+  const userId = await assertAdmin()
+  return attempt(async () => {
+    if (!rows.length) throw new Error('Nothing to import')
+    if (rows.length > 100) throw new Error('Import at most 100 rows per call')
+    const db = agentDb()
+    const { POST_AUDIENCE } = await import('@/lib/reputation/knowledge')
+    const { data: existing } = await db.from('agent_style_examples').select('final_text').eq('audience', POST_AUDIENCE).eq('is_deleted', false).limit(5000)
+    const seen = new Set(((existing ?? []) as Array<{ final_text: string }>).map(e => e.final_text.toLowerCase().replace(/\s+/g, ' ').trim()))
+    const fresh: Array<{ text: string; business: string | null }> = []
+    let duplicates = 0
+    for (const r of rows) {
+      const text = String(r.text ?? '').trim()
+      if (!text) continue
+      const key = text.toLowerCase().replace(/\s+/g, ' ')
+      if (seen.has(key)) { duplicates++; continue }
+      seen.add(key); fresh.push({ text, business: r.business ? String(r.business).trim().slice(0, 120) || null : null })
+    }
+    if (!fresh.length) return { added: 0, duplicates, categorized: 0 }
+    const { data: catRows } = await db.from('sf_job_categories').select('name').eq('is_deleted', false)
+    const categories = [...new Set(((catRows ?? []) as Array<{ name: string | null }>).map(c => (c.name ?? '').trim()).filter(Boolean))]
+    const { categorizePosts } = await import('@/lib/reputation/post-categorize')
+    const { loadAgentSettings } = await import('@/lib/agent/settings')
+    const model = (await loadAgentSettings(db)).classifier_model
+    const cats = await categorizePosts(fresh.map(f => f.text), categories, model).catch(() => fresh.map(() => null))
+    const inserts = fresh.map((f, i) => ({
+      source: 'import', audience: POST_AUDIENCE, question_type: cats[i], inquiry_text: f.business, final_text: f.text.slice(0, 2000), created_by: userId,
+    }))
+    const { error } = await db.from('agent_style_examples').insert(inserts)
+    if (error) throw new Error(error.message)
+    return { added: inserts.length, duplicates, categorized: cats.filter(Boolean).length }
+  })
+}
+
+/** Soft-delete every post example that came in through the CSV import. */
+export async function removeImportedPostStyleExamples(): Promise<ActionResult & { removed?: number }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const { POST_AUDIENCE } = await import('@/lib/reputation/knowledge')
+    const { data, error } = await agentDb().from('agent_style_examples').update({ is_deleted: true, is_pinned: false })
+      .eq('source', 'import').eq('is_deleted', false).eq('audience', POST_AUDIENCE).select('id')
+    if (error) throw new Error(error.message)
+    return { removed: (data ?? []).length }
+  })
+}
