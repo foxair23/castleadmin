@@ -294,7 +294,7 @@ export async function preparePostsAction(input: { dateKey?: string; from?: strin
 export async function testJobPhotosAction(jobRef: string): Promise<ActionResult & {
   sfJobId?: string; found?: number; pictures?: Array<{ name: string | null; url: string; docType: string | null }>; rawKeys?: string[]
   samples?: string[]; probes?: Array<{ what: string; result: string }>; absoluteUrls?: number; imported?: number; importErrors?: string[]
-  stored?: number; queue?: { status: string; attempts: number; received: number; error: string | null; discovery: unknown; finishedAt: string | null; createdAt: string } | null
+  stored?: number
 }> {
   await assertAdmin()
   return attempt(async () => {
@@ -314,29 +314,12 @@ export async function testJobPhotosAction(jobRef: string): Promise<ActionResult 
     const rawList: unknown[] = Array.isArray(job?.pictures) ? job.pictures : Array.isArray(job?.pictures?.items) ? job.pictures.items : []
     const samples = rawList.slice(0, 2).map(o => JSON.stringify(o, null, 1).slice(0, 700))
 
-    // The public API has no file endpoint (service-fusion-api-docs_.pdf lists none; typ.Picture's
-    // file_location is a bare file name). Nothing to probe: the bytes must come through the
-    // office extension's Service Fusion web session, like documents, payments and line items.
     const probes: Array<{ what: string; result: string }> = []
-    const absoluteUrls = pictures.filter(p => /^https?:\/\//i.test(p.fileLocation)).length
-    const imp = absoluteUrls ? await importJobPhotos(db, sfJobId) : { imported: 0, errors: [] as string[] }
-    const { photoQueueStatus } = await import('@/lib/reputation/photo-queue')
-    const [{ count: stored }, queue] = await Promise.all([
-      db.from('job_photos').select('id', { count: 'exact', head: true }).eq('sf_job_id', sfJobId).not('storage_path', 'is', null),
-      photoQueueStatus(db, sfJobId),
-    ])
-    return { sfJobId, found: pictures.length, pictures: pictures.map(p => ({ name: p.name, url: p.fileLocation, docType: p.docType })), rawKeys, samples, probes, absoluteUrls, imported: imp.imported, importErrors: imp.errors, stored: stored ?? 0, queue }
-  })
-}
-
-/** Queue one job for the office extension to pull its pictures from Service Fusion (re-queues a finished or failed item). */
-export async function queueJobPhotosAction(sfJobId: string): Promise<ActionResult & { status?: string }> {
-  await assertAdmin()
-  return attempt(async () => {
-    const { enqueuePhotoFetch } = await import('@/lib/reputation/photo-queue')
-    const r = await enqueuePhotoFetch(agentDb(), sfJobId, { force: true })
-    if (!r.ok) throw new Error(r.error ?? 'could not queue')
-    return { status: r.status }
+    const { resolvePictureUrl } = await import('@/lib/reputation/photos')
+    const absoluteUrls = pictures.length
+    const imp = await importJobPhotos(db, sfJobId)
+    const { count: stored } = await db.from('job_photos').select('id', { count: 'exact', head: true }).eq('sf_job_id', sfJobId).not('storage_path', 'is', null)
+    return { sfJobId, found: pictures.length, pictures: pictures.map(p => ({ name: p.name, url: resolvePictureUrl(p.fileLocation), docType: p.docType })), rawKeys, samples, probes, absoluteUrls, imported: imp.imported, importErrors: imp.errors, stored: stored ?? 0 }
   })
 }
 

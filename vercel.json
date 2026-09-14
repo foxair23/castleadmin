@@ -76,7 +76,7 @@
       "schedule": "10 13,14 * * *"
     },
     {
-      "path": "/api/cron/sf-photos-enqueue",
+      "path": "/api/cron/sf-photos-sync",
       "schedule": "40 14-23,0-2 * * *"
     },
     {

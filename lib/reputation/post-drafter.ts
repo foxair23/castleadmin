@@ -170,7 +170,7 @@ export async function draftPostWithGuardrails(ctx: PostContext, deps: PostDeps, 
 
 export type PostOutcome =
   | { outcome: 'drafted' | 'scheduled'; postId: string }
-  | { outcome: 'no_photo' | 'waiting_photos' | 'exists' | 'llm_not_configured' | 'error'; error?: string; photos?: number }
+  | { outcome: 'no_photo' | 'exists' | 'llm_not_configured' | 'error'; error?: string; photos?: number }
 
 export async function preparePostForJob(db: SupabaseClient, job: CandidateJob, deps: PostDeps, opts: { skipPhotoImport?: boolean } = {}): Promise<PostOutcome> {
   if (!isLlmConfigured()) return { outcome: 'llm_not_configured' }
@@ -179,19 +179,6 @@ export async function preparePostForJob(db: SupabaseClient, job: CandidateJob, d
     await scoreJobPhotos(db, job.id, deps.agentSettings.composer_model, { category: job.category, description: job.description })
     const { data } = await db.from('job_photos').select(PHOTO_SELECT).eq('sf_job_id', job.id)
     const photos = (data ?? []) as JobPhotoRow[]
-    // Nothing stored yet: the pictures come through the office extension (Service Fusion's API
-    // has no file endpoint). Queue the job if it is not queued and try again next morning.
-    if (!photos.some(p => p.storage_path)) {
-      const { data: q } = await db.from('sf_photo_fetch_queue').select('status').eq('sf_job_id', job.id).maybeSingle()
-      const status = (q as { status: string } | null)?.status
-      if (!status) {
-        const { enqueuePhotoFetch } = await import('./photo-queue')
-        await enqueuePhotoFetch(db, job.id, { jobNumber: job.number, knownFiles: photos.map(p => p.source_ref) })
-        return { outcome: 'waiting_photos', photos: 0 }
-      }
-      if (status === 'pending') return { outcome: 'waiting_photos', photos: 0 }
-      return { outcome: 'no_photo', photos: 0 }
-    }
     const chosen = pickPostPhotos(photos, deps.settings.photo_min_score)
     if (!chosen.length) return { outcome: 'no_photo', photos: photos.length }
     const ctx = await buildPostContext(db, job, chosen, deps)
@@ -217,20 +204,20 @@ export async function preparePostForJob(db: SupabaseClient, job: CandidateJob, d
   }
 }
 
-export interface PostPrepReport { candidates: number; drafted: number; scheduled: number; noPhoto: number; waitingPhotos: number; skipped: number; errors: string[]; reason?: string }
+export interface PostPrepReport { candidates: number; drafted: number; scheduled: number; noPhoto: number; skipped: number; errors: string[]; reason?: string }
 
 /**
  * The daily pass: yesterday's finished jobs (PT), best candidates first, up to
  * the daily cap of drafts, unless the weekly cap of posts is already reached.
  */
 export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: string; fromIso?: string; toIso?: string; limit?: number; deadline?: number } = {}): Promise<PostPrepReport> {
-  const report: PostPrepReport = { candidates: 0, drafted: 0, scheduled: 0, noPhoto: 0, waitingPhotos: 0, skipped: 0, errors: [] }
+  const report: PostPrepReport = { candidates: 0, drafted: 0, scheduled: 0, noPhoto: 0, skipped: 0, errors: [] }
   if (!isLlmConfigured()) return { ...report, reason: 'llm_not_configured' }
   const deps = await loadPostDeps(db)
   const deadline = opts.deadline ?? Date.now() + 240_000
   const day = opts.dateKey ?? addPtDays(ptDateKey(new Date()), -1)
-  // Unscoped (cron) runs look back three days: a job whose pictures the office
-  // extension pulled after its first morning still gets its post.
+  // Unscoped (cron) runs look back three days: a job whose pictures the tech uploaded
+  // after its first morning still gets its post.
   const firstDay = opts.dateKey ? day : addPtDays(day, -2)
   const fromIso = opts.fromIso ?? ptWallToUtc(firstDay, 0).toISOString()
   const toIso = opts.toIso ?? ptWallToUtc(addPtDays(day, 1), 0).toISOString()
@@ -262,7 +249,6 @@ export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: s
     if (out.outcome === 'drafted') { report.drafted++; made++ }
     else if (out.outcome === 'scheduled') { report.drafted++; report.scheduled++; made++ }
     else if (out.outcome === 'no_photo') report.noPhoto++
-    else if (out.outcome === 'waiting_photos') report.waitingPhotos++
     else if (out.outcome === 'exists') report.skipped++
     else if (out.outcome === 'llm_not_configured') { report.reason = 'llm_not_configured'; break }
     else { report.errors.push(`${job.number ?? job.id}: ${('error' in out && out.error) || 'unknown'}`); if (report.errors.length >= 5) break }

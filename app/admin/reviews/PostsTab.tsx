@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from 'react'
 import type { JobPhotoRow } from '@/lib/reputation/photos'
 import {
-  approvePostAction, skipPostAction, redraftPostAction, setPhotoUsableAction, preparePostsAction, testJobPhotosAction, queueJobPhotosAction,
+  approvePostAction, skipPostAction, redraftPostAction, setPhotoUsableAction, preparePostsAction, testJobPhotosAction,
 } from './reputation-actions'
 
 // Reviews → Posts (PRD §5): the profile posts drafted from finished jobs. Each
@@ -280,36 +280,6 @@ function PhotoGrid({ photos, selected, editable, threshold, onToggle, onOverride
   )
 }
 
-const QUEUE_LABEL: Record<string, string> = { pending: 'queued for the office extension', done: 'pulled by the office extension', failed: 'failed', no_pictures: 'extension found no pictures on the job page' }
-
-function QueueLine({ sfJobId, queue }: { sfJobId: string; queue: { status: string; attempts: number; received: number; error: string | null; discovery: unknown; finishedAt: string | null; createdAt: string } | null }) {
-  const [pending, start] = useTransition()
-  const [msg, setMsg] = useState<string | null>(null)
-  const d = (queue?.discovery ?? null) as { matched?: string[]; others?: string[]; page?: { paths?: string[]; snippets?: string[]; iframes?: string[] } } | null
-  return (
-    <div className="mt-2 rounded border border-gray-200 bg-gray-50 p-2 space-y-1">
-      <p>
-        <b>Office extension:</b>{' '}
-        {queue ? <>{QUEUE_LABEL[queue.status] ?? queue.status} · {queue.received} received · {queue.attempts} attempt{queue.attempts === 1 ? '' : 's'}{queue.finishedAt ? ` · finished ${fmtWhen(queue.finishedAt)}` : ` · queued ${fmtWhen(queue.createdAt)}`}{queue.error ? <span className="text-red-600"> · {queue.error}</span> : null}</> : 'not queued yet'}
-        {' '}<button className="underline text-gray-600 disabled:opacity-50" disabled={pending} onClick={() => start(async () => { const r = await queueJobPhotosAction(sfJobId); setMsg(r.error ?? 'Queued. The extension picks it up on its next run.') })}>{queue ? 'queue again' : 'queue now'}</button>
-        {msg && <span className="text-gray-600"> · {msg}</span>}
-      </p>
-      {d && (
-        <details><summary className="cursor-pointer text-gray-600">What the extension saw on the job page</summary>
-          <div className="mt-1 space-y-1 text-[11px] text-gray-700">
-            <p>matched the API&rsquo;s file names: {d.matched?.length ?? 0} · other image files: {d.others?.length ?? 0}</p>
-            {d.matched?.slice(0, 5).map((u, i) => <p key={`m${i}`} className="break-all">✓ {u}</p>)}
-            {d.others?.slice(0, 8).map((u, i) => <p key={`o${i}`} className="break-all text-gray-500">· {u}</p>)}
-            {d.page?.paths?.length ? <p className="break-all">picture-ish paths in scripts: {d.page.paths.join(' , ')}</p> : null}
-            {d.page?.iframes?.length ? <p className="break-all">iframes: {d.page.iframes.join(' , ')}</p> : null}
-            {d.page?.snippets?.map((sn, i) => <pre key={`s${i}`} className="whitespace-pre-wrap break-all rounded bg-white border border-gray-200 p-1">{sn}</pre>)}
-          </div>
-        </details>
-      )}
-    </div>
-  )
-}
-
 // ── Diagnostic: what does Service Fusion give us for a job? ─────────────────
 
 function TestPhotosCard() {
@@ -328,10 +298,9 @@ function TestPhotosCard() {
         <div className="mt-3 text-xs text-gray-700 space-y-1">
           {out.error ? <p className="text-red-600">{out.error}</p> : (
             <>
-              <p>{out.found} picture{out.found === 1 ? '' : 's'} on the job · {out.absoluteUrls ?? 0} with a web address · {out.imported} imported now{out.importErrors?.length ? ` · ${out.importErrors.length} failed` : ''}</p>
+              <p>{out.found} picture{out.found === 1 ? '' : 's'} on the job · {out.imported} downloaded now{out.importErrors?.length ? ` · ${out.importErrors.length} failed` : ''}</p>
               <p><b>{out.stored ?? 0}</b> photo{out.stored === 1 ? '' : 's'} stored for this job so far.</p>
-              {out.found ? (out.absoluteUrls ?? 0) === 0 && <p className="text-gray-600">Service Fusion&rsquo;s API lists pictures by file name only, so the office Chrome extension pulls them from the job page in its Service Fusion session. That happens on the extension&rsquo;s next run after the job is queued (every few minutes while the office machine is on).</p> : null}
-              <QueueLine sfJobId={out.sfJobId!} queue={out.queue ?? null} />
+              {out.found && out.importErrors?.length ? <p className="text-amber-700">Some pictures could not be downloaded from Service Fusion&rsquo;s photo storage. The errors are listed below; send them to Claude if they persist.</p> : null}
               {out.rawKeys && out.rawKeys.length > 0 && <p className="text-gray-400">picture-like fields on the job: {out.rawKeys.join(', ')}</p>}
               {out.rawKeys && out.rawKeys.length === 0 && <p className="text-amber-700">The job payload has no picture fields at all. Service Fusion may need the pictures expand enabled on the API key.</p>}
               <ul className="list-disc pl-4">

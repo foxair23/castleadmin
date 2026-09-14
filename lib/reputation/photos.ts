@@ -16,6 +16,18 @@ import { llm, isLlmConfigured, isAdaptiveThinkingModel, describeLlmError } from 
 // photo-quality-by-tech report.
 
 export const MEDIA_BUCKET = 'gbp-media'
+
+// Where Service Fusion keeps job pictures. The API lists only the file name; the web app
+// serves the file from this public bucket path (confirmed 2026-09-13 with a live job:
+// thumbnail and full-size are the same URL, no login needed). Overridable in case it moves.
+export const SF_PICTURE_BASE = (process.env.SF_PICTURE_BASE_URL || 'https://servicefusion.s3.amazonaws.com/images/estimates').replace(/\/+$/, '')
+
+/** A picture's file_location → a downloadable URL (absolute ones pass through). */
+export function resolvePictureUrl(fileLocation: string): string {
+  const loc = fileLocation.trim()
+  if (/^https?:\/\//i.test(loc)) return loc
+  return `${SF_PICTURE_BASE}/${loc.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/')}`
+}
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024
 const MAX_EDGE = 1200
 
@@ -102,7 +114,7 @@ export const PHOTO_SELECT = 'id, sf_job_id, source, source_ref, source_name, sto
 export interface ImportReport { found: number; imported: number; skipped: number; errors: string[] }
 
 /** Copy every new picture of a job into gbp-media and record it. Re-runnable. */
-/** Normalize, store in the public bucket, and record one photo. Shared by the API import and the extension callback. */
+/** Normalize, store in the public bucket, and record one photo. Used by the API import; kept separate so other sources can store photos the same way. */
 export async function storeJobPhoto(db: SupabaseClient, sfJobId: string, input: { sourceRef: string; name: string | null; bytes: Buffer }): Promise<{ ok: true; id: string | null; duplicate: boolean } | { ok: false; error: string }> {
   const nowIso = new Date().toISOString()
   try {
@@ -133,11 +145,9 @@ export async function importJobPhotos(db: SupabaseClient, sfJobId: string): Prom
   const stored = new Set(((have ?? []) as Array<{ source_ref: string; storage_path: string | null }>).filter(h => h.storage_path).map(h => h.source_ref))
   for (const p of pictures) {
     if (stored.has(p.fileLocation)) { report.skipped++; continue }
-    // Service Fusion lists a bare file name with no web address (its API has no file endpoint);
-    // those come through the office extension instead (lib/reputation/photo-queue.ts).
-    if (!/^https?:\/\//i.test(p.fileLocation)) { report.errors.push(`${p.name ?? p.fileLocation}: no web address (file name only)`); continue }
     try {
-      const { bytes } = await downloadPicture(p.fileLocation)
+      // The API gives a bare file name; the file itself sits in SF's public picture bucket.
+      const { bytes } = await downloadPicture(resolvePictureUrl(p.fileLocation))
       const r = await storeJobPhoto(db, sfJobId, { sourceRef: p.fileLocation, name: p.name, bytes })
       if (!r.ok) throw new Error(r.error)
       report.imported++

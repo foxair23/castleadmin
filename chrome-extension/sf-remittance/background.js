@@ -1,10 +1,9 @@
 import { getConfig, setConfig, setStatus, pushHistory } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult, fetchPhotosQueue, postPhotosResult, postReport, ackCommand } from './app-api.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult, postReport, ackCommand } from './app-api.js'
 import { applyOne } from './sf.js'
 import { addLinesToJob } from './sf-lines.js'
 import { setJobSchedule } from './sf-schedule.js'
 import { uploadDocument } from './sf-document.js'
-import { fetchJobPhotos } from './sf-photos.js'
 import { postNote } from './sf-note.js'
 
 const ALARM = 'sf-remittance-poll'
@@ -925,36 +924,6 @@ async function runDocumentUploads(cfg, log) {
   return { discovered, posted, failed, pending: items.length }
 }
 
-/** Job pictures out of SF for Google profile posts. The app queues finished jobs; each one
- *  gets its job view page read, its pictures downloaded, shrunk, and posted back one at a
- *  time. If nothing on the page matches, the item reports what it saw and stays queued. */
-async function runPhotoFetches(cfg, log) {
-  let fetched = 0, discovered = 0, failed = 0
-  let items = []
-  try {
-    ({ items } = await fetchPhotosQueue(cfg.baseUrl, cfg.token))
-  } catch (e) {
-    log.push({ photosQueueError: String(e) })
-    return { fetched, discovered, failed }
-  }
-  if (!items.length) return { fetched, discovered, failed }
-  console.log('[sf-remittance] photo queue', { items: items.length })
-  const send = (payload) => cfg.dryRun ? Promise.resolve() : postPhotosResult(cfg.baseUrl, cfg.token, payload)
-  for (const item of items.slice(0, 6)) {
-    let res
-    try {
-      res = await fetchJobPhotos({ id: item.id, jobNumber: item.jobNumber, known: item.known, dryRun: cfg.dryRun }, send)
-    } catch (e) {
-      res = { ok: false, error: e instanceof Error ? e.message : String(e) }
-      if (!cfg.dryRun) { try { await send({ id: item.id, done: { ok: false, error: res.error } }) } catch (e2) { log.push({ photoId: item.id, callbackError: String(e2) }) } }
-    }
-    log.push({ photoJob: item.jobNumber, ...(res.discovery ? { matched: res.discovery.matched?.length ?? 0, others: res.discovery.others?.length ?? 0 } : {}), ...(res.received != null ? { received: res.received } : {}), ...(res.error ? { error: res.error } : {}), discoveryOnly: res.ok === undefined })
-    if (res.ok === undefined) discovered++; else if (res.ok) fetched++; else failed++
-    await sleep(1500)
-  }
-  return { fetched, discovered, failed, pending: items.length }
-}
-
 export async function run(source) {
   if (running) return { ok: false, error: 'already running' }
   // The in-memory flag dies with the worker; a storage lock stops a second run from
@@ -1020,9 +989,6 @@ export async function run(source) {
     // Signed e-sign forms onto their SF jobs — discovery only until the upload request is captured.
     const docs = await runDocumentUploads(cfg, log)
 
-    // Job pictures out of SF for Google profile posts. Independent of everything above.
-    const photos = await runPhotoFetches(cfg, log)
-
     // SF session trouble: a login-looking failure → warm the session and retry once,
     // silently; only if the retry also fails is it a real logged-out alert. Per-item
     // failures are NOT emailed — each is already recorded by its callback and shown in
@@ -1043,11 +1009,11 @@ export async function run(source) {
       }
     }
 
-    await pushHistory({ kind: 'run', source, ok: !staleSf, dryRun: cfg.dryRun, queued: items.length, applied, failed, lines, schedule, notes, docs, photos, finishedAt: Date.now() })
-    await report({ kind: 'run', site: 'service_fusion', status: staleSf ? 'failed' : 'done', reason: staleSf ? 'SF session logged out' : null, source, started_at: runStartedAt, finished_at: Date.now(), counts: { dryRun: cfg.dryRun, queued: items.length, applied, failed, skipped: (skipped ?? []).length, lines, schedule, notes, docs, photos }, log: log.slice(-100) })
-    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, docs, photos, log })
-    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, photos, log })
-    return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, photos, log }
+    await pushHistory({ kind: 'run', source, ok: !staleSf, dryRun: cfg.dryRun, queued: items.length, applied, failed, lines, schedule, notes, docs, finishedAt: Date.now() })
+    await report({ kind: 'run', site: 'service_fusion', status: staleSf ? 'failed' : 'done', reason: staleSf ? 'SF session logged out' : null, source, started_at: runStartedAt, finished_at: Date.now(), counts: { dryRun: cfg.dryRun, queued: items.length, applied, failed, skipped: (skipped ?? []).length, lines, schedule, notes, docs }, log: log.slice(-100) })
+    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, docs, log })
+    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log })
+    return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
     await pushHistory({ kind: 'run', source, ok: false, error, finishedAt: Date.now() })
