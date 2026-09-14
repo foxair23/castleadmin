@@ -76,6 +76,10 @@
       "schedule": "10 13,14 * * *"
     },
     {
+      "path": "/api/cron/sf-photos-sync",
+      "schedule": "40 14-23,0-2 * * *"
+    },
+    {
       "path": "/api/cron/reputation-digest",
       "schedule": "5 14,15 * * 1"
     },

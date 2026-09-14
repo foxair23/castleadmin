@@ -54,3 +54,12 @@ describe('pickPostPhotos', () => {
     expect(pickPostPhotos([photo({ score: 95, public_url: null })], 70)).toEqual([])
   })
 })
+
+describe('resolvePictureUrl', () => {
+  it('maps a bare file name to the Service Fusion picture bucket and passes absolute URLs through', async () => {
+    const { resolvePictureUrl } = await import('@/lib/reputation/photos')
+    expect(resolvePictureUrl('897f67f0cc4193970f223ea2f778dd87.jpg')).toBe('https://servicefusion.s3.amazonaws.com/images/estimates/897f67f0cc4193970f223ea2f778dd87.jpg')
+    expect(resolvePictureUrl('1789066157_9099f0_E6688C4B-1591-4571-81D5-AF38BA3F54D2.jpg')).toBe('https://servicefusion.s3.amazonaws.com/images/estimates/1789066157_9099f0_E6688C4B-1591-4571-81D5-AF38BA3F54D2.jpg')
+    expect(resolvePictureUrl('https://cdn.example.com/a b.jpg')).toBe('https://cdn.example.com/a b.jpg')
+  })
+})

@@ -16,6 +16,18 @@ import { llm, isLlmConfigured, isAdaptiveThinkingModel, describeLlmError } from 
 // photo-quality-by-tech report.
 
 export const MEDIA_BUCKET = 'gbp-media'
+
+// Where Service Fusion keeps job pictures. The API lists only the file name; the web app
+// serves the file from this public bucket path (confirmed 2026-09-13 with a live job:
+// thumbnail and full-size are the same URL, no login needed). Overridable in case it moves.
+export const SF_PICTURE_BASE = (process.env.SF_PICTURE_BASE_URL || 'https://servicefusion.s3.amazonaws.com/images/estimates').replace(/\/+$/, '')
+
+/** A picture's file_location → a downloadable URL (absolute ones pass through). */
+export function resolvePictureUrl(fileLocation: string): string {
+  const loc = fileLocation.trim()
+  if (/^https?:\/\//i.test(loc)) return loc
+  return `${SF_PICTURE_BASE}/${loc.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/')}`
+}
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024
 const MAX_EDGE = 1200
 
@@ -102,38 +114,45 @@ export const PHOTO_SELECT = 'id, sf_job_id, source, source_ref, source_name, sto
 export interface ImportReport { found: number; imported: number; skipped: number; errors: string[] }
 
 /** Copy every new picture of a job into gbp-media and record it. Re-runnable. */
+/** Normalize, store in the public bucket, and record one photo. Used by the API import; kept separate so other sources can store photos the same way. */
+export async function storeJobPhoto(db: SupabaseClient, sfJobId: string, input: { sourceRef: string; name: string | null; bytes: Buffer }): Promise<{ ok: true; id: string | null; duplicate: boolean } | { ok: false; error: string }> {
+  const nowIso = new Date().toISOString()
+  try {
+    const img = await normalizeImage(input.bytes)
+    const key = crypto.createHash('sha1').update(input.sourceRef).digest('hex').slice(0, 16)
+    const path = `jobs/${encodeURIComponent(sfJobId)}/${key}.jpg`
+    const { error: upErr } = await db.storage.from(MEDIA_BUCKET).upload(path, img.jpeg, { contentType: 'image/jpeg', upsert: true })
+    if (upErr) throw new Error(`upload: ${upErr.message}`)
+    const publicUrl = db.storage.from(MEDIA_BUCKET).getPublicUrl(path).data.publicUrl
+    const row = { sf_job_id: sfJobId, source: 'sf', source_ref: input.sourceRef, source_name: input.name, storage_path: path, public_url: publicUrl, width: img.width, height: img.height, bytes: img.jpeg.byteLength, error: null, updated_at: nowIso }
+    // A placeholder row from an earlier failed attempt (no storage_path) is completed rather than duplicated.
+    const { data, error } = await db.from('job_photos').upsert({ ...row, created_at: nowIso }, { onConflict: 'sf_job_id,source_ref' }).select('id, score').single()
+    if (error) throw new Error(error.message)
+    return { ok: true, id: (data as { id: string } | null)?.id ?? null, duplicate: false }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    await db.from('job_photos').upsert({ sf_job_id: sfJobId, source: 'sf', source_ref: input.sourceRef, source_name: input.name, error: msg.slice(0, 300), created_at: nowIso, updated_at: nowIso }, { onConflict: 'sf_job_id,source_ref', ignoreDuplicates: true })
+    return { ok: false, error: msg }
+  }
+}
+
 export async function importJobPhotos(db: SupabaseClient, sfJobId: string): Promise<ImportReport> {
   const report: ImportReport = { found: 0, imported: 0, skipped: 0, errors: [] }
   const { pictures } = await fetchJobPictures(sfJobId)
   report.found = pictures.length
   if (!pictures.length) return report
-  const { data: have } = await db.from('job_photos').select('source_ref').eq('sf_job_id', sfJobId)
-  const seen = new Set(((have ?? []) as Array<{ source_ref: string }>).map(h => h.source_ref))
+  const { data: have } = await db.from('job_photos').select('source_ref, storage_path').eq('sf_job_id', sfJobId)
+  const stored = new Set(((have ?? []) as Array<{ source_ref: string; storage_path: string | null }>).filter(h => h.storage_path).map(h => h.source_ref))
   for (const p of pictures) {
-    if (seen.has(p.fileLocation)) { report.skipped++; continue }
-    // Service Fusion may list a bare file name with no web address; nothing to fetch until we know its file endpoint.
-    if (!/^https?:\/\//i.test(p.fileLocation)) { report.errors.push(`${p.name ?? p.fileLocation}: no web address (file name only)`); continue }
-    const nowIso = new Date().toISOString()
+    if (stored.has(p.fileLocation)) { report.skipped++; continue }
     try {
-      const { bytes } = await downloadPicture(p.fileLocation)
-      const img = await normalizeImage(bytes)
-      const key = crypto.createHash('sha1').update(p.fileLocation).digest('hex').slice(0, 16)
-      const path = `jobs/${encodeURIComponent(sfJobId)}/${key}.jpg`
-      const { error: upErr } = await db.storage.from(MEDIA_BUCKET).upload(path, img.jpeg, { contentType: 'image/jpeg', upsert: true })
-      if (upErr) throw new Error(`upload: ${upErr.message}`)
-      const publicUrl = db.storage.from(MEDIA_BUCKET).getPublicUrl(path).data.publicUrl
-      const { error } = await db.from('job_photos').insert({
-        sf_job_id: sfJobId, source: 'sf', source_ref: p.fileLocation, source_name: p.name,
-        storage_path: path, public_url: publicUrl, width: img.width, height: img.height, bytes: img.jpeg.byteLength,
-        created_at: nowIso, updated_at: nowIso,
-      })
-      if (error && error.code !== '23505') throw new Error(error.message)
+      // The API gives a bare file name; the file itself sits in SF's public picture bucket.
+      const { bytes } = await downloadPicture(resolvePictureUrl(p.fileLocation))
+      const r = await storeJobPhoto(db, sfJobId, { sourceRef: p.fileLocation, name: p.name, bytes })
+      if (!r.ok) throw new Error(r.error)
       report.imported++
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      report.errors.push(`${p.name ?? p.fileLocation}: ${msg}`)
-      // Keep a row so the failure is visible and the picture is not retried every run.
-      await db.from('job_photos').upsert({ sf_job_id: sfJobId, source: 'sf', source_ref: p.fileLocation, source_name: p.name, error: msg.slice(0, 300), created_at: nowIso, updated_at: nowIso }, { onConflict: 'sf_job_id,source_ref', ignoreDuplicates: true })
+      report.errors.push(`${p.name ?? p.fileLocation}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
   return report
