@@ -5,6 +5,7 @@ import { loadAgentSettings, type AgentSettings } from '@/lib/agent/settings'
 import type { Charter, Instruction, StyleExample } from '@/lib/agent/knowledge'
 import { pickStyleExamples } from '@/lib/agent/email/learning'
 import { marketingUrl } from '@/lib/config/domains'
+import { categoryAllowed, CANCELLED_STATUSES } from './post-rules'
 import { checkPostGuardrails, POST_LENGTH, scrubNames, serviceTermsFor, type GuardrailFailure, type GuardrailResult, type PostGuardrailContext } from './guardrails'
 import { getPostCharter, listPostInstructions, listPostStyleExamples } from './knowledge'
 import { importJobPhotos, pickPostPhotos, scoreJobPhotos, PHOTO_SELECT, type JobPhotoRow } from './photos'
@@ -40,15 +41,8 @@ export interface CandidateJob {
   city: string | null; postal_code: string | null; work_completed_at: string; customer_name: string | null; contact_last_name: string | null; street_1: string | null
 }
 const JOB_SELECT = 'id, number, category, description, completion_notes, city, postal_code, work_completed_at, customer_name, contact_last_name, street_1'
-const CANCELLED = ['Cancelled', 'Canceled', 'Void', 'Voided']
-const DEFAULT_EXCLUDE = /warranty|estimate|service call|callback|call back|no charge|recall/i
-
-/** Pure: is this category allowed to become a post? An empty allow-list means everything except the usual non-work categories. */
-export function categoryAllowed(category: string | null, allowed: string[]): boolean {
-  const cat = (category ?? '').trim()
-  if (allowed.length) return allowed.some(a => a.trim().toLowerCase() === cat.toLowerCase())
-  return !!cat && !DEFAULT_EXCLUDE.test(cat)
-}
+const CANCELLED = CANCELLED_STATUSES
+export { categoryAllowed }
 
 /** Jobs completed in a UTC window that could become posts, excluding cancelled ones and those with a live post. */
 export async function findPostCandidates(db: SupabaseClient, settings: ReputationSettings, window: { fromIso: string; toIso: string }): Promise<CandidateJob[]> {
@@ -222,7 +216,10 @@ export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: s
   const deps = await loadPostDeps(db)
   const deadline = opts.deadline ?? Date.now() + 240_000
   const day = opts.dateKey ?? addPtDays(ptDateKey(new Date()), -1)
-  const fromIso = opts.fromIso ?? ptWallToUtc(day, 0).toISOString()
+  // Unscoped (cron) runs look back three days: a job whose pictures the tech uploaded
+  // after its first morning still gets its post.
+  const firstDay = opts.dateKey ? day : addPtDays(day, -2)
+  const fromIso = opts.fromIso ?? ptWallToUtc(firstDay, 0).toISOString()
   const toIso = opts.toIso ?? ptWallToUtc(addPtDays(day, 1), 0).toISOString()
 
   // Weekly cap counts what is already on the calendar or published this week.
