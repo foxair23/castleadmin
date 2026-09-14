@@ -494,3 +494,18 @@ export async function rankProviderStatusAction(): Promise<ActionResult & { confi
     return { configured: isRankProviderConfigured(), balance: await providerBalance() }
   })
 }
+
+// ── Google profile performance ──────────────────────────────────────────────
+
+/** "Fetch now" on the Insights tab: pull the last 30 days of profile performance from Google. */
+export async function syncPerformanceAction(): Promise<ActionResult & { rows?: number; days?: number }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const { isConfigured } = await import('@/lib/google-reviews/gbp-client')
+    if (!isConfigured()) throw new Error('Google Business Profile is not connected (GOOGLE_* environment variables).')
+    const { syncPerformance } = await import('@/lib/google-reviews/performance')
+    const r = await syncPerformance(agentDb(), { days: 30 })
+    if (!r.ok) throw new Error(r.error ?? 'Sync failed')
+    return { rows: r.rows, days: r.days }
+  })
+}

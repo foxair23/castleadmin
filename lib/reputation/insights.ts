@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { THEMES } from './tagging'
 import { PHOTO_SELECT, isUsable, type JobPhotoRow } from './photos'
+import { ptDateKey } from './pt-time'
+import { loadPerformance, type PerfSummary } from '@/lib/google-reviews/performance'
 export { THEME_LABEL } from './theme-labels'
 
 // Insights (PRD §5): the review funnel, what customers talk about, which techs
@@ -182,6 +184,10 @@ export interface Insights {
   replies: ReplyPerf
   photos: ReturnType<typeof summarizePhotos>
   posts: { published: number; drafted: number; waitingApproval: number; skipped: number; failed: number }
+  /** Google Business Profile performance (impressions, calls, clicks) for the same PT days; null until the first sync. */
+  performance: PerfSummary | null
+  /** PT day → count, for the day markers under the performance charts. */
+  dayMarks: { reviews: Record<string, number>; posts: Record<string, number> }
 }
 
 /** Tech full names per job for a set of job ids (sf_job_techs). */
@@ -208,6 +214,9 @@ export async function loadInsights(db: SupabaseClient, window: DateWindow, photo
     db.from('job_photos').select(PHOTO_SELECT).gte('created_at', fromIso).lt('created_at', toIso).limit(5000),
     db.from('gbp_posts').select('status, published_at, created_at').or(`and(created_at.gte.${fromIso},created_at.lt.${toIso}),and(published_at.gte.${fromIso},published_at.lt.${toIso})`).limit(2000),
   ])
+  // Performance rows are keyed by PT calendar day; the window's bounds are PT midnights, so the last day is the one before toIso.
+  const perfFrom = ptDateKey(new Date(fromIso)), perfTo = ptDateKey(new Date(new Date(toIso).getTime() - 1))
+  const performance = await loadPerformance(db, perfFrom, perfTo).then(p => p.days.length || p.lastError ? p : null).catch(() => null)
 
   type SurveyRaw = Omit<FunnelSurveyRow, 'rating'> & { csat_responses: Array<{ rating: number | null; is_current: boolean }> | null }
   const surveys: FunnelSurveyRow[] = ((surveyRows ?? []) as SurveyRaw[]).map(s => ({
@@ -230,8 +239,10 @@ export async function loadInsights(db: SupabaseClient, window: DateWindow, photo
   const byStar: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
   for (const r of live) byStar[r.star_rating as 1 | 2 | 3 | 4 | 5]++
   const posts = { published: 0, drafted: 0, waitingApproval: 0, skipped: 0, failed: 0 }
+  const dayMarks: Insights['dayMarks'] = { reviews: {}, posts: {} }
+  for (const r of live) { const k = ptDateKey(new Date(r.created_at_google)); dayMarks.reviews[k] = (dayMarks.reviews[k] ?? 0) + 1 }
   for (const p of (postRows ?? []) as Array<{ status: string; published_at: string | null; created_at: string }>) {
-    if (p.status === 'published' && p.published_at && p.published_at >= fromIso && p.published_at < toIso) posts.published++
+    if (p.status === 'published' && p.published_at && p.published_at >= fromIso && p.published_at < toIso) { posts.published++; const k = ptDateKey(new Date(p.published_at)); dayMarks.posts[k] = (dayMarks.posts[k] ?? 0) + 1 }
     if (p.created_at >= fromIso && p.created_at < toIso) {
       posts.drafted++
       if (p.status === 'draft') posts.waitingApproval++
@@ -249,5 +260,7 @@ export async function loadInsights(db: SupabaseClient, window: DateWindow, photo
     replies: summarizeReplies(reviews, (replyRows ?? []) as ReplyPerfReplyRow[]),
     photos: summarizePhotos(photos, techsByJob, photoThreshold),
     posts,
+    performance,
+    dayMarks,
   }
 }
