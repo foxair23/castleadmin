@@ -33,13 +33,15 @@ const ACTION_TOOLS: Anthropic.Tool[] = [
 ]
 
 function system(charter: string, instructions: string[], ctx: { subject: string; from: string; partnerText: string; draft: string | null; job: string | null; summary: string | null; unsourced: string[]; status: string }): string {
-  return `You are Cassie, Castle Garage Doors & Gates' AI agent, talking with a Castle reviewer on the review page about ONE partner email and your draft reply to it. Talk like a colleague: brief, direct, honest about what you know and do not.
+  return `You are Cassie, Castle Garage Doors & Gates' AI agent, talking with a Castle reviewer on the review page about ONE partner email and your draft reply to it. This is a conversation like a text thread with a coworker: answer what they actually asked, in your own words, and sound like a person — not a status line.
 
 Rules:
 - Never state a date, status, name or number you did not get from the facts below, a lookup, or the reviewer.
 - If the reviewer asks for a change to the reply, use revise_draft — do not just describe the change.
 - If something in the draft needs the team (an internal status word, a date that has passed, anything you cannot ground), use ask_team with a question in your own words. Do not ask the team things you can look up yourself.
-- If the reviewer states a general rule, use remember_rule, then confirm what you kept.
+- When the reviewer gives you feedback, first say back in a sentence what you understood and what you will do differently. Then, if it is a general rule, use remember_rule — and QUOTE the rule you kept, word for word, so they can correct it. "Kept that rule" on its own is not an answer.
+- If they ask what rule you kept, or what you took from something, tell them — quote it. Do not save another rule to answer a question.
+- Feedback about how you talk to the TEAM (Google Chat wording, what you called something) is a rule too; keep it the same way.
 - One message per turn. Do not paste the whole draft into chat unless asked; say what changed.
 
 THE PARTNER EMAIL — from ${ctx.from}, subject "${ctx.subject}":
@@ -134,7 +136,12 @@ export async function chatWithCassie(db: SupabaseClient, settings: AgentSettings
 
   const turn = await runCassieTurn({ model: settings.composer_model, system: sys, messages: tidyHistory(history), tools: [...LOOKUP_TOOLS, ...ACTION_TOOLS], runTool, forceTool: opts.forceAskTeam ? 'ask_team' : undefined })
   meta.toolsUsed = turn.toolsUsed
-  const text = turn.error ? `I hit a snag (${turn.error}). Try again in a minute.` : (turn.text || (meta.askId ? 'Asked the team in Chat.' : meta.revisedReplyId ? 'Draft revised.' : 'Done.'))
+  let text = turn.error ? `I hit a snag (${turn.error}). Try again in a minute.` : (turn.text || (meta.askId ? 'Asked the team in Chat.' : meta.revisedReplyId ? 'Draft revised.' : 'Done.'))
+  // What she did is part of what she said. The stored text is the only memory the next turn
+  // has, so a rule she kept must be IN it — otherwise "what rule did you keep?" gets a blank
+  // (or a second rule). It also means the reviewer sees the exact words without asking.
+  const learned = (meta.learned as string[] | undefined) ?? []
+  for (const r of learned) if (!text.includes(r.replace(/\.$/, ''))) text += `\n\nRule I kept: "${r}"`
   await say(db, messageId, 'cassie', text, null, meta)
   return { turns: await loadReviewChat(db, messageId) }
 }
