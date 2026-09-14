@@ -124,6 +124,8 @@ function insights(over: Partial<Insights['reviews']> = {}, extra: Partial<Insigh
     replies: { reviewsInWindow: 4, replied: 3, unreplied: 1, waitingApproval: 1, scheduled: 0, medianHours: 9.6, within24h: 3, within48h: 3, timed: 3, byAgent: 2, byHand: 1, preExisting: 0, autopilot: 1, editedBeforeApproval: 1 },
     photos: { byTech: [{ tech: 'Sam Rivera', jobs: 2, photos: 4, scored: 4, avgScore: 82, usable: 3, usableShare: 75, topReasons: [] }, { tech: 'Lee Park', jobs: 1, photos: 2, scored: 2, avgScore: 45, usable: 0, usableShare: 0, topReasons: [{ reason: 'blurry', count: 2 }] }], total: { photos: 6, scored: 6, avgScore: 70, usable: 3 } },
     posts: { published: 2, drafted: 3, waitingApproval: 1, skipped: 0, failed: 0 },
+    performance: null,
+    dayMarks: { reviews: {}, posts: {} },
     ...extra,
   }
 }

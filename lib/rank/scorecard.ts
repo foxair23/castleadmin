@@ -149,3 +149,34 @@ export async function loadWeekMovement(db: SupabaseClient, weekKey: string, prev
   const cur = rows.filter(r => r.week === weekKey), prev = rows.filter(r => r.week === prevWeekKey)
   return { ...weekMovement(cur, prev), scanned: cur.length }
 }
+
+// ── Trend history ───────────────────────────────────────────────────────────
+
+export interface HistoryMonitor { id: string; place_id: string; place_name: string; keyword: string; is_active: boolean }
+export interface HistoryPoint { monitor_id: string; week_key: string; our_rank_avg: number | null; found_share: number | null; top3_share: number | null }
+export interface RankHistory { monitors: HistoryMonitor[]; weeks: string[]; points: HistoryPoint[] }
+
+/** Pure: one point per monitor per week (the newest finished scan of that week wins); weeks sorted oldest first. */
+export function foldHistory(rows: Array<{ monitor_id: string; week_key: string | null; run_at: string; our_rank_avg: number | null; found_share: number | null; top3_share: number | null }>): { weeks: string[]; points: HistoryPoint[] } {
+  const best = new Map<string, HistoryPoint & { run_at: string }>()
+  for (const r of rows) {
+    const week = r.week_key ?? r.run_at.slice(0, 10)
+    const k = `${r.monitor_id}|${week}`
+    const prev = best.get(k)
+    if (!prev || r.run_at > prev.run_at) best.set(k, { monitor_id: r.monitor_id, week_key: week, our_rank_avg: r.our_rank_avg, found_share: r.found_share, top3_share: r.top3_share, run_at: r.run_at })
+  }
+  const points = [...best.values()].map(p => ({ monitor_id: p.monitor_id, week_key: p.week_key, our_rank_avg: p.our_rank_avg, found_share: p.found_share, top3_share: p.top3_share }))
+  const weeks = [...new Set(points.map(p => p.week_key))].sort()
+  return { weeks, points }
+}
+
+/** Every monitor's weekly positions since scanning began (up to `weeks` weeks back), for the trend chart. */
+export async function loadRankHistory(db: SupabaseClient, weeks = 52): Promise<RankHistory> {
+  const { data: mons } = await db.from('rank_monitors').select(MONITOR_SELECT).order('created_at')
+  const monitors = ((mons ?? []) as unknown as MonitorRow[]).map(m => ({ id: m.id, place_id: m.place_id, place_name: m.place?.name ?? '?', keyword: m.keyword, is_active: m.is_active }))
+  if (!monitors.length) return { monitors, weeks: [], points: [] }
+  const since = new Date(Date.now() - weeks * 7 * 86_400_000).toISOString()
+  const { data } = await db.from('rank_scans').select('monitor_id, week_key, run_at, our_rank_avg, found_share, top3_share').in('monitor_id', monitors.map(m => m.id)).eq('status', 'done').gte('run_at', since).order('run_at').limit(10000)
+  const rows = ((data ?? []) as Array<Record<string, unknown>>).map(r => ({ monitor_id: r.monitor_id as string, week_key: r.week_key as string | null, run_at: r.run_at as string, our_rank_avg: n(r.our_rank_avg), found_share: n(r.found_share), top3_share: n(r.top3_share) }))
+  return { monitors, ...foldHistory(rows) }
+}

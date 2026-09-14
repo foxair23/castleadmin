@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
-import type { MonitorOverview, ScanDetail, PlaceRow, ScanRow } from '@/lib/rank/scorecard'
+import type { MonitorOverview, ScanDetail, PlaceRow, ScanRow, RankHistory } from '@/lib/rank/scorecard'
+import LineChart, { type ChartSeries } from './LineChart'
 import type { ScorecardRow, Competitor } from '@/lib/rank/summary'
 import { bandFor, COST_PER_REQUEST_USD, type RankBand } from '@/lib/rank/grid'
 import RankMap, { type MapPin } from './RankMap'
@@ -58,6 +59,7 @@ export default function RankingsTab({ defaultKeywords, businessMatch, weeklyCap 
       <CheckNowCard places={d?.places ?? []} defaultKeywords={defaultKeywords} configured={!!d?.configured} onDone={refresh} onOpen={setOpenScan} />
       {d && d.overview.length > 0 && <OverviewMapCard d={d} onOpen={setOpenScan} />}
       <MonitoredCard d={d} loading={loading} defaultKeywords={defaultKeywords} weeklyCap={weeklyCap} businessMatch={businessMatch} onChange={refresh} onOpen={setOpenScan} />
+      <TrendCard tick={tick} />
       <ScorecardCard rows={d?.scorecard ?? []} areaPages={d?.areaPages ?? []} onChange={refresh} />
       <CompetitorsCard keywords={[...new Set((d?.overview ?? []).map(m => m.keyword))]} />
       <LiveHistoryCard scans={d?.liveScans ?? []} onOpen={setOpenScan} onChange={refresh} />
@@ -237,6 +239,100 @@ function Spark({ history }: { history: MonitorOverview['history'] }) {
   const w = 60, h = 18
   const path = pts.map((p, i) => `${(i / (pts.length - 1)) * w},${((p - 1) / 20) * (h - 2) + 1}`).join(' ')
   return <svg width={w} height={h} className="text-gray-500"><polyline fill="none" stroke="currentColor" strokeWidth="1.5" points={path} /></svg>
+}
+
+// ── Trend: weekly positions since scanning began, by city or by keyword ─────
+
+const fmtWeek = (k: string) => new Date(`${k}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+const fmtRank = (v: number) => v >= 21 ? '20+' : v % 1 === 0 ? String(v) : v.toFixed(1)
+const MAX_LINES = 8
+
+function TrendCard({ tick }: { tick: number }) {
+  const [hist, setHist] = useState<{ tick: number; h: RankHistory | null; err: string | null } | null>(null)
+  const [mode, setMode] = useState<'city' | 'keyword'>('city')
+  const [metric, setMetric] = useState<'rank' | 'found'>('rank')
+  const [pick, setPick] = useState<string | null>(null)
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/admin/reviews/rankings/history').then(async res => { const j = await res.json(); if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`); if (!cancelled) setHist({ tick, h: j, err: null }) }).catch(e => { if (!cancelled) setHist({ tick, h: null, err: e instanceof Error ? e.message : String(e) }) })
+    return () => { cancelled = true }
+  }, [tick])
+  const h = hist?.h ?? null
+
+  // Stable slots: every city and every keyword gets a fixed color for the life of the page, whatever is filtered.
+  const cities = useMemo(() => [...new Set((h?.monitors ?? []).map(m => m.place_name))].sort(), [h])
+  const keywords = useMemo(() => [...new Set((h?.monitors ?? []).map(m => m.keyword))].sort(), [h])
+  const options = mode === 'city' ? cities : keywords
+  const chosen = pick && options.includes(pick) ? pick : options[0] ?? null
+
+  const built = useMemo(() => {
+    if (!h || !chosen) return null
+    const monitors = h.monitors.filter(m => (mode === 'city' ? m.place_name : m.keyword) === chosen)
+    const byMonitor = new Map<string, Map<string, number | null>>()
+    for (const p of h.points) {
+      if (!byMonitor.has(p.monitor_id)) byMonitor.set(p.monitor_id, new Map())
+      byMonitor.get(p.monitor_id)!.set(p.week_key, metric === 'rank' ? (p.our_rank_avg ?? 21) : p.found_share == null ? null : Math.round(p.found_share * 100))
+    }
+    const weeks = h.weeks.filter(w => monitors.some(m => byMonitor.get(m.id)?.has(w)))
+    const series: ChartSeries[] = monitors.map(m => {
+      const label = mode === 'city' ? m.keyword : m.place_name
+      const slot = (mode === 'city' ? keywords : cities).indexOf(label)
+      return { key: m.id, label: m.is_active ? label : `${label} (paused)`, slot, values: weeks.map(w => byMonitor.get(m.id)?.get(w) ?? null) }
+    }).filter(s => s.values.some(v => v != null)).sort((a, b) => a.slot - b.slot)
+    // Since-start line: first and last week averaged across the shown lines.
+    const shown = series.filter(s => !hidden.has(s.key)).slice(0, MAX_LINES)
+    const avgAt = (i: number) => { const vs = shown.map(s => s.values[i]).filter((v): v is number => v != null); return vs.length ? Math.round(vs.reduce((a, b) => a + b, 0) / vs.length * 10) / 10 : null }
+    const first = weeks.length ? avgAt(0) : null, last = weeks.length ? avgAt(weeks.length - 1) : null
+    return { series, shown, weeks, first, last }
+  }, [h, chosen, mode, metric, hidden, cities, keywords])
+
+  const change = built && built.first != null && built.last != null && built.weeks.length > 1
+    ? (metric === 'rank' ? built.first - built.last : built.last - built.first) : null
+  return (
+    <div className={card}>
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">Is the Map Pack presence growing?</h2>
+          <p className="text-xs text-gray-500">Every weekly scan since monitoring started, one line per {mode === 'city' ? 'keyword' : 'city'}. {metric === 'rank' ? 'Average Map Pack position across the grid; higher on the chart is better, "20+" means not found.' : 'Share of grid points where Castle appears in the top 20.'}</p>
+        </div>
+        {hist?.err && <span className="text-xs text-red-600">{hist.err}</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="inline-flex rounded-md border border-gray-300 overflow-hidden text-xs">
+          {(['city', 'keyword'] as const).map(m => <button key={m} className={`px-2.5 py-1 ${mode === m ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`} onClick={() => { setMode(m); setPick(null); setHidden(new Set()) }}>By {m}</button>)}
+        </div>
+        <select className={input} value={chosen ?? ''} onChange={e => { setPick(e.target.value); setHidden(new Set()) }} disabled={!options.length}>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <div className="inline-flex rounded-md border border-gray-300 overflow-hidden text-xs">
+          <button className={`px-2.5 py-1 ${metric === 'rank' ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`} onClick={() => setMetric('rank')}>Position</button>
+          <button className={`px-2.5 py-1 ${metric === 'found' ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`} onClick={() => setMetric('found')}>Found %</button>
+        </div>
+        {built && built.weeks.length > 0 && (
+          <span className="text-xs text-gray-600 ml-auto">
+            Since {fmtWeek(built.weeks[0])} ({built.weeks.length} week{built.weeks.length === 1 ? '' : 's'}): {metric === 'rank' ? `position ${built.first == null ? '—' : fmtRank(built.first)} → ${built.last == null ? '—' : fmtRank(built.last)}` : `found ${built.first ?? '—'}% → ${built.last ?? '—'}%`}
+            {change != null && change !== 0 && <b className={change > 0 ? 'text-green-700' : 'text-red-700'}> {change > 0 ? '▲' : '▼'} {Math.abs(Math.round(change * 10) / 10)}{metric === 'found' ? ' pts' : ''}</b>}
+          </span>
+        )}
+      </div>
+      {built && built.series.length > MAX_LINES && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {built.series.map(s => { const on = !hidden.has(s.key) && built.shown.some(x => x.key === s.key); return (
+            <button key={s.key} className={`rounded-full border px-2 py-0.5 text-xs ${on ? 'border-gray-400 text-gray-800' : 'border-gray-200 text-gray-400 line-through'}`} onClick={() => setHidden(prev => { const n = new Set(prev); if (n.has(s.key)) n.delete(s.key); else n.add(s.key); return n })}>{s.label}</button>
+          ) })}
+          <span className="text-xs text-gray-400 self-center">up to {MAX_LINES} lines at once</span>
+        </div>
+      )}
+      {!h ? <p className="text-sm text-gray-400">Loading…</p> : !built || !built.weeks.length ? (
+        <p className="text-sm text-gray-400">No weekly scans stored yet. The first line appears after the Monday scan runs (or after Scan now on a monitored search); the trend builds up week by week from there.</p>
+      ) : metric === 'rank' ? (
+        <LineChart xLabels={built.weeks.map(fmtWeek)} series={built.shown} yInverted yMin={1} yMax={21} yFormat={fmtRank} height={260} />
+      ) : (
+        <LineChart xLabels={built.weeks.map(fmtWeek)} series={built.shown} yMin={0} yMax={100} yFormat={v => `${Math.round(v)}%`} height={260} />
+      )}
+    </div>
+  )
 }
 
 // ── Scan detail modal ───────────────────────────────────────────────────────

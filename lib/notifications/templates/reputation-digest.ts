@@ -14,6 +14,19 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export interface RankMovement { avgNow: number | null; avgBefore: number | null; up: Array<{ label: string; delta: number }>; down: Array<{ label: string; delta: number }>; scanned: number }
 export interface DigestInput { thisWeek: Insights; lastWeek: Insights; weekLabel: string; rank?: RankMovement | null }
 
+type PerfTotals = NonNullable<Insights['performance']>['totals']
+/** Pure: how the profile was seen and used this week, next to the week before. */
+export function googleProfileLines(t: PerfTotals, l: PerfTotals | null): string[] {
+  const vs = (a: number, b: number | null | undefined) => b == null ? '' : a === b ? ' (same as the week before)' : a > b ? ` (up from ${b.toLocaleString('en-US')})` : ` (down from ${b.toLocaleString('en-US')})`
+  const views = t.impressionsMaps + t.impressionsSearch
+  const lastViews = l ? l.impressionsMaps + l.impressionsSearch : null
+  return [
+    `Seen ${views.toLocaleString('en-US')} times on Google${vs(views, lastViews)} · ${t.impressionsMaps.toLocaleString('en-US')} on Maps, ${t.impressionsSearch.toLocaleString('en-US')} in Search`,
+    `${plural(t.calls, 'call')}${vs(t.calls, l?.calls)} · ${plural(t.website, 'website click')}${vs(t.website, l?.website)} · ${plural(t.directions, 'direction request')}${vs(t.directions, l?.directions)}`,
+    ...(t.conversations + t.bookings ? [`${plural(t.conversations, 'message')} · ${plural(t.bookings, 'booking')}`] : []),
+  ]
+}
+
 /** Pure: the sections of the digest as short lines, so the email and the tests share one source. */
 export function digestLines(input: DigestInput): { headline: string; sections: Array<{ title: string; lines: string[] }> } {
   const { thisWeek: t, lastWeek: l, weekLabel, rank } = input
@@ -59,11 +72,13 @@ export function digestLines(input: DigestInput): { headline: string; sections: A
     ...(rank.up.length ? [`Moved up: ${rank.up.map(m => `${m.label} +${m.delta}`).join(', ')}`] : []),
     ...(rank.down.length ? [`Slipped: ${rank.down.map(m => `${m.label} ${m.delta}`).join(', ')}`] : []),
   ] : null
+  const perf = t.performance && t.performance.days.length ? googleProfileLines(t.performance.totals, l.performance?.days.length ? l.performance.totals : null) : null
   return {
     headline: `${weekLabel}: ${headline}`,
     sections: [
       { title: 'Reviews', lines: reviews }, { title: 'Survey funnel', lines: funnel }, { title: 'Replies', lines: replies },
       { title: 'What customers said', lines: themes }, { title: 'Profile posts', lines: posts }, { title: 'Job photos', lines: photos },
+      ...(perf ? [{ title: 'Google profile', lines: perf }] : []),
       ...(ranks ? [{ title: 'Map Pack rankings', lines: ranks }] : []),
     ],
   }

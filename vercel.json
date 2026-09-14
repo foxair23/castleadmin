@@ -88,6 +88,10 @@
       "schedule": "20 * * * 1,2"
     },
     {
+      "path": "/api/cron/gbp-performance",
+      "schedule": "50 13 * * *"
+    },
+    {
       "path": "/api/cron/scheduler-partial-leads",
       "schedule": "*/5 * * * *"
     },

@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import type { Insights } from '@/lib/reputation/insights'
 import { THEME_LABEL } from '@/lib/reputation/theme-labels'
+import LineChart, { type ChartMarker } from './LineChart'
+import { syncPerformanceAction } from './reputation-actions'
 
 // Reviews → Insights (PRD §5): the review funnel, reply performance, what
 // customers talk about, which techs they name, posts, and photo quality by
@@ -20,7 +22,8 @@ const PRESETS: Array<{ label: string; days: number }> = [{ label: '7 days', days
 export default function InsightsTab() {
   const [from, setFrom] = useState(ptDay(-29))
   const [to, setTo] = useState(ptDay(0))
-  const key = `${from}:${to}`
+  const [tick, setTick] = useState(0)
+  const key = `${from}:${to}:${tick}`
   const [data, setData] = useState<{ key: string; insights: Insights | null; threshold: number; err: string | null } | null>(null)
 
   useEffect(() => {
@@ -36,7 +39,7 @@ export default function InsightsTab() {
       }
     })()
     return () => { cancelled = true }
-  }, [from, to, key])
+  }, [from, to, key, tick])
   const loading = data?.key !== key
   const ins = data?.insights ?? null
 
@@ -55,6 +58,7 @@ export default function InsightsTab() {
       {ins && (
         <>
           <ReviewsRow ins={ins} />
+          <PerformanceCard ins={ins} onSynced={() => setTick(t => t + 1)} />
           <div className="grid lg:grid-cols-2 gap-4">
             <FunnelCard ins={ins} />
             <RepliesCard ins={ins} />
@@ -218,6 +222,73 @@ function PhotosCard({ ins, threshold }: { ins: Insights; threshold: number }) {
             </tr>
           ))}</tbody>
         </table></div>
+      )}
+    </div>
+  )
+}
+
+// ── Google profile performance (impressions, calls, clicks, directions) ─────
+
+const fmtDay = (k: string) => new Date(`${k}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+const fmtN = (v: number) => Math.round(v).toLocaleString('en-US')
+
+function PerformanceCard({ ins, onSynced }: { ins: Insights; onSynced: () => void }) {
+  const [pending, start] = useTransition()
+  const [msg, setMsg] = useState<string | null>(null)
+  const perf = ins.performance
+  const days = perf?.days ?? []
+  const t = perf?.totals
+  const xLabels = days.map(d => fmtDay(d.date))
+  const markers: ChartMarker[] = []
+  days.forEach((d, i) => {
+    const r = ins.dayMarks.reviews[d.date], p = ins.dayMarks.posts[d.date]
+    if (r) markers.push({ index: i, label: `${r} new review${r === 1 ? '' : 's'}`, kind: 'review' })
+    if (p) markers.push({ index: i, label: `${p} post${p === 1 ? '' : 's'} published`, kind: 'post' })
+  })
+  const fetchNow = () => start(async () => {
+    setMsg(null)
+    const r = await syncPerformanceAction()
+    if (r.error) { setMsg(r.error); return }
+    setMsg(`Pulled ${r.days} days from Google (${r.rows} metric rows).`)
+    onSynced()
+  })
+  return (
+    <div className={card}>
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">How the Google profile is doing</h2>
+          <p className="text-xs text-gray-500">Straight from Google: how often the Castle listing was seen on Maps and in Search, and what people did next. Ticks under the charts mark days with new reviews (gray) and published posts (red), so you can see whether the work moves the numbers. Google finalizes a day about three days late.</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {perf?.lastFetchedAt && <span className="text-xs text-gray-400">updated {new Date(perf.lastFetchedAt).toLocaleString('en-US', { timeZone: PT, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>}
+          <button className={btnGhost} disabled={pending} onClick={fetchNow}>{pending ? 'Fetching…' : 'Fetch now'}</button>
+        </div>
+      </div>
+      {msg && <p className={`text-xs mb-2 ${/^Pulled/.test(msg) ? 'text-green-700' : 'text-red-600'}`}>{msg}</p>}
+      {perf?.lastError && <p className="text-xs text-red-600 mb-2">Last sync failed: {perf.lastError}</p>}
+      {!perf || !days.length ? (
+        <p className="text-sm text-gray-400 mt-2">No performance data stored for these days yet. It is pulled every morning once the Business Profile Performance API is enabled in the Google Cloud project; use Fetch now to pull the last 30 days right away.</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-3">
+            <Tile label="Seen on Google" value={fmtN(t!.impressionsMaps + t!.impressionsSearch)} sub={`${fmtN(t!.impressionsMaps)} Maps · ${fmtN(t!.impressionsSearch)} Search`} />
+            <Tile label="Calls from the listing" value={fmtN(t!.calls)} sub={`${days.length} days with data`} />
+            <Tile label="Website clicks" value={fmtN(t!.website)} />
+            <Tile label="Direction requests" value={fmtN(t!.directions)} sub={t!.conversations + t!.bookings ? `${fmtN(t!.conversations)} messages · ${fmtN(t!.bookings)} bookings` : undefined} />
+          </div>
+          <div className="grid lg:grid-cols-2 gap-4">
+            <div>
+              <h3 className="text-xs font-semibold text-gray-700 mb-1">Times the listing was seen, per day</h3>
+              <LineChart xLabels={xLabels} yMin={0} yFormat={fmtN} height={220} markers={markers}
+                series={[{ key: 'maps', label: 'On Maps', slot: 0, values: days.map(d => d.impressionsMaps) }, { key: 'search', label: 'In Search', slot: 1, values: days.map(d => d.impressionsSearch) }]} />
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold text-gray-700 mb-1">What people did, per day</h3>
+              <LineChart xLabels={xLabels} yMin={0} yFormat={fmtN} height={220} markers={markers}
+                series={[{ key: 'calls', label: 'Calls', slot: 2, values: days.map(d => d.calls) }, { key: 'web', label: 'Website clicks', slot: 3, values: days.map(d => d.website) }, { key: 'dir', label: 'Directions', slot: 4, values: days.map(d => d.directions) }]} />
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
