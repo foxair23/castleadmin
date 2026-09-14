@@ -216,6 +216,45 @@ async function askByReference(db: SupabaseClient, text: string) {
   return hits.length === 1 ? hits[0] : null
 }
 
+type AskRow = Record<string, unknown> & { id: string; reply_id: string | null; draft_reply_id: string | null; posted_at: string; responded_at?: string | null }
+
+/** Open asks in this space from the last three days, newest first. */
+async function openAsksInSpace(db: SupabaseClient, space: string | null): Promise<AskRow[]> {
+  if (!space) return []
+  const since = new Date(Date.now() - 72 * 3600_000).toISOString()
+  const { data } = await db.from('agent_chat_asks').select('*').eq('space_name', space).in('status', ['open', 'answered', 'composed', 'timed_out']).gte('posted_at', since).order('posted_at', { ascending: false }).limit(10)
+  return (data ?? []) as AskRow[]
+}
+
+/** How Cassie refers to an ask when checking with the team: "the Valdez job (PO 34529655)". */
+async function askLabels(db: SupabaseClient, asks: AskRow[]): Promise<Map<string, string>> {
+  const ids = [...new Set(asks.flatMap(a => [a.draft_reply_id, a.reply_id]).filter((x): x is string => !!x))]
+  const { data } = ids.length ? await db.from('agent_email_replies').select('id, question_summary, sf_job_number, identifiers').in('id', ids) : { data: [] }
+  const byId = new Map((data ?? []).map(r => [r.id as string, r]))
+  const out = new Map<string, string>()
+  for (const a of asks) {
+    const r = byId.get(a.draft_reply_id ?? '') ?? byId.get(a.reply_id ?? '')
+    const pos = ((r?.identifiers as { pos?: string[] } | null)?.pos ?? []).slice(0, 2)
+    const bits = [r?.sf_job_number ? `job ${r.sf_job_number}` : null, pos.length ? `PO ${pos.join(' / ')}` : null].filter(Boolean).join(', ')
+    const summary = (r?.question_summary as string | null)?.slice(0, 80)
+    out.set(a.id, summary ? `${summary}${bits ? ` (${bits})` : ''}` : bits || `my question from ${new Date(a.posted_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`)
+  }
+  return out
+}
+
+/** A message with no PO in it, outside any ask thread: which ask is it most likely about?
+ *  - one open ask → that one;
+ *  - several, and the newest was posted or answered in the last two hours (she just asked
+ *    and this is the next thing said) → the newest;
+ *  - otherwise nothing, and she asks which. Exported for tests. */
+export function guessAsk<T extends { posted_at: string; responded_at?: string | null }>(open: T[], now = Date.now()): T | null {
+  if (open.length === 0) return null
+  if (open.length === 1) return open[0]
+  const newest = [...open].sort((a, b) => lastTouch(b).localeCompare(lastTouch(a)))[0]
+  return now - Date.parse(lastTouch(newest)) <= 2 * 3600_000 ? newest : null
+}
+const lastTouch = (a: { posted_at: string; responded_at?: string | null }) => (a.responded_at && a.responded_at > a.posted_at ? a.responded_at : a.posted_at)
+
 const responderOf = (u: ChatUser | undefined) => ({ name: u?.displayName ?? u?.email ?? 'a team member', email: u?.email ?? null, id: u?.name ?? null })
 
 /** What to do with a message that lands in an ask's thread. Silence is the worst possible
@@ -256,9 +295,27 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
   const rawText = (ev.message?.argumentText ?? ev.message?.text ?? '').replace(/@\S*cassie\S*/gi, '').trim()
   let ask = await askForThread(db, ev)
   let joined = false
+  let guessed: string | null = null   // the label she checks with the team when she guessed
   if (!ask && rawText) {
     ask = await askByReference(db, rawText)
     joined = !!ask
+  }
+  if (!ask && rawText) {
+    // No PO to go on. A team member who forgets to reply in the thread is usually answering
+    // the question she just asked — so guess that, say so, and let them correct her. When
+    // several are open and none stands out, ask which one rather than guess.
+    const space = ev.space?.name ?? ev.message?.space?.name ?? null
+    const open = await openAsksInSpace(db, space)
+    const pick = guessAsk(open)
+    if (pick) {
+      ask = pick; joined = true
+      guessed = (await askLabels(db, [pick])).get(pick.id) ?? 'my last question'
+    } else if (open.length > 1 && space) {
+      const labels = await askLabels(db, open)
+      const list = open.map(a => `• ${labels.get(a.id)}`).join('\n')
+      await postText(space, ev.message?.thread?.threadKey ?? null, `Which one is this about? I have a few open:\n${list}\nReply in that thread, or give me the PO or job number.`, ev.message?.thread?.name ?? null)
+      return 'asked which ask'
+    }
   }
   if (!ask) {
     // Not one of her ask threads: a coworker talking to her. Answer as a colleague — look
@@ -282,6 +339,7 @@ export async function handleChatMessage(db: SupabaseClient, settings: AgentSetti
     await db.from('agent_chat_asks').update({ linked_thread_names: names }).eq('id', ask.id)
   }
   const post = (t: string) => postText(ask.space_name, ask.thread_key, t, replyThread)
+  if (guessed) await post(`Taking this as being about ${guessed} — tell me if not.`)
 
   const plan = planForAsk(String(ask.status), Boolean(ask.awaiting_edit && ask.draft_reply_id))
   if (plan.act === 'explain') {
