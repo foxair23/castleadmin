@@ -4,7 +4,7 @@ import { loadCsatSettings } from '@/lib/csat/config'
 import { getCsatRows } from '@/lib/csat/metrics'
 import { loadReputationSettings } from '@/lib/reputation/settings'
 import { approvalStats, loadApprovalStatRows, loadNeedsApprovalCount } from '@/lib/reputation/reply-actions'
-import { getReviewCharter, listReviewInstructions, listReviewStyleExamples, REVIEW_CHANNEL, getPostCharter, listPostInstructions, listPostStyleExamples, POST_CHANNEL } from '@/lib/reputation/knowledge'
+import { getReviewCharter, listReviewInstructions, listReviewStyleExamples, REVIEW_CHANNEL, getPostCharter, listPostInstructions, listPhotoInstructions, listPostStyleExamples, POST_CHANNEL } from '@/lib/reputation/knowledge'
 import { loadPostsNeedingApprovalCount } from '@/lib/reputation/post-actions'
 import { listCharterVersions } from '@/lib/agent/knowledge'
 import { loadAgentSettings } from '@/lib/agent/settings'
@@ -56,8 +56,8 @@ export default async function ReviewsPage() {
     listReviewInstructions(db, { includeRetired: true }), listReviewStyleExamples(db), loadApprovalStatRows(db),
   ])
   // Profile posts (Phase 2): charter, rules, examples, the category list for the settings, and the badge count.
-  const [postCharter, postVersions, postInstructions, postStyles, postsNeedingApproval, { data: catRows }] = await Promise.all([
-    getPostCharter(db), listCharterVersions(db, POST_CHANNEL), listPostInstructions(db, { includeRetired: true }), listPostStyleExamples(db),
+  const [postCharter, postVersions, postInstructions, photoInstructions, postStyles, postsNeedingApproval, { data: catRows }] = await Promise.all([
+    getPostCharter(db), listCharterVersions(db, POST_CHANNEL), listPostInstructions(db, { includeRetired: true }), listPhotoInstructions(db, { includeRetired: true }), listPostStyleExamples(db),
     loadPostsNeedingApprovalCount(db), db.from('sf_job_categories').select('name').eq('is_deleted', false).order('name'),
   ])
   const categories = [...new Set(((catRows ?? []) as Array<{ name: string | null }>).map(c => (c.name ?? '').trim()).filter(Boolean))]
@@ -79,7 +79,7 @@ export default async function ReviewsPage() {
         llmConfigured: isLlmConfigured(),
         charter, versions, instructions, styles,
         stats: approvalStats(statRows),
-        postCharter, postVersions, postInstructions, postStyles, categories,
+        postCharter, postVersions, postInstructions, photoInstructions, postStyles, categories,
         rankProviderConfigured: isRankProviderConfigured(),
       }}
     />

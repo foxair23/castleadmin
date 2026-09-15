@@ -12,6 +12,7 @@ import {
   createReviewStyleExample, pinReviewStyleExample, removeReviewStyleExample, backfillTagsAction, importReviewStyleExamples, removeImportedStyleExamples,
   savePostCharter, activatePostCharter, createPostInstruction, createPostStyleExample,
   importPostStyleExamples, removeImportedPostStyleExamples,
+  createPhotoInstruction,
 } from './reputation-actions'
 
 // Reviews → Settings (PRD §9.1): the two autopilot switches with their stats, the
@@ -31,6 +32,7 @@ export interface Props {
   postCharter: Charter
   postVersions: Charter[]
   postInstructions: Instruction[]
+  photoInstructions: Instruction[]
   postStyles: StyleExample[]
   categories: string[]
   // Rank tracking (Phase 3)
@@ -87,6 +89,7 @@ export default function ReputationSettingsTab(p: Props) {
       <PostsCard settings={p.settings} categories={p.categories} />
       <CharterEditor title="Post Charter" blurb="How Castle writes profile posts: plain and local, one job per post, no names, no prices, no hashtags. Included in every post draft. Saving creates a new version; older versions stay." charter={p.postCharter} versions={p.postVersions} save={savePostCharter} activate={activatePostCharter} />
       <InstructionsCard title="Standing instructions for posts" blurb="Short rules applied to every post draft, e.g. “Mention same-day service when the job was booked and finished the same day.”" rows={p.postInstructions} create={createPostInstruction} />
+      <InstructionsCard title="Rules for judging job photos" blurb="Applied every time a job's photos are scored, e.g. “A door with visible cracks, dents or rust is a Before photo, never the main image.” The agent adds rules here when you correct it in the feedback rail on the Posts tab." rows={p.photoInstructions} create={createPhotoInstruction} />
       <PostStyleExamplesCard rows={p.postStyles} categories={p.categories} />
       <h2 className="text-base font-semibold text-gray-900 pt-4">Map Pack rankings</h2>
       <RankCard settings={p.settings} providerConfigured={p.rankProviderConfigured} />
