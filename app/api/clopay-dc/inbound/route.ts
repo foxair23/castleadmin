@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logRejectedInbound } from '@/lib/inbound/log'
 import { checkInboundSecret } from '@/lib/inbound/resend'
 import { ingestDcReport } from '@/lib/clopay-dc/ingest'
 import { ingestDcReportEmail } from '@/lib/clopay-dc/from-email'
@@ -23,6 +24,7 @@ export const maxDuration = 120
 //                       a parser fix can be replayed against past reports).
 export async function POST(req: NextRequest) {
   if (!checkInboundSecret(req, 'CLOPAY_DC_INBOUND_SECRET', 'x-clopay-dc-secret')) {
+    await logRejectedInbound('clopay_dc', 'inbound post rejected: token does not match CLOPAY_DC_INBOUND_SECRET')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

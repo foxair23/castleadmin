@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logRejectedInbound } from '@/lib/inbound/log'
 import { checkInboundSecret, extractEmail, fetchReceivedEmail } from '@/lib/inbound/resend'
 import { ingestRemittance } from '@/lib/remittance/engine'
 
@@ -10,6 +11,7 @@ export const maxDuration = 60
 // sender doesn't retry-storm; a bad token is the one hard failure.
 export async function POST(req: NextRequest) {
   if (!checkInboundSecret(req, 'REMITTANCE_INBOUND_SECRET', 'x-remittance-secret')) {
+    await logRejectedInbound('remittance', 'inbound post rejected: token does not match REMITTANCE_INBOUND_SECRET')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

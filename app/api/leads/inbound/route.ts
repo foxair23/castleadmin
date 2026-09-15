@@ -5,6 +5,7 @@ import { aiExtractLead, isAiExtractConfigured } from '@/lib/leadgen/ai-extract'
 import { ingestRemittance } from '@/lib/remittance/engine'
 import { ingestStsEmail, ingestDcReply } from '@/lib/clopay-sts/engine'
 import { ingestDcReportEmail } from '@/lib/clopay-dc/from-email'
+import { logInboundEmail, logRejectedInbound } from '@/lib/inbound/log'
 
 export const maxDuration = 60
 
@@ -99,7 +100,11 @@ export async function POST(req: NextRequest) {
   const secret = process.env.LEADGEN_INBOUND_SECRET
   if (secret) {
     const token = req.nextUrl.searchParams.get('token') ?? req.headers.get('x-leadgen-secret')
-    if (token !== secret) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (token !== secret) {
+      // Posts ARE arriving and being turned away: say so, or this looks identical to silence.
+      await logRejectedInbound('leads', token ? 'inbound post rejected: token does not match LEADGEN_INBOUND_SECRET' : 'inbound post rejected: no token on the request')
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
 
   let body: Record<string, unknown>
@@ -145,6 +150,7 @@ export async function POST(req: NextRequest) {
         outcome: result.ok ? 'clopay_dc' : 'clopay_dc_failed',
         detail: `to=${earlyRecipient || '?'} · ${result.ok ? `${result.status}: ${result.rows ?? 0} rows, ${result.newPos ?? 0} new POs` : (result.error ?? 'unknown')}`,
       })
+      await logInboundEmail({ route: 'clopay_dc', recipient: earlyRecipient, from_addr: metaFrom, subject: metaSubject, resend_email_id: emailId, ok: !!result.ok, detail: result.ok ? null : 'dc ingest reported not ok' })
       return NextResponse.json({ route: 'clopay_dc', ...result })
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e)
@@ -182,9 +188,12 @@ export async function POST(req: NextRequest) {
     try {
       const isDcReply = hasPdfAttachment(data)
       const result = isDcReply ? await ingestDcReply(email, emailId) : await ingestStsEmail(email, emailId)
+      await logInboundEmail({ route: isDcReply ? 'clopay_sts_dc_reply' : 'clopay_sts', recipient, from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, ok: true, detail: JSON.stringify(result).slice(0, 500) })
       return NextResponse.json({ route: isDcReply ? 'clopay_sts_dc_reply' : 'clopay_sts', ...result })
     } catch (e) {
-      return NextResponse.json({ ok: true, route: 'clopay_sts', error: e instanceof Error ? e.message : String(e) })
+      const detail = e instanceof Error ? e.message : String(e)
+      await logInboundEmail({ route: 'clopay_sts', recipient, from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, ok: false, detail })
+      return NextResponse.json({ ok: true, route: 'clopay_sts', error: detail })
     }
   }
 
@@ -196,9 +205,12 @@ export async function POST(req: NextRequest) {
   if (/remittances@/i.test(recipient) || fromVendor) {
     try {
       const result = await ingestRemittance(email, emailId)
+      await logInboundEmail({ route: 'remittance', recipient, from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, ok: true, detail: JSON.stringify(result).slice(0, 500) })
       return NextResponse.json({ route: 'remittance', ...result })
     } catch (e) {
-      return NextResponse.json({ ok: true, route: 'remittance', error: e instanceof Error ? e.message : String(e) })
+      const detail = e instanceof Error ? e.message : String(e)
+      await logInboundEmail({ route: 'remittance', recipient, from_addr: email.from ?? metaFrom, subject: email.subject ?? metaSubject, resend_email_id: emailId, ok: false, detail })
+      return NextResponse.json({ ok: true, route: 'remittance', error: detail })
     }
   }
 
