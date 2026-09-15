@@ -3,9 +3,11 @@
 // America/Los_Angeles).
 //
 // Three sends, each stamped once, in order:
-//   heads_up  — the morning of the install/delivery, from 8am PT: the link "so you have it".
-//               A job whose date is already past when we first see it gets this on the
-//               next sweep instead (never skipped: the customer must have the link).
+//   heads_up  — the morning of the scheduled date, from 8am PT: the link "so you have it".
+//               Only for a job the OFFICE has marked "HD SOF Needed" in Service Fusion. That
+//               marking is the authorisation, and it replaces the guessing this used to do
+//               from the job's own status — which read "Door/Segment Installation" on a job
+//               that had only had its site check.
 //   ask       — the day after the date, if unsigned. Never the same PT day as the heads-up.
 //   reminder  — three days after the ask, once, if still unsigned.
 // "Never before the work is done" is what the wording carries; the link itself is never
@@ -13,7 +15,7 @@
 
 export type CustomerStage = 'heads_up' | 'ask' | 'reminder'
 
-export type WorkPhase = 'inspection' | 'waiting' | 'install' | 'delivery' | 'unknown'
+import type { SofStage } from './sub-status'
 
 export interface DueInput {
   status: string
@@ -24,8 +26,13 @@ export interface DueInput {
   customer_signed_at: string | null
   /** The date of the work that matters (the install / delivery visit), YYYY-MM-DD, or null. */
   start_date: string | null
-  /** What the job is at, read live from SF. 'inspection' = the site check; nothing is sent. */
-  phase?: WorkPhase
+  /** Where the job's HD SOF sub-status stands, read live from SF. 'needed' is the office
+   *  saying "send it"; anything else (including none) means no heads-up goes out. */
+  sof?: SofStage | null
+  /** When the extension last confirmed OUR own sub-status write. Cleared the moment a new
+   *  write is queued, so the gap between sending and confirming can never be mistaken for
+   *  the office asking again. */
+  sub_status_set_at?: string | null
   /** The work is done (a visit's tech status Completed, or the job completed / invoiced / closed).
    *  undefined = not known (no live read) — then the ask waits. */
   completed?: boolean
@@ -53,24 +60,23 @@ export function customerStageDue(d: DueInput): CustomerStage | null {
   if (!['prepared', 'sent_customer'].includes(d.status)) return null
   if (d.customer_signed_at) return null
   if (!d.enabled_at || d.created_at < d.enabled_at) return null
-  // A site check is not the work, and a job on a waiting status has no install scheduled.
-  // Nothing goes out until the job is at the install. (Unknown phase = no live read: the
-  // old date rule applies below, which is what a delivery form without visits needs.)
-  if (d.phase === 'inspection' || d.phase === 'waiting') return null
   // The work is done: ask now, whether or not a heads-up ever went out (the link goes with it).
   if (!d.customer_asked_at && d.completed === true) {
     if (d.customer_sent_at && ptDay(d.customer_sent_at) >= d.today && d.hour < 17) return null   // heads-up went this morning; give the day
     return 'ask'
   }
-  if (!d.start_date) return null
-  const rel = daysBetween(d.start_date, d.today)          // 0 = the day itself, >0 = days after
   if (!d.customer_sent_at) {
-    if (rel === 0 && d.hour >= 8) return 'heads_up'        // the morning of the work
-    return null                                            // before the day, or the day has passed without completion: wait
+    // Nothing reaches a customer on a job the office has not marked "HD SOF Needed".
+    if (d.sof !== 'needed' || !d.start_date) return null
+    return daysBetween(d.start_date, d.today) === 0 && d.hour >= 8 ? 'heads_up' : null
   }
+  // Back on "HD SOF Needed" after we set "HD SOF Sent": the office is asking for it again.
+  // Gated on our write having been CONFIRMED, so an in-flight write is not a second send.
+  if (d.sof === 'needed' && d.sub_status_set_at) return 'heads_up'
+  const rel = d.start_date ? daysBetween(d.start_date, d.today) : 0   // 0 = the day itself, >0 = days after
   if (!d.customer_asked_at) {
     // No completion signal available (no live read): fall back to the day after the date.
-    if (d.completed === undefined && rel >= 1 && ptDay(d.customer_sent_at) < d.today) return 'ask'
+    if (d.completed === undefined && d.start_date && rel >= 1 && ptDay(d.customer_sent_at) < d.today) return 'ask'
     return null
   }
   if (!d.customer_reminded_at) {

@@ -12,6 +12,7 @@ import { getEsignSettings } from './settings'
 import { prepareEsignDoc } from './prepare'
 import { linkMissingEsignJobs } from './job-link'
 import { refreshJob } from '@/lib/agent/live-refresh'
+import { sofStageOf, type SofStage } from './sub-status'
 import { deriveWork } from './work'
 
 // The customer sender. An hourly sweep (business hours PT) walks the documents that are
@@ -39,10 +40,11 @@ export const signLink = (token: string) => `${appUrl()}/sign/${token}`
 interface DocRow {
   id: string; order_id: string; status: string; template_key: string | null; sf_job_id: string | null; customer_token: string; created_at: string
   customer_sent_at: string | null; customer_asked_at: string | null; customer_reminded_at: string | null; customer_signed_at: string | null
+  sf_sub_status_set_at?: string | null
 }
 interface OrderRow { id: string; external_id: string | null; customer_name: string | null; phone: string | null; email: string | null; status: string | null; sf_job_id: string | null }
 
-const DOC_COLS = 'id, order_id, status, template_key, sf_job_id, customer_token, created_at, customer_sent_at, customer_asked_at, customer_reminded_at, customer_signed_at'
+const DOC_COLS = 'id, order_id, status, template_key, sf_job_id, customer_token, created_at, customer_sent_at, customer_asked_at, customer_reminded_at, customer_signed_at, sf_sub_status_set_at'
 
 /** Send one stage's email + SMS to the customer and stamp it. A failed email does not block the SMS. */
 export async function deliverToCustomer(supabase: SupabaseClient, doc: DocRow, order: OrderRow, stage: CustomerStage): Promise<{ channels: string[]; error?: string }> {
@@ -77,6 +79,13 @@ export async function deliverToCustomer(supabase: SupabaseClient, doc: DocRow, o
     else if (stage === 'ask') { patch.customer_asked_at = now; if (!doc.customer_sent_at) { patch.customer_sent_at = now; patch.customer_sent_channels = channels.join(',') }; patch.status = 'sent_customer' }
     else patch.customer_reminded_at = now
     await supabase.from('esign_documents').update(patch).eq('id', doc.id)
+    // The customer now has the form, so the job says so: queue "HD SOF Sent" for the
+    // extension. Queued, never blocking — the message has already gone, and a sub-status
+    // that lags is a cosmetic problem where a failed send is not.
+    if (stage === 'heads_up' || (stage === 'ask' && !doc.customer_sent_at)) {
+      const { enqueueSubStatus, SOF_SENT } = await import('./sub-status')
+      await enqueueSubStatus(supabase, doc.id, SOF_SENT)
+    }
     await supabase.from('vendor_order_events').insert({ order_id: doc.order_id, event_type: `esign_customer_${stage}`, to_value: channels.join(','), detail: { doc_id: doc.id, service } })
     if (doc.sf_job_id) {
       const what = stage === 'heads_up' ? 'link sent ahead of the work' : stage === 'ask' ? 'asked to sign' : 'reminded to sign'
@@ -118,13 +127,15 @@ export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSwee
     let status = doc.status
     // The work's real stage comes from the live job (its visits and their completion), not
     // the mirror's single date: a Clopay install's site check must never trigger the form.
-    let phase: 'inspection' | 'waiting' | 'install' | 'delivery' | 'unknown' | undefined
+    let sof: SofStage | null | undefined
     let completed: boolean | undefined
     if (jobId) {
       const live = await refreshJob(String(jobId))
       if (live.status === 'fresh') {
         const w = deriveWork(live.facts, templateByKey(doc.template_key)?.service ?? 'install')
-        phase = w.phase; completed = w.completed; start = w.workDate ?? start
+        completed = w.completed; start = w.workDate ?? start
+        // The office's marking, not the job's status, decides whether the form goes out.
+        sof = sofStageOf(live.facts.subStatus)
       } else { out.held++; out.errors.push(`order ${order.external_id}: live read failed (${live.error})`); continue }
     }
     // A blank that has not been inspected yet is prepared inline, so a same-day install is not missed.
@@ -133,7 +144,7 @@ export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSwee
       if (!r.ok || r.status !== 'prepared') { out.held++; continue }
       status = 'prepared'; doc.template_key = r.template ?? doc.template_key
     }
-    const stage = customerStageDue({ ...doc, status, start_date: start, phase, completed, enabled_at: s.enabledAt, today, hour })
+    const stage = customerStageDue({ ...doc, status, start_date: start, sof, completed, sub_status_set_at: doc.sf_sub_status_set_at ?? null, enabled_at: s.enabledAt, today, hour })
     if (!stage) { out.held++; continue }
     try {
       const { channels, error } = await deliverToCustomer(supabase, { ...doc, sf_job_id: jobId }, order, stage)
