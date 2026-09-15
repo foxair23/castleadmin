@@ -36,7 +36,8 @@ export interface DueInput {
   /** The work is done (a visit's tech status Completed, or the job completed / invoiced / closed).
    *  undefined = not known (no live read) — then the ask waits. */
   completed?: boolean
-  /** Setting cutoff; documents found before it are never auto-sent. */
+  /** Setting cutoff: documents found before it are not auto-sent on their own — unless the
+   *  office has marked the job HD SOF, or we have already written to this customer. */
   enabled_at: string | null
   /** The sweep's clock, PT: calendar day YYYY-MM-DD and hour 0–23. */
   today: string
@@ -59,7 +60,15 @@ export function daysBetween(a: string, b: string): number {
 export function customerStageDue(d: DueInput): CustomerStage | null {
   if (!['prepared', 'sent_customer'].includes(d.status)) return null
   if (d.customer_signed_at) return null
-  if (!d.enabled_at || d.created_at < d.enabled_at) return null
+  if (!d.enabled_at) return null
+  // The cutoff exists so that switching auto-send on does not mail the ~200 blanks already
+  // sitting on file. A job the office has marked HD SOF is not one of those: someone chose
+  // it deliberately, and that choice is a far better gate than when the blank happened to be
+  // captured. Job 1020258680 was captured on 9 Sep, auto-send went on late on 14 Sep, and
+  // the marking at 7:53 the next morning could never release it.
+  // The same applies once we have written to this customer at all: the ask and the reminder
+  // have to be able to follow their own heads-up.
+  if (d.created_at < d.enabled_at && !d.sof && !d.customer_sent_at) return null
   // The work is done: ask now, whether or not a heads-up ever went out (the link goes with it).
   if (!d.customer_asked_at && d.completed === true) {
     if (d.customer_sent_at && ptDay(d.customer_sent_at) >= d.today && d.hour < 17) return null   // heads-up went this morning; give the day

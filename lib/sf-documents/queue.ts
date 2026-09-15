@@ -69,8 +69,9 @@ export async function recordSfDocumentResult(id: string, result: { ok?: boolean;
       if (doc && doc.status === 'completed') {
         await supabase.from('esign_documents').update({ status: 'sf_uploaded', sf_uploaded_at: now, updated_at: now }).eq('id', doc.id)
         await supabase.from('vendor_order_events').insert({ order_id: doc.order_id, event_type: 'esign_sf_uploaded', to_value: 'posted', detail: { queue_id: id } })
-        const { enqueueSubStatus, SOF_COMPLETE } = await import('@/lib/esign/sub-status')
+        const { enqueueSubStatus, nudgeExtensionRun, SOF_COMPLETE } = await import('@/lib/esign/sub-status')
         await enqueueSubStatus(supabase, doc.id as string, SOF_COMPLETE)
+        await nudgeExtensionRun(supabase)
       }
     }
   } else {
