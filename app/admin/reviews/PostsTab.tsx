@@ -127,11 +127,15 @@ function PrepareCard({ llmConfigured, onDone }: { llmConfigured: boolean; onDone
           setMsg('Pulling photos, scoring and drafting… this can take a minute per job.')
           const r = await preparePostsAction(mode === 'day' ? { dateKey: day } : { from, to })
           if (r.error) { setMsg(r.error); return }
-          const parts = [`${r.candidates ?? 0} finished job${r.candidates === 1 ? '' : 's'} looked at`, `${r.drafted ?? 0} drafted`]
+          const parts = [`${r.finished ?? r.candidates ?? 0} finished job${(r.finished ?? r.candidates) === 1 ? '' : 's'} looked at`, `${r.drafted ?? 0} drafted`]
           if (r.scheduled) parts.push(`${r.scheduled} scheduled by autopilot`)
+          if (r.wrongCategory) parts.push(`${r.wrongCategory} skipped by category`)
+          if (r.alreadyPosted) parts.push(`${r.alreadyPosted} already have a post`)
           if (r.noPhoto) parts.push(`${r.noPhoto} without a usable photo`)
           if (r.skipped) parts.push(`${r.skipped} skipped`)
-          if (r.reason === 'weekly_cap') parts.push('weekly cap reached')
+          // Whatever stopped the run, say it. This used to test for a token the drafter
+          // never returned, so every early stop read as a silent "0 drafted".
+          if (r.reason) parts.push(r.reason)
           if (r.errors?.length) parts.push(`${r.errors.length} error${r.errors.length === 1 ? '' : 's'}: ${r.errors[0]}`)
           setMsg(parts.join(' · '))
           onDone()

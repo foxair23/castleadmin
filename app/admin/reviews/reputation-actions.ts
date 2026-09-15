@@ -276,7 +276,7 @@ export async function setPhotoUsableAction(photoId: string, usable: boolean | nu
 }
 
 /** Run the daily pass by hand for one PT day (default yesterday) or a range. */
-export async function preparePostsAction(input: { dateKey?: string; from?: string; to?: string }): Promise<ActionResult & { candidates?: number; drafted?: number; scheduled?: number; noPhoto?: number; skipped?: number; reason?: string; errors?: string[] }> {
+export async function preparePostsAction(input: { dateKey?: string; from?: string; to?: string }): Promise<ActionResult & { candidates?: number; drafted?: number; scheduled?: number; noPhoto?: number; skipped?: number; finished?: number; wrongCategory?: number; alreadyPosted?: number; reason?: string; errors?: string[] }> {
   await assertAdmin()
   return attempt(async () => {
     const { runPostPreparation } = await import('@/lib/reputation/post-drafter')

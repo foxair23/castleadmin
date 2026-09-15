@@ -44,18 +44,33 @@ const JOB_SELECT = 'id, number, category, description, completion_notes, city, p
 const CANCELLED = CANCELLED_STATUSES
 export { categoryAllowed }
 
+/** Why the jobs in a window did not all become candidates. "0 finished jobs looked at" on
+ *  its own tells a person nothing, so every gate keeps a count. */
+export interface CandidateBreakdown {
+  /** Finished, not deleted, not cancelled, and inside the window and the `posts_since` cutoff. */
+  finished: number
+  /** Dropped because their category is not one we post about. */
+  wrongCategory: number
+  /** Dropped because a post for that job already exists. */
+  alreadyPosted: number
+}
+
 /** Jobs completed in a UTC window that could become posts, excluding cancelled ones and those with a live post. */
-export async function findPostCandidates(db: SupabaseClient, settings: ReputationSettings, window: { fromIso: string; toIso: string }): Promise<CandidateJob[]> {
+export async function findPostCandidates(db: SupabaseClient, settings: ReputationSettings, window: { fromIso: string; toIso: string }): Promise<{ jobs: CandidateJob[]; breakdown: CandidateBreakdown }> {
   const { data } = await db.from('sf_jobs').select(JOB_SELECT)
     .not('work_completed_at', 'is', null).gte('work_completed_at', window.fromIso).lt('work_completed_at', window.toIso)
     .gte('work_completed_at', settings.posts_since)
     .eq('is_deleted', false).not('status', 'in', `(${CANCELLED.map(s => `"${s}"`).join(',')})`)
     .order('work_completed_at', { ascending: false }).limit(300)
-  const jobs = ((data ?? []) as CandidateJob[]).filter(j => categoryAllowed(j.category, settings.post_allowed_categories))
-  if (!jobs.length) return []
+  const finished = ((data ?? []) as CandidateJob[])
+  const jobs = finished.filter(j => categoryAllowed(j.category, settings.post_allowed_categories))
+  const breakdown: CandidateBreakdown = { finished: finished.length, wrongCategory: finished.length - jobs.length, alreadyPosted: 0 }
+  if (!jobs.length) return { jobs: [], breakdown }
   const { data: live } = await db.from('gbp_posts').select('sf_job_id').in('sf_job_id', jobs.map(j => j.id)).in('status', ['draft', 'approved', 'scheduled', 'published'])
   const taken = new Set(((live ?? []) as Array<{ sf_job_id: string }>).map(l => l.sf_job_id))
-  return jobs.filter(j => !taken.has(j.id))
+  const open = jobs.filter(j => !taken.has(j.id))
+  breakdown.alreadyPosted = jobs.length - open.length
+  return { jobs: open, breakdown }
 }
 
 // ── Drafting ────────────────────────────────────────────────────────────────
@@ -204,7 +219,7 @@ export async function preparePostForJob(db: SupabaseClient, job: CandidateJob, d
   }
 }
 
-export interface PostPrepReport { candidates: number; drafted: number; scheduled: number; noPhoto: number; skipped: number; errors: string[]; reason?: string }
+export interface PostPrepReport extends Partial<CandidateBreakdown> { candidates: number; drafted: number; scheduled: number; noPhoto: number; skipped: number; errors: string[]; reason?: string }
 
 /**
  * The daily pass: yesterday's finished jobs (PT), best candidates first, up to
@@ -225,10 +240,20 @@ export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: s
   // Weekly cap counts what is already on the calendar or published this week.
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString()
   const { count: weekCount } = await db.from('gbp_posts').select('id', { count: 'exact', head: true }).in('status', ['approved', 'scheduled', 'published']).gte('created_at', weekAgo)
-  if ((weekCount ?? 0) >= deps.settings.cap_posts_weekly) return { ...report, reason: `weekly cap of ${deps.settings.cap_posts_weekly} reached` }
+  if ((weekCount ?? 0) >= deps.settings.cap_posts_weekly) return { ...report, reason: `the weekly cap of ${deps.settings.cap_posts_weekly} post(s) is already reached — raise it in Settings, or wait` }
 
-  const candidates = await findPostCandidates(db, deps.settings, { fromIso, toIso })
+  const { jobs: candidates, breakdown } = await findPostCandidates(db, deps.settings, { fromIso, toIso })
   report.candidates = candidates.length
+  Object.assign(report, breakdown)
+  if (!candidates.length) {
+    // Say which gate emptied it, so "nothing happened" is never the whole answer.
+    report.reason = breakdown.finished === 0
+      ? 'no finished jobs in Service Fusion for those days (a job counts from when it is marked complete)'
+      : breakdown.alreadyPosted === breakdown.finished - breakdown.wrongCategory
+        ? `all ${breakdown.alreadyPosted} finished job(s) already have a post`
+        : `none of the ${breakdown.finished} finished job(s) qualified — ${breakdown.wrongCategory} by category, ${breakdown.alreadyPosted} already posted`
+    return report
+  }
   const limit = opts.limit ?? Math.max(1, deps.settings.cap_posts)
   // Prefer categories and cities not posted about in the last two weeks.
   const twoWeeks = new Date(Date.now() - 14 * 86_400_000).toISOString()
