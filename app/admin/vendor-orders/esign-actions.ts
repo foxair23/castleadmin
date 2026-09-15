@@ -138,15 +138,6 @@ export async function adoptAttachmentAsWaiverAction(attachmentId: string): Promi
 }
 
 /** Find the SF job for every waiting document that has none (shared matcher), and store it. */
-/** Bin a blank whose stored file carries no document, so the crawler captures it again. */
-export async function discardUnusableBlankAction(id: string): Promise<{ ok: boolean; filename?: string; kind?: string; error?: string }> {
-  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
-  const { discardUnusableBlank } = await import('@/lib/esign/discard-blank')
-  const r = await discardUnusableBlank(id)
-  if (r.ok) { revalidatePath(PATH); revalidatePath('/admin/vendor-orders') }
-  return r
-}
-
 export async function linkEsignJobsAction(): Promise<{ ok: boolean; looked?: number; linked?: number; error?: string }> {
   if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
   const { linkMissingEsignJobs } = await import('@/lib/esign/job-link')

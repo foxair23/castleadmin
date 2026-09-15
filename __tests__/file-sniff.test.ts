@@ -93,25 +93,3 @@ describe('what storeVendorDoc refuses', () => {
     expect(rejectedByStore(text('<html>a page</html>'), 'notes.html', 'text/html')).toBe(false)
   })
 })
-
-// Which files the "Bin & re-capture" button is allowed to delete. It re-reads the stored
-// bytes and decides from those, never from the error text on the row — a button that deletes
-// documents must not take this app's own word for the file being broken.
-const DISCARDABLE = new Set(['zeros', 'empty', 'html'])
-const binnable = (b: Uint8Array) => DISCARDABLE.has(sniff(b))
-
-describe('what "Bin & re-capture" may delete', () => {
-  it('bins the captures that carry no document', () => {
-    expect(binnable(new Uint8Array(1_280_000))).toBe(true)          // the two real ones
-    expect(binnable(new Uint8Array())).toBe(true)
-    expect(binnable(text('<!DOCTYPE html><html>Sign in'))).toBe(true)
-  })
-  it('refuses a scan — that IS the document, and it is the only copy we have', () => {
-    expect(binnable(bytes(0x89, 0x50, 0x4e, 0x47, 9))).toBe(false)
-    expect(binnable(bytes(0xff, 0xd8, 0xff, 0xe0, 9))).toBe(false)
-    expect(binnable(bytes(0x49, 0x49, 0x2a, 0x00, 9))).toBe(false)
-  })
-  it('refuses a perfectly good PDF', () => {
-    expect(binnable(text('%PDF-1.7 ...'))).toBe(false)
-  })
-})
