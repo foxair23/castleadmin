@@ -70,6 +70,17 @@ describe('e-sign messages', () => {
     expect(e.text).toContain('Please wait until the installation is finished before signing.')
     expect(renderEsignCustomerEmail('ask', 'install', o).subject).toBe('Your installation is complete — please e-sign the Home Depot completion form')
   })
+  it('delivery copy is the approved wording, verbatim', () => {
+    // Approved 2026-09-15. A delivery has no "work": the heads-up does not say "for the
+    // work", and the reminder says "your delivery" rather than the vaguer "your order".
+    expect(renderEsignCustomerSms('heads_up', 'delivery', o)).toBe("Hi Sergio, it's Castle Garage Doors. Your delivery is scheduled soon. Home Depot requires a signed proof-of-delivery form — we're sending it now so you have it. Once your delivery is complete, please come back here to review and e-sign it: https://go.cstle.co/AbC12345. Reply STOP to opt out.")
+    expect(renderEsignCustomerSms('ask', 'delivery', o)).toBe('Hi Sergio, now that your Home Depot delivery is complete, Home Depot needs your e-signature on the proof-of-delivery form. It takes about a minute: https://go.cstle.co/AbC12345')
+    expect(renderEsignCustomerSms('reminder', 'delivery', o)).toBe("Quick reminder from Castle Garage Doors — Home Depot's proof-of-delivery form for your delivery is still waiting for your e-signature: https://go.cstle.co/AbC12345")
+    const e = renderEsignCustomerEmail('heads_up', 'delivery', o)
+    expect(e.subject).toBe('Your Home Depot proof-of-delivery form — for after your delivery')
+    expect(e.text).toContain('Please wait until the delivery is finished before signing.')
+    expect(renderEsignCustomerEmail('ask', 'delivery', o).subject).toBe('Your delivery is complete — please e-sign the Home Depot proof-of-delivery form')
+  })
   it('delivery copy never mentions an installation', () => {
     for (const stage of ['heads_up', 'ask', 'reminder'] as const) {
       const sms = renderEsignCustomerSms(stage, 'delivery', o)
@@ -77,7 +88,6 @@ describe('e-sign messages', () => {
       expect(sms).not.toMatch(/install/i); expect(email.subject + email.text).not.toMatch(/install/i)
       expect(sms).toContain('proof-of-delivery'); expect(sms).toContain(o.link)
     }
-    expect(renderEsignCustomerSms('heads_up', 'delivery', o)).toContain('Your Home Depot delivery is scheduled soon')
   })
   it('heads-up carries the no-date, come-back-after promise and STOP; the link is in every message', () => {
     for (const service of ['install', 'delivery'] as const) {
