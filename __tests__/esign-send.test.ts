@@ -59,10 +59,23 @@ describe('customerStageDue', () => {
     expect(customerStageDue({ ...asked, today: '2026-09-19', hour: 9 })).toBe('reminder')
     expect(customerStageDue({ ...asked, customer_reminded_at: ptNoon('2026-09-19'), today: '2026-09-25', hour: 9 })).toBeNull()
   })
+  it('the office marking a job beats the auto-send cutoff — the real cause of the 1020258680 miss', () => {
+    // That blank was captured on 9 Sep; auto-send was switched on late on 14 Sep. The cutoff
+    // is there so flipping the switch does not mail ~200 old blanks — but a job someone has
+    // deliberately marked HD SOF Needed is not one of those, and used to be silenced anyway.
+    const old = { ...base, created_at: '2026-09-10T03:16:24Z', enabled_at: '2026-09-15T05:46:55Z' }
+    expect(customerStageDue({ ...old, sof: 'needed' })).toBe('heads_up')
+    // Unmarked and older than the cutoff: still quiet. That is the protection, kept.
+    expect(customerStageDue({ ...old, sof: null })).toBeNull()
+    expect(customerStageDue({ ...old, sof: null, completed: true })).toBeNull()
+    // Once we have written to this customer, the ask and the reminder may follow their own
+    // heads-up even though the blank predates the cutoff.
+    expect(customerStageDue({ ...old, sof: 'sent', customer_sent_at: ptNoon('2026-09-15'), completed: true, today: '2026-09-16' })).toBe('ask')
+  })
   it('never sends: signed, no job date, found before the cutoff, wrong status', () => {
     expect(customerStageDue({ ...base, customer_signed_at: ptNoon('2026-09-15') })).toBeNull()
     expect(customerStageDue({ ...base, start_date: null })).toBeNull()
-    expect(customerStageDue({ ...base, created_at: '2026-08-20T00:00:00Z' })).toBeNull()
+    expect(customerStageDue({ ...base, created_at: '2026-08-20T00:00:00Z', sof: null })).toBeNull()
     expect(customerStageDue({ ...base, enabled_at: null })).toBeNull()
     expect(customerStageDue({ ...base, status: 'unrecognised_template' })).toBeNull()
     expect(customerStageDue({ ...base, status: 'customer_signed' })).toBeNull()
