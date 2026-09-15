@@ -114,7 +114,7 @@ function PrepareCard({ llmConfigured, onDone }: { llmConfigured: boolean; onDone
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <h2 className="text-sm font-semibold text-gray-900">Prepare posts</h2>
-          <p className="text-xs text-gray-500">Runs by itself every morning for yesterday&rsquo;s finished jobs. Use this to run it now, or to catch up on a range of days (a few jobs at a time).</p>
+          <p className="text-xs text-gray-500">Runs by itself every morning for yesterday&rsquo;s finished jobs. Use this to run it now, or to catch up on a range of days (a few jobs at a time). Days you pick here are used whatever the posts start date in Settings says.</p>
         </div>
         <div className="flex items-center gap-1 text-sm">
           <button onClick={() => setMode('day')} className={`px-2 py-1 rounded border ${mode === 'day' ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-700'}`}>One day</button>
@@ -127,11 +127,16 @@ function PrepareCard({ llmConfigured, onDone }: { llmConfigured: boolean; onDone
           setMsg('Pulling photos, scoring and drafting… this can take a minute per job.')
           const r = await preparePostsAction(mode === 'day' ? { dateKey: day } : { from, to })
           if (r.error) { setMsg(r.error); return }
-          const parts = [`${r.candidates ?? 0} finished job${r.candidates === 1 ? '' : 's'} looked at`, `${r.drafted ?? 0} drafted`]
+          const parts = [`${r.finished ?? r.candidates ?? 0} finished job${(r.finished ?? r.candidates) === 1 ? '' : 's'} looked at`, `${r.drafted ?? 0} drafted`]
           if (r.scheduled) parts.push(`${r.scheduled} scheduled by autopilot`)
+          if (r.wrongCategory) parts.push(`${r.wrongCategory} skipped by category`)
+          if (r.beforeSince) parts.push(`${r.beforeSince} before the posts start date`)
+          if (r.alreadyPosted) parts.push(`${r.alreadyPosted} already have a post`)
           if (r.noPhoto) parts.push(`${r.noPhoto} without a usable photo`)
           if (r.skipped) parts.push(`${r.skipped} skipped`)
-          if (r.reason === 'weekly_cap') parts.push('weekly cap reached')
+          // Whatever stopped the run, say it. This used to test for a token the drafter
+          // never returned, so every early stop read as a silent "0 drafted".
+          if (r.reason) parts.push(r.reason)
           if (r.errors?.length) parts.push(`${r.errors.length} error${r.errors.length === 1 ? '' : 's'}: ${r.errors[0]}`)
           setMsg(parts.join(' · '))
           onDone()
