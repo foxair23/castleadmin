@@ -923,40 +923,45 @@ async function runSubStatusUpdates(cfg, log) {
   return { posted, failed }
 }
 
-/** Signed e-sign forms onto their SF jobs. DISCOVERY ONLY until SF's upload request is
- *  captured: each queued item gets its job page read and the upload widget's configuration
- *  reported back; nothing is uploaded and nothing counts as a failure. Items already
- *  discovered are skipped, so this costs one page read per document, once. */
+/** Signed e-sign forms onto their SF jobs. Uploads the file into the customer's document
+ *  library and attaches it to the job; a file already there under the same name is reused
+ *  rather than uploaded twice, so a retry cannot litter a customer's record. */
 async function runDocumentUploads(cfg, log) {
-  let discovered = 0, posted = 0, failed = 0
+  let posted = 0, failed = 0
   let items = []
   try {
     ({ items } = await fetchDocsQueue(cfg.baseUrl, cfg.token))
   } catch (e) {
     log.push({ docsQueueError: String(e) })
-    return { discovered, posted, failed }
+    return { posted, failed }
   }
-  const todo = items.filter(i => !i.discovered)
-  if (!todo.length) return { discovered, posted, failed, pending: items.length }
-  console.log('[sf-remittance] document queue', { items: items.length, toDiscover: todo.length })
-  for (const item of todo) {
+  if (!items.length) return { posted, failed }
+  console.log('[sf-remittance] document queue', { items: items.length })
+  const runFailures = []
+  for (const item of items) {
     let res
     try {
-      res = await uploadDocument({ jobNumber: item.jobNumber, dryRun: cfg.dryRun })
+      res = await uploadDocument({ jobNumber: item.jobNumber, filename: item.filename, downloadUrl: item.downloadUrl, dryRun: cfg.dryRun })
     } catch (e) {
       res = { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-    log.push({ docId: item.id, jobNumber: item.jobNumber, filename: item.filename, ...(res.discovery ? { discovery: { url: res.discovery.pluploadUrl, fileField: res.discovery.fileDataName, forms: res.discovery.forms?.length ?? 0 } } : {}), ...(res.error ? { error: res.error } : {}), discoveryOnly: res.ok === undefined })
+    log.push({ docId: item.id, jobNumber: item.jobNumber, filename: item.filename, ok: !!res.ok, ...(res.reused ? { reused: true } : {}), ...(res.error ? { error: res.error } : {}), ...(res.dryRun ? { dryRun: true } : {}) })
+    // A dry run proves the job, the customer and the file all resolve but writes nothing,
+    // so the item stays queued rather than being reported as filed.
     if (!cfg.dryRun) {
       try {
-        if (res.ok === undefined) await postDocsResult(cfg.baseUrl, cfg.token, { id: item.id, discovery: res.discovery })
-        else await postDocsResult(cfg.baseUrl, cfg.token, { id: item.id, ok: !!res.ok, error: res.ok ? undefined : res.error })
+        await postDocsResult(cfg.baseUrl, cfg.token, { id: item.id, ok: !!res.ok, error: res.ok ? undefined : res.error, sfResponse: res.sfResponse })
       } catch (e) { log.push({ docId: item.id, callbackError: String(e) }) }
+      if (res.ok) posted++
+      else { failed++; runFailures.push({ id: item.id, error: res.error ?? null }) }
     }
-    if (res.ok === undefined) discovered++; else if (res.ok) posted++; else failed++
     await sleep(1500)
   }
-  return { discovered, posted, failed, pending: items.length }
+  // One email listing what the office must file by hand, rather than one per document.
+  if (runFailures.length && !cfg.dryRun) {
+    try { await postDocsResult(cfg.baseUrl, cfg.token, { runFailures }) } catch (e) { log.push({ docsRunFailuresError: String(e) }) }
+  }
+  return { posted, failed }
 }
 
 export async function run(source) {

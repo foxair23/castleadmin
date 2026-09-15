@@ -5,13 +5,13 @@ import { appUrl } from '@/lib/config/domains'
 
 // Queue of files for the Chrome extension to upload onto Service Fusion jobs. SF's REST API
 // has no document endpoint at all, so — like notes, line items and appointments — the app
-// queues WHAT and the extension does it through SF's web session.
+// queues WHAT and the extension does it through SF's web session (see sf-document.js for the
+// request chain, captured from a real job).
 //
-// The exact upload request SF's job page makes has not been captured yet. Until it is, the
-// extension runs DISCOVERY on each item: it opens the job page, records what the upload
-// widget is configured with, and reports that back here (`discovery`) without uploading.
-// Such an item stays pending and is not counted as a failure; once the real request is
-// known and shipped in the extension, the same queue drives the upload.
+// Filing the document is the last step of the e-sign journey, so a posted upload both moves
+// the document to 'sf_uploaded' and queues "HD SOF Complete" onto the job: the office's cue
+// that this one is finished. Complete is set only after the file is actually on the job —
+// never merely because both parties signed.
 
 function db(): SupabaseClient {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
@@ -26,13 +26,13 @@ export async function enqueueSfDocumentUpload(input: { sfJobId: string; sfJobNum
   return error ? { ok: false, error: error.message } : { ok: true }
 }
 
-export interface SfDocQueueItem { id: string; sfJobId: string; jobNumber: string | null; filename: string; downloadUrl: string; discovered: boolean }
+export interface SfDocQueueItem { id: string; sfJobId: string; jobNumber: string | null; filename: string; downloadUrl: string }
 
 /** Pending uploads. Each carries a fresh one-hour download URL — the bytes never pass
  *  through Vercel; the extension fetches them straight from storage. */
 export async function getSfDocumentQueue(limit = 10): Promise<{ items: SfDocQueueItem[] }> {
   const supabase = db()
-  const { data } = await supabase.from('sf_document_upload_queue').select('id, sf_job_id, sf_job_number, storage_path, filename, discovery')
+  const { data } = await supabase.from('sf_document_upload_queue').select('id, sf_job_id, sf_job_number, storage_path, filename')
     .eq('status', 'pending').lt('attempts', MAX_ATTEMPTS).order('created_at', { ascending: true }).limit(limit)
   const items: SfDocQueueItem[] = []
   for (const r of data ?? []) {
@@ -43,13 +43,14 @@ export async function getSfDocumentQueue(limit = 10): Promise<{ items: SfDocQueu
     }
     const url = await signedUrl(r.storage_path as string, 3600)
     if (!url) continue
-    items.push({ id: r.id as string, sfJobId: r.sf_job_id as string, jobNumber, filename: r.filename as string, downloadUrl: url, discovered: !!r.discovery })
+    items.push({ id: r.id as string, sfJobId: r.sf_job_id as string, jobNumber, filename: r.filename as string, downloadUrl: url })
   }
   return { items }
 }
 
-/** Extension callback for one item. `discovery` alone records what it found and leaves the
- *  item pending; ok/error record a real attempt. Idempotent on posted. */
+/** Extension callback for one item. ok/error record an attempt; a `discovery` payload alone
+ *  still just records what was seen and leaves the item pending, which is the escape hatch if
+ *  SF ever changes the upload page again. Idempotent on posted. */
 export async function recordSfDocumentResult(id: string, result: { ok?: boolean; error?: string; discovery?: unknown; sfResponse?: unknown }): Promise<{ ok: boolean; error?: string }> {
   const supabase = db()
   const { data: row } = await supabase.from('sf_document_upload_queue').select('id, status, attempts, ref_table, ref_id').eq('id', id).maybeSingle()
@@ -68,6 +69,8 @@ export async function recordSfDocumentResult(id: string, result: { ok?: boolean;
       if (doc && doc.status === 'completed') {
         await supabase.from('esign_documents').update({ status: 'sf_uploaded', sf_uploaded_at: now, updated_at: now }).eq('id', doc.id)
         await supabase.from('vendor_order_events').insert({ order_id: doc.order_id, event_type: 'esign_sf_uploaded', to_value: 'posted', detail: { queue_id: id } })
+        const { enqueueSubStatus, SOF_COMPLETE } = await import('@/lib/esign/sub-status')
+        await enqueueSubStatus(supabase, doc.id as string, SOF_COMPLETE)
       }
     }
   } else {

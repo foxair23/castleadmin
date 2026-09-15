@@ -25,7 +25,9 @@ export const enc = (v) => encodeURIComponent(v ?? '')
 
 export async function sfFetch(path, { method = 'GET', body, follow = false, xhr = false } = {}) {
   const headers = {}
-  if (body) headers['Content-Type'] = 'application/x-www-form-urlencoded'
+  // A string body is a form post; FormData must set its own Content-Type, because only the
+  // browser knows the multipart boundary it generated.
+  if (typeof body === 'string') headers['Content-Type'] = 'application/x-www-form-urlencoded'
   // The search/details endpoints are XHR in the browser; the form save is a navigation.
   // Send each the way SF expects or it bounces to the home page.
   if (xhr) headers['X-Requested-With'] = 'XMLHttpRequest'
