@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from 'react'
 import type { JobPhotoRow } from '@/lib/reputation/photos'
+import type { CandidateBreakdown } from '@/lib/reputation/post-drafter'
 import {
   approvePostAction, skipPostAction, redraftPostAction, setPhotoUsableAction, preparePostsAction, testJobPhotosAction,
 } from './reputation-actions'
@@ -131,15 +132,28 @@ function PrepareCard({ llmConfigured, onDone }: { llmConfigured: boolean; onDone
           if (r.scheduled) parts.push(`${r.scheduled} scheduled by autopilot`)
           if (r.noPhoto) parts.push(`${r.noPhoto} without a usable photo`)
           if (r.skipped) parts.push(`${r.skipped} skipped`)
-          if (r.reason === 'weekly_cap') parts.push('weekly cap reached')
+          if (r.reason?.startsWith('weekly cap')) parts.push(r.reason)
           if (r.errors?.length) parts.push(`${r.errors.length} error${r.errors.length === 1 ? '' : 's'}: ${r.errors[0]}`)
-          setMsg(parts.join(' · '))
+          const why = whyNoCandidates(r.candidates ?? 0, r.breakdown)
+          setMsg(parts.join(' · ') + (why ? ` — ${why}` : ''))
           onDone()
         })}>{pending ? 'Working…' : 'Run now'}</button>
       </div>
       {msg && <p className="text-sm text-gray-600 mt-2">{msg}</p>}
     </div>
   )
+}
+
+/** Plain English for a run that found nothing: which filter removed the finished jobs. */
+function whyNoCandidates(candidates: number, b: CandidateBreakdown | undefined): string | null {
+  if (candidates > 0 || !b) return null
+  if (b.finished === 0) return 'no finished jobs in Service Fusion for those days (cancelled and deleted jobs never count)'
+  const bits: string[] = []
+  if (b.categoryBlocked) bits.push(`${b.categoryBlocked} in job categories that never post${b.blockedCategories.length ? ` (${b.blockedCategories.map(c => `${c.category} ${c.count}`).join(', ')})` : ''}`)
+  if (b.alreadyPosted) bits.push(`${b.alreadyPosted} already have a post`)
+  if (b.beforeSince) bits.push(`${b.beforeSince} finished before the posts start date`)
+  const tail = b.categoryBlocked ? ' Tick the categories you do want in Settings → Profile posts to override the default exclusions.' : ''
+  return `${b.finished} finished job${b.finished === 1 ? '' : 's'} in those days, none usable: ${bits.join(', ')}.${tail}`
 }
 
 // ── One post ────────────────────────────────────────────────────────────────

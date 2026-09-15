@@ -44,18 +44,57 @@ const JOB_SELECT = 'id, number, category, description, completion_notes, city, p
 const CANCELLED = CANCELLED_STATUSES
 export { categoryAllowed }
 
-/** Jobs completed in a UTC window that could become posts, excluding cancelled ones and those with a live post. */
-export async function findPostCandidates(db: SupabaseClient, settings: ReputationSettings, window: { fromIso: string; toIso: string }): Promise<CandidateJob[]> {
+/** Why the finished jobs in a window did or did not become candidates, so "0 drafted" can explain itself. */
+export interface CandidateBreakdown {
+  finished: number            // finished, not cancelled, not deleted, in the window
+  beforeSince: number         // completed before the posts start date
+  categoryBlocked: number     // category not allowed to post
+  alreadyPosted: number       // already has a draft or a published post
+  usable: number
+  blockedCategories: Array<{ category: string; count: number }>
+}
+
+/** Pure: split finished jobs into candidates and the reasons the rest were dropped. */
+export function splitCandidates(
+  all: CandidateJob[],
+  settings: Pick<ReputationSettings, 'posts_since' | 'post_allowed_categories'>,
+  taken: Set<string>,
+  opts: { ignorePostsSince?: boolean } = {},
+): { jobs: CandidateJob[]; breakdown: CandidateBreakdown } {
+  const since = Date.parse(settings.posts_since)
+  const blocked = new Map<string, number>()
+  const breakdown: CandidateBreakdown = { finished: all.length, beforeSince: 0, categoryBlocked: 0, alreadyPosted: 0, usable: 0, blockedCategories: [] }
+  const jobs: CandidateJob[] = []
+  for (const j of all) {
+    if (!opts.ignorePostsSince && Number.isFinite(since) && Date.parse(j.work_completed_at) < since) { breakdown.beforeSince++; continue }
+    if (!categoryAllowed(j.category, settings.post_allowed_categories)) {
+      breakdown.categoryBlocked++
+      const c = (j.category ?? '').trim() || 'no category'
+      blocked.set(c, (blocked.get(c) ?? 0) + 1)
+      continue
+    }
+    if (taken.has(j.id)) { breakdown.alreadyPosted++; continue }
+    jobs.push(j)
+  }
+  breakdown.usable = jobs.length
+  breakdown.blockedCategories = [...blocked.entries()].map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count).slice(0, 5)
+  return { jobs, breakdown }
+}
+
+/**
+ * Jobs completed in a UTC window that could become posts, excluding cancelled ones and those with a live post.
+ * The morning pass honours the posts start date; a run over days the owner named explicitly ignores it.
+ */
+export async function findPostCandidates(db: SupabaseClient, settings: ReputationSettings, window: { fromIso: string; toIso: string }, opts: { ignorePostsSince?: boolean } = {}): Promise<{ jobs: CandidateJob[]; breakdown: CandidateBreakdown }> {
   const { data } = await db.from('sf_jobs').select(JOB_SELECT)
     .not('work_completed_at', 'is', null).gte('work_completed_at', window.fromIso).lt('work_completed_at', window.toIso)
-    .gte('work_completed_at', settings.posts_since)
     .eq('is_deleted', false).not('status', 'in', `(${CANCELLED.map(s => `"${s}"`).join(',')})`)
     .order('work_completed_at', { ascending: false }).limit(300)
-  const jobs = ((data ?? []) as CandidateJob[]).filter(j => categoryAllowed(j.category, settings.post_allowed_categories))
-  if (!jobs.length) return []
-  const { data: live } = await db.from('gbp_posts').select('sf_job_id').in('sf_job_id', jobs.map(j => j.id)).in('status', ['draft', 'approved', 'scheduled', 'published'])
+  const all = (data ?? []) as CandidateJob[]
+  if (!all.length) return { jobs: [], breakdown: { finished: 0, beforeSince: 0, categoryBlocked: 0, alreadyPosted: 0, usable: 0, blockedCategories: [] } }
+  const { data: live } = await db.from('gbp_posts').select('sf_job_id').in('sf_job_id', all.map(j => j.id)).in('status', ['draft', 'approved', 'scheduled', 'published'])
   const taken = new Set(((live ?? []) as Array<{ sf_job_id: string }>).map(l => l.sf_job_id))
-  return jobs.filter(j => !taken.has(j.id))
+  return splitCandidates(all, settings, taken, opts)
 }
 
 // ── Drafting ────────────────────────────────────────────────────────────────
@@ -204,13 +243,13 @@ export async function preparePostForJob(db: SupabaseClient, job: CandidateJob, d
   }
 }
 
-export interface PostPrepReport { candidates: number; drafted: number; scheduled: number; noPhoto: number; skipped: number; errors: string[]; reason?: string }
+export interface PostPrepReport { candidates: number; drafted: number; scheduled: number; noPhoto: number; skipped: number; errors: string[]; reason?: string; breakdown?: CandidateBreakdown }
 
 /**
  * The daily pass: yesterday's finished jobs (PT), best candidates first, up to
  * the daily cap of drafts, unless the weekly cap of posts is already reached.
  */
-export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: string; fromIso?: string; toIso?: string; limit?: number; deadline?: number } = {}): Promise<PostPrepReport> {
+export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: string; fromIso?: string; toIso?: string; limit?: number; deadline?: number; ignorePostsSince?: boolean } = {}): Promise<PostPrepReport> {
   const report: PostPrepReport = { candidates: 0, drafted: 0, scheduled: 0, noPhoto: 0, skipped: 0, errors: [] }
   if (!isLlmConfigured()) return { ...report, reason: 'llm_not_configured' }
   const deps = await loadPostDeps(db)
@@ -227,8 +266,9 @@ export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: s
   const { count: weekCount } = await db.from('gbp_posts').select('id', { count: 'exact', head: true }).in('status', ['approved', 'scheduled', 'published']).gte('created_at', weekAgo)
   if ((weekCount ?? 0) >= deps.settings.cap_posts_weekly) return { ...report, reason: `weekly cap of ${deps.settings.cap_posts_weekly} reached` }
 
-  const candidates = await findPostCandidates(db, deps.settings, { fromIso, toIso })
+  const { jobs: candidates, breakdown } = await findPostCandidates(db, deps.settings, { fromIso, toIso }, { ignorePostsSince: opts.ignorePostsSince })
   report.candidates = candidates.length
+  report.breakdown = breakdown
   const limit = opts.limit ?? Math.max(1, deps.settings.cap_posts)
   // Prefer categories and cities not posted about in the last two weeks.
   const twoWeeks = new Date(Date.now() - 14 * 86_400_000).toISOString()
