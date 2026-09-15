@@ -149,7 +149,7 @@
     },
     {
       "path": "/api/cron/esign-sweep",
-      "schedule": "10 15-23,0-2 * * *"
+      "schedule": "0 15-23,0-2 * * *"
     },
     {
       "path": "/api/cron/automation-health",
