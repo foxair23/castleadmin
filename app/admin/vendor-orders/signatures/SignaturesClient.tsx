@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction, resetSignatureAction, linkEsignJobsAction } from '../esign-actions'
+import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction, resetSignatureAction, linkEsignJobsAction, discardUnusableBlankAction } from '../esign-actions'
 
 export interface EsignRow {
   id: string; order_id: string; status: string; template_key: string | null; template_fingerprint: string | null
@@ -131,6 +131,12 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
                 <td className="py-1.5 pr-3 flex gap-1.5">
                   {['found', 'unrecognised_template', 'prepared'].includes(r.status) && <button className={btn} disabled={pending} onClick={() => run(() => prepareEsignDocAction(r.id), x => `${x.status}${x.fingerprint ? ` · ${x.fingerprint}` : ''}`)}>Prepare</button>}
                   {r.template_fingerprint && <a className={btn} href={`/api/admin/esign/preview/${r.id}`} target="_blank" rel="noreferrer">Preview</a>}
+                  {/* The stored file carries no document. Binning it is what lets the crawler
+                      capture it again — it skips anything already on file. */}
+                  {r.error && /not a PDF|is empty|empty bytes|web page/.test(r.error) && !r.customer_signed_at && (
+                    <button className={`${btn} text-red-700`} disabled={pending}
+                      title="Delete the unusable file so the Clopay crawler downloads this document again"
+                      onClick={() => { if (confirm(`Bin the stored file for ${r.customer_name ?? 'this order'} so it is captured again?\n\nIt holds no document, so nothing is lost. The next Clopay document crawl re-downloads it.`)) run(() => discardUnusableBlankAction(r.id), x => `Binned (${x.kind}) — the next document crawl will capture it again`) }}>Bin &amp; re-capture</button>)}
                   {r.customer_signed_at && !['sf_uploaded', 'portal_uploaded', 'cancelled'].includes(r.status) && (
                     <button className={`${btn} text-red-700`} disabled={pending} title="Wipe the customer's signature (and the tech's, if any) so the link works again"
                       onClick={() => { if (confirm(`Clear ${r.customer_name ?? 'the customer'}'s signature${r.tech_signed_at ? ' AND the technician\'s' : ''}? The signing link will work again.`)) run(() => resetSignatureAction(r.id, 'customer'), x => `Customer signature cleared · now ${x.status}`) }}>Clear customer signature</button>)}
