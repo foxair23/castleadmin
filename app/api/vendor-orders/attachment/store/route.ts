@@ -43,6 +43,12 @@ export async function POST(req: NextRequest) {
         // A blank lien waiver becomes an e-sign document on its house; a signed one closes it.
         const { ensureEsignDocForAttachment } = await import('@/lib/esign/documents')
         await ensureEsignDocForAttachment(id)
+        // A retry that finally brought the document down: clear the stale "not a PDF" note so
+        // the row stops reading as broken and the prepare sweep takes it from the top.
+        if (res.retried && !res.unusable) {
+          const { clearEsignFileError } = await import('@/lib/esign/documents')
+          await clearEsignFileError(id)
+        }
       } catch (e) { console.error('[attachment/store] post-store processing failed (non-critical):', e) }
     })
   }

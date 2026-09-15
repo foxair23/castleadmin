@@ -67,29 +67,30 @@ describe('previewBytes', () => {
   })
 })
 
-// The guard in storeVendorDoc, stated as the rule it implements. A file that carries no
-// document is refused so nothing is left behind and the next crawl can try again; a file
-// that IS the document, in an awkward format, is kept.
+// storeVendorDoc keeps EVERY capture. What this decides is only whether the document is
+// worth asking the portal for again later: the Clopay portal (Oracle) answers some requests
+// with a fixed-size run of zero bytes instead of the document, and that should not close the
+// door on it. A later capture overwrites the placeholder in place; nothing is deleted.
 import { sniffFileType as sniff } from '@/lib/files/sniff'
-const rejectedByStore = (bytes: Uint8Array, filename: string, mime: string) => {
+const unusableCapture = (bytes: Uint8Array, filename: string, mime: string) => {
   const claimsPdf = /pdf/i.test(mime) || /\.pdf$/i.test(filename)
   const kind = sniff(bytes)
   return kind === 'zeros' || kind === 'empty' || (claimsPdf && kind === 'html')
 }
 
-describe('what storeVendorDoc refuses', () => {
+describe('which captures storeVendorDoc will ask for again', () => {
   const pdfName = 'waiver.pdf', pdfMime = 'application/pdf'
-  it('refuses the captures that carry nothing', () => {
-    expect(rejectedByStore(new Uint8Array(1_280_000), pdfName, pdfMime)).toBe(true)   // the real failure
-    expect(rejectedByStore(new Uint8Array(), pdfName, pdfMime)).toBe(true)
-    expect(rejectedByStore(text('<!DOCTYPE html><html>Sign in'), pdfName, pdfMime)).toBe(true)
+  it('marks the captures that carried no document', () => {
+    expect(unusableCapture(new Uint8Array(1_280_000), pdfName, pdfMime)).toBe(true)   // the portal's placeholder
+    expect(unusableCapture(new Uint8Array(), pdfName, pdfMime)).toBe(true)
+    expect(unusableCapture(text('<!DOCTYPE html><html>Sign in'), pdfName, pdfMime)).toBe(true)
   })
-  it('keeps a scan that is merely the wrong format — it is still the document', () => {
-    expect(rejectedByStore(bytes(0x89, 0x50, 0x4e, 0x47, 1, 2, 3), pdfName, pdfMime)).toBe(false)
-    expect(rejectedByStore(bytes(0xff, 0xd8, 0xff, 0xe0, 1), 'scan.pdf', pdfMime)).toBe(false)
+  it('settles for a scan in the wrong format — that IS the document, so stop asking', () => {
+    expect(unusableCapture(bytes(0x89, 0x50, 0x4e, 0x47, 1, 2, 3), pdfName, pdfMime)).toBe(false)
+    expect(unusableCapture(bytes(0xff, 0xd8, 0xff, 0xe0, 1), 'scan.pdf', pdfMime)).toBe(false)
   })
-  it('keeps a real PDF, and a file that never claimed to be one', () => {
-    expect(rejectedByStore(text('%PDF-1.7 ...'), pdfName, pdfMime)).toBe(false)
-    expect(rejectedByStore(text('<html>a page</html>'), 'notes.html', 'text/html')).toBe(false)
+  it('settles for a real PDF, and for a file that never claimed to be one', () => {
+    expect(unusableCapture(text('%PDF-1.7 ...'), pdfName, pdfMime)).toBe(false)
+    expect(unusableCapture(text('<html>a page</html>'), 'notes.html', 'text/html')).toBe(false)
   })
 })
