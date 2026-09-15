@@ -82,6 +82,15 @@ export async function listPostInstructions(db: SupabaseClient, opts: { includeRe
   return listInstructions(db, { ...opts, channel: POST_CHANNEL })
 }
 
+// Standing rules for the vision scorer that grades job photos. Separate from the
+// post channel: "a cracked door is a Before shot" is about reading a photo, not
+// about writing a post, and the scorer runs long before any post is drafted.
+export const PHOTO_CHANNEL = 'photo'
+
+export async function listPhotoInstructions(db: SupabaseClient, opts: { includeRetired?: boolean } = {}): Promise<Instruction[]> {
+  return listInstructions(db, { ...opts, channel: PHOTO_CHANNEL })
+}
+
 export async function listPostStyleExamples(db: SupabaseClient): Promise<StyleExample[]> {
   return listStyleExamplesByAudience(db, [POST_AUDIENCE])
 }

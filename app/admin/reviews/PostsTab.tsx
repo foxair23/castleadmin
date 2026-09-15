@@ -1,9 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useState, useTransition } from 'react'
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import type { JobPhotoRow } from '@/lib/reputation/photos'
+import type { PostChatTurn } from '@/lib/reputation/post-chat'
 import {
   approvePostAction, skipPostAction, redraftPostAction, setPhotoUsableAction, preparePostsAction, testJobPhotosAction,
+  loadPostChatAction, postChatAction, undoPostChatTurnAction,
 } from './reputation-actions'
 
 // Reviews → Posts (PRD §5): the profile posts drafted from finished jobs. Each
@@ -48,6 +50,7 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 
 export default function PostsTab({ llmConfigured, photoMinScore, onNeedsApproval }: Props) {
   const [filter, setFilter] = useState<Filter>('needs_approval')
+  const [chatFor, setChatFor] = useState<{ sfJobId: string; postId: string | null; label: string } | null>(null)
   const [tick, setTick] = useState(0)
   const [data, setData] = useState<{ key: string; posts: PostRow[]; err: string | null } | null>(null)
   const key = `${filter}:${tick}`
@@ -94,8 +97,9 @@ export default function PostsTab({ llmConfigured, photoMinScore, onNeedsApproval
           {filter === 'needs_approval' ? 'Nothing waiting. New drafts appear here each morning after the 6am pass, or when you run "Prepare posts" above.' : 'No posts here.'}
         </div>
       )}
-      {posts.map(p => <PostCard key={p.id} post={p} threshold={photoMinScore} onChange={refresh} />)}
+      {posts.map(p => <PostCard key={p.id} post={p} threshold={photoMinScore} onChange={refresh} onAsk={setChatFor} />)}
       <TestPhotosCard />
+      {chatFor && <FeedbackRail target={chatFor} onClose={() => setChatFor(null)} onChanged={refresh} />}
     </div>
   )
 }
@@ -149,7 +153,10 @@ function PrepareCard({ llmConfigured, onDone }: { llmConfigured: boolean; onDone
 
 // ── One post ────────────────────────────────────────────────────────────────
 
-function PostCard({ post, threshold, onChange }: { post: PostRow; threshold: number; onChange: () => void }) {
+function PostCard({ post, threshold, onChange, onAsk }: {
+  post: PostRow; threshold: number; onChange: () => void
+  onAsk: (t: { sfJobId: string; postId: string | null; label: string }) => void
+}) {
   const [pending, start] = useTransition()
   const editable = post.status === 'draft'
   const [text, setText] = useState(post.final_text ?? post.draft_text)
@@ -219,6 +226,7 @@ function PostCard({ post, threshold, onChange }: { post: PostRow; threshold: num
               {text.trim() !== post.draft_text.trim() ? 'Approve edited' : 'Approve'}
             </button>
             <button className={btnGhost} disabled={pending} onClick={() => setShowRedraft(v => !v)}>Redraft…</button>
+            <button className={btnGhost} onClick={() => onAsk({ sfJobId: post.sf_job_id, postId: post.id, label: `${j?.category ?? 'Job'}${j?.city ? ` · ${j.city}` : ''} · job ${j?.number ?? post.sf_job_id}` })}>Give feedback…</button>
             <button className={btnGhost} disabled={pending} onClick={() => { if (confirm('Skip this post? The job will not be posted.')) run(() => skipPostAction(post.id)) }}>Skip</button>
             {selected.length === 0 && <span className="text-xs text-red-600">Pick at least one photo.</span>}
             {selected.length > 0 && dirtyPhotos && <span className="text-xs text-gray-500">Photo choice changed — saved when you approve or redraft.</span>}
@@ -244,6 +252,8 @@ function PhotoGrid({ photos, selected, editable, threshold, onToggle, onOverride
   photos: JobPhotoRow[]; selected: string[]; editable: boolean; threshold: number
   onToggle: (p: JobPhotoRow) => void; onOverride: (id: string, v: boolean | null) => void
 }) {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const shown = photos.filter(p => p.public_url)
   if (photos.length === 0) return <p className="text-xs text-gray-400">No photos found on this job in Service Fusion.</p>
   const pairIndex = new Map<string, number>()
   for (const p of photos) if (p.pair_id && !pairIndex.has(p.pair_id)) pairIndex.set(p.pair_id, pairIndex.size + 1)
@@ -255,6 +265,7 @@ function PhotoGrid({ photos, selected, editable, threshold, onToggle, onOverride
         const scoreClass = p.score == null ? 'bg-gray-200 text-gray-600' : p.score >= threshold ? 'bg-green-600 text-white' : p.score >= threshold - 20 ? 'bg-amber-500 text-white' : 'bg-red-600 text-white'
         return (
           <div key={p.id} className={`w-40 ${!usable && idx < 0 ? 'opacity-60' : ''}`}>
+            <div className="relative w-40 h-28">
             <button type="button" onClick={() => onToggle(p)} disabled={!editable || !p.public_url} title={p.score_reasons?.join('\n') || undefined}
               className={`relative block w-40 h-28 rounded overflow-hidden bg-gray-100 border-2 ${idx >= 0 ? 'border-red-600 ring-2 ring-red-200' : 'border-transparent'} ${editable && p.public_url ? 'cursor-pointer' : 'cursor-default'}`}>
               {p.public_url
@@ -265,6 +276,11 @@ function PhotoGrid({ photos, selected, editable, threshold, onToggle, onOverride
               {idx >= 0 && <span className="absolute top-1 right-1 rounded-full bg-red-600 text-white text-[11px] font-semibold w-5 h-5 flex items-center justify-center">{idx + 1}</span>}
               {p.override_usable != null && <span className="absolute bottom-1 right-1 rounded bg-gray-900/80 text-white text-[10px] px-1">{p.override_usable ? 'forced ok' : 'blocked'}</span>}
             </button>
+            {p.public_url && (
+              <button type="button" onClick={() => setOpenId(p.id)} title="See it bigger"
+                className="absolute bottom-1 left-1 rounded bg-gray-900/70 px-1.5 py-0.5 text-[11px] leading-none text-white hover:bg-gray-900">⤢</button>
+            )}
+            </div>
             <div className="mt-1 text-[11px] leading-tight text-gray-600">
               <span className="font-medium text-gray-800">{p.shows ? SHOWS_LABEL[p.shows] : 'Unscored'}</span>
               {p.pair_id && pairIndex.has(p.pair_id) && <span className="text-gray-400"> · pair {pairIndex.get(p.pair_id)}</span>}
@@ -281,6 +297,183 @@ function PhotoGrid({ photos, selected, editable, threshold, onToggle, onOverride
           </div>
         )
       })}
+      {openId && shown.some(p => p.id === openId) && (
+        <PhotoViewer photos={shown} openId={openId} selected={selected} editable={editable} threshold={threshold}
+          onOpen={setOpenId} onClose={() => setOpenId(null)} onToggle={onToggle} onOverride={onOverride} />
+      )}
+    </div>
+  )
+}
+
+// ── Feedback rail ───────────────────────────────────────────────────────────
+
+const SUGGESTIONS = [
+  'That photo is the old door, not the finished one',
+  'Too salesy, make it plainer',
+  'Never show the inside of a garage',
+]
+
+/** A right-hand rail for talking to the posting agent about the post you are looking at.
+ *  It acts: relabels or blocks photos, swaps the post's photos, rewrites the text, and
+ *  saves standing rules. Every message that changed something can be put back. */
+function FeedbackRail({ target, onClose, onChanged }: {
+  target: { sfJobId: string; postId: string | null; label: string }
+  onClose: () => void; onChanged: () => void
+}) {
+  const [turns, setTurns] = useState<PostChatTurn[] | null>(null)
+  const [text, setText] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const [pending, start] = useTransition()
+  const endRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    loadPostChatAction(target.sfJobId).then(r => { if (!cancelled) { if (r.error) setErr(r.error); else setTurns(r.turns ?? []) } })
+    return () => { cancelled = true }
+  }, [target.sfJobId])
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns, pending])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const send = (body: string) => {
+    const t = body.trim()
+    if (!t || pending) return
+    setErr(null); setText('')
+    setTurns(prev => [...(prev ?? []), { id: `pending-${Date.now()}`, sf_job_id: target.sfJobId, post_id: target.postId, role: 'user', text: t, user_name: null, created_at: new Date().toISOString(), meta: {} }])
+    start(async () => {
+      const r = await postChatAction(target.sfJobId, target.postId, t)
+      if (r.error) { setErr(r.error); return }
+      setTurns(r.turns ?? [])
+      onChanged()
+    })
+  }
+  const undo = (turnId: string) => start(async () => {
+    setErr(null)
+    const r = await undoPostChatTurnAction(turnId)
+    if (r.error) { setErr(r.error); return }
+    setTurns(r.turns ?? [])
+    onChanged()
+  })
+
+  return (
+    <aside className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-gray-200 bg-white shadow-xl sm:w-[26rem]">
+      <div className="flex items-start gap-2 border-b border-gray-200 px-4 py-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-gray-900">Tell the agent what&rsquo;s wrong</h2>
+          <p className="truncate text-xs text-gray-500">{target.label}</p>
+        </div>
+        <button className="ml-auto rounded px-2 py-1 text-sm text-gray-500 hover:bg-gray-100" onClick={onClose} title="Close (Esc)">✕</button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {turns === null && <p className="text-xs text-gray-400">Loading…</p>}
+        {turns?.length === 0 && (
+          <div className="text-xs text-gray-500">
+            <p className="mb-2">Say what is wrong in plain words. The agent fixes this post and, when the same thing will come up again, saves a rule so it stops happening.</p>
+            <div className="flex flex-col items-start gap-1">
+              {SUGGESTIONS.map(q => <button key={q} className="rounded-full border border-gray-300 px-2.5 py-1 text-left text-xs text-gray-700 hover:bg-gray-50" onClick={() => send(q)}>{q}</button>)}
+            </div>
+          </div>
+        )}
+        {turns?.map(t => {
+          const changes = t.meta?.changes ?? []
+          const undone = !!t.meta?.undone_at
+          return (
+            <div key={t.id} className={t.role === 'user' ? 'flex justify-end' : ''}>
+              <div className={`max-w-[92%] rounded-lg px-3 py-2 text-sm ${t.role === 'user' ? 'bg-gray-900 text-white' : 'border border-gray-200 bg-white text-gray-900'}`}>
+                <p className="whitespace-pre-wrap">{t.text}</p>
+                {changes.length > 0 && (
+                  <div className="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-500">
+                    <ul className="list-disc pl-4">{changes.map((c, i) => <li key={i} className={undone ? 'line-through' : ''}>{c.label}</li>)}</ul>
+                    {undone
+                      ? <span className="mt-1 inline-block text-gray-400">put back</span>
+                      : <button className="mt-1 underline hover:text-gray-800" disabled={pending} onClick={() => undo(t.id)}>Undo all of this</button>}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+        {pending && <p className="text-xs text-gray-400">Working on it…</p>}
+        <div ref={endRef} />
+      </div>
+
+      {err && <p className="px-4 pb-1 text-xs text-red-600">{err}</p>}
+      <div className="border-t border-gray-200 p-3">
+        <div className="flex gap-2">
+          <input className={`${input} flex-1`} placeholder="e.g. that&rsquo;s the old cracked door" value={text}
+            onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(text) } }} />
+          <button className={btn} disabled={pending || !text.trim()} onClick={() => send(text)}>{pending ? '…' : 'Send'}</button>
+        </div>
+        <p className="mt-1 text-[11px] text-gray-400">Rules it saves live in Settings → Profile posts, where you can retire them.</p>
+      </div>
+    </aside>
+  )
+}
+
+// ── One photo, big ──────────────────────────────────────────────────────────
+
+/** Full-screen look at one photo with everything the scorer said about it, and the
+ *  same allow/block/choose actions as the tile. Arrow keys move, Escape closes. */
+function PhotoViewer({ photos, openId, selected, editable, threshold, onOpen, onClose, onToggle, onOverride }: {
+  photos: JobPhotoRow[]; openId: string; selected: string[]; editable: boolean; threshold: number
+  onOpen: (id: string) => void; onClose: () => void
+  onToggle: (p: JobPhotoRow) => void; onOverride: (id: string, v: boolean | null) => void
+}) {
+  const i = photos.findIndex(p => p.id === openId)
+  const p = photos[i]
+  const step = useCallback((n: number) => { const next = photos[(i + n + photos.length) % photos.length]; if (next) onOpen(next.id) }, [photos, i, onOpen])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+      else if (e.key === 'ArrowRight') step(1)
+      else if (e.key === 'ArrowLeft') step(-1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, step])
+  if (!p) return null
+  const chosen = selected.indexOf(p.id)
+  const scoreClass = p.score == null ? 'bg-gray-200 text-gray-700' : p.score >= threshold ? 'bg-green-600 text-white' : p.score >= threshold - 20 ? 'bg-amber-500 text-white' : 'bg-red-600 text-white'
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose} role="dialog" aria-modal="true" aria-label="Job photo">
+      <div className="max-h-full w-full max-w-4xl overflow-y-auto rounded-lg bg-white" onClick={e => e.stopPropagation()}>
+        <div className="relative bg-black">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={p.public_url!} alt={p.subject ?? 'Job photo'} className="mx-auto max-h-[70vh] w-auto object-contain" />
+          <button type="button" onClick={onClose} title="Close" className="absolute right-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-sm text-white hover:bg-black">✕</button>
+          {photos.length > 1 && (
+            <>
+              <button type="button" onClick={() => step(-1)} title="Previous photo" className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-white hover:bg-black">‹</button>
+              <button type="button" onClick={() => step(1)} title="Next photo" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-white hover:bg-black">›</button>
+              <span className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/60 px-2 py-0.5 text-xs text-white">{i + 1} of {photos.length}</span>
+            </>
+          )}
+        </div>
+        <div className="p-4">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className={`rounded px-2 py-0.5 text-xs font-semibold ${scoreClass}`}>{p.score ?? '?'}</span>
+            <span className="font-medium text-gray-900">{p.shows ? SHOWS_LABEL[p.shows] : 'Unscored'}</span>
+            {p.subject && <span className="text-gray-600">{p.subject}</span>}
+            {chosen >= 0 && <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium text-white">in this post, photo {chosen + 1}</span>}
+            {p.override_usable != null && <span className="rounded bg-gray-900 px-2 py-0.5 text-xs text-white">{p.override_usable ? 'forced ok' : 'blocked'}</span>}
+          </div>
+          {p.score_reasons?.length > 0 && (
+            <ul className="mt-2 list-disc pl-5 text-xs text-gray-600">{p.score_reasons.map((r, n) => <li key={n}>{r}</li>)}</ul>
+          )}
+          {editable && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button className={btn} onClick={() => onToggle(p)}>{chosen >= 0 ? 'Take out of this post' : 'Use in this post'}</button>
+              {p.override_usable !== true && <button className={btnGhost} onClick={() => onOverride(p.id, true)}>Allow</button>}
+              {p.override_usable !== false && <button className={btnGhost} onClick={() => onOverride(p.id, false)}>Block</button>}
+              {p.override_usable != null && <button className={btnGhost} onClick={() => onOverride(p.id, null)}>Reset</button>}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

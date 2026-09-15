@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { agentDb } from '@/lib/agent/settings'
 import { normalizeWindow, normalizeCtaMap, type ReplyBand, type ReputationSettings } from '@/lib/reputation/settings'
 import { cancelOutbound } from '@/lib/reputation/queue'
+import type { PostChatTurn } from '@/lib/reputation/post-chat'
 
 // Admin server actions for the reputation engine (Reviews → Google Reviews reply
 // panel, backlog button, and the Settings sub-tab). assertAdmin → service-role
@@ -577,5 +578,55 @@ export async function removeImportedPostStyleExamples(): Promise<ActionResult & 
       .eq('source', 'import').eq('is_deleted', false).eq('audience', POST_AUDIENCE).select('id')
     if (error) throw new Error(error.message)
     return { removed: (data ?? []).length }
+  })
+}
+
+// ── Feedback chat beside a post ─────────────────────────────────────────────
+
+async function chatUser(): Promise<{ id: string; name: string }> {
+  const userId = await assertAdmin()
+  const { data } = await agentDb().from('profiles').select('full_name, email').eq('id', userId).maybeSingle()
+  return { id: userId, name: ((data?.full_name as string | null) ?? (data?.email as string | null) ?? 'The office').split('@')[0] }
+}
+
+export async function loadPostChatAction(sfJobId: string): Promise<ActionResult & { turns?: PostChatTurn[] }> {
+  await assertAdmin()
+  return attempt(async () => {
+    const { loadPostChat } = await import('@/lib/reputation/post-chat')
+    return { turns: await loadPostChat(agentDb(), sfJobId) }
+  })
+}
+
+/** One round of feedback: the agent may relabel or block photos, swap the post's photos, rewrite it, and save rules. */
+export async function postChatAction(sfJobId: string, postId: string | null, text: string): Promise<ActionResult & { turns?: PostChatTurn[] }> {
+  const user = await chatUser()
+  return attempt(async () => {
+    const body = text.trim()
+    if (!body) throw new Error('Type what you want changed first')
+    const { chatAboutPost } = await import('@/lib/reputation/post-chat')
+    const r = await chatAboutPost(agentDb(), { sfJobId, postId, text: body.slice(0, 2000), user })
+    return { turns: r.turns }
+  })
+}
+
+/** Put back everything one agent message changed, including any rule it saved. */
+export async function undoPostChatTurnAction(turnId: string): Promise<ActionResult & { turns?: PostChatTurn[] }> {
+  const userId = await assertAdmin()
+  return attempt(async () => {
+    const { undoPostChatTurn, loadPostChat } = await import('@/lib/reputation/post-chat')
+    const r = await undoPostChatTurn(agentDb(), turnId, userId)
+    if (!r.ok) throw new Error(r.error)
+    return { turns: await loadPostChat(agentDb(), r.sfJobId) }
+  })
+}
+
+/** A rule for the vision scorer that grades job photos. The feedback rail saves these too. */
+export async function createPhotoInstruction(text: string): Promise<ActionResult> {
+  const userId = await assertAdmin()
+  return attempt(async () => {
+    if (!text.trim()) throw new Error('Write the rule first')
+    const { addInstruction } = await import('@/lib/agent/knowledge')
+    const { PHOTO_CHANNEL } = await import('@/lib/reputation/knowledge')
+    await addInstruction(agentDb(), text, PHOTO_CHANNEL, userId)
   })
 }
