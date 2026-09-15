@@ -1,9 +1,10 @@
 import { getConfig, setConfig, setStatus, pushHistory } from './store.js'
-import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult, postReport, ackCommand } from './app-api.js'
+import { fetchQueue, postResult, fetchNoteQueue, postNoteResult, postVendorOrders, postAlert, fetchLinesQueue, postLinesResult, fetchScheduleQueue, postScheduleResult, fetchDocsQueue, postDocsResult, postReport, ackCommand, fetchSubStatusQueue, postSubStatusResult } from './app-api.js'
 import { applyOne } from './sf.js'
 import { addLinesToJob } from './sf-lines.js'
 import { setJobSchedule } from './sf-schedule.js'
 import { uploadDocument } from './sf-document.js'
+import { setJobSubStatus } from './sf-substatus.js'
 import { postNote } from './sf-note.js'
 
 const ALARM = 'sf-remittance-poll'
@@ -888,6 +889,40 @@ async function runJobSchedule(cfg, log) {
   return { posted, failed }
 }
 
+/** HD SOF sub-statuses onto their SF jobs (dedicated endpoint, so nothing else on the job
+ *  can be touched). A write only counts when SF echoes the name back. */
+async function runSubStatusUpdates(cfg, log) {
+  let posted = 0, failed = 0
+  let items = []
+  try {
+    ({ items } = await fetchSubStatusQueue(cfg.baseUrl, cfg.token))
+  } catch (e) {
+    log.push({ subStatusQueueError: String(e) })
+    return { posted, failed }
+  }
+  if (!items.length) return { posted, failed }
+  console.log('[sf-remittance] sub-status queue', { items: items.length })
+  for (const item of items) {
+    let res
+    try {
+      res = await setJobSubStatus({ jobNumber: item.jobNumber, subStatus: item.subStatus, dryRun: cfg.dryRun })
+    } catch (e) {
+      res = { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+    log.push({ docId: item.id, jobNumber: item.jobNumber, subStatus: item.subStatus, ok: !!res.ok, ...(res.error ? { error: res.error } : {}), ...(res.dryRun ? { dryRun: true } : {}) })
+    // A dry run proves the job and the sub-status both resolve; it has written nothing, so
+    // the item stays queued rather than being reported as done.
+    if (!cfg.dryRun) {
+      try {
+        await postSubStatusResult(cfg.baseUrl, cfg.token, { id: item.id, ok: !!res.ok, error: res.ok ? undefined : res.error, subStatus: res.ok ? res.subStatus : undefined })
+      } catch (e) { log.push({ docId: item.id, callbackError: String(e) }) }
+      res.ok ? posted++ : failed++
+    }
+    await sleep(1500)
+  }
+  return { posted, failed }
+}
+
 /** Signed e-sign forms onto their SF jobs. DISCOVERY ONLY until SF's upload request is
  *  captured: each queued item gets its job page read and the upload widget's configuration
  *  reported back; nothing is uploaded and nothing counts as a failure. Items already
@@ -986,6 +1021,8 @@ export async function run(source) {
     // etc.). Independent of the payment pass — a failure here never affects it.
     const notes = await runNotes(cfg, log)
 
+    // HD SOF sub-statuses on their SF jobs (the office's handshake for the sign-off form).
+    const subStatus = await runSubStatusUpdates(cfg, log)
     // Signed e-sign forms onto their SF jobs — discovery only until the upload request is captured.
     const docs = await runDocumentUploads(cfg, log)
 
@@ -1009,11 +1046,11 @@ export async function run(source) {
       }
     }
 
-    await pushHistory({ kind: 'run', source, ok: !staleSf, dryRun: cfg.dryRun, queued: items.length, applied, failed, lines, schedule, notes, docs, finishedAt: Date.now() })
-    await report({ kind: 'run', site: 'service_fusion', status: staleSf ? 'failed' : 'done', reason: staleSf ? 'SF session logged out' : null, source, started_at: runStartedAt, finished_at: Date.now(), counts: { dryRun: cfg.dryRun, queued: items.length, applied, failed, skipped: (skipped ?? []).length, lines, schedule, notes, docs }, log: log.slice(-100) })
-    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, docs, log })
-    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log })
-    return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, log }
+    await pushHistory({ kind: 'run', source, ok: !staleSf, dryRun: cfg.dryRun, queued: items.length, applied, failed, lines, schedule, notes, docs, subStatus, finishedAt: Date.now() })
+    await report({ kind: 'run', site: 'service_fusion', status: staleSf ? 'failed' : 'done', reason: staleSf ? 'SF session logged out' : null, source, started_at: runStartedAt, finished_at: Date.now(), counts: { dryRun: cfg.dryRun, queued: items.length, applied, failed, skipped: (skipped ?? []).length, lines, schedule, notes, docs, subStatus }, log: log.slice(-100) })
+    await setStatus({ source, dryRun: cfg.dryRun, queued: items.length, skipped: skipped ?? [], applied, failed, lines, schedule, notes, docs, subStatus, log })
+    console.log('[sf-remittance] run complete', { dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, subStatus, log })
+    return { ok: true, dryRun: cfg.dryRun, applied, failed, lines, schedule, notes, docs, subStatus, log }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
     await pushHistory({ kind: 'run', source, ok: false, error, finishedAt: Date.now() })

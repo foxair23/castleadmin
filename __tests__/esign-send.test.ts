@@ -5,7 +5,7 @@ import { renderEsignCustomerSms, renderEsignCustomerEmail, renderEsignTechSms } 
 const base: DueInput = {
   status: 'prepared', created_at: '2026-09-10T12:00:00Z', enabled_at: '2026-09-01T00:00:00Z',
   customer_sent_at: null, customer_asked_at: null, customer_reminded_at: null, customer_signed_at: null,
-  start_date: '2026-09-15', today: '2026-09-15', hour: 9,
+  start_date: '2026-09-15', today: '2026-09-15', hour: 9, sof: 'needed',
 }
 // PT noon on a given day, as an ISO instant.
 const ptNoon = (day: string) => `${day}T19:00:00Z`
@@ -17,11 +17,26 @@ describe('customerStageDue', () => {
     expect(customerStageDue({ ...base, today: '2026-09-14', hour: 16 })).toBeNull()   // day before: nothing
   })
   it('a date that passed without completion is a wait, not a late heads-up', () => {
-    expect(customerStageDue({ ...base, today: '2026-09-17', hour: 10, phase: 'install', completed: false })).toBeNull()
+    expect(customerStageDue({ ...base, today: '2026-09-17', hour: 10, completed: false })).toBeNull()
+  })
+  it('nothing goes out on a job the office has not marked "HD SOF Needed"', () => {
+    expect(customerStageDue({ ...base, sof: null })).toBeNull()          // no sub-status at all
+    expect(customerStageDue({ ...base, sof: 'sent' })).toBeNull()        // already ours
+    expect(customerStageDue({ ...base, sof: 'complete' })).toBeNull()
+    expect(customerStageDue({ ...base, sof: undefined })).toBeNull()     // live read gave us nothing
+  })
+  it('back on "HD SOF Needed" after our write landed is the office asking again', () => {
+    const sent = { ...base, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-15'), today: '2026-09-20', hour: 9, completed: false }
+    // Our own write confirmed, and SF reads Needed again: someone moved it back on purpose.
+    expect(customerStageDue({ ...sent, sof: 'needed', sub_status_set_at: ptNoon('2026-09-15') })).toBe('heads_up')
+    // Same, but our write has not been confirmed yet — this is just the gap, not a request.
+    expect(customerStageDue({ ...sent, sof: 'needed', sub_status_set_at: null })).toBeNull()
+    // Sitting on Sent, as it should be: nothing.
+    expect(customerStageDue({ ...sent, sof: 'sent', sub_status_set_at: ptNoon('2026-09-15') })).toBeNull()
   })
   it('asks when the work is marked complete — even with no heads-up, and not the same morning as one', () => {
-    expect(customerStageDue({ ...base, phase: 'install', completed: true, today: '2026-09-15', hour: 14 })).toBe('ask')
-    const sentOnDay = { ...base, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-15'), phase: 'install' as const, completed: true }
+    expect(customerStageDue({ ...base, completed: true, today: '2026-09-15', hour: 14 })).toBe('ask')
+    const sentOnDay = { ...base, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-15'), completed: true }
     expect(customerStageDue({ ...sentOnDay, today: '2026-09-15', hour: 14 })).toBeNull()
     expect(customerStageDue({ ...sentOnDay, today: '2026-09-15', hour: 18 })).toBe('ask')
     expect(customerStageDue({ ...sentOnDay, today: '2026-09-16', hour: 9 })).toBe('ask')
@@ -33,13 +48,13 @@ describe('customerStageDue', () => {
     expect(customerStageDue({ ...sentOnDay, today: '2026-09-15', hour: 17 })).toBeNull()
     expect(customerStageDue({ ...sentOnDay, today: '2026-09-16', hour: 9 })).toBe('ask')
   })
-  it('never sends during the site check or while the job is waiting', () => {
-    expect(customerStageDue({ ...base, phase: 'inspection', completed: false, hour: 9 })).toBeNull()
-    expect(customerStageDue({ ...base, phase: 'inspection', completed: true, hour: 9 })).toBeNull()
-    expect(customerStageDue({ ...base, phase: 'waiting', completed: false, hour: 9 })).toBeNull()
+  it('"HD SOF Needed" overrides the job\'s own status — that is the whole point of it', () => {
+    // A job parked on "Waiting on Clopay" used to be silenced by its status. The office
+    // marking it is an instruction, so it sends.
+    expect(customerStageDue({ ...base, sof: 'needed', completed: false, hour: 9 })).toBe('heads_up')
   })
   it('reminds once, three days after the ask, then stops', () => {
-    const asked = { ...base, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-15'), customer_asked_at: ptNoon('2026-09-16'), phase: 'install' as const, completed: true }
+    const asked = { ...base, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-15'), customer_asked_at: ptNoon('2026-09-16'), completed: true, sof: 'sent' as const }
     expect(customerStageDue({ ...asked, today: '2026-09-18', hour: 9 })).toBeNull()
     expect(customerStageDue({ ...asked, today: '2026-09-19', hour: 9 })).toBe('reminder')
     expect(customerStageDue({ ...asked, customer_reminded_at: ptNoon('2026-09-19'), today: '2026-09-25', hour: 9 })).toBeNull()
@@ -106,37 +121,61 @@ describe('e-sign messages', () => {
 
 // The four real Clopay jobs the rule was pinned on (live SF reads, 2026-09-12).
 import { deriveWork } from '@/lib/esign/work'
+import { sofStageOf, SOF_NEEDED, SOF_SENT, SOF_COMPLETE } from '@/lib/esign/sub-status'
 import type { LiveJobFacts } from '@/lib/agent/live-refresh'
 const job = (o: Partial<LiveJobFacts>): LiveJobFacts => ({ jobId: '1', jobNumber: '1', status: null, subStatus: null, category: null, description: null, visits: [], customerName: null, poNumber: null, startDate: null, endDate: null, windowStart: null, windowEnd: null, completedAt: null, techs: [], city: null, postalCode: null, requiresFollowUp: false, updatedAtSf: null, fetchedAt: 'x', ...o })
 const visit = (startDate: string, notes: string | null, techStatus: string) => ({ startDate, windowStart: null, windowEnd: null, notes, techs: [], techStatus })
-describe('deriveWork on real Clopay jobs', () => {
-  it('1020256603: inspection visit, waiting — nothing is sent', () => {
-    const w = deriveWork(job({ status: 'Waiting for Tiffany', category: 'CLOPAY: Inspection', startDate: '2026-08-25', description: 'HD cust door install', visits: [visit('2026-08-25', 'HD cust site inspection', 'Waiting for Tiffany')] }), 'install')
-    expect(['inspection', 'waiting']).toContain(w.phase); expect(w.completed).toBe(false)
-    expect(customerStageDue({ ...base, phase: w.phase, completed: w.completed, start_date: w.workDate, today: '2026-08-25', hour: 9 })).toBeNull()
+// The four real Clopay jobs the timing was first pinned on. What decides now is the office's
+// HD SOF sub-status, not the category or the status — which is exactly why these jobs are
+// still the fixtures: each one fooled a status-reading rule at some point.
+describe('the real Clopay jobs, under the HD SOF sub-status rule', () => {
+  const at = (f: LiveJobFacts) => ({ sof: sofStageOf(f.subStatus), work: deriveWork(f, 'install') })
+  it('1020256603: unmarked, so nothing is sent whatever the visit says', () => {
+    const f = job({ status: 'Waiting for Tiffany', category: 'CLOPAY: Inspection', startDate: '2026-08-25', description: 'HD cust door install', visits: [visit('2026-08-25', 'HD cust site inspection', 'Waiting for Tiffany')] })
+    const { sof, work } = at(f)
+    expect(sof).toBeNull(); expect(work.completed).toBe(false)
+    expect(customerStageDue({ ...base, sof, completed: work.completed, start_date: work.workDate, today: '2026-08-25', hour: 9 })).toBeNull()
   })
-  it('1020259141: "Site Check" visit under Inspection — nothing is sent', () => {
-    const w = deriveWork(job({ status: 'Waiting on Clopay', category: 'CLOPAY: Inspection', description: 'HD install', visits: [visit('2026-09-09', 'Site Check', 'Waiting on Clopay')] }), 'install')
-    expect(['inspection', 'waiting']).toContain(w.phase)
-    expect(customerStageDue({ ...base, phase: w.phase, completed: w.completed, start_date: w.workDate, today: '2026-09-09', hour: 9 })).toBeNull()
-    // Even with a non-waiting status, an Inspection-category visit is the site check.
-    expect(deriveWork(job({ status: 'Scheduled', category: 'CLOPAY: Inspection', visits: [visit('2026-09-09', 'Site Check', 'Scheduled')] }), 'install').phase).toBe('inspection')
+  it('1020259141: unmarked "Site Check" — nothing is sent', () => {
+    const f = job({ status: 'Waiting on Clopay', category: 'CLOPAY: Inspection', description: 'HD install', visits: [visit('2026-09-09', 'Site Check', 'Waiting on Clopay')] })
+    const { sof, work } = at(f)
+    expect(customerStageDue({ ...base, sof, completed: work.completed, start_date: work.workDate, today: '2026-09-09', hour: 9 })).toBeNull()
   })
-  it('1020259079: category says Installation but the job is "Waiting on Clopay" — that visit was the site check; nothing is sent', () => {
-    const w = deriveWork(job({ status: 'Waiting on Clopay', category: 'CLOPAY: Door/Segment Installation', description: 'HD door installation', visits: [visit('2026-08-27', null, 'Waiting on Clopay')] }), 'install')
-    expect(w.phase).toBe('waiting')
-    expect(customerStageDue({ ...base, phase: w.phase, completed: w.completed, start_date: w.workDate, today: '2026-08-27', hour: 9 })).toBeNull()
+  it('1020259079: the category said Installation and the visit was really the site check — still nothing, because nobody marked it', () => {
+    const f = job({ status: 'Waiting on Clopay', category: 'CLOPAY: Door/Segment Installation', description: 'HD door installation', visits: [visit('2026-08-27', null, 'Waiting on Clopay')] })
+    const { sof, work } = at(f)
+    expect(customerStageDue({ ...base, sof, completed: work.completed, start_date: work.workDate, today: '2026-08-27', hour: 9 })).toBeNull()
   })
-  it('the same job once the install is scheduled (a non-waiting status) — heads-up that morning, no ask until complete', () => {
-    const w = deriveWork(job({ status: 'Scheduled', category: 'CLOPAY: Door/Segment Installation', description: 'HD door installation', visits: [visit('2026-09-20', 'HD door install', 'Scheduled')] }), 'install')
-    expect(w).toMatchObject({ phase: 'install', workDate: '2026-09-20', completed: false })
-    const d = { ...base, phase: w.phase, completed: w.completed, start_date: w.workDate }
+  it('the office marks that same waiting job "HD SOF Needed" — the heads-up goes that morning', () => {
+    const f = job({ status: 'Waiting on Clopay', subStatus: 'HD SOF Needed', category: 'CLOPAY: Door/Segment Installation', visits: [visit('2026-09-20', 'HD door install', 'Waiting on Clopay')] })
+    const { sof, work } = at(f)
+    expect(sof).toBe('needed')
+    const d = { ...base, sof, completed: work.completed, start_date: work.workDate }
+    expect(customerStageDue({ ...d, today: '2026-09-19', hour: 9 })).toBeNull()      // the day before
+    expect(customerStageDue({ ...d, today: '2026-09-20', hour: 7 })).toBeNull()      // too early
     expect(customerStageDue({ ...d, today: '2026-09-20', hour: 9 })).toBe('heads_up')
-    expect(customerStageDue({ ...d, status: 'sent_customer', customer_sent_at: ptNoon('2026-09-20'), today: '2026-09-25', hour: 9 })).toBeNull()
+    expect(customerStageDue({ ...d, status: 'sent_customer', sof: 'sent', customer_sent_at: ptNoon('2026-09-20'), today: '2026-09-25', hour: 9 })).toBeNull()
   })
-  it('1020258612: install complete (visit Completed, job Invoiced) — ask now', () => {
+  it('1020258612: install complete (visit Completed, job Invoiced) — ask now, marked or not', () => {
     const w = deriveWork(job({ status: 'Invoiced', startDate: '2026-08-14', completedAt: '2026-08-19T10:35:10+00:00', description: 'HD Customer Installation', visits: [visit('2026-07-07', 'HD Customer- Door install', 'Completed')] }), 'install')
     expect(w).toMatchObject({ phase: 'install', completed: true })
-    expect(customerStageDue({ ...base, phase: w.phase, completed: w.completed, start_date: w.workDate, today: '2026-09-12', hour: 9 })).toBe('ask')
+    // Completion is its own authority: the customer has had the work done, so the form is
+    // due whatever the sub-status says. Only the HEADS-UP waits on the office.
+    expect(customerStageDue({ ...base, sof: null, completed: w.completed, start_date: w.workDate, today: '2026-09-12', hour: 9 })).toBe('ask')
+  })
+})
+
+describe('sofStageOf', () => {
+  it('reads the three HD SOF sub-statuses, and nothing else', () => {
+    expect(sofStageOf(SOF_NEEDED)).toBe('needed')
+    expect(sofStageOf(SOF_SENT)).toBe('sent')
+    expect(sofStageOf(SOF_COMPLETE)).toBe('complete')
+    // Tolerant of how it was typed into SF settings.
+    expect(sofStageOf('  hd sof   needed ')).toBe('needed')
+    // Everything else is "not marked", never a guess.
+    expect(sofStageOf('Waiting on Clopay')).toBeNull()
+    expect(sofStageOf('HD SOF')).toBeNull()
+    expect(sofStageOf(null)).toBeNull()
+    expect(sofStageOf('')).toBeNull()
   })
 })

@@ -84,6 +84,20 @@ export async function postScheduleResult(baseUrl, token, payload) {
   return res.json()
 }
 
+export async function fetchSubStatusQueue(baseUrl, token) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-substatus-queue`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`sub-status queue ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
+export async function postSubStatusResult(baseUrl, token, payload) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-substatus-callback`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`sub-status callback ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
 export async function fetchDocsQueue(baseUrl, token) {
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/vendor-orders/sf-docs-queue`, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) throw new Error(`docs queue ${res.status}: ${(await res.text()).slice(0, 200)}`)
