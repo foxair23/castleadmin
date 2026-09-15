@@ -113,3 +113,11 @@ export async function cancelEsignDoc(docId: string, restore = false, supabase: S
   await supabase.from('vendor_order_events').insert({ order_id: doc.order_id, event_type: restore ? 'esign_restored' : 'esign_cancelled', to_value: restore ? 'found' : 'cancelled', detail: { doc_id: docId, from_status: doc.status } })
   return { ok: true }
 }
+
+/** A re-capture finally delivered the document: drop the stale file complaint so the row
+ *  stops reading as broken and the prepare sweep starts it over. */
+export async function clearEsignFileError(attachmentId: string): Promise<void> {
+  const supabase = db()
+  await supabase.from('esign_documents').update({ error: null, updated_at: new Date().toISOString() })
+    .eq('source_attachment_id', attachmentId).eq('status', 'found').not('error', 'is', null)
+}

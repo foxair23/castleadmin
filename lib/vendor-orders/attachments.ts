@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { describeNotPdf, sniffFileType } from '@/lib/files/sniff'
+import { sniffFileType } from '@/lib/files/sniff'
 
 // Storing vendor-order document FILES (Clopay HD-Program docs downloaded by the
 // crawler) in the private `vendor-order-attachments` bucket. The extension can't
@@ -65,41 +65,48 @@ export async function recordVendorAttachment(
  *  earlier bad copy) and records the row. Keyed/deduped by (order, documentId). */
 export async function storeVendorDoc(
   vendor: string, externalId: string, documentId: string, filename: string, mime: string, bytes: Uint8Array | null, meta: DocMeta = {},
-): Promise<{ ok: boolean; alreadyStored?: boolean; needsUpload?: boolean; stored?: boolean; error?: string }> {
+): Promise<{ ok: boolean; alreadyStored?: boolean; needsUpload?: boolean; stored?: boolean; retried?: boolean; unusable?: boolean; error?: string }> {
   const orderId = await orderIdFor(vendor, externalId)
   if (!orderId) return { ok: false, error: 'order not found' }
   const ref = String(documentId)
   const { data: existing } = await db().from('vendor_order_attachments')
-    .select('id').eq('order_id', orderId).eq('external_ref', ref).maybeSingle()
-  if (existing) return { ok: true, alreadyStored: true }
+    .select('id, capture_unusable').eq('order_id', orderId).eq('external_ref', ref).maybeSingle()
+  // A file already on record counts as done — UNLESS the last capture carried no document.
+  // The Clopay portal (Oracle) answers some requests with a fixed-size run of zero bytes
+  // instead of the document; we keep those, but they should not close the door on the
+  // document. Reporting "needs upload" puts it back in the crawler's path, and a good
+  // capture then overwrites the placeholder in place. Nothing is ever deleted.
+  if (existing && !existing.capture_unusable) return { ok: true, alreadyStored: true }
   if (!bytes) return { ok: true, needsUpload: true }
-  // Refuse a capture that plainly did not work, BEFORE the row exists. Two Clopay blanks
-  // were stored as 1,280,000 bytes of zeros and only announced themselves months later,
-  // when someone pressed Prepare — and because the row existed, every later capture of the
-  // same document short-circuited on `alreadyStored`, so it could never repair itself.
-  // Rejecting here leaves nothing behind, so the next crawl simply tries again.
-  // Only files carrying no document at all are refused. A scan that arrives as a PNG under
-  // a .pdf name is still the document, so it is kept and Prepare explains it has to be filled
-  // in by hand; throwing that away would lose the only copy we have.
+  // Whether this capture carried a document decides only whether we try again later, never
+  // whether it is kept. A scan that arrives as a PNG under a .pdf name IS the document and
+  // counts as usable; the office fills that one in by hand.
   const claimsPdf = /pdf/i.test(mime || '') || /\.pdf$/i.test(filename || '')
   const kind = sniffFileType(bytes)
-  if (kind === 'zeros' || kind === 'empty' || (claimsPdf && kind === 'html')) {
-    return { ok: false, error: `not stored — ${describeNotPdf(bytes) ?? 'the download did not deliver a usable file'}` }
-  }
+  const unusable = kind === 'zeros' || kind === 'empty' || (claimsPdf && kind === 'html')
   const path = `${orderId}/${ref}-${safeName(filename)}`
   const { error: upErr } = await db().storage.from(BUCKET).upload(path, bytes, {
     contentType: mime || 'application/pdf', upsert: true,
   })
   if (upErr) return { ok: false, error: upErr.message }
-  const { error } = await db().from('vendor_order_attachments').insert({
+  const row = {
     order_id: orderId, storage_path: path, filename: safeName(filename),
     mime_type: mime || 'application/pdf', byte_size: bytes.byteLength, source: 'clopay_doc', external_ref: ref,
     // What the filename loses on the way in: Clopay's type and the portal's own name (URL-style
     // names are mangled by safeName and unrecognisable after) — the e-sign classifier needs both.
     doc_type: meta.docType ?? null, raw_name: meta.rawName ?? filename,
-  })
+    capture_unusable: unusable,
+  }
+  if (existing) {
+    // Retrying a placeholder: update in place so the e-sign document and any parsed line
+    // items keep pointing at the same attachment.
+    const { error } = await db().from('vendor_order_attachments').update(row).eq('id', existing.id as string)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true, stored: true, retried: true, unusable }
+  }
+  const { error } = await db().from('vendor_order_attachments').insert(row)
   if (error && !/duplicate key|unique/i.test(error.message)) return { ok: false, error: error.message }
-  return { ok: true, stored: true }
+  return { ok: true, stored: true, unusable }
 }
 
 export interface StoredAttachment {
