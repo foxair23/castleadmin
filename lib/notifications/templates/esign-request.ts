@@ -2,9 +2,13 @@ import { emailLogoUrl, emailFooterDomain } from '@/lib/config/domains'
 import type { TemplateService } from '@/lib/esign/templates'
 import type { CustomerStage } from '@/lib/esign/eligibility'
 
-// The e-sign messages. INSTALL copy approved by the owner 2026-09-09 and pinned verbatim.
-// DELIVERY copy (the homedepot.com proof-of-delivery waiver — we deliver the door, we do not
-// install it) mirrors it word for word with the service swapped.
+// The e-sign messages. INSTALL copy approved by the owner 2026-09-09, DELIVERY copy
+// 2026-09-15; both pinned verbatim by the exact-string tests in esign-send.test.ts.
+//
+// The delivery form is the homedepot.com proof-of-delivery waiver: we deliver the door, we
+// do not install it. Its wording is NOT the install wording with a word swapped — a delivery
+// has no "work", so every phrase that assumed one comes from the table below rather than
+// from a ternary at the call site.
 //
 // Home Depot forbids asking for the signature before the work is done: the heads-up says so
 // in plain words and asks the customer to come back once the install/delivery is complete.
@@ -15,33 +19,46 @@ const DISPLAY = "'DM Sans',system-ui,-apple-system,sans-serif"
 const BODY = "'Source Sans 3',system-ui,-apple-system,sans-serif"
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-interface Words { work: string; form: string; formShort: string }
+interface Words {
+  /** What is scheduled, in the heads-up: "Your ___ is scheduled soon." */
+  scheduled: string
+  /** What has been done, in the ask: "now that your ___ is complete". */
+  work: string
+  /** What the form is waiting on, in the reminder: "the form for your ___". */
+  waiting: string
+  /** The completed event: "Once your ___ is complete", "Your ___ is complete". */
+  done: string
+  /** Install only. Home Depot requires the form "for the work"; a delivery has no work. */
+  forWork: string
+  form: string
+  formShort: string
+}
 const WORDS: Record<TemplateService, Words> = {
-  install: { work: 'garage door installation', form: 'completion form', formShort: 'completion form' },
-  delivery: { work: 'Home Depot delivery', form: 'proof-of-delivery form', formShort: 'proof-of-delivery form' },
+  install: { scheduled: 'garage door installation', work: 'garage door installation', waiting: 'garage door installation', done: 'installation', forWork: ' for the work', form: 'completion form', formShort: 'completion form' },
+  delivery: { scheduled: 'delivery', work: 'Home Depot delivery', waiting: 'delivery', done: 'delivery', forWork: '', form: 'proof-of-delivery form', formShort: 'proof-of-delivery form' },
 }
 
 export function renderEsignCustomerSms(stage: CustomerStage, service: TemplateService, opts: { greetingName: string | null; link: string }): string {
   const w = WORDS[service]
   const hi = opts.greetingName ? `Hi ${opts.greetingName}, ` : 'Hi, '
   if (stage === 'heads_up') {
-    return `${hi}it's Castle Garage Doors. Your ${w.work} is scheduled soon. Home Depot requires a signed ${w.form} for the work — we're sending it now so you have it. Once your ${service === 'install' ? 'installation' : 'delivery'} is complete, please come back here to review and e-sign it: ${opts.link}. Reply STOP to opt out.`
+    return `${hi}it's Castle Garage Doors. Your ${w.scheduled} is scheduled soon. Home Depot requires a signed ${w.form}${w.forWork} — we're sending it now so you have it. Once your ${w.done} is complete, please come back here to review and e-sign it: ${opts.link}. Reply STOP to opt out.`
   }
   if (stage === 'ask') {
     return `${hi}now that your ${w.work} is complete, Home Depot needs your e-signature on the ${w.form}. It takes about a minute: ${opts.link}`
   }
-  return `Quick reminder from Castle Garage Doors — Home Depot's ${w.form} for your ${service === 'install' ? 'garage door installation' : 'order'} is still waiting for your e-signature: ${opts.link}`
+  return `Quick reminder from Castle Garage Doors — Home Depot's ${w.form} for your ${w.waiting} is still waiting for your e-signature: ${opts.link}`
 }
 
 export function renderEsignCustomerEmail(stage: CustomerStage, service: TemplateService, opts: { greetingName: string | null; link: string }): { subject: string; html: string; text: string } {
   const w = WORDS[service]
-  const done = service === 'install' ? 'installation' : 'delivery'
+  const done = w.done
   const hi = opts.greetingName ? `Hi ${opts.greetingName},` : 'Hi,'
   let subject: string, paras: string[], cta: string, under: string | null = null
   if (stage === 'heads_up') {
     subject = `Your Home Depot ${w.form} — for after your ${done}`
     paras = [
-      `Your ${w.work} is scheduled soon. Home Depot requires a signed ${w.form} for the work — we're sending it now so you have it.`,
+      `Your ${w.scheduled} is scheduled soon. Home Depot requires a signed ${w.form}${w.forWork} — we're sending it now so you have it.`,
       `Once your ${done} is complete, please come back here to review and e-sign it.`,
     ]
     cta = `Review & e-sign after the ${done}`
@@ -52,7 +69,7 @@ export function renderEsignCustomerEmail(stage: CustomerStage, service: Template
     cta = 'Review & e-sign'
   } else {
     subject = `Reminder: Home Depot's ${w.form} is waiting for your e-signature`
-    paras = [`Quick reminder from Castle Garage Doors — Home Depot's ${w.form} for your ${service === 'install' ? 'garage door installation' : 'order'} is still waiting for your e-signature.`]
+    paras = [`Quick reminder from Castle Garage Doors — Home Depot's ${w.form} for your ${w.waiting} is still waiting for your e-signature.`]
     cta = 'Review & e-sign'
   }
   const text = `${hi}\n\n${paras.join('\n\n')}\n\n${cta}: ${opts.link}${under ? `\n\n${under}` : ''}\n\nQuestions? Call us at (800) 576-1397 or just reply to this email.\n\n— Castle Team`
