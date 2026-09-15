@@ -48,6 +48,25 @@ export async function enqueueSubStatus(supabase: SupabaseClient, docId: string, 
   if (error) console.error('[esign sub-status] enqueue:', error.message)
 }
 
+/** Nudge the office extension to run now, so a sub-status written at 8:10 lands in Service
+ *  Fusion within a minute or two rather than whenever its own poll next comes round. The
+ *  extension polls every 10 minutes by default, so this is about being deterministic, not
+ *  about being much faster: the office should be able to look at a job straight after the
+ *  morning send and see it already say "HD SOF Sent".
+ *
+ *  One pending nudge is enough — queueing five sends should not queue five runs. */
+export async function nudgeExtensionRun(supabase: SupabaseClient): Promise<void> {
+  try {
+    const { count } = await supabase.from('extension_commands').select('id', { count: 'exact', head: true }).eq('kind', 'run_now').eq('status', 'pending')
+    if ((count ?? 0) > 0) return
+    const { enqueueExtensionCommand } = await import('@/lib/ops/extension-report')
+    await enqueueExtensionCommand('run_now', {}, null, supabase)
+  } catch (e) {
+    // The sub-status still goes out on the extension's own poll; this only makes it prompt.
+    console.error('[esign sub-status] could not nudge the extension:', e instanceof Error ? e.message : e)
+  }
+}
+
 export interface SubStatusQueueItem { id: string; jobNumber: string; subStatus: string }
 
 /** What the extension should set next. Documents whose job is not in the mirror yet are left

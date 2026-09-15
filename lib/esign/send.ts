@@ -83,8 +83,9 @@ export async function deliverToCustomer(supabase: SupabaseClient, doc: DocRow, o
     // extension. Queued, never blocking — the message has already gone, and a sub-status
     // that lags is a cosmetic problem where a failed send is not.
     if (stage === 'heads_up' || (stage === 'ask' && !doc.customer_sent_at)) {
-      const { enqueueSubStatus, SOF_SENT } = await import('./sub-status')
+      const { enqueueSubStatus, nudgeExtensionRun, SOF_SENT } = await import('./sub-status')
       await enqueueSubStatus(supabase, doc.id, SOF_SENT)
+      await nudgeExtensionRun(supabase)
     }
     await supabase.from('vendor_order_events').insert({ order_id: doc.order_id, event_type: `esign_customer_${stage}`, to_value: channels.join(','), detail: { doc_id: doc.id, service } })
     if (doc.sf_job_id) {
