@@ -68,6 +68,16 @@ export async function logInboundEvent(fields: {
   detail?: string | null
 }): Promise<void> {
   try { await db().from('leadgen_inbound_events').insert(fields) } catch { /* non-critical */ }
+  // Mirror into the shared inbound log, so one table answers "did this email reach us?" for
+  // every route rather than only the two that happened to write one.
+  try {
+    const { logInboundEmail } = await import('@/lib/inbound/log')
+    await logInboundEmail({
+      route: fields.outcome.startsWith('clopay_dc') ? 'clopay_dc' : 'leads',
+      from_addr: fields.from_addr, subject: fields.subject, resend_email_id: fields.resend_email_id,
+      ok: !/failed|error/i.test(fields.outcome), detail: `${fields.outcome}${fields.detail ? ` — ${fields.detail}` : ''}`,
+    })
+  } catch { /* non-critical */ }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

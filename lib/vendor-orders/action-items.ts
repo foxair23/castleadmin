@@ -37,9 +37,11 @@ export interface GenieActionItemsResult { items: GenieActionItem[] }
 //               "Schedule Install/Delivery". Sourced from the weekly DC report, keyed by PO.
 // They dismiss to different places (see markClopayActionDone), so the kind travels with the
 // item rather than being inferred in the UI.
-//   'portal_upload' — a Home Depot form both parties e-signed, waiting for a person to upload
-//               it to the Clopay portal. Button: "Uploaded to Clopay". Auto-clears when the
-//               crawl sees the Signed ICA/LW come back.
+//   'portal_upload' — a Home Depot form both parties e-signed AND filed on the SF job,
+//               waiting for a person to upload it to the Clopay portal. Button: "Upload SOF
+//               to Clopay". Auto-clears when the crawl sees the Signed ICA/LW come back.
+//               It appears only once the form is on the SF job, so the sequence the office
+//               follows is the sequence the list shows: sign, file in SF, then Clopay.
 export interface ClopayActionItem extends GenieActionItem {
   kind: 'new_job' | 'at_dc' | 'portal_upload'
   /** at_dc only — the PO is the unit of work, and one customer can have one PO at the DC
@@ -106,7 +108,7 @@ async function getPortalUploadItems(): Promise<ClopayActionItem[]> {
   const supabase = db()
   const { data } = await supabase.from('esign_documents')
     .select('id, order_id, status, completed_at, completed_pdf_path, sf_uploaded_at, prefill')
-    .in('status', ['completed', 'sf_uploaded']).is('portal_uploaded_at', null).order('completed_at', { ascending: true }).limit(200)
+    .eq('status', 'sf_uploaded').is('portal_uploaded_at', null).order('completed_at', { ascending: true }).limit(200)
   const rows = (data ?? []) as Array<{ id: string; order_id: string; status: string; completed_at: string | null; completed_pdf_path: string | null; sf_uploaded_at: string | null; prefill: Record<string, string> | null }>
   if (!rows.length) return []
   const { data: orders } = await supabase.from('vendor_orders')
