@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { describeNotPdf, sniffFileType } from '@/lib/files/sniff'
 
 // Storing vendor-order document FILES (Clopay HD-Program docs downloaded by the
 // crawler) in the private `vendor-order-attachments` bucket. The extension can't
@@ -72,6 +73,19 @@ export async function storeVendorDoc(
     .select('id').eq('order_id', orderId).eq('external_ref', ref).maybeSingle()
   if (existing) return { ok: true, alreadyStored: true }
   if (!bytes) return { ok: true, needsUpload: true }
+  // Refuse a capture that plainly did not work, BEFORE the row exists. Two Clopay blanks
+  // were stored as 1,280,000 bytes of zeros and only announced themselves months later,
+  // when someone pressed Prepare — and because the row existed, every later capture of the
+  // same document short-circuited on `alreadyStored`, so it could never repair itself.
+  // Rejecting here leaves nothing behind, so the next crawl simply tries again.
+  // Only files carrying no document at all are refused. A scan that arrives as a PNG under
+  // a .pdf name is still the document, so it is kept and Prepare explains it has to be filled
+  // in by hand; throwing that away would lose the only copy we have.
+  const claimsPdf = /pdf/i.test(mime || '') || /\.pdf$/i.test(filename || '')
+  const kind = sniffFileType(bytes)
+  if (kind === 'zeros' || kind === 'empty' || (claimsPdf && kind === 'html')) {
+    return { ok: false, error: `not stored — ${describeNotPdf(bytes) ?? 'the download did not deliver a usable file'}` }
+  }
   const path = `${orderId}/${ref}-${safeName(filename)}`
   const { error: upErr } = await db().storage.from(BUCKET).upload(path, bytes, {
     contentType: mime || 'application/pdf', upsert: true,

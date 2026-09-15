@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sniffFileType, describeNotPdf, previewBytes } from '@/lib/esign/file-type'
+import { sniffFileType, describeNotPdf, previewBytes } from '@/lib/files/sniff'
 
 const bytes = (...v: number[]) => new Uint8Array(v)
 const text = (s: string) => new Uint8Array([...s].map(c => c.charCodeAt(0)))
@@ -20,6 +20,7 @@ describe('sniffFileType', () => {
     expect(sniffFileType(new Uint8Array())).toBe('empty')
     expect(sniffFileType(null)).toBe('empty')
     expect(sniffFileType(bytes(0x01, 0x02, 0x03, 0x04))).toBe('unknown')
+    expect(sniffFileType(new Uint8Array(4096))).toBe('zeros')
   })
   it('does not call a PDF mentioned deep inside a big file a PDF', () => {
     // The header lives at the front. A 1 MB page that merely says "%PDF-" somewhere is not one.
@@ -43,6 +44,13 @@ describe('describeNotPdf', () => {
     expect(msg).toContain('PNG image')
     expect(msg).toContain('by hand')
   })
+  it('names a capture that delivered nothing but zeros — the one that started all this', () => {
+    // Both failing Clopay blanks were exactly 1,280,000 bytes of zeros.
+    const msg = describeNotPdf(new Uint8Array(1_280_000))!
+    expect(msg).toContain('empty bytes')
+    expect(msg).toContain('capture it again')
+    expect(msg).toContain('1250 KB')
+  })
   it('covers the empty download and the one nobody recognises', () => {
     expect(describeNotPdf(new Uint8Array())).toContain('empty')
     const msg = describeNotPdf(bytes(0x01, 0x02, 0x03))!
@@ -56,5 +64,32 @@ describe('previewBytes', () => {
     expect(previewBytes(text('%PDF-1.7'))).toBe('"%PDF-1.7"')
     expect(previewBytes(bytes(0x89, 0x50))).toBe('89 50')
     expect(previewBytes(new Uint8Array())).toBe('nothing')
+  })
+})
+
+// The guard in storeVendorDoc, stated as the rule it implements. A file that carries no
+// document is refused so nothing is left behind and the next crawl can try again; a file
+// that IS the document, in an awkward format, is kept.
+import { sniffFileType as sniff } from '@/lib/files/sniff'
+const rejectedByStore = (bytes: Uint8Array, filename: string, mime: string) => {
+  const claimsPdf = /pdf/i.test(mime) || /\.pdf$/i.test(filename)
+  const kind = sniff(bytes)
+  return kind === 'zeros' || kind === 'empty' || (claimsPdf && kind === 'html')
+}
+
+describe('what storeVendorDoc refuses', () => {
+  const pdfName = 'waiver.pdf', pdfMime = 'application/pdf'
+  it('refuses the captures that carry nothing', () => {
+    expect(rejectedByStore(new Uint8Array(1_280_000), pdfName, pdfMime)).toBe(true)   // the real failure
+    expect(rejectedByStore(new Uint8Array(), pdfName, pdfMime)).toBe(true)
+    expect(rejectedByStore(text('<!DOCTYPE html><html>Sign in'), pdfName, pdfMime)).toBe(true)
+  })
+  it('keeps a scan that is merely the wrong format — it is still the document', () => {
+    expect(rejectedByStore(bytes(0x89, 0x50, 0x4e, 0x47, 1, 2, 3), pdfName, pdfMime)).toBe(false)
+    expect(rejectedByStore(bytes(0xff, 0xd8, 0xff, 0xe0, 1), 'scan.pdf', pdfMime)).toBe(false)
+  })
+  it('keeps a real PDF, and a file that never claimed to be one', () => {
+    expect(rejectedByStore(text('%PDF-1.7 ...'), pdfName, pdfMime)).toBe(false)
+    expect(rejectedByStore(text('<html>a page</html>'), 'notes.html', 'text/html')).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { downloadVendorDoc } from '@/lib/vendor-orders/attachments'
-import { describeNotPdf } from './file-type'
+import { describeNotPdf } from '@/lib/files/sniff'
 import { inspectPdf, fingerprintPdf, renderPrepared, renderOverlay, type PdfInspection } from './render'
 import { resolveTemplate, templateByKey, type TemplateSpec } from './templates'
 import { buildPrefill, type PrefillOrder, type PrefillJob } from './prefill'
