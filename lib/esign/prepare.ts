@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { downloadVendorDoc } from '@/lib/vendor-orders/attachments'
+import { describeNotPdf } from './file-type'
 import { inspectPdf, fingerprintPdf, renderPrepared, renderOverlay, type PdfInspection } from './render'
 import { resolveTemplate, templateByKey, type TemplateSpec } from './templates'
 import { buildPrefill, type PrefillOrder, type PrefillJob } from './prefill'
@@ -41,6 +42,10 @@ export async function prepareEsignDoc(docId: string, supabase: SupabaseClient = 
   try {
     const bytes = await downloadVendorDoc(att.storage_path as string)
     if (!bytes) throw new Error('could not download the blank')
+    // Say what the file IS before handing it to a PDF parser, whose own complaint ("No PDF
+    // header found") names neither the problem nor what to do about it.
+    const notPdf = describeNotPdf(bytes)
+    if (notPdf) throw new Error(notPdf)
     const insp = await inspectPdf(bytes)
     const fingerprint = fingerprintPdf(insp)
     const template = resolveTemplate(fingerprint, insp.firstPageText)
@@ -93,6 +98,8 @@ export async function inspectEsignDoc(docId: string): Promise<{ ok: boolean; ins
   if (!ctx?.att) return { ok: false, error: 'not found' }
   const bytes = await downloadVendorDoc(ctx.att.storage_path as string)
   if (!bytes) return { ok: false, error: 'could not download' }
+  const notPdf = describeNotPdf(bytes)
+  if (notPdf) return { ok: false, error: notPdf }
   const inspection = await inspectPdf(bytes)
   const fingerprint = fingerprintPdf(inspection)
   return { ok: true, inspection, fingerprint, template: resolveTemplate(fingerprint, inspection.firstPageText) }
@@ -107,6 +114,8 @@ export async function previewEsignDoc(docId: string, candidate?: Pick<TemplateSp
   if (!ctx?.att || !ctx.root) return { ok: false, error: 'not found' }
   const bytes = await downloadVendorDoc(ctx.att.storage_path as string)
   if (!bytes) return { ok: false, error: 'could not download' }
+  const notPdf = describeNotPdf(bytes)
+  if (notPdf) return { ok: false, error: notPdf }
   const insp = await inspectPdf(bytes)
   const template = candidate ? { key: 'candidate', vendor: '', docType: '', label: '', service: 'install' as const, fingerprints: [], fields: candidate.fields } : (templateByKey(ctx.doc.template_key as string | null) ?? resolveTemplate(fingerprintPdf(insp), insp.firstPageText))
   const filled = template ? await renderPrepared(bytes, template, buildPrefill(ctx.root, ctx.doors, ctx.job)) : bytes
