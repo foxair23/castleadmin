@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runClopayStsAutoRequest } from '@/lib/clopay-sts/dc-request'
+import { runMilestoneNoteSweep } from '@/lib/vendor-orders/milestone-notes'
 
 export const maxDuration = 120
 
@@ -10,5 +11,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const autoRequest = await runClopayStsAutoRequest()
-  return NextResponse.json({ autoRequest })
+  // Catch-up pass: an STS order is received before its SF job exists, and a DC report can
+  // name an order whose job is made later, so the notes are written when both are in hand.
+  const notes = await runMilestoneNoteSweep()
+  return NextResponse.json({ autoRequest, notes })
 }

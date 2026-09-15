@@ -703,13 +703,16 @@ const SERVICE_CATEGORY_LABELS: Record<string, string> = {
 }
 
 // "Done" button — acknowledges an Online Scheduling lead (requires login).
-function DoneButton({ leadId, endpoint = '/api/leads/ack', kind, label = 'Done' }: { leadId: string; endpoint?: string; kind?: string; label?: string }) {
+function DoneButton({ leadId, endpoint = '/api/leads/ack', kind, label = 'Done', confirmText }: { leadId: string; endpoint?: string; kind?: string; label?: string; confirmText?: string }) {
   // Optimistic: flip to the acknowledged chip immediately; the row clears on
   // the next page load. Rolls back if the request fails.
   const [done, setDone] = useState(false)
 
   async function handleDone() {
     if (done) return
+    // Some of these buttons are named for the TASK rather than for what pressing them does.
+    // Where that gap could let someone tick a job off without having done it, ask first.
+    if (confirmText && !window.confirm(confirmText)) return
     setDone(true)
     try {
       const res = await fetch(endpoint, {
@@ -1634,7 +1637,7 @@ export default function ActionItemsClient({
           title="Clopay — To Schedule"
           count={clopayItems.length}
         >
-          <p className="text-xs text-gray-400 mb-2">Three kinds of work. <strong>Uploaded to Clopay</strong> — a Home Depot form both parties e-signed; download the signed PDF, upload it to the customer&rsquo;s order in the Clopay portal, then press the button (it also clears itself once the crawl sees the signed copy come back). <strong>New Job to Schedule</strong> — our service created an SF job from a Clopay HD order. <strong>Schedule Install/Delivery</strong> — the product has landed at the DC and is ready to install, from the weekly DC report; these are listed per PO, oldest arrival first, and once pressed a PO never comes back even though it stays on the DC report until it ships.</p>
+          <p className="text-xs text-gray-400 mb-2">Three kinds of work. <strong>Upload SOF to Clopay</strong> — a Home Depot sign-off form both parties e-signed and already filed on the SF job; download the signed PDF, upload it to the customer&rsquo;s order in the Clopay portal, then press the button to record that it is done (it also clears itself once the crawl sees the signed copy come back). <strong>New Job to Schedule</strong> — our service created an SF job from a Clopay HD order. <strong>Schedule Install/Delivery</strong> — the product has landed at the DC and is ready to install, from the weekly DC report; these are listed per PO, oldest arrival first, and once pressed a PO never comes back even though it stays on the DC report until it ships.</p>
           {clopayItems.length === 0 ? <AllClear /> : <ClopayTable items={clopayItems} />}
         </AlertSection>
       )}
@@ -1813,7 +1816,10 @@ function ClopayTable({ items }: { items: ClopayActionItem[] }) {
                   leadId={c.id}
                   endpoint="/api/vendor-orders/ack"
                   kind={c.kind}
-                  label={c.kind === 'at_dc' ? 'Schedule Install/Delivery' : c.kind === 'portal_upload' ? 'Uploaded to Clopay' : 'New Job to Schedule'}
+                  label={c.kind === 'at_dc' ? 'Schedule Install/Delivery' : c.kind === 'portal_upload' ? 'Upload SOF to Clopay' : 'New Job to Schedule'}
+                  confirmText={c.kind === 'portal_upload'
+                    ? 'Have you already uploaded the signed sign-off form to this order in the Clopay portal?\n\nPressing this only records that it is done — it does not upload anything.'
+                    : undefined}
                 />
                 {c.kind === 'portal_upload' && (
                   <div className="mt-1 flex items-center gap-2 text-[11px]">
