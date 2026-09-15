@@ -198,7 +198,7 @@ function db(): SupabaseClient {
 }
 
 export async function loadHealthSnapshot(supabase: SupabaseClient = db(), currentVersion: string, now = new Date()): Promise<Snapshot> {
-  const [hb, runs, lists, remit, notes, lines, sched, docs, sync, prev, subs, manual] = await Promise.all([
+  const [hb, runs, lists, remit, notes, lines, sched, docs, subStatus, sync, prev, subs, manual] = await Promise.all([
     supabase.from('extension_heartbeat').select('device, version, last_seen_at, last_run_at, last_run_status, state'),
     supabase.from('extension_runs').select('id, device, kind, site, mode, status, reason, source, started_at, finished_at, counts, created_at').order('created_at', { ascending: false }).limit(300),
     supabase.from('vendor_scrape_runs').select('vendor, mode, received, created_at').eq('kind', 'list').order('created_at', { ascending: false }).limit(60),
@@ -207,6 +207,9 @@ export async function loadHealthSnapshot(supabase: SupabaseClient = db(), curren
     supabase.from('vendor_orders').select('updated_at', { count: 'exact' }).eq('sf_lines_status', 'queued').order('updated_at', { ascending: true }).limit(1),
     supabase.from('vendor_orders').select('scheduled_at', { count: 'exact' }).eq('sf_schedule_status', 'queued').order('scheduled_at', { ascending: true }).limit(1),
     supabase.from('sf_document_upload_queue').select('created_at', { count: 'exact' }).eq('status', 'pending').order('created_at', { ascending: true }).limit(1),
+    // HD SOF sub-statuses waiting to be written onto their jobs. A backlog here means the
+    // office is looking at jobs that still say "Needed" for forms the customer already has.
+    supabase.from('esign_documents').select('sf_sub_status_queued_at', { count: 'exact' }).eq('sf_sub_status_status', 'queued').order('sf_sub_status_queued_at', { ascending: true }).limit(1),
     supabase.from('sf_sync_runs').select('entity, status, started_at').in('run_type', ['incremental', 'reconcile', 'backfill']).eq('status', 'completed').in('entity', ['jobs', 'estimates', 'invoices', 'calendar_tasks']).order('started_at', { ascending: false }).limit(40),
     supabase.from('ops_health_state').select('condition, state, since, last_alerted_at, detail'),
     supabase.from('user_notification_preferences').select('user_id, notification_types!inner(key)', { count: 'exact', head: true }).eq('is_enabled', true).eq('notification_types.key', 'automation_health'),
@@ -226,6 +229,7 @@ export async function loadHealthSnapshot(supabase: SupabaseClient = db(), curren
       q('lines', 'IPO line items', lines as never, 'updated_at'),
       q('schedule', 'Genie appointments', sched as never, 'scheduled_at'),
       q('docs', 'Signed forms', docs as never, 'created_at'),
+      q('sub_status', 'HD SOF sub-statuses', subStatus as never, 'sf_sub_status_queued_at'),
     ],
     sfSync,
     prevStates: (prev.data ?? []) as Snapshot['prevStates'],

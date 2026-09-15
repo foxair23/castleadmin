@@ -104,6 +104,18 @@ describe('evaluateHealth', () => {
     b.queues[0].oldest_at = minsAgo(now, 25 * 60)
     expect(state(evaluateHealth(b), 'queue_stale:notes')).toBe('red')
   })
+  it('queues: the HD SOF sub-status backlog is watched like every other write queue', () => {
+    // A backlog here means the office is looking at jobs still marked "HD SOF Needed" for
+    // forms the customer already has — the kind of thing nobody notices until someone asks.
+    const now = T('2026-09-15T10:00')
+    const b = base(now)
+    b.queues = [{ key: 'sub_status', label: 'HD SOF sub-statuses', pending: 2, oldest_at: minsAgo(now, 7 * 60) }]
+    expect(state(evaluateHealth(b), 'queue_stale:sub_status')).toBe('amber')
+    b.queues[0].oldest_at = minsAgo(now, 25 * 60)
+    expect(state(evaluateHealth(b), 'queue_stale:sub_status')).toBe('red')
+    b.queues[0].pending = 0
+    expect(state(evaluateHealth(b), 'queue_stale:sub_status')).toBe('green')
+  })
   it('flags two machines reporting in the same hour', () => {
     const b = base(T('2026-09-15T10:00'))
     b.heartbeats.push({ ...b.heartbeats[0], device: 'office-chromebook' })
