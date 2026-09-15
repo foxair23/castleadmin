@@ -130,6 +130,7 @@ function PrepareCard({ llmConfigured, onDone }: { llmConfigured: boolean; onDone
           const parts = [`${r.finished ?? r.candidates ?? 0} finished job${(r.finished ?? r.candidates) === 1 ? '' : 's'} looked at`, `${r.drafted ?? 0} drafted`]
           if (r.scheduled) parts.push(`${r.scheduled} scheduled by autopilot`)
           if (r.wrongCategory) parts.push(`${r.wrongCategory} skipped by category`)
+          if (r.beforeSince) parts.push(`${r.beforeSince} before the posts start date`)
           if (r.alreadyPosted) parts.push(`${r.alreadyPosted} already have a post`)
           if (r.noPhoto) parts.push(`${r.noPhoto} without a usable photo`)
           if (r.skipped) parts.push(`${r.skipped} skipped`)

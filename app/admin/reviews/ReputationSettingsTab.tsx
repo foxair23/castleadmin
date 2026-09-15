@@ -359,6 +359,13 @@ function CsvImport() {
 
 // ── Style examples ──────────────────────────────────────────────────────────
 
+/** A timestamp → the Pacific calendar day it falls on, for a date input. */
+const ptDayOf = (iso: string): string => {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return ''
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t))
+}
+
 const SOURCE: Record<string, string> = { pre_existing: 'Existing Google reply', staff: 'Pasted', import: 'Imported from CSV', human_edit: 'Edited draft', human_approved: 'Approved draft' }
 
 function ReviewStyleExamplesCard({ rows }: { rows: StyleExample[] }) {
@@ -421,7 +428,7 @@ function PostsCard({ settings: s, categories }: { settings: ReputationSettings; 
   const router = useRouter()
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<string | null>(null)
-  const [f, setF] = useState({ cap_posts_weekly: s.cap_posts_weekly, photo_min_score: s.photo_min_score, allowed: s.post_allowed_categories, rules: s.post_cta_map as CtaRule[] })
+  const [f, setF] = useState({ cap_posts_weekly: s.cap_posts_weekly, photo_min_score: s.photo_min_score, allowed: s.post_allowed_categories, rules: s.post_cta_map as CtaRule[], posts_since: ptDayOf(s.posts_since) })
   const allCats = [...new Set([...categories, ...f.allowed])].sort()
   const toggleCat = (c: string) => setF(x => ({ ...x, allowed: x.allowed.includes(c) ? x.allowed.filter(a => a !== c) : [...x.allowed, c] }))
   const setRule = (i: number, patch: Partial<CtaRule>) => setF(x => ({ ...x, rules: x.rules.map((r, j) => j === i ? { ...r, ...patch } : r) }))
@@ -437,8 +444,13 @@ function PostsCard({ settings: s, categories }: { settings: ReputationSettings; 
         <Field label="Photo bar (0–100)" hint="A photo must score at least this to be used without a person allowing it. Scores judge sharpness, framing, whether the work is the subject, and whether a customer, plate or address is visible."><input type="number" className={input} value={f.photo_min_score} onChange={e => setF(x => ({ ...x, photo_min_score: Number(e.target.value) }))} /></Field>
       </div>
       <div className="mt-4">
+        <span className="block text-sm text-gray-700 font-medium mb-1">Only consider jobs finished on or after</span>
+        <p className="text-xs text-gray-400 mb-2">The morning pass never reaches further back than this, so switching posts on does not write about old work. It starts at the day the feature was installed. Running &ldquo;Prepare posts&rdquo; by hand over days you pick ignores this date.</p>
+        <input type="date" className={`${input} w-44`} value={f.posts_since} onChange={e => setF(x => ({ ...x, posts_since: e.target.value }))} />
+      </div>
+      <div className="mt-4">
         <span className="block text-sm text-gray-700 font-medium mb-1">Job categories that can become posts</span>
-        <p className="text-xs text-gray-400 mb-2">Leave every box unticked to allow all categories except warranty, estimate, service-call, callback and no-charge jobs, which never post.</p>
+        <p className="text-xs text-gray-400 mb-2">Leave every box unticked to allow all categories except warranty, estimate, service-call, callback, recall and no-charge jobs, which never post. If most Castle work sits in one of those, tick the ones you do want here — ticking any box means only the ticked categories post.</p>
         <div className="flex flex-wrap gap-2">
           {allCats.map(c => (
             <label key={c} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs cursor-pointer ${f.allowed.includes(c) ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-700'}`}>
@@ -468,7 +480,7 @@ function PostsCard({ settings: s, categories }: { settings: ReputationSettings; 
       <div className="mt-4 flex items-center gap-3">
         <button className={btn} disabled={pending} onClick={() => start(async () => {
           setMsg(null)
-          const r = await saveReputationSettings({ cap_posts_weekly: f.cap_posts_weekly, photo_min_score: f.photo_min_score, post_allowed_categories: f.allowed, post_cta_map: f.rules })
+          const r = await saveReputationSettings({ cap_posts_weekly: f.cap_posts_weekly, photo_min_score: f.photo_min_score, post_allowed_categories: f.allowed, post_cta_map: f.rules, posts_since: f.posts_since })
           setMsg(r.error ?? 'Saved.'); if (!r.error) router.refresh()
         })}>Save posting rules</button>
         {msg && <span className="text-sm text-gray-600">{msg}</span>}

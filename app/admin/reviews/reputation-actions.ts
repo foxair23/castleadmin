@@ -110,7 +110,7 @@ const EDITABLE: ReadonlyArray<keyof ReputationSettings> = [
   'autopilot_positive', 'autopilot_negative', 'sends_paused', 'reply_signature',
   'reply_delay_min_hours', 'reply_delay_max_hours', 'working_window', 'min_gap_minutes', 'max_gap_minutes', 'skip_hour_ratio',
   'cap_new_replies', 'cap_backlog_replies', 'cap_posts', 'ingest_interval_minutes',
-  'autopilot_posts', 'cap_posts_weekly', 'post_allowed_categories', 'post_cta_map', 'photo_min_score',
+  'autopilot_posts', 'cap_posts_weekly', 'post_allowed_categories', 'post_cta_map', 'photo_min_score', 'posts_since',
   'rank_scans_enabled', 'rank_business_match', 'rank_weekly_request_cap', 'rank_default_keywords',
 ]
 
@@ -123,6 +123,13 @@ export async function saveReputationSettings(patch: Partial<ReputationSettings>)
     if ('working_window' in row) row.working_window = normalizeWindow(row.working_window)
     if ('post_cta_map' in row) row.post_cta_map = normalizeCtaMap(row.post_cta_map)
     if ('post_allowed_categories' in row) row.post_allowed_categories = (Array.isArray(row.post_allowed_categories) ? row.post_allowed_categories : []).map(c => String(c).trim()).filter(Boolean)
+    // The posts start date is edited as a PT calendar day; store the PT midnight that begins it.
+    if ('posts_since' in row) {
+      const raw = String(row.posts_since ?? '').trim()
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) { const { ptWallToUtc } = await import('@/lib/reputation/pt-time'); row.posts_since = ptWallToUtc(raw, 0).toISOString() }
+      else if (Number.isNaN(Date.parse(raw))) throw new Error('The posts start date is not a valid date')
+      else row.posts_since = new Date(raw).toISOString()
+    }
     const num = (k: string, lo: number, hi: number) => { if (k in row) { const v = Number(row[k]); if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`${k} must be between ${lo} and ${hi}`); row[k] = v } }
     num('reply_delay_min_hours', 0, 72); num('reply_delay_max_hours', 0, 72)
     num('min_gap_minutes', 1, 600); num('max_gap_minutes', 1, 600); num('skip_hour_ratio', 0, 0.9)
@@ -276,12 +283,13 @@ export async function setPhotoUsableAction(photoId: string, usable: boolean | nu
 }
 
 /** Run the daily pass by hand for one PT day (default yesterday) or a range. */
-export async function preparePostsAction(input: { dateKey?: string; from?: string; to?: string }): Promise<ActionResult & { candidates?: number; drafted?: number; scheduled?: number; noPhoto?: number; skipped?: number; finished?: number; wrongCategory?: number; alreadyPosted?: number; reason?: string; errors?: string[] }> {
+export async function preparePostsAction(input: { dateKey?: string; from?: string; to?: string }): Promise<ActionResult & { candidates?: number; drafted?: number; scheduled?: number; noPhoto?: number; skipped?: number; finished?: number; wrongCategory?: number; alreadyPosted?: number; beforeSince?: number; reason?: string; errors?: string[] }> {
   await assertAdmin()
   return attempt(async () => {
     const { runPostPreparation } = await import('@/lib/reputation/post-drafter')
     const { ptWallToUtc, addPtDays } = await import('@/lib/reputation/pt-time')
-    const opts: Parameters<typeof runPostPreparation>[1] = { deadline: Date.now() + 240_000, limit: 5 }
+    // Days the owner picked are considered whatever the posts start date says; that rail is for the unattended morning pass.
+    const opts: Parameters<typeof runPostPreparation>[1] = { deadline: Date.now() + 240_000, limit: 5, ignorePostsSince: true }
     if (input.from && input.to) { opts.fromIso = ptWallToUtc(input.from, 0).toISOString(); opts.toIso = ptWallToUtc(addPtDays(input.to, 1), 0).toISOString() }
     else if (input.dateKey) opts.dateKey = input.dateKey
     const r = await runPostPreparation(agentDb(), opts)

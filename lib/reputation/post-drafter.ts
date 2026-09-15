@@ -47,30 +47,59 @@ export { categoryAllowed }
 /** Why the jobs in a window did not all become candidates. "0 finished jobs looked at" on
  *  its own tells a person nothing, so every gate keeps a count. */
 export interface CandidateBreakdown {
-  /** Finished, not deleted, not cancelled, and inside the window and the `posts_since` cutoff. */
+  /** Finished, not deleted, not cancelled, inside the window. */
   finished: number
+  /** Dropped because they finished before the posts start date (`posts_since`). */
+  beforeSince: number
   /** Dropped because their category is not one we post about. */
   wrongCategory: number
   /** Dropped because a post for that job already exists. */
   alreadyPosted: number
+  /** The categories that blocked the most jobs, so the office can allow them. */
+  blockedCategories: Array<{ category: string; count: number }>
 }
 
-/** Jobs completed in a UTC window that could become posts, excluding cancelled ones and those with a live post. */
-export async function findPostCandidates(db: SupabaseClient, settings: ReputationSettings, window: { fromIso: string; toIso: string }): Promise<{ jobs: CandidateJob[]; breakdown: CandidateBreakdown }> {
+/** Pure: split the finished jobs into candidates and the reasons the rest were dropped. */
+export function splitCandidates(
+  finished: CandidateJob[],
+  settings: Pick<ReputationSettings, 'posts_since' | 'post_allowed_categories'>,
+  taken: Set<string>,
+  opts: { ignorePostsSince?: boolean } = {},
+): { jobs: CandidateJob[]; breakdown: CandidateBreakdown } {
+  const since = Date.parse(settings.posts_since)
+  const blocked = new Map<string, number>()
+  const breakdown: CandidateBreakdown = { finished: finished.length, beforeSince: 0, wrongCategory: 0, alreadyPosted: 0, blockedCategories: [] }
+  const jobs: CandidateJob[] = []
+  for (const j of finished) {
+    if (!opts.ignorePostsSince && Number.isFinite(since) && Date.parse(j.work_completed_at) < since) { breakdown.beforeSince++; continue }
+    if (!categoryAllowed(j.category, settings.post_allowed_categories)) {
+      breakdown.wrongCategory++
+      const c = (j.category ?? '').trim() || 'no category'
+      blocked.set(c, (blocked.get(c) ?? 0) + 1)
+      continue
+    }
+    if (taken.has(j.id)) { breakdown.alreadyPosted++; continue }
+    jobs.push(j)
+  }
+  breakdown.blockedCategories = [...blocked.entries()].map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count).slice(0, 5)
+  return { jobs, breakdown }
+}
+
+/**
+ * Jobs completed in a UTC window that could become posts, excluding cancelled ones and those with a live post.
+ * The `posts_since` rail is applied here rather than in SQL, so a run can report how many it cost;
+ * a run over days the owner named explicitly skips that rail (it exists for the unattended morning pass).
+ */
+export async function findPostCandidates(db: SupabaseClient, settings: ReputationSettings, window: { fromIso: string; toIso: string }, opts: { ignorePostsSince?: boolean } = {}): Promise<{ jobs: CandidateJob[]; breakdown: CandidateBreakdown }> {
   const { data } = await db.from('sf_jobs').select(JOB_SELECT)
     .not('work_completed_at', 'is', null).gte('work_completed_at', window.fromIso).lt('work_completed_at', window.toIso)
-    .gte('work_completed_at', settings.posts_since)
     .eq('is_deleted', false).not('status', 'in', `(${CANCELLED.map(s => `"${s}"`).join(',')})`)
     .order('work_completed_at', { ascending: false }).limit(300)
   const finished = ((data ?? []) as CandidateJob[])
-  const jobs = finished.filter(j => categoryAllowed(j.category, settings.post_allowed_categories))
-  const breakdown: CandidateBreakdown = { finished: finished.length, wrongCategory: finished.length - jobs.length, alreadyPosted: 0 }
-  if (!jobs.length) return { jobs: [], breakdown }
-  const { data: live } = await db.from('gbp_posts').select('sf_job_id').in('sf_job_id', jobs.map(j => j.id)).in('status', ['draft', 'approved', 'scheduled', 'published'])
+  if (!finished.length) return { jobs: [], breakdown: { finished: 0, beforeSince: 0, wrongCategory: 0, alreadyPosted: 0, blockedCategories: [] } }
+  const { data: live } = await db.from('gbp_posts').select('sf_job_id').in('sf_job_id', finished.map(j => j.id)).in('status', ['draft', 'approved', 'scheduled', 'published'])
   const taken = new Set(((live ?? []) as Array<{ sf_job_id: string }>).map(l => l.sf_job_id))
-  const open = jobs.filter(j => !taken.has(j.id))
-  breakdown.alreadyPosted = jobs.length - open.length
-  return { jobs: open, breakdown }
+  return splitCandidates(finished, settings, taken, opts)
 }
 
 // ── Drafting ────────────────────────────────────────────────────────────────
@@ -221,11 +250,21 @@ export async function preparePostForJob(db: SupabaseClient, job: CandidateJob, d
 
 export interface PostPrepReport extends Partial<CandidateBreakdown> { candidates: number; drafted: number; scheduled: number; noPhoto: number; skipped: number; errors: string[]; reason?: string }
 
+/** Pure: the one sentence for a window whose finished jobs all fell at a gate. */
+export function emptyReason(b: CandidateBreakdown, postsSince: string): string {
+  const day = postsSince.slice(0, 10)
+  const bits: string[] = []
+  if (b.wrongCategory) bits.push(`${b.wrongCategory} in a category that never posts${b.blockedCategories.length ? ` (${b.blockedCategories.map(c => `${c.category} ×${c.count}`).join(', ')})` : ''} — tick the categories you do want in Settings → Profile posts`)
+  if (b.alreadyPosted) bits.push(`${b.alreadyPosted} already have a post`)
+  if (b.beforeSince) bits.push(`${b.beforeSince} finished before the posts start date of ${day}, which you can move in Settings → Profile posts`)
+  return `none of the ${b.finished} finished job(s) qualified — ${bits.join('; ')}`
+}
+
 /**
  * The daily pass: yesterday's finished jobs (PT), best candidates first, up to
  * the daily cap of drafts, unless the weekly cap of posts is already reached.
  */
-export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: string; fromIso?: string; toIso?: string; limit?: number; deadline?: number } = {}): Promise<PostPrepReport> {
+export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: string; fromIso?: string; toIso?: string; limit?: number; deadline?: number; ignorePostsSince?: boolean } = {}): Promise<PostPrepReport> {
   const report: PostPrepReport = { candidates: 0, drafted: 0, scheduled: 0, noPhoto: 0, skipped: 0, errors: [] }
   if (!isLlmConfigured()) return { ...report, reason: 'llm_not_configured' }
   const deps = await loadPostDeps(db)
@@ -242,16 +281,14 @@ export async function runPostPreparation(db: SupabaseClient, opts: { dateKey?: s
   const { count: weekCount } = await db.from('gbp_posts').select('id', { count: 'exact', head: true }).in('status', ['approved', 'scheduled', 'published']).gte('created_at', weekAgo)
   if ((weekCount ?? 0) >= deps.settings.cap_posts_weekly) return { ...report, reason: `the weekly cap of ${deps.settings.cap_posts_weekly} post(s) is already reached — raise it in Settings, or wait` }
 
-  const { jobs: candidates, breakdown } = await findPostCandidates(db, deps.settings, { fromIso, toIso })
+  const { jobs: candidates, breakdown } = await findPostCandidates(db, deps.settings, { fromIso, toIso }, { ignorePostsSince: opts.ignorePostsSince })
   report.candidates = candidates.length
   Object.assign(report, breakdown)
   if (!candidates.length) {
     // Say which gate emptied it, so "nothing happened" is never the whole answer.
     report.reason = breakdown.finished === 0
       ? 'no finished jobs in Service Fusion for those days (a job counts from when it is marked complete)'
-      : breakdown.alreadyPosted === breakdown.finished - breakdown.wrongCategory
-        ? `all ${breakdown.alreadyPosted} finished job(s) already have a post`
-        : `none of the ${breakdown.finished} finished job(s) qualified — ${breakdown.wrongCategory} by category, ${breakdown.alreadyPosted} already posted`
+      : emptyReason(breakdown, deps.settings.posts_since)
     return report
   }
   const limit = opts.limit ?? Math.max(1, deps.settings.cap_posts)
