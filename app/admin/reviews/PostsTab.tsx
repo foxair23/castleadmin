@@ -114,7 +114,7 @@ function PrepareCard({ llmConfigured, onDone }: { llmConfigured: boolean; onDone
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <h2 className="text-sm font-semibold text-gray-900">Prepare posts</h2>
-          <p className="text-xs text-gray-500">Runs by itself every morning for yesterday&rsquo;s finished jobs. Use this to run it now, or to catch up on a range of days (a few jobs at a time).</p>
+          <p className="text-xs text-gray-500">Runs by itself every morning for yesterday&rsquo;s finished jobs. Use this to run it now, or to catch up on a range of days (a few jobs at a time). Days you pick here are used whatever the posts start date in Settings says.</p>
         </div>
         <div className="flex items-center gap-1 text-sm">
           <button onClick={() => setMode('day')} className={`px-2 py-1 rounded border ${mode === 'day' ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-700'}`}>One day</button>
