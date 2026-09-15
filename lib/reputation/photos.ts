@@ -251,9 +251,13 @@ export async function scoreJobPhotos(db: SupabaseClient, sfJobId: string, model:
   }
   if (!loaded.length) return { scored: 0, pairs: 0 }
   content.push({ type: 'text', text: `Job type: ${ctx?.category ?? 'unknown'}${ctx?.description ? `\nJob description: ${ctx.description.slice(0, 300)}` : ''}\n\nScore all ${loaded.length} photos with score_job_photos.` })
+  // Rules the office taught the scorer in the post chat, applied on every run after that.
+  const { listPhotoInstructions } = await import('./knowledge')
+  const taught = await listPhotoInstructions(db).catch(() => [])
+  const system = taught.length ? `${RUBRIC}\n\nRULES THE CASTLE TEAM ADDED (apply all, they win over the general rubric):\n${taught.map(i => `- ${i.text}`).join('\n')}` : RUBRIC
   try {
     const res = await llm().messages.create({
-      model, max_tokens: 1500, system: RUBRIC,
+      model, max_tokens: 1500, system,
       tools: [SCORE_TOOL], tool_choice: { type: 'tool', name: 'score_job_photos' },
       ...(isAdaptiveThinkingModel(model) ? { thinking: { type: 'adaptive' as const }, output_config: { effort: 'low' as const } } : {}),
       messages: [{ role: 'user', content }],
@@ -278,6 +282,12 @@ export async function scoreJobPhotos(db: SupabaseClient, sfJobId: string, model:
   } catch (e) {
     return { scored: 0, pairs: 0, error: describeLlmError(e) }
   }
+}
+
+/** Clear the scores on one job's photos and score them again, so a new rule is applied to work already pulled in. A person's allow/block choices are kept. */
+export async function rescoreJobPhotos(db: SupabaseClient, sfJobId: string, model: string, ctx?: { category?: string | null; description?: string | null }): Promise<ScoreReport> {
+  await db.from('job_photos').update({ score: null, score_reasons: [], shows: null, subject: null, pair_id: null, scored_at: null, updated_at: new Date().toISOString() }).eq('sf_job_id', sfJobId).not('storage_path', 'is', null)
+  return scoreJobPhotos(db, sfJobId, model, ctx)
 }
 
 // ── Selection ───────────────────────────────────────────────────────────────
