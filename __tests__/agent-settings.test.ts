@@ -29,9 +29,9 @@ describe('agent settings', () => {
     expect(isAllowlisted(s, null)).toBe(false)
   })
   it('auto eligibility lists every blocking reason', () => {
-    expect(isAutoEligible(AGENT_DEFAULTS, 'schedule', 'po')).toEqual({ ok: false, reasons: ['auto_off'] })
-    const on = mergeSettings({ auto_respond_enabled: true, paused_tiers: { 'schedule:po': { since: 'x', rate: 0.3 } } })
-    expect(isAutoEligible(on, 'schedule', 'po').reasons).toEqual(['tier_paused'])
+    expect(isAutoEligible(AGENT_DEFAULTS, 'status', 'po')).toEqual({ ok: false, reasons: ['auto_off'] })
+    const on = mergeSettings({ auto_respond_enabled: true, paused_tiers: { 'status:po': { since: 'x', rate: 0.3 } } })
+    expect(isAutoEligible(on, 'status', 'po').reasons).toEqual(['tier_paused'])
     expect(isAutoEligible(on, 'completion', 'po').ok).toBe(true)
     expect(isAutoEligible(on, 'pricing', 'name').reasons).toEqual(['type_not_auto', 'tier_not_auto'])
   })

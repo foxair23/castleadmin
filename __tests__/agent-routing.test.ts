@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { decideRoute, estimateAutoShare, toConfidenceInput, type RoutableReply } from '@/lib/agent/email/routing'
 import { mergeSettings, AGENT_DEFAULTS } from '@/lib/agent/settings'
 
-const good = { resolveStatus: 'matched' as const, resolveTier: 'po' as const, questionType: 'schedule' as const, fullyGrounded: true, unsourcedCount: 0, liveFresh: true, hardFailReasons: [] as string[] }
+const good = { resolveStatus: 'matched' as const, resolveTier: 'po' as const, questionType: 'status' as const, fullyGrounded: true, unsourcedCount: 0, liveFresh: true, hardFailReasons: [] as string[] }
 const NOW = new Date('2026-09-08T10:00:00Z')
 
 describe('decideRoute', () => {
@@ -20,7 +20,7 @@ describe('decideRoute', () => {
   })
 })
 
-const reply = (o: Partial<RoutableReply>): RoutableReply => ({ confidence: 1, question_type: 'schedule', resolve_status: 'matched', resolve_tier: 'po', hard_fail_reasons: [], unsourced_claims: [], live_fetched_at: '2026-09-08T09:00:00Z', ...o })
+const reply = (o: Partial<RoutableReply>): RoutableReply => ({ confidence: 1, question_type: 'status', resolve_status: 'matched', resolve_tier: 'po', hard_fail_reasons: [], unsourced_claims: [], live_fetched_at: '2026-09-08T09:00:00Z', ...o })
 
 describe('estimateAutoShare', () => {
   const recent = [
