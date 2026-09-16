@@ -18,9 +18,22 @@ export function normalizeJobNumber(raw: string | null | undefined): string | nul
   return d.length >= 6 && d.length <= 12 ? d : null
 }
 
-export interface LinkResult { ok: boolean; error?: string; jobNumber?: string; customerName?: string | null; lines?: string }
+export interface LinkResult {
+  ok: boolean; error?: string; jobNumber?: string; customerName?: string | null; lines?: string
+  /** The job is already on another order. The caller confirms, then links again with
+   *  allowShared — deliberately two steps, because sharing is usually a mistake. */
+  needsConfirm?: boolean
+  warnings?: string[]
+}
 
-export async function linkSfJobToOrder(orderId: string, rawJobNumber: string): Promise<LinkResult> {
+export interface LinkOptions {
+  /** Link even though another order already carries this job. Two HD rows really can be one
+   *  SF job — a second door ordered separately, or a Genie and a Clopay order for the same
+   *  visit — and the office needs to say so without the rows being grouped as one house. */
+  allowShared?: boolean
+}
+
+export async function linkSfJobToOrder(orderId: string, rawJobNumber: string, opts: LinkOptions = {}): Promise<LinkResult> {
   const number = normalizeJobNumber(rawJobNumber)
   if (!number) return { ok: false, error: 'Enter the SF job number (digits only).' }
   const supabase = db()
@@ -38,9 +51,14 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string): P
   if (taken && taken.sf_job_id !== job.id) {
     return { ok: false, error: `This house is already linked to SF job #${taken.sf_created_job_number ?? taken.sf_job_id}. Press Unmatch on it first if that is wrong.` }
   }
-  // And one job is one house: refuse to attach a job some other order already owns.
+  // Another order already carries this job. Not an error — two rows can genuinely be one SF
+  // job — but it is worth one confirmation, because far more often it means the wrong number
+  // was typed.
   const { data: other } = await supabase.from('vendor_orders').select('id, external_id').eq('sf_job_id', job.id).neq('id', rootId).limit(1).maybeSingle()
-  if (other) return { ok: false, error: `SF job #${number} is already linked to order ${other.external_id}.` }
+  if (other && !opts.allowShared) {
+    return { ok: false, needsConfirm: true, jobNumber: number, customerName: job.customer_name as string | null,
+      error: `SF job #${number} is already linked to order ${other.external_id}. Link this order to it as well?` }
+  }
 
   const now = new Date().toISOString()
   const { error } = await supabase.from('vendor_orders').update({ sf_job_id: job.id, updated_at: now }).eq('id', rootId)
@@ -51,7 +69,8 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string): P
     await supabase.from('vendor_orders').update({ sf_match_excluded_job_ids: r.sf_match_excluded_job_ids.filter(x => x !== job.id) }).eq('id', r.id)
   }
   await supabase.from('vendor_order_events').insert({
-    order_id: rootId, event_type: 'sf_job_linked', to_value: job.number, detail: { sf_job_id: job.id, method: 'manual', typed: rawJobNumber },
+    order_id: rootId, event_type: 'sf_job_linked', to_value: job.number,
+    detail: { sf_job_id: job.id, method: 'manual', typed: rawJobNumber, shared_with_order_id: other?.id ?? null },
   })
 
   // The reason anyone links a job by hand is to get the IPO lines onto it. Queue them now —
@@ -63,5 +82,13 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string): P
     else if (q.skipped) lines = 'IPO line items not queued (already posted, or the job already carries lines)'
   } catch { /* the link itself succeeded; the button remains */ }
 
-  return { ok: true, jobNumber: job.number as string, customerName: job.customer_name as string | null, lines }
+  const warnings: string[] = []
+  if (other) {
+    // Everything that writes into SF is per-order, so a shared job can be written to twice.
+    // The line queue's live check stops a second post of the items; nothing stops a second
+    // appointment or a second e-sign form, so the office is told to expect one of each.
+    warnings.push(`Also linked to order ${other.external_id} — both rows now show job #${job.number}.`)
+    warnings.push('Send the appointment and the e-sign form from one row only; the job takes line items once.')
+  }
+  return { ok: true, jobNumber: job.number as string, customerName: job.customer_name as string | null, lines, warnings }
 }
