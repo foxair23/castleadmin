@@ -22,3 +22,25 @@ describe('signState once a form is signed on paper', () => {
     expect(signState(doc('cancelled'), 'customer')).toBe('cancelled')
   })
 })
+
+// The "In process" list sorts by how long each one has been waiting, so the oldest is the
+// one to chase. The clock read lives in lib rather than the page because the React purity
+// lint refuses one during render, even server-side.
+import { daysSinceIso } from '@/lib/esign/eligibility'
+
+describe('daysSinceIso', () => {
+  const now = Date.parse('2026-09-16T18:00:00Z')
+  it('counts whole days since the last message', () => {
+    expect(daysSinceIso('2026-09-16T09:00:00Z', now)).toBe(0)
+    expect(daysSinceIso('2026-09-15T09:00:00Z', now)).toBe(1)
+    expect(daysSinceIso('2026-09-09T09:00:00Z', now)).toBe(7)
+  })
+  it('never goes negative when a stamp is slightly ahead of the clock', () => {
+    expect(daysSinceIso('2026-09-16T19:00:00Z', now)).toBe(0)
+  })
+  it('is null for nothing sent yet, or an unparseable stamp', () => {
+    expect(daysSinceIso(null, now)).toBeNull()
+    expect(daysSinceIso(undefined, now)).toBeNull()
+    expect(daysSinceIso('not a date', now)).toBeNull()
+  })
+})

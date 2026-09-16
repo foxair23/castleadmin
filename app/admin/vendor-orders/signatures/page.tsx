@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { daysSinceIso } from '@/lib/esign/eligibility'
 import { redirect } from 'next/navigation'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { signedUrls } from '@/lib/vendor-orders/attachments'
@@ -23,7 +24,7 @@ export default async function SignaturesPage() {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
   const settings = await getEsignSettings('clopay_hd', 'lien_waiver')
   const { data: docs } = await db.from('esign_documents')
-    .select('id, order_id, vendor, doc_type, status, template_key, template_fingerprint, source_attachment_id, sf_job_id, customer_sent_at, customer_asked_at, customer_signed_at, tech_name, tech_sent_at, tech_signed_at, completed_at, sf_uploaded_at, portal_uploaded_at, portal_uploaded_by, prepared_pdf_path, completed_pdf_path, error, created_at, customer_token, tech_token')
+    .select('id, order_id, vendor, doc_type, status, template_key, template_fingerprint, source_attachment_id, sf_job_id, customer_sent_at, customer_asked_at, customer_signed_at, tech_name, tech_sent_at, tech_signed_at, completed_at, sf_uploaded_at, portal_uploaded_at, portal_uploaded_by, signed_offline_at, prepared_pdf_path, completed_pdf_path, error, created_at, customer_token, tech_token')
     .order('created_at', { ascending: false }).limit(500)
   const orderIds = [...new Set((docs ?? []).map(d => d.order_id as string))]
   const { data: orders } = orderIds.length ? await db.from('vendor_orders').select('id, external_id, customer_name, sf_created_job_number, status').in('id', orderIds) : { data: [] }
@@ -32,9 +33,15 @@ export default async function SignaturesPage() {
   const { data: jobs } = jobIds.length ? await db.from('sf_jobs').select('id, number, start_date').in('id', jobIds) : { data: [] }
   const jobById = new Map((jobs ?? []).map(j => [j.id as string, j]))
 
+  // Whole days since the last message we sent on each one. Computed server-side; the clock
+  // read itself lives in lib/esign/eligibility.ts, because the React purity lint refuses one
+  // during render even in a server component.
   const rows: EsignRow[] = (docs ?? []).map(d => {
     const o = orderById.get(d.order_id as string)
     const j = jobById.get((d.sf_job_id as string | null) ?? '')
+    const lastSent = d.customer_signed_at
+      ? (d.tech_sent_at as string | null)
+      : ((d.customer_asked_at as string | null) ?? (d.customer_sent_at as string | null))
     return {
       id: d.id as string, order_id: d.order_id as string, status: d.status as string, template_key: d.template_key as string | null,
       template_fingerprint: d.template_fingerprint as string | null, external_id: (o?.external_id as string | null) ?? null,
@@ -46,6 +53,8 @@ export default async function SignaturesPage() {
       portal_uploaded_by: d.portal_uploaded_by as string | null, has_prepared: !!d.prepared_pdf_path, has_completed: !!d.completed_pdf_path,
       error: d.error as string | null, created_at: d.created_at as string,
       customer_link: `${appUrl()}/sign/${d.customer_token as string}`, tech_link: `${appUrl()}/sign/${d.tech_token as string}`,
+      signed_offline_at: (d.signed_offline_at as string | null) ?? null,
+      days_waiting: daysSinceIso(lastSent),
     }
   })
 

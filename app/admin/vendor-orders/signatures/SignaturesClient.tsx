@@ -11,6 +11,10 @@ export interface EsignRow {
   completed_at: string | null; sf_uploaded_at: string | null; portal_uploaded_at: string | null; portal_uploaded_by: string | null
   has_prepared: boolean; has_completed: boolean; error: string | null; created_at: string
   customer_link: string; tech_link: string
+  signed_offline_at?: string | null
+  /** Whole days since the last message we sent on this one, computed server-side —
+   *  Date.now() during render trips the purity lint, and a day count needs no client clock. */
+  days_waiting?: number | null
 }
 export interface FingerprintRow { fingerprint: string; count: number; template_key: string | null; sample_doc_id: string; sample_external_id: string | null }
 export interface SignedSample { id: string; external_id: string | null; url: string | null; created_at: string }
@@ -35,6 +39,59 @@ const STATUS_LABEL: Record<string, string> = {
 const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : '—'
 const btn = 'text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50'
 const btnDark = 'text-xs px-2.5 py-1 rounded bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50'
+
+// Everything with a live signing link out and nobody finished — the question the office
+// actually asks this page. Longest wait first, because that is the one to chase.
+const IN_PROCESS = ['sent_customer', 'customer_signed', 'sent_tech']
+
+function InProcess({ rows, onCopy }: { rows: EsignRow[]; onCopy: (m: string) => void }) {
+  const live = rows
+    .filter(r => IN_PROCESS.includes(r.status) && !r.portal_uploaded_at)
+    .sort((a, b) => (b.days_waiting ?? 0) - (a.days_waiting ?? 0))
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-gray-900">In process</h2>
+        <span className="text-xs text-gray-500">{live.length === 0 ? 'nothing out with a customer or tech right now' : `${live.length} waiting on a signature`}</span>
+      </div>
+      {live.length > 0 && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="text-left text-gray-500">
+              <th className="py-1 pr-3">Customer</th><th className="py-1 pr-3">Job</th><th className="py-1 pr-3">Waiting on</th>
+              <th className="py-1 pr-3">Sent</th><th className="py-1 pr-3">Waiting</th><th className="py-1 pr-3"></th>
+            </tr></thead>
+            <tbody>{live.map(r => {
+              const onCustomer = !r.customer_signed_at
+              const sent = onCustomer ? (r.customer_asked_at ?? r.customer_sent_at) : r.tech_sent_at
+              const days = r.days_waiting ?? null
+              return (
+                <tr key={r.id} className="border-t border-gray-100">
+                  <td className="py-1.5 pr-3 text-gray-900">{r.customer_name ?? r.external_id ?? '—'}</td>
+                  <td className="py-1.5 pr-3 text-gray-700">{r.sf_job_number ?? '—'}</td>
+                  <td className="py-1.5 pr-3">
+                    <span className={`px-1.5 py-0.5 rounded ${onCustomer ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}`}>
+                      {onCustomer ? 'Customer' : `Technician${r.tech_name ? ` · ${r.tech_name}` : ''}`}
+                    </span>
+                  </td>
+                  <td className="py-1.5 pr-3 text-gray-600">{fmt(sent)}</td>
+                  {/* Amber past a week: the reminder has already gone, so this one needs a person. */}
+                  <td className={`py-1.5 pr-3 ${days != null && days >= 7 ? 'text-amber-700 font-medium' : 'text-gray-600'}`}>
+                    {days == null ? '—' : days === 0 ? 'today' : days === 1 ? '1 day' : `${days} days`}
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    <button className={btn} title={onCustomer ? r.customer_link : r.tech_link}
+                      onClick={() => { navigator.clipboard.writeText(onCustomer ? r.customer_link : r.tech_link); onCopy(`${onCustomer ? 'Customer' : 'Tech'} link copied`) }}>Copy link</button>
+                  </td>
+                </tr>
+              )
+            })}</tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
 
 export default function SignaturesClient({ rows, fingerprints, uninspected, signedSamples, registeredCount, settings }: { rows: EsignRow[]; fingerprints: FingerprintRow[]; uninspected: number; signedSamples: SignedSample[]; registeredCount: number; settings: { enabled: boolean; enabledAt: string | null } }) {
   const [pending, start] = useTransition()
@@ -74,6 +131,8 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
           {msg && <span className="text-xs text-gray-700">{msg}</span>}
         </div>
       </div>
+
+      <InProcess rows={rows} onCopy={setMsg} />
 
       <section className="rounded-lg border border-gray-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-gray-900">Form versions</h2>
