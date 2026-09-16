@@ -26,6 +26,14 @@ export interface AgentSettings {
   allowlist_addresses: string[]
   blocklist_addresses: string[]
 
+  /** What Cassie works on AT ALL. Anything outside this stops right after classification —
+   *  no Service Fusion lookups, no draft, no review row, no question to the team in Chat.
+   *  Separate from auto_question_types, which decides what may send without a person. */
+  handle_question_types: QuestionType[]
+  /** An email that tells us something rather than asking ("staged for pickup on 9/23")
+   *  wants nothing from us; record it and leave it alone. */
+  skip_notifications: boolean
+
   confidence_threshold: number
   auto_question_types: QuestionType[]
   auto_match_tiers: MatchTier[]
@@ -71,6 +79,9 @@ export const AGENT_DEFAULTS: AgentSettings = {
   allowlist_domains: [],
   allowlist_addresses: [],
   blocklist_addresses: [],
+
+  handle_question_types: ['status'],
+  skip_notifications: true,
 
   confidence_threshold: 0.9,
   auto_question_types: ['schedule', 'completion', 'tech', 'status'],
@@ -144,6 +155,14 @@ export function isAllowlisted(s: AgentSettings, fromAddr: string | null | undefi
     const dd = d.trim().toLowerCase().replace(/^@/, '')
     return dd !== '' && (domain === dd || domain.endsWith('.' + dd))
   })
+}
+
+/** Does Cassie touch this email at all? The earliest gate there is: it runs before any
+ *  lookup or model call, so an out-of-scope email costs nothing but the classifier. */
+export function isInScope(s: AgentSettings, questionType: QuestionType, isNotification: boolean): { ok: boolean; reason?: string } {
+  if (isNotification && s.skip_notifications) return { ok: false, reason: 'notification — nothing is being asked' }
+  if (!s.handle_question_types.includes(questionType)) return { ok: false, reason: `"${questionType}" is not a type Cassie handles` }
+  return { ok: true }
 }
 
 /** Auto-send eligibility for a (question type, tier) pair — before confidence is even computed. */

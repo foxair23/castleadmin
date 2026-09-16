@@ -17,6 +17,8 @@ export interface Classification {
   extraPos: string[]
   /** More than one distinct question → never auto-sent (PRD §6.3). */
   isMultiPart: boolean
+  /** The email TELLS us something and asks nothing — "staged for pickup on 9/23". */
+  isNotification: boolean
   /** The sender asked whether they are talking to a bot / wants a human. */
   asksForHuman: boolean
   model: string
@@ -29,7 +31,7 @@ const TOOL: Anthropic.Tool = {
   input_schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['question_type', 'summary', 'customer_name', 'extra_pos', 'is_multi_part', 'asks_for_human'],
+    required: ['question_type', 'summary', 'customer_name', 'extra_pos', 'is_multi_part', 'asks_for_human', 'is_notification'],
     properties: {
       question_type: {
         type: 'string', enum: QUESTION_TYPES,
@@ -40,6 +42,7 @@ const TOOL: Anthropic.Tool = {
       extra_pos: { type: 'array', items: { type: 'string' }, description: 'PO, order, or job numbers mentioned in the email (digits only). Empty if none.' },
       is_multi_part: { type: 'boolean', description: 'True if the sender asks more than one distinct question.' },
       asks_for_human: { type: 'boolean', description: 'True if the sender asks to speak to a person / manager or asks whether they are talking to a bot.' },
+      is_notification: { type: 'boolean', description: 'True when the email only TELLS us something and asks nothing of us — "Order 181195118 has been staged for pickup on 9/23", "the door has arrived and is available for pickup", a delivery or status announcement. False whenever it asks a question, requests an action, or needs any answer from us, even a short one.' },
     },
   },
 }
@@ -56,13 +59,14 @@ export async function classifyInquiry(input: { subject: string; body: string; fr
   })
   const tu = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
   if (!tu) return null
-  const i = tu.input as { question_type: QuestionType; summary: string; customer_name: string | null; extra_pos: string[]; is_multi_part: boolean; asks_for_human: boolean }
+  const i = tu.input as { question_type: QuestionType; summary: string; customer_name: string | null; extra_pos: string[]; is_multi_part: boolean; asks_for_human: boolean; is_notification?: boolean }
   return {
     questionType: QUESTION_TYPES.includes(i.question_type) ? i.question_type : 'other',
     summary: (i.summary ?? '').trim().slice(0, 300),
     customerName: i.customer_name?.trim() || null,
     extraPos: (i.extra_pos ?? []).map(p => String(p).replace(/\D/g, '')).filter(p => p.length >= 6),
     isMultiPart: !!i.is_multi_part || i.question_type === 'multi',
+    isNotification: !!i.is_notification,
     asksForHuman: !!i.asks_for_human,
     model: res.model,
   }

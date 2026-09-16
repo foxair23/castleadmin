@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { AgentSettings, QuestionType } from '@/lib/agent/settings'
+import { isInScope, type AgentSettings, type QuestionType } from '@/lib/agent/settings'
 import { isLlmConfigured, describeLlmError } from '@/lib/agent/llm'
 import { getActiveCharter, listInstructions, listStyleExamples } from '@/lib/agent/knowledge'
 import type { LiveJobFacts } from '@/lib/agent/live-refresh'
@@ -83,15 +83,24 @@ export async function runComposer(db: SupabaseClient, settings: AgentSettings, a
   }
 
   // 3a. Classify.
-  let questionType: QuestionType = 'other', summary = a.email.subject, customerName: string | null = null, extraPos: string[] = [], multi = false, asksHuman = false
+  let questionType: QuestionType = 'other', summary = a.email.subject, customerName: string | null = null, extraPos: string[] = [], multi = false, asksHuman = false, isNotification = false
   try {
     const c = await classifyInquiry({ subject: a.email.subject, body: a.cleanBody, fromDomain, model: settings.classifier_model })
-    if (c) { questionType = c.questionType; summary = c.summary || summary; customerName = c.customerName; extraPos = c.extraPos; multi = c.isMultiPart; asksHuman = c.asksForHuman }
+    if (c) { questionType = c.questionType; summary = c.summary || summary; customerName = c.customerName; extraPos = c.extraPos; multi = c.isMultiPart; asksHuman = c.asksForHuman; isNotification = c.isNotification }
   } catch (e) {
     const err = describeLlmError(e)
     await db.from('agent_email_replies').insert({ ...base, status: 'failed', error: `classify: ${err}` })
     return { outcome: 'error', detail: `classify: ${err}` }
   }
+  // Is this hers to work on at all? The earliest gate there is: everything below costs
+  // Service Fusion reads and model calls, and an out-of-scope email should cost neither.
+  // Nothing is sent, drafted, queued for review, or asked of the team — it is recorded and
+  // left, and shows in Activity so the office can see what she declined and widen the list.
+  if (!opts.chatAnswer) {
+    const scope = isInScope(settings, questionType, isNotification)
+    if (!scope.ok) return { outcome: 'out_of_scope', detail: `${scope.reason}. ${summary}`.slice(0, 500) }
+  }
+
   // The partner's numbers, the classifier's, and — when a team member has answered in
   // Chat — theirs too. "It might be PO 74491444" is a lookup to run, not a phrase to relay.
   const partnerPos = [...new Set([...a.identifiers.pos, ...extraPos])]

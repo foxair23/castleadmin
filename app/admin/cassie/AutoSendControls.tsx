@@ -24,6 +24,23 @@ const FOCUS: { key: QuestionType; label: string; hint: string }[] = [
   { key: 'tech', label: 'Which technician is assigned?', hint: 'names from the job' },
   { key: 'status', label: 'What is the current job status?', hint: 'status + sub-status' },
 ]
+// Every type the classifier can assign, so the office can widen her remit without a deploy.
+// Ordered by how much of the real mail each one accounts for, most first.
+const ALL_TYPES: { key: QuestionType; label: string; hint: string }[] = [
+  { key: 'status', label: 'Status update', hint: '"Can I get an update on PO 69427561?"' },
+  { key: 'schedule', label: 'Scheduling', hint: '"Do you have an install date for this customer?"' },
+  { key: 'completion', label: 'Completion', hint: 'has the work been done, and when' },
+  { key: 'tech', label: 'Technician', hint: 'who is assigned' },
+  { key: 'ship_date', label: 'Ship / pickup date', hint: 'when material leaves or lands' },
+  { key: 'material', label: 'Material', hint: 'damage, defects, replacement parts' },
+  { key: 'other', label: 'Other', hint: 'mostly Clopay asking us for an order number' },
+  { key: 'reschedule', label: 'Reschedule request', hint: 'a change she must never agree to' },
+  { key: 'complaint', label: 'Complaint', hint: 'trip charges, disputes — needs a person' },
+  { key: 'pricing', label: 'Pricing', hint: 'off limits by the charter' },
+  { key: 'warranty', label: 'Warranty', hint: 'off limits by the charter' },
+  { key: 'multi', label: 'Several questions at once', hint: 'rarely answerable in full' },
+]
+
 const TIERS: { key: MatchTier; label: string; hint: string }[] = [
   { key: 'po', label: 'PO / order number → exactly one job', hint: 'the only unambiguous identifier partners give' },
   { key: 'name', label: 'Customer name → exactly one active or recent job', hint: 'weaker; enable after PO sends prove clean' },
@@ -59,6 +76,8 @@ export function AutoSendCard({ settings: s, items, confusionRates }: { settings:
   const [msg, setMsg] = useState<string | null>(null)
   const [threshold, setThreshold] = useState(s.confidence_threshold)
   const [types, setTypes] = useState<QuestionType[]>(s.auto_question_types)
+  const [handled, setHandled] = useState<QuestionType[]>(s.handle_question_types)
+  const [skipNotes, setSkipNotes] = useState<boolean>(s.skip_notifications)
   const [tiers, setTiers] = useState<MatchTier[]>(s.auto_match_tiers)
   const [hold, setHold] = useState(s.hold_minutes)
   const [confThreshold, setConfThreshold] = useState(s.confusion_threshold)
@@ -72,7 +91,7 @@ export function AutoSendCard({ settings: s, items, confusionRates }: { settings:
     return items.filter(i => i.confidence != null && Date.parse(i.created_at) >= cutoff)
   }, [items])
   const est = useMemo(() => estimateAutoShare(recent, { ...s, confidence_threshold: threshold, auto_question_types: types, auto_match_tiers: tiers }), [recent, s, threshold, types, tiers])
-  const dirty = threshold !== s.confidence_threshold || hold !== s.hold_minutes || types.join() !== s.auto_question_types.join() || tiers.join() !== s.auto_match_tiers.join() || confThreshold !== s.confusion_threshold || confMin !== s.confusion_min_sample
+  const dirty = handled.join() !== s.handle_question_types.join() || skipNotes !== s.skip_notifications || threshold !== s.confidence_threshold || hold !== s.hold_minutes || types.join() !== s.auto_question_types.join() || tiers.join() !== s.auto_match_tiers.join() || confThreshold !== s.confusion_threshold || confMin !== s.confusion_min_sample
   const paused = Object.entries(s.paused_tiers)
 
   return (
@@ -102,7 +121,23 @@ export function AutoSendCard({ settings: s, items, confusionRates }: { settings:
 
         <div className="space-y-4">
           <div>
+            <div className="text-sm text-gray-700 font-medium mb-1">What Cassie works on</div>
+            <p className="text-xs text-gray-500 mb-2">
+              Anything unticked she leaves alone entirely: no job lookup, no draft, nothing in the review queue, no question to the team in Chat.
+              It is recorded on the Activity tab as out of scope, so you can see what she passed over. Widen this as you train her on each kind.
+            </p>
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">{ALL_TYPES.map(f => (
+              <li key={f.key}><label className="flex items-start gap-2 text-sm text-gray-800"><input type="checkbox" className="mt-1" checked={handled.includes(f.key)} onChange={e => setHandled(t => e.target.checked ? [...t, f.key] : t.filter(x => x !== f.key))} /><span>{f.label} <span className="text-xs text-gray-400">{f.hint}</span></span></label></li>
+            ))}</ul>
+            <label className="mt-2 flex items-start gap-2 text-sm text-gray-800">
+              <input type="checkbox" className="mt-1" checked={skipNotes} onChange={e => setSkipNotes(e.target.checked)} />
+              <span>Ignore emails that only tell us something <span className="text-xs text-gray-400">&ldquo;Order 181195118 has been staged for pickup on 9/23&rdquo; asks nothing, so she does nothing — whatever type it lands in</span></span>
+            </label>
+            {handled.length === 0 && <p className="text-xs text-amber-700 mt-2">Nothing ticked: Cassie will read her mail and act on none of it.</p>}
+          </div>
+          <div>
             <div className="text-sm text-gray-700 font-medium mb-1">Auto-send focus area</div>
+            <p className="text-xs text-gray-500 mb-1">Of the kinds she works on, which may go out without you. A type has to be ticked above before this can apply to it.</p>
             <ul className="space-y-1">{FOCUS.map(f => (
               <li key={f.key}><label className="flex items-start gap-2 text-sm text-gray-800"><input type="checkbox" className="mt-1" checked={types.includes(f.key)} onChange={e => setTypes(t => e.target.checked ? [...t, f.key] : t.filter(x => x !== f.key))} /><span>{f.label} <span className="text-xs text-gray-400">{f.hint}</span></span></label></li>
             ))}</ul>
@@ -148,7 +183,7 @@ export function AutoSendCard({ settings: s, items, confusionRates }: { settings:
       <div className="mt-4 flex items-center gap-3">
         <button className={btn} disabled={pending || !dirty} onClick={() => start(async () => {
           setMsg(null)
-          try { await saveAgentSettings({ confidence_threshold: threshold, auto_question_types: types, auto_match_tiers: tiers, hold_minutes: hold, confusion_threshold: confThreshold, confusion_min_sample: confMin }); setMsg('Saved.'); router.refresh() } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
+          try { await saveAgentSettings({ handle_question_types: handled, skip_notifications: skipNotes, confidence_threshold: threshold, auto_question_types: types, auto_match_tiers: tiers, hold_minutes: hold, confusion_threshold: confThreshold, confusion_min_sample: confMin }); setMsg('Saved.'); router.refresh() } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
         })}>Save auto-send settings</button>
         {msg && <span className={`text-sm ${msg === 'Saved.' ? 'text-green-700' : 'text-red-700'}`}>{msg}</span>}
       </div>
