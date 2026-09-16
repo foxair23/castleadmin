@@ -25,10 +25,26 @@ export async function resolveTechForJob(sfJobId: string, supabase: SupabaseClien
   if (!links?.length) return null
   const ids = links.map(l => String(l.tech_id))
   const { data: techs } = await supabase.from('sf_techs').select('id, first_name, last_name, email, phone_1, phone_2').in('id', ids)
+
+  // The mobile on the Castle profile wins over whatever is on the Service Fusion tech
+  // record. sf_techs.phone_1/phone_2 is a field nobody here curates for this, so a stale
+  // one texted a signing link to the wrong place and a missing one sent nothing at all.
+  // Falls back to SF so a tech without a mobile set yet is still reachable — once every
+  // technician has one in Manage Technicians, the fallback can go.
+  const { data: profiles } = await supabase.from('profiles')
+    .select('sf_technician_id, mobile_phone, full_name')
+    .in('sf_technician_id', ids).eq('is_active', true)
+  const mobileByTech = new Map<string, { phone: string | null; name: string | null }>()
+  for (const p of (profiles ?? []) as Array<{ sf_technician_id: string | null; mobile_phone: string | null; full_name: string | null }>) {
+    if (!p.sf_technician_id) continue
+    mobileByTech.set(String(p.sf_technician_id), { phone: (p.mobile_phone ?? '').trim() || null, name: p.full_name })
+  }
+
   for (const l of links) {
     const t = (techs ?? []).find(x => String(x.id) === String(l.tech_id))
-    const name = [t?.first_name ?? l.tech_first_name, t?.last_name ?? l.tech_last_name].filter(Boolean).join(' ') || `Tech ${l.tech_id}`
-    const phone = (t?.phone_1 as string | null) || (t?.phone_2 as string | null) || null
+    const own = mobileByTech.get(String(l.tech_id))
+    const name = own?.name || [t?.first_name ?? l.tech_first_name, t?.last_name ?? l.tech_last_name].filter(Boolean).join(' ') || `Tech ${l.tech_id}`
+    const phone = own?.phone || (t?.phone_1 as string | null) || (t?.phone_2 as string | null) || null
     const email = (t?.email as string | null) || null
     if (phone || email) return { id: String(l.tech_id), name, phone, email }
   }
