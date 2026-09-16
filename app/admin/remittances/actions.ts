@@ -48,6 +48,15 @@ export async function assignLineJobAction(lineId: string, opts: { jobId?: string
   return res.ok ? { ok: true } : { error: res.error }
 }
 
+/** Wrong job on a line: take it off, and keep the matcher from putting it back. */
+export async function unassignLineJobAction(lineId: string): Promise<{ ok?: boolean; error?: string }> {
+  if (!(await isAdmin())) return { error: 'Not authorized.' }
+  const { unassignLineJob } = await import('@/lib/remittance/engine')
+  const res = await unassignLineJob(lineId)
+  if (res.ok) revalidatePath('/admin/remittances')
+  return res.ok ? { ok: true } : { error: res.error }
+}
+
 // Build the exact SF payload for a line WITHOUT posting (dry run).
 export async function previewLineAction(lineId: string): Promise<{ preview?: PaymentPreview; error?: string }> {
   if (!(await isAdmin())) return { error: 'Not authorized.' }
