@@ -16,6 +16,14 @@ interface Tech {
   mobile_phone: string | null
 }
 
+// Stored as the admin typed it, so display normalizes rather than the database.
+function formatMobile(raw: string): string {
+  const d = raw.replace(/\D/g, '')
+  const ten = d.length === 11 && d.startsWith('1') ? d.slice(1) : d
+  if (ten.length !== 10) return raw
+  return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`
+}
+
 interface NewTechForm {
   full_name: string
   email: string
@@ -344,6 +352,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Email</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Mobile</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Role</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-600">Status</th>
                 <th className="px-4 py-3"></th>
@@ -352,7 +361,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
             <tbody className="divide-y divide-gray-100">
               {techs.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-center py-8 text-gray-400 text-sm">
+                  <td colSpan={6} className="text-center py-8 text-gray-400 text-sm">
                     No users yet. Add one above.
                   </td>
                 </tr>
@@ -379,6 +388,39 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-sm">{tech.email}</td>
+                    <td className="px-4 py-3 text-sm">
+                      {mobileId === tech.id ? (
+                        <div className="flex gap-1 items-center">
+                          <input
+                            type="tel"
+                            autoFocus
+                            value={mobileForm[tech.id] ?? ''}
+                            onChange={e => setMobileForm(f => ({ ...f, [tech.id]: e.target.value }))}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') handleSaveMobile(tech.id)
+                              if (e.key === 'Escape') { setMobileId(null); setMobileForm({}) }
+                            }}
+                            placeholder="(619) 555-0134"
+                            className="border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 w-32 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <button onClick={() => handleSaveMobile(tech.id)} className="text-blue-600 hover:underline text-xs">Save</button>
+                          <button onClick={() => { setMobileId(null); setMobileForm({}) }} className="text-gray-400 hover:underline text-xs">Cancel</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setMobileId(tech.id)
+                            setMobileForm(f => ({ ...f, [tech.id]: tech.mobile_phone ?? '' }))
+                            setEmailingId(null); setResetingId(null); setBonusId(null)
+                            setError('')
+                          }}
+                          title="Where e-sign texts their signing link. Used instead of the number on their Service Fusion record."
+                          className={tech.mobile_phone ? 'text-gray-700 hover:underline' : 'text-blue-600 hover:underline text-xs'}
+                        >
+                          {tech.mobile_phone ? formatMobile(tech.mobile_phone) : 'Add'}
+                        </button>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <select
                         value={tech.role}
@@ -434,17 +476,6 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                         )}
                         <button
                           onClick={() => {
-                            setMobileId(mobileId === tech.id ? null : tech.id)
-                            setMobileForm(f => ({ ...f, [tech.id]: tech.mobile_phone ?? '' }))
-                            setEmailingId(null); setResetingId(null); setBonusId(null)
-                            setError('')
-                          }}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {tech.mobile_phone ? 'Mobile' : 'Add Mobile'}
-                        </button>
-                        <button
-                          onClick={() => {
                             setEmailingId(emailingId === tech.id ? null : tech.id)
                             setResetingId(null)
                             setBonusId(null)
@@ -476,28 +507,9 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                       </div>
                     </td>
                   </tr>
-                  {mobileId === tech.id && (
-                    <tr key={`${tech.id}-mobile`}>
-                      <td colSpan={5} className="bg-blue-50 px-4 py-3">
-                        <div className="flex gap-2 items-center flex-wrap">
-                          <label className="text-xs text-gray-600 whitespace-nowrap">Mobile number:</label>
-                          <input
-                            type="tel"
-                            value={mobileForm[tech.id] ?? ''}
-                            onChange={e => setMobileForm(f => ({ ...f, [tech.id]: e.target.value }))}
-                            placeholder="(619) 555-0134"
-                            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-44 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                          <span className="text-xs text-gray-400">Where e-sign texts their signing link. Used instead of the number on their Service Fusion record.</span>
-                          <button onClick={() => handleSaveMobile(tech.id)} className="bg-blue-600 text-white rounded px-3 py-1.5 text-xs hover:bg-blue-700">Save Mobile</button>
-                          <button onClick={() => { setMobileId(null); setMobileForm({}) }} className="text-gray-500 hover:underline text-xs">Cancel</button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
                   {bonusId === tech.id && (
                     <tr key={`${tech.id}-bonus`}>
-                      <td colSpan={4} className="bg-purple-50 px-4 py-3">
+                      <td colSpan={5} className="bg-purple-50 px-4 py-3">
                         <div className="flex gap-2 items-center flex-wrap">
                           <label className="text-xs text-gray-600 whitespace-nowrap">Weekly bonus ($):</label>
                           <input
@@ -527,7 +539,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                   )}
                   {emailingId === tech.id && (
                     <tr key={`${tech.id}-email`}>
-                      <td colSpan={4} className="bg-blue-50 px-4 py-3">
+                      <td colSpan={5} className="bg-blue-50 px-4 py-3">
                         <div className="flex gap-2 items-center">
                           <label className="text-xs text-gray-600 whitespace-nowrap">New email:</label>
                           <input
@@ -555,7 +567,7 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                   )}
                   {resetingId === tech.id && (
                     <tr key={`${tech.id}-reset`}>
-                      <td colSpan={4} className="bg-yellow-50 px-4 py-3">
+                      <td colSpan={5} className="bg-yellow-50 px-4 py-3">
                         <div className="flex gap-2 items-center">
                           <label className="text-xs text-gray-600 whitespace-nowrap">New password:</label>
                           <input
