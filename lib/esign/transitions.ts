@@ -24,7 +24,9 @@ const CUSTOMER_MAY_SIGN = ['prepared', 'sent_customer']
 const TECH_MAY_SIGN = ['customer_signed', 'sent_tech']
 
 export function signState(doc: SignDoc, scope: SignScope): SignState {
-  if (doc.status === 'cancelled') return 'cancelled'
+  // Signed on paper in front of the tech: the link a customer may still have in their inbox
+  // must not take a second signature for the same form.
+  if (doc.status === 'cancelled' || doc.status === 'signed_offline') return 'cancelled'
   if (scope === 'customer') {
     if (doc.customer_signed_at) return 'already_signed'
     return CUSTOMER_MAY_SIGN.includes(doc.status) ? 'ready' : 'not_ready'

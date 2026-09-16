@@ -123,6 +123,18 @@ export async function cancelEsignAction(id: string, restore = false): Promise<{ 
   return r
 }
 
+/** Signed on paper in front of the tech: stop the e-sign series, keep the Clopay step. */
+export async function markSignedOfflineAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  if (!(await assertAdmin())) return { ok: false, error: 'admin only' }
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const name = user ? ((await supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle()).data?.full_name as string | null) : null
+  const { markSignedOffline } = await import('@/lib/esign/documents')
+  const r = await markSignedOffline(id, name)
+  if (r.ok) { revalidatePath(PATH); revalidatePath('/admin/vendor-orders'); revalidatePath('/admin/action-items') }
+  return r
+}
+
 /** The classifier missed one: treat this stored attachment as the blank lien waiver. */
 export async function adoptAttachmentAsWaiverAction(attachmentId: string): Promise<{ ok: boolean; docId?: string; error?: string }> {
   if (!(await assertAdmin())) return { ok: false, error: 'admin only' }

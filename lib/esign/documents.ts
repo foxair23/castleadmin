@@ -121,3 +121,25 @@ export async function clearEsignFileError(attachmentId: string): Promise<void> {
   await supabase.from('esign_documents').update({ error: null, updated_at: new Date().toISOString() })
     .eq('source_attachment_id', attachmentId).eq('status', 'found').not('error', 'is', null)
 }
+
+/** The customer signed the paper copy in front of the technician.
+ *
+ *  Stops every customer and technician message at once, like a cancellation — but NOT a
+ *  cancellation: Home Depot still wants the signed sheet in Clopay, so it stays on the
+ *  "Upload SOF to Clopay" list. Cancelling instead would take it off that list and leave
+ *  the paper copy with nothing chasing it. */
+export async function markSignedOffline(docId: string, byName: string | null, supabase: SupabaseClient = db()): Promise<{ ok: boolean; error?: string }> {
+  const { data: doc } = await supabase.from('esign_documents').select('id, order_id, status').eq('id', docId).maybeSingle()
+  if (!doc) return { ok: false, error: 'Document not found.' }
+  const status = doc.status as string
+  if (status === 'signed_offline') return { ok: true }
+  if (['sf_uploaded', 'portal_uploaded'].includes(status)) return { ok: false, error: 'Already filed — nothing to stop.' }
+  if (status === 'cancelled') return { ok: false, error: 'This one is cancelled; restore it first.' }
+  const now = new Date().toISOString()
+  await supabase.from('esign_documents').update({ status: 'signed_offline', signed_offline_at: now, signed_offline_by: byName ?? 'office', updated_at: now }).eq('id', docId)
+  await supabase.from('vendor_order_events').insert({
+    order_id: doc.order_id, event_type: 'esign_signed_offline', to_value: byName ?? 'office',
+    detail: { doc_id: docId, from_status: status },
+  })
+  return { ok: true }
+}
