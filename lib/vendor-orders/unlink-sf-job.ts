@@ -6,9 +6,12 @@ import { resolveSfJobMatches } from './sf-match'
 //    creation): cleared on every row of the house.
 //  - A COMPUTED match (PO / name / email / phone): nothing to clear — instead the rejected
 //    job id is recorded on the house so the matcher never returns it for this order again.
-// Both are done every time, so whichever way the wrong job got there, it stays gone. What
-// is NOT undone: anything already written INTO Service Fusion (IPO line items, an
-// appointment, a signed form) — the result says so, so the office can clean the job by hand.
+//  - A job Castle Admin CREATED (sf_created_job_number): the marker is cleared too, and the
+//    order is taken off autopilot permanently, so nothing auto-creates a replacement while
+//    the wrong job is still in SF. The result says to delete that job in SF by hand.
+// Whichever way the wrong job got there, it stays gone. What is NOT undone: anything already
+// written INTO Service Fusion (IPO line items, an appointment, a signed form, the job itself)
+// — the result says so, so the office can clean the job up by hand.
 
 function db(): SupabaseClient {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
@@ -38,22 +41,31 @@ export async function unmatchSfJobFromOrder(orderId: string, userId?: string | n
     const matches = await resolveSfJobMatches(supabase, house)
     jobId = house.map(r => matches.get(r.id)?.sfJobId).find(Boolean) ?? null
   }
-  if (!jobId) return { ok: false, error: 'No SF job is matched to this order.' }
+  // A job we just created shows as "pending sync" until the mirror catches up — there is no
+  // sf_jobs row to point at yet, but the number on the row is still the thing to undo.
+  const createdNumber = house.map(r => r.sf_created_job_number).find(Boolean) ?? null
+  if (!jobId && !createdNumber) return { ok: false, error: 'No SF job is matched to this order.' }
 
-  const { data: job } = await supabase.from('sf_jobs').select('id, number').eq('id', jobId).maybeSingle()
-  const jobNumber = (job?.number as string | null) ?? null
-  // A job Castle Admin created FROM this order is this order's job by construction; unmatching
-  // it would let autopilot create a second one for the same house.
-  if (jobNumber && house.some(r => r.sf_created_job_number === jobNumber)) {
-    return { ok: false, error: `SF job #${jobNumber} was created from this order by Castle Admin, so it cannot be unmatched here. If it is wrong, delete the job in Service Fusion first.` }
-  }
+  const { data: job } = jobId
+    ? await supabase.from('sf_jobs').select('id, number').eq('id', jobId).maybeSingle()
+    : { data: null }
+  const jobNumber = (job?.number as string | null) ?? createdNumber
+  // Castle Admin created this job. Unmatching is allowed — the office does sometimes create
+  // one against the wrong house — but the job itself lives in SF and only a person can remove
+  // it there, so say so, and keep autopilot from filling the hole with a duplicate.
+  const createdHere = !!jobNumber && house.some(r => r.sf_created_job_number === jobNumber)
 
   const now = new Date().toISOString()
   const warnings: string[] = []
   for (const r of house) {
-    const excluded = Array.from(new Set([...(r.sf_match_excluded_job_ids ?? []), jobId]))
-    const patch: Record<string, unknown> = { sf_match_excluded_job_ids: excluded, updated_at: now }
-    if (r.sf_job_id === jobId) patch.sf_job_id = null
+    // Off autopilot for good: a human has now overruled the match on this house once.
+    const patch: Record<string, unknown> = { updated_at: now, sf_autopilot_blocked_at: now }
+    if (jobId) patch.sf_match_excluded_job_ids = Array.from(new Set([...(r.sf_match_excluded_job_ids ?? []), jobId]))
+    if (jobId && r.sf_job_id === jobId) patch.sf_job_id = null
+    else if (!jobId && r.sf_job_id) patch.sf_job_id = null
+    // The create marker must go with it, or the row keeps claiming a job it is no longer
+    // linked to and the nudge/action-item sweeps chase a number that points nowhere.
+    if (r.sf_created_job_number && r.sf_created_job_number === jobNumber) patch.sf_created_job_number = null
     // Work still waiting to go onto the wrong job is cancelled; work already posted is not.
     if (r.sf_lines_status === 'queued') { patch.sf_lines_status = null; patch.sf_lines_sync_note = `line items unqueued — job #${jobNumber ?? jobId} unmatched` }
     if (r.sf_schedule_status === 'queued') { patch.sf_schedule_status = null; patch.sf_schedule_sync_note = `appointment unqueued — job #${jobNumber ?? jobId} unmatched` }
@@ -63,9 +75,16 @@ export async function unmatchSfJobFromOrder(orderId: string, userId?: string | n
     if (r.sf_schedule_status === 'posted') warnings.push(`The appointment was already written to job #${jobNumber ?? jobId} in Service Fusion.`)
   }
 
+  if (createdHere) {
+    warnings.unshift(`Castle Admin created SF job #${jobNumber} — it is still in Service Fusion. Delete it there too, or it stays on the board as a duplicate.`)
+    warnings.push('This order will not auto-create another SF job; use "+ Create SF Job" when you are ready.')
+  }
+
   // The e-sign form for this house pointed at the same job: forget it so the next sweep
   // re-links (or holds) rather than sending the customer a form for someone else's job.
-  const { data: docs } = await supabase.from('esign_documents').select('id, status').eq('order_id', rootId).eq('sf_job_id', jobId)
+  const { data: docs } = jobId
+    ? await supabase.from('esign_documents').select('id, status').eq('order_id', rootId).eq('sf_job_id', jobId)
+    : { data: [] }
   for (const d of (docs ?? []) as Array<{ id: string; status: string }>) {
     await supabase.from('esign_documents').update({ sf_job_id: null, updated_at: now }).eq('id', d.id)
     if (['finalized', 'uploaded', 'portal_uploaded'].includes(d.status)) warnings.push(`The signed form was already filed against job #${jobNumber ?? jobId}.`)
@@ -73,7 +92,7 @@ export async function unmatchSfJobFromOrder(orderId: string, userId?: string | n
 
   await supabase.from('vendor_order_events').insert({
     order_id: rootId, event_type: 'sf_job_unlinked', from_value: jobNumber ?? jobId, to_value: null,
-    detail: { sf_job_id: jobId, method: 'manual', by: userId ?? null },
+    detail: { sf_job_id: jobId, method: 'manual', by: userId ?? null, created_by_castle: createdHere },
   })
   return { ok: true, jobNumber, warnings: Array.from(new Set(warnings)) }
 }

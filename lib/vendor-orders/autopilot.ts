@@ -7,6 +7,9 @@ import { resolveSfJobMatches } from './sf-match'
 //   • only orders first seen AT/AFTER enabled_at (turning it on ignores history)
 //   • only active orders (not Cancelled / Closed / Completed)
 //   • not already created by us (sf_created_job_number null) or linked (sf_job_id null)
+//   • never unmatched by hand (sf_autopilot_blocked_at null) — an admin who unmatched this
+//     house is done with automation for it; re-creating would duplicate the job they are
+//     about to delete in SF
 //   • not already matching an existing SF job (PO/name/email/phone) — no duplicates
 //   • capped per run, gentle pacing — so a burst can't hammer SF
 
@@ -58,6 +61,7 @@ export async function runVendorAutopilot(vendor: string): Promise<AutopilotRunRe
     .eq('vendor', vendor)
     .is('sf_job_id', null)
     .is('sf_created_job_number', null)
+    .is('sf_autopilot_blocked_at', null)
     // Multi-door jobs: only a group's PRIMARY is eligible. Each door is its own Clopay
     // order with its own PO, but they're one house / one crew visit — and the office
     // already books them as ONE SF job carrying every PO. Without this, a 3-door job
