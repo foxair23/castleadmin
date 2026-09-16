@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction, resetSignatureAction, linkEsignJobsAction } from '../esign-actions'
+import { prepareEsignDocAction, runPrepareSweepAction, classifyBacklogAction, inspectEsignDocAction, setEsignSettingsAction, sendEsignNowAction, runEsignSweepAction, resetSignatureAction, linkEsignJobsAction, markSignedOfflineAction } from '../esign-actions'
 
 export interface EsignRow {
   id: string; order_id: string; status: string; template_key: string | null; template_fingerprint: string | null
@@ -20,7 +20,9 @@ const STAGES: Array<{ key: string; label: string; statuses: string[] }> = [
   { key: 'awaiting_install', label: 'Awaiting install/delivery', statuses: ['found', 'prepared'] },
   { key: 'awaiting_customer', label: 'Awaiting customer', statuses: ['sent_customer'] },
   { key: 'awaiting_tech', label: 'Awaiting tech', statuses: ['customer_signed', 'sent_tech'] },
-  { key: 'completed', label: 'Completed', statuses: ['tech_signed', 'completed', 'sf_uploaded'] },
+  // Signed on paper belongs with the finished ones: it is done, it just never came through
+  // the e-sign flow, and it is still waiting on the Clopay upload like the rest.
+  { key: 'completed', label: 'Completed', statuses: ['tech_signed', 'completed', 'sf_uploaded', 'signed_offline'] },
   { key: 'done', label: 'Done', statuses: ['portal_uploaded'] },
   { key: 'cancelled', label: 'Cancelled', statuses: ['cancelled'] },
 ]
@@ -28,7 +30,7 @@ const stageOf = (status: string) => STAGES.find(s => s.statuses.includes(status)
 const STATUS_LABEL: Record<string, string> = {
   found: 'found — not inspected yet', unrecognised_template: 'form version not pinned', prepared: 'prepared', sent_customer: 'sent to customer',
   customer_signed: 'customer signed', sent_tech: 'sent to tech', tech_signed: 'tech signed', completed: 'completed', sf_uploaded: 'on SF job',
-  portal_uploaded: 'uploaded to Clopay', cancelled: 'cancelled',
+  portal_uploaded: 'uploaded to Clopay', signed_offline: 'signed on paper', cancelled: 'cancelled',
 }
 const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : '—'
 const btn = 'text-xs px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50'
@@ -141,6 +143,10 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
                     <button className={btn} title={r.customer_link} onClick={() => { navigator.clipboard.writeText(r.customer_link); setMsg('Customer link copied') }}>Customer link</button>
                     <button className={btn} title={r.tech_link} onClick={() => { navigator.clipboard.writeText(r.tech_link); setMsg('Tech link copied') }}>Tech link</button>
                   </>}
+                  {['found', 'prepared', 'sent_customer'].includes(r.status) && !r.customer_signed_at && (
+                    <button className={`${btn} text-blue-700`} disabled={pending}
+                      title="The customer signed the paper form in front of the technician — stop the messages, keep the Clopay upload"
+                      onClick={() => { if (confirm(`Did ${r.customer_name ?? 'the customer'} sign the paper form in person?\n\nNo further emails or texts go out, and the customer's link stops working. It stays on the Clopay list, so the technician's copy still has to be uploaded there.`)) run(() => markSignedOfflineAction(r.id), () => 'Marked signed on paper — no more reminders') }}>Signed on paper</button>)}
                   {['found', 'prepared', 'sent_customer'].includes(r.status) && !r.customer_signed_at && (
                     <select className={`${btn} text-gray-900 bg-white`} disabled={pending} value="" title="Send a message to the customer now — regardless of the auto-send setting"
                       onChange={e => { const v = e.target.value as '' | 'heads_up' | 'ask' | 'reminder'; if (!v) return; if (!confirm(`Send the ${v === 'heads_up' ? 'heads-up (link ahead of the work)' : v === 'ask' ? '"please sign"' : 'reminder'} to ${r.customer_name ?? 'this customer'} now?`)) return; run(() => sendEsignNowAction(r.id, v), x => `Sent via ${(x.channels as string[]).join(', ')}${x.warning ? ` · ${x.warning}` : ''}`) }}>

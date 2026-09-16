@@ -1823,8 +1823,10 @@ function ClopayTable({ items }: { items: ClopayActionItem[] }) {
                 />
                 {c.kind === 'portal_upload' && (
                   <div className="mt-1 flex items-center gap-2 text-[11px]">
-                    {c.completed_url ? <a href={c.completed_url} target="_blank" rel="noreferrer" className="text-blue-600 underline">Signed PDF</a> : <span className="text-gray-400">PDF missing</span>}
-                    <span className={`px-1.5 py-0.5 rounded ${c.sf_uploaded ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`} title={c.sf_uploaded ? 'The extension filed it on the SF job' : 'Not on the SF job yet — the extension will file it, or upload it by hand'}>{c.sf_uploaded ? 'on SF job' : 'SF pending'}</span>
+                    {c.completed_url ? <a href={c.completed_url} target="_blank" rel="noreferrer" className="text-blue-600 underline">Signed PDF</a> : <span className="text-gray-400">{c.signed_offline ? 'paper copy' : 'PDF missing'}</span>}
+                    {c.signed_offline
+                      ? <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700" title="The customer signed the paper form in front of the technician, so we hold no PDF — upload the tech's copy to Clopay">signed on paper</span>
+                      : <span className={`px-1.5 py-0.5 rounded ${c.sf_uploaded ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`} title={c.sf_uploaded ? 'The extension filed it on the SF job' : 'Not on the SF job yet — the extension will file it, or upload it by hand'}>{c.sf_uploaded ? 'on SF job' : 'SF pending'}</span>}
                   </div>
                 )}
               </td>

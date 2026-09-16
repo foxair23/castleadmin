@@ -56,6 +56,8 @@ export interface ClopayActionItem extends GenieActionItem {
   completed_url?: string | null
   sf_uploaded?: boolean
   completed_at?: string | null
+  /** portal_upload only — signed on paper in front of the tech, so we hold no PDF of it. */
+  signed_offline?: boolean
 }
 export interface ClopayActionItemsResult { items: ClopayActionItem[] }
 
@@ -107,9 +109,12 @@ export async function getClopayActionItems(): Promise<ClopayActionItemsResult> {
 async function getPortalUploadItems(): Promise<ClopayActionItem[]> {
   const supabase = db()
   const { data } = await supabase.from('esign_documents')
-    .select('id, order_id, status, completed_at, completed_pdf_path, sf_uploaded_at, prefill')
-    .eq('status', 'sf_uploaded').is('portal_uploaded_at', null).order('completed_at', { ascending: true }).limit(200)
-  const rows = (data ?? []) as Array<{ id: string; order_id: string; status: string; completed_at: string | null; completed_pdf_path: string | null; sf_uploaded_at: string | null; prefill: Record<string, string> | null }>
+    .select('id, order_id, status, completed_at, completed_pdf_path, sf_uploaded_at, signed_offline_at, prefill')
+    // 'signed_offline' too: the customer signed the paper copy in front of the tech, so
+    // there is no PDF of ours to file in SF — but Home Depot still wants the sheet in
+    // Clopay, and this list is the only thing chasing it.
+    .in('status', ['sf_uploaded', 'signed_offline']).is('portal_uploaded_at', null).order('completed_at', { ascending: true }).limit(200)
+  const rows = (data ?? []) as Array<{ id: string; order_id: string; status: string; completed_at: string | null; completed_pdf_path: string | null; sf_uploaded_at: string | null; signed_offline_at: string | null; prefill: Record<string, string> | null }>
   if (!rows.length) return []
   const { data: orders } = await supabase.from('vendor_orders')
     .select('id, external_id, customer_name, street_address, city, state_prov, postal_code, order_date, status, phone, sf_created_job_number')
@@ -129,7 +134,8 @@ async function getPortalUploadItems(): Promise<ClopayActionItem[]> {
       created_job_at: r.completed_at ?? '',
       appointment_date: null, appointment_window_start: null, appointment_window_end: null, schedule_nudge_sent_at: null,
       completed_url: r.completed_pdf_path ? urls.get(r.completed_pdf_path) ?? null : null,
-      sf_uploaded: !!r.sf_uploaded_at, completed_at: r.completed_at,
+      sf_uploaded: !!r.sf_uploaded_at, completed_at: r.completed_at ?? r.signed_offline_at,
+      signed_offline: r.status === 'signed_offline',
     }
   })
 }

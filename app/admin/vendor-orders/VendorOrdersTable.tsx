@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState, useTransition } from 'react'
 import { createSfJobAction, sendNudgeNowAction, getOrderDetailAction, addIpoLinesToSfJobAction, linkSfJobAction, unmatchSfJobAction } from './actions'
-import { sendEsignNowAction, notifyTechNowAction, prepareEsignDocAction, finalizeNowAction, markPortalUploadedAction, cancelEsignAction, resetSignatureAction, adoptAttachmentAsWaiverAction } from './esign-actions'
+import { sendEsignNowAction, notifyTechNowAction, prepareEsignDocAction, finalizeNowAction, markPortalUploadedAction, cancelEsignAction, markSignedOfflineAction, resetSignatureAction, adoptAttachmentAsWaiverAction } from './esign-actions'
 import { statusChipStyle } from '@/lib/vendor-orders/status-style'
 
 // Portal-specific detail captured verbatim by the crawler (Clopay's Summary
@@ -482,7 +482,9 @@ function EsignSection({ esign, attachments, orderId }: { esign: OrderEsign | nul
         {live && e.status === 'tech_signed' && <button className={b} disabled={pending} onClick={() => run(() => finalizeNowAction(e.id), r => `${r.status}`)}>Finish now</button>}
         {live && ['completed', 'sf_uploaded'].includes(e.status) && <button className={`${b} border-green-600 text-green-700`} disabled={pending} onClick={() => { if (confirm('Mark as uploaded to the Clopay portal?')) run(() => markPortalUploadedAction(e.id), () => 'Marked uploaded to Clopay') }}>Uploaded to Clopay</button>}
         {live && e.customer_signed_at && !['sf_uploaded'].includes(e.status) && <button className={`${b} text-red-700`} disabled={pending} onClick={() => { if (confirm('Clear the customer\'s signature (and the tech\'s)? The link will work again.')) run(() => resetSignatureAction(e.id, 'customer'), r => `Cleared · now ${r.status}`) }}>Clear signatures</button>}
-        {live && <button className={`${b} text-gray-500`} disabled={pending} onClick={() => { if (confirm('Cancel this form? Both links will say it is no longer needed.')) run(() => cancelEsignAction(e.id), () => 'Cancelled') }}>Cancel</button>}
+        {live && !e.customer_signed_at && <button className={`${b} text-blue-700`} disabled={pending} title="Signed on paper in front of the tech — stop the messages, keep the Clopay upload"
+          onClick={() => { if (confirm('Did the customer sign the paper form in person?\n\nNo further emails or texts go out, and their link stops working. It stays on the Clopay list, so the tech\'s copy still has to be uploaded there.')) run(() => markSignedOfflineAction(e.id), () => 'Marked signed on paper') }}>Signed on paper</button>}
+        {live && <button className={`${b} text-gray-500`} disabled={pending} onClick={() => { if (confirm('Cancel this form? Both links will say it is no longer needed, and it drops off the Clopay upload list.')) run(() => cancelEsignAction(e.id), () => 'Cancelled') }}>Cancel</button>}
         {e.status === 'cancelled' && <button className={b} disabled={pending} onClick={() => run(() => cancelEsignAction(e.id, true), () => 'Restored — will be inspected again')}>Restore</button>}
         {msg && <span className="text-[11px] text-gray-700">{msg}</span>}
       </div>
