@@ -241,9 +241,10 @@ function LinkJobInput({ orderId }: { orderId: string }) {
   )
 }
 
-// The matcher (or an earlier link) put the wrong SF job on this house. One click clears the
-// link, tells the matcher never to pick that job for this order again, and the row goes back
-// to "+ Create SF Job / link Job #". Work already written into SF is reported, not undone.
+// The matcher (or an earlier link, or a wrong create) put the wrong SF job on this house. One
+// click clears the link, tells the matcher never to pick that job for this order again, and the
+// row goes back to "+ Create SF Job / link Job #". Work already written into SF — including a
+// job Castle Admin created — is reported, not undone: only a person can delete it in SF.
 function UnmatchButton({ orderId, jobNumber }: { orderId: string; jobNumber: string }) {
   const [pending, start] = useTransition()
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -254,7 +255,7 @@ function UnmatchButton({ orderId, jobNumber }: { orderId: string; jobNumber: str
         disabled={pending}
         title="Wrong job? Remove this match — the matcher will not pick this job for this order again"
         onClick={() => {
-          if (!window.confirm(`Unmatch SF job #${jobNumber} from this order?\n\nThe row goes back to Create / Link. Line items or appointments already posted to the job in Service Fusion are not removed.`)) return
+          if (!window.confirm(`Unmatch SF job #${jobNumber} from this order?\n\nThe row goes back to Create / Link, and this order stops auto-creating jobs.\n\nNothing is removed from Service Fusion: if Castle Admin created job #${jobNumber}, delete it in SF too, along with any line items or appointment already posted to it.`)) return
           setMsg(null)
           start(async () => {
             const r = await unmatchSfJobAction(orderId)
@@ -983,7 +984,7 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                           {o.sf_match_method && !['po', 'linked', 'pending'].includes(o.sf_match_method) && (
                             <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 rounded px-1">{o.sf_match_method}</span>
                           )}
-                          {o.sf_match_method !== 'pending' && <UnmatchButton orderId={o.id} jobNumber={o.sf_job_number} />}
+                          <UnmatchButton orderId={o.id} jobNumber={o.sf_job_number} />
                         </span>
                       ) : (
                         <span className="inline-flex flex-col gap-1">
