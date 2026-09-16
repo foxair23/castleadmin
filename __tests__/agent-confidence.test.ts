@@ -3,7 +3,7 @@ import { computeConfidence, autoSendDecision } from '@/lib/agent/email/confidenc
 import { stripDisclosure } from '@/lib/agent/email/review'
 import { mergeSettings, AGENT_DEFAULTS } from '@/lib/agent/settings'
 
-const good = { resolveStatus: 'matched' as const, resolveTier: 'po' as const, questionType: 'schedule' as const, fullyGrounded: true, unsourcedCount: 0, liveFresh: true, hardFailReasons: [] as string[] }
+const good = { resolveStatus: 'matched' as const, resolveTier: 'po' as const, questionType: 'status' as const, fullyGrounded: true, unsourcedCount: 0, liveFresh: true, hardFailReasons: [] as string[] }
 
 describe('computeConfidence', () => {
   it('a PO-matched, grounded, fresh, in-focus draft scores 1.0', () => {
@@ -40,7 +40,7 @@ describe('autoSendDecision', () => {
     expect(autoSendDecision(good, 0.85, on).reasons).toEqual(['below_threshold'])
   })
   it('a paused tier blocks even a perfect draft', () => {
-    const on = mergeSettings({ auto_respond_enabled: true, paused_tiers: { 'schedule:po': { since: 'x', rate: 0.3 } } })
+    const on = mergeSettings({ auto_respond_enabled: true, paused_tiers: { 'status:po': { since: 'x', rate: 0.3 } } })
     expect(autoSendDecision(good, 1, on).reasons).toEqual(['tier_paused'])
   })
 })

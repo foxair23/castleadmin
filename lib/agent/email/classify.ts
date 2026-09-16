@@ -35,7 +35,11 @@ const TOOL: Anthropic.Tool = {
     properties: {
       question_type: {
         type: 'string', enum: QUESTION_TYPES,
-        description: 'schedule = when is the appointment / install; completion = has the work been done; tech = which technician; status = general "where is this at"; material = parts/doors/sections received, damaged, missing; ship_date = when will the manufacturer ship; pricing = invoice, payment, cost; warranty; reschedule = a request to change the appointment; complaint; multi = several distinct questions; other.',
+        description: [
+          'status = asking where something stands, INCLUDING when it is scheduled: "do you have an install date for this customer?", "what is the delivery date for PO 88984640?", "can I get an update on PO 69427561?", "when will the site check be scheduled?". Anything answerable by reading the job.',
+          'schedule = asking US to take a scheduling ACTION, not asking for a date we already hold: "please contact the customer to schedule delivery", "customer has not been contacted, please reach out". Someone at Castle has to do something; no date exists to report yet.',
+          'completion = has the work been done; tech = which technician; material = parts/doors/sections received, damaged, missing; ship_date = when will the manufacturer ship; pricing = invoice, payment, cost; warranty; reschedule = a request to CHANGE an appointment that already exists; complaint; multi = several distinct questions; other.',
+        ].join(' '),
       },
       summary: { type: 'string', description: 'The question in one sentence, keeping any PO / order numbers verbatim.' },
       customer_name: { type: ['string', 'null'], description: 'The homeowner / end customer named in the email, as written. null if none.' },

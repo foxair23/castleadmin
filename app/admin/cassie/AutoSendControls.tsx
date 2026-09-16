@@ -19,16 +19,16 @@ const btn = 'rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white h
 const card = 'rounded-lg border border-gray-200 bg-white p-4'
 
 const FOCUS: { key: QuestionType; label: string; hint: string }[] = [
-  { key: 'schedule', label: 'Is it scheduled, and for when?', hint: 'date + arrival window' },
+  { key: 'schedule', label: 'Asking us to go and schedule something', hint: 'an action for a person, not a date to report' },
   { key: 'completion', label: 'Has it been completed, and when?', hint: 'completion date' },
   { key: 'tech', label: 'Which technician is assigned?', hint: 'names from the job' },
-  { key: 'status', label: 'What is the current job status?', hint: 'status + sub-status' },
+  { key: 'status', label: 'Where does it stand, and when is it booked?', hint: 'the date, the status and the sub-status' },
 ]
 // Every type the classifier can assign, so the office can widen her remit without a deploy.
 // Ordered by how much of the real mail each one accounts for, most first.
 const ALL_TYPES: { key: QuestionType; label: string; hint: string }[] = [
-  { key: 'status', label: 'Status update', hint: '"Can I get an update on PO 69427561?"' },
-  { key: 'schedule', label: 'Scheduling', hint: '"Do you have an install date for this customer?"' },
+  { key: 'status', label: 'Where does it stand, and when is it booked?', hint: '"Do you have an install date for this customer?" — answerable from the job' },
+  { key: 'schedule', label: 'Asking us to go and schedule something', hint: '"Please contact the customer to schedule delivery" — a person has to act; there is no date to report' },
   { key: 'completion', label: 'Completion', hint: 'has the work been done, and when' },
   { key: 'tech', label: 'Technician', hint: 'who is assigned' },
   { key: 'ship_date', label: 'Ship / pickup date', hint: 'when material leaves or lands' },

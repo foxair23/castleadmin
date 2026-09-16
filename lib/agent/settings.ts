@@ -84,7 +84,8 @@ export const AGENT_DEFAULTS: AgentSettings = {
   skip_notifications: true,
 
   confidence_threshold: 0.9,
-  auto_question_types: ['schedule', 'completion', 'tech', 'status'],
+  // 'schedule' now means "go and schedule this" - an action for a person, never auto-sendable.
+  auto_question_types: ['completion', 'tech', 'status'],
   auto_match_tiers: ['po'],
   hold_minutes: 12,
   staleness_minutes: 5,
