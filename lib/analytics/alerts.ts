@@ -107,17 +107,23 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
   // updated_date doesn't even move, so no sync can ever clear it. Treat a job
   // as paid when it has invoices and none of them are unpaid; otherwise a paid
   // job would sit on the Unpaid tab forever.
+  //
+  // ZERO-TOTAL invoices are ignored here. SF leaves $0 invoices around, and a $0
+  // invoice is is_paid=true the moment it exists — nothing is owed on it. Counting one
+  // as settlement hid job 1020258096: a real $473 receivable, closed 11 Jul, behind a
+  // single $0 invoice marked paid. Money owed cannot be settled by an invoice for nothing.
   const paidJobIds = new Set<string>()
   const rawIds = rawJobs.map((j: { id: string }) => j.id)
   if (rawIds.length > 0) {
     const { data: invRows } = await db
       .from('sf_invoices')
-      .select('job_id, is_paid')
+      .select('job_id, is_paid, total')
       .in('job_id', rawIds)
       .eq('is_deleted', false)
     const invByJob = new Map<string, { any: boolean; hasUnpaid: boolean }>()
-    for (const inv of (invRows ?? []) as Array<{ job_id: string | null; is_paid: boolean | null }>) {
+    for (const inv of (invRows ?? []) as Array<{ job_id: string | null; is_paid: boolean | null; total: number | string | null }>) {
       if (!inv.job_id) continue
+      if (Number(inv.total ?? 0) <= 0) continue   // a $0 invoice settles nothing
       const e = invByJob.get(inv.job_id) ?? { any: false, hasUnpaid: false }
       e.any = true
       if (!inv.is_paid) e.hasUnpaid = true
