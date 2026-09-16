@@ -2,7 +2,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { rematchAllAction, reparseAction, aiReviewAction } from './actions'
 import { isAiMatchConfigured } from '@/lib/remittance/ai-match'
 import { ActionButton } from './ActionButton'
-import { AssignJob, type AssignCandidate } from './AssignJob'
+import { AssignJob, UnassignJob, type AssignCandidate } from './AssignJob'
 import { ApplyControls } from './ApplyControls'
 import { AutopilotToggle } from './AutopilotToggle'
 import { SyncFromSfButton } from './SyncFromSfButton'
@@ -54,6 +54,8 @@ const METHOD_LABEL: Record<string, { label: string; cls: string }> = {
   po: { label: 'PO', cls: 'bg-gray-100 text-gray-500' },
   po_name: { label: 'PO + name', cls: 'bg-gray-100 text-gray-500' },
   name: { label: 'name only — verify', cls: 'bg-amber-100 text-amber-800' },
+  manual: { label: 'you picked it', cls: 'bg-blue-100 text-blue-700' },
+  manual_unmatched: { label: 'you unmatched it', cls: 'bg-blue-100 text-blue-700' },
 }
 
 export default async function RemittancesPage() {
@@ -146,7 +148,10 @@ export default async function RemittancesPage() {
                     <td className="px-3 py-1.5">{l.match_method && METHOD_LABEL[l.match_method] ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${METHOD_LABEL[l.match_method].cls}`}>{METHOD_LABEL[l.match_method].label}</span> : <span className="text-gray-300">—</span>}</td>
                     <td className="px-3 py-1.5 text-gray-600">
                       {l.sf_job_number ? (
-                        <span className="whitespace-nowrap">#{l.sf_job_number}{l.matched_customer ? ` · ${l.matched_customer}` : ''}{l.match_method === 'manual' && <span className="ml-1 text-[10px] text-gray-400">(manual)</span>}</span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="whitespace-nowrap">#{l.sf_job_number}{l.matched_customer ? ` · ${l.matched_customer}` : ''}{l.match_method === 'manual' && <span className="ml-1 text-[10px] text-gray-400">(manual)</span>}</span>
+                          <UnassignJob lineId={l.id} jobNumber={l.sf_job_number} applied={l.apply_status === 'applied'} />
+                        </div>
                       ) : (
                         <div className="flex flex-col gap-1">
                           {l.ai_suggested_job_number && (

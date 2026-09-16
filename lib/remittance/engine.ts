@@ -143,10 +143,14 @@ export async function rematchPending(): Promise<{ updated: number }> {
   const { data: emailRows } = await supabase.from('remittance_emails').select('id, vendor_id')
   const vendorByEmail = new Map<string, string | null>((emailRows ?? []).map((e: { id: string; vendor_id: string | null }) => [e.id, e.vendor_id]))
 
+  // A line a person has decided is left alone. Re-matching overwrote every pending line
+  // regardless, so a hand-typed job number survived only until the next "Re-match all" —
+  // which is why one wrong job looked like it kept coming back.
   const { data: rows } = await supabase
     .from('remittance_payments')
-    .select('id, email_id, po, customer_name, vendor_ref, amount, doc_date, apply_status')
+    .select('id, email_id, po, customer_name, vendor_ref, amount, doc_date, apply_status, match_method')
     .in('apply_status', ['pending', 'failed'])
+    .or(`match_method.is.null,and(match_method.neq.${MANUAL},match_method.neq.${MANUAL_UNMATCHED})`)
   const lines = (rows ?? []) as Array<{ id: string; email_id: string; po: string | null; customer_name: string | null; vendor_ref: string | null; amount: number; doc_date: string | null }>
 
   let updated = 0
@@ -210,6 +214,28 @@ export async function aiReviewPending(): Promise<{ reviewed: number; suggested: 
 // Manually allocate a remittance line to a specific SF job — by job id (from the
 // suggestions) or by a typed job number. Records a 'manual' match. Never touches
 // an already-applied line.
+/** A person picked this job. */
+export const MANUAL = 'manual'
+/** A person said this line is NOT that job. Both are left alone by re-matching: the whole
+ *  point of saying so is that the matcher keeps finding the same wrong answer. */
+export const MANUAL_UNMATCHED = 'manual_unmatched'
+
+/** Take the job off a remittance line and keep the matcher off it. */
+export async function unassignLineJob(lineId: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = db()
+  const { data: updated } = await supabase.from('remittance_payments').update({
+    sf_job_id: null,
+    sf_job_number: null,
+    matched_customer: null,
+    match_status: 'no_match',
+    match_method: MANUAL_UNMATCHED,
+    match_confidence: null,
+    open_amount: null,
+  }).eq('id', lineId).neq('apply_status', 'applied').select('id')
+  if (!updated || updated.length === 0) return { ok: false, error: 'Line not found, or the payment has already been applied.' }
+  return { ok: true }
+}
+
 export async function assignLineJob(lineId: string, opts: { jobId?: string; jobNumber?: string }): Promise<{ ok: boolean; error?: string; jobNumber?: string | null }> {
   const supabase = db()
   type JobLite = { id: string; number: string | null; customer_name: string | null; due_total: number | null }
@@ -231,7 +257,7 @@ export async function assignLineJob(lineId: string, opts: { jobId?: string; jobN
     sf_job_number: job.number,
     matched_customer: job.customer_name,
     match_status: 'matched',
-    match_method: 'manual',
+    match_method: MANUAL,
     match_confidence: 1,
     open_amount: open,
   }).eq('id', lineId).neq('apply_status', 'applied').select('id')

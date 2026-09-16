@@ -1,9 +1,34 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { assignLineJobAction } from './actions'
+import { assignLineJobAction, unassignLineJobAction } from './actions'
 
 export interface AssignCandidate { id: string; number: string | null; customer_name: string | null }
+
+/** A line that already carries a job. The matcher keeps proposing the same wrong one on some
+ *  lines, so this has to be undoable — and the undo has to stick, which is why it records a
+ *  decision rather than just blanking the field. */
+export function UnassignJob({ lineId, jobNumber, applied }: { lineId: string; jobNumber: string | null; applied: boolean }) {
+  const [pending, start] = useTransition()
+  const [error, setError] = useState<string | null>(null)
+  if (applied) return null
+  return (
+    <span className="inline-flex flex-col">
+      <button
+        type="button"
+        disabled={pending}
+        title="Wrong job? Take it off — re-matching will not put it back"
+        onClick={() => {
+          if (!window.confirm(`Take job #${jobNumber ?? '—'} off this line?\n\nIt goes back to unmatched so you can type the right number, and re-matching will leave it alone from now on.`)) return
+          setError(null)
+          start(async () => { const r = await unassignLineJobAction(lineId); if (r?.error) setError(r.error) })
+        }}
+        className="text-[10px] text-gray-400 hover:text-red-600 underline disabled:opacity-50"
+      >{pending ? 'unmatching…' : 'unmatch'}</button>
+      {error && <span className="text-[10px] text-red-600 max-w-[200px] whitespace-normal">{error}</span>}
+    </span>
+  )
+}
 
 // Per-line manual allocation for unmatched/ambiguous remittance lines: pick from
 // the suggested jobs, or type any job number. Typing a number takes precedence
