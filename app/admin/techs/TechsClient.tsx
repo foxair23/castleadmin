@@ -13,6 +13,7 @@ interface Tech {
   weekly_bonus: number
   gas_eligible: boolean
   is_dispatch: boolean
+  mobile_phone: string | null
 }
 
 interface NewTechForm {
@@ -36,6 +37,8 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [bonusId, setBonusId] = useState<string | null>(null)
   const [bonusForm, setBonusForm] = useState<Record<string, string>>({})
+  const [mobileId, setMobileId] = useState<string | null>(null)
+  const [mobileForm, setMobileForm] = useState<Record<string, string>>({})
 
   async function handleCreateTech(e: React.FormEvent) {
     e.preventDefault()
@@ -130,6 +133,33 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
     } else {
       const data = await res.json()
       setError(data.error ?? 'Failed to change role')
+    }
+  }
+
+  async function handleSaveMobile(techId: string) {
+    const raw = (mobileForm[techId] ?? '').trim()
+    // 10 digits, or 11 starting with 1. Blank clears it.
+    const digits = raw.replace(/\D/g, '')
+    if (raw && !(digits.length === 10 || (digits.length === 11 && digits.startsWith('1')))) {
+      setError('Enter a 10-digit US mobile number, or leave it blank to clear.')
+      return
+    }
+    setError('')
+    setSuccess('')
+    const res = await fetch(`/api/admin/techs/${techId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile_phone: raw }),
+    })
+    if (res.ok) {
+      const val = raw || null
+      setTechs(ts => ts.map(t => t.id === techId ? { ...t, mobile_phone: val } : t))
+      setSuccess(val ? 'Mobile saved — e-sign will text this number.' : 'Mobile cleared.')
+      setMobileId(null)
+      setMobileForm({})
+    } else {
+      const data = await res.json()
+      setError(data.error ?? 'Failed to save mobile')
     }
   }
 
@@ -404,9 +434,21 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                         )}
                         <button
                           onClick={() => {
+                            setMobileId(mobileId === tech.id ? null : tech.id)
+                            setMobileForm(f => ({ ...f, [tech.id]: tech.mobile_phone ?? '' }))
+                            setEmailingId(null); setResetingId(null); setBonusId(null)
+                            setError('')
+                          }}
+                          className="text-blue-600 hover:underline"
+                        >
+                          {tech.mobile_phone ? 'Mobile' : 'Add Mobile'}
+                        </button>
+                        <button
+                          onClick={() => {
                             setEmailingId(emailingId === tech.id ? null : tech.id)
                             setResetingId(null)
                             setBonusId(null)
+                            setMobileId(null)
                             setError('')
                           }}
                           className="text-red-600 hover:underline"
@@ -434,6 +476,25 @@ export default function TechsClient({ initialTechs }: { initialTechs: Tech[] }) 
                       </div>
                     </td>
                   </tr>
+                  {mobileId === tech.id && (
+                    <tr key={`${tech.id}-mobile`}>
+                      <td colSpan={5} className="bg-blue-50 px-4 py-3">
+                        <div className="flex gap-2 items-center flex-wrap">
+                          <label className="text-xs text-gray-600 whitespace-nowrap">Mobile number:</label>
+                          <input
+                            type="tel"
+                            value={mobileForm[tech.id] ?? ''}
+                            onChange={e => setMobileForm(f => ({ ...f, [tech.id]: e.target.value }))}
+                            placeholder="(619) 555-0134"
+                            className="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-900 w-44 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <span className="text-xs text-gray-400">Where e-sign texts their signing link. Used instead of the number on their Service Fusion record.</span>
+                          <button onClick={() => handleSaveMobile(tech.id)} className="bg-blue-600 text-white rounded px-3 py-1.5 text-xs hover:bg-blue-700">Save Mobile</button>
+                          <button onClick={() => { setMobileId(null); setMobileForm({}) }} className="text-gray-500 hover:underline text-xs">Cancel</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {bonusId === tech.id && (
                     <tr key={`${tech.id}-bonus`}>
                       <td colSpan={4} className="bg-purple-50 px-4 py-3">

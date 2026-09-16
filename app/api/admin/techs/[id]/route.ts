@@ -73,6 +73,21 @@ export async function PATCH(
     return NextResponse.json({ profile })
   }
 
+  // Mobile number for direct contact (e-sign texts the signing link here). Stored on the
+  // Castle profile deliberately: the Service Fusion tech record's phone is not curated for
+  // this, and a stale one sent a customer's form link to the wrong person.
+  if (typeof body.mobile_phone === 'string') {
+    const raw = body.mobile_phone.trim()
+    const digits = raw.replace(/\D/g, '')
+    if (raw && !(digits.length === 10 || (digits.length === 11 && digits.startsWith('1')))) {
+      return NextResponse.json({ error: 'Enter a 10-digit US mobile number, or leave it blank to clear.' }, { status: 400 })
+    }
+    const { data: profile, error } = await adminClient
+      .from('profiles').update({ mobile_phone: raw || null }).eq('id', id).select().single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ profile })
+  }
+
   // Handle active toggle
   if (typeof body.is_active === 'boolean') {
     const { data: profile, error } = await adminClient
