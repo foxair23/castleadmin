@@ -130,10 +130,11 @@ export async function addIpoLinesToSfJobAction(orderId: string): Promise<{ ok: b
 }
 
 /** Link an order (its whole house) to an SF job the office already created — the matcher
- *  could not see it. Queues the IPO line items onto that job as part of the same step. */
-export async function linkSfJobAction(orderId: string, jobNumber: string): Promise<{ ok: boolean; error?: string; jobNumber?: string; customerName?: string | null; lines?: string }> {
+ *  could not see it. Queues the IPO line items onto that job as part of the same step.
+ *  allowShared lets two HD rows point at ONE job, after the caller has confirmed it. */
+export async function linkSfJobAction(orderId: string, jobNumber: string, allowShared = false): Promise<{ ok: boolean; error?: string; needsConfirm?: boolean; jobNumber?: string; customerName?: string | null; lines?: string; warnings?: string[] }> {
   if (!(await isAllowed())) return { ok: false, error: 'not authorized' }
-  const r = await linkSfJobToOrder(orderId, jobNumber)
+  const r = await linkSfJobToOrder(orderId, jobNumber, { allowShared })
   if (r.ok) { revalidatePath('/admin/vendor-orders'); revalidatePath('/sales/hd-orders') }
   return r
 }

@@ -228,8 +228,19 @@ function LinkJobInput({ orderId }: { orderId: string }) {
           type="button"
           disabled={pending || !num.trim()}
           onClick={() => { setMsg(null); start(async () => {
-            const r = await linkSfJobAction(orderId, num)
-            setMsg(r.ok ? { ok: true, text: `Linked to #${r.jobNumber}${r.customerName ? ` · ${r.customerName}` : ''} — ${r.lines}` } : { ok: false, text: r.error ?? 'failed' })
+            let r = await linkSfJobAction(orderId, num)
+            // Another row already points at this job. Usually a typo, sometimes deliberate —
+            // two HD orders really can be one SF job — so ask once and link on a yes.
+            if (!r.ok && r.needsConfirm) {
+              if (!window.confirm(`${r.error}\n\nBoth rows will show job #${r.jobNumber}. The job takes IPO line items once — send the appointment and the e-sign form from one row only.`)) {
+                setMsg({ ok: false, text: 'not linked' })
+                return
+              }
+              r = await linkSfJobAction(orderId, num, true)
+            }
+            setMsg(r.ok
+              ? { ok: true, text: [`Linked to #${r.jobNumber}${r.customerName ? ` · ${r.customerName}` : ''} — ${r.lines}`, ...(r.warnings ?? [])].join(' ') }
+              : { ok: false, text: r.error ?? 'failed' })
           }) }}
           className="text-xs px-2 py-0.5 rounded bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
