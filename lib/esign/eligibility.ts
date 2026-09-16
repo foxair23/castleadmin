@@ -52,6 +52,14 @@ export function ptDay(iso: string | Date): string {
 export function ptHour(d: Date = new Date()): number {
   return Number(new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: 'numeric', hour12: false }).format(d).replace(/[^0-9]/g, '')) % 24
 }
+/** Whole days since an instant, or null. Lives here rather than in the page because the
+ *  React purity lint refuses a clock read during render, even in a server component. */
+export function daysSinceIso(iso: string | null | undefined, now: number = Date.now()): number | null {
+  if (!iso) return null
+  const t = Date.parse(iso)
+  return Number.isNaN(t) ? null : Math.max(0, Math.floor((now - t) / 86_400_000))
+}
+
 /** Whole PT calendar days from a to b (b − a). */
 export function daysBetween(a: string, b: string): number {
   return Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10)) - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86_400_000)
