@@ -26,11 +26,13 @@ export async function unmatchSfJobFromOrder(orderId: string, userId?: string | n
   const rootId = (self.parent_order_id as string | null) ?? (self.id as string)
 
   const { data: rows } = await supabase.from('vendor_orders')
-    .select('id, external_id, customer_po, customer_name, email, phone, sf_job_id, sf_created_job_number, sf_match_excluded_job_ids, sf_lines_status, sf_schedule_status')
+    .select('id, external_id, customer_po, customer_name, email, phone, sf_job_id, sf_created_job_number, sf_match_excluded_job_ids, sf_match_job_id, sf_match_job_number, sf_lines_status, sf_schedule_status')
     .or(`id.eq.${rootId},parent_order_id.eq.${rootId}`)
   const house = (rows ?? []) as Array<{
     id: string; external_id: string | null; customer_po: string | null; customer_name: string | null; email: string | null; phone: string | null
-    sf_job_id: string | null; sf_created_job_number: string | null; sf_match_excluded_job_ids: string[] | null; sf_lines_status: string | null; sf_schedule_status: string | null
+    sf_job_id: string | null; sf_created_job_number: string | null; sf_match_excluded_job_ids: string[] | null
+    sf_match_job_id: string | null; sf_match_job_number: string | null
+    sf_lines_status: string | null; sf_schedule_status: string | null
   }>
   const root = house.find(r => r.id === rootId)
   if (!root) return { ok: false, error: 'Order not found.' }
@@ -61,11 +63,17 @@ export async function unmatchSfJobFromOrder(orderId: string, userId?: string | n
     // Off autopilot for good: a human has now overruled the match on this house once.
     const patch: Record<string, unknown> = { updated_at: now, sf_autopilot_blocked_at: now }
     if (jobId) patch.sf_match_excluded_job_ids = Array.from(new Set([...(r.sf_match_excluded_job_ids ?? []), jobId]))
+    // The cached match (migration 150) is cleared on the spot rather than left to the next
+    // refresh: pressing Unmatch means "not this job", and a screen reading the cache half an
+    // hour later must not still be told it is.
     if (jobId && r.sf_job_id === jobId) patch.sf_job_id = null
     else if (!jobId && r.sf_job_id) patch.sf_job_id = null
     // The create marker must go with it, or the row keeps claiming a job it is no longer
     // linked to and the nudge/action-item sweeps chase a number that points nowhere.
     if (r.sf_created_job_number && r.sf_created_job_number === jobNumber) patch.sf_created_job_number = null
+    if (!jobId || r.sf_match_job_id === jobId || r.sf_match_job_number === jobNumber) {
+      patch.sf_match_job_id = null; patch.sf_match_job_number = null; patch.sf_match_method = null; patch.sf_matched_at = now
+    }
     // Work still waiting to go onto the wrong job is cancelled; work already posted is not.
     if (r.sf_lines_status === 'queued') { patch.sf_lines_status = null; patch.sf_lines_sync_note = `line items unqueued — job #${jobNumber ?? jobId} unmatched` }
     if (r.sf_schedule_status === 'queued') { patch.sf_schedule_status = null; patch.sf_schedule_sync_note = `appointment unqueued — job #${jobNumber ?? jobId} unmatched` }
