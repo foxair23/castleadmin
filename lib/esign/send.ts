@@ -7,7 +7,7 @@ import { ensureShortLink } from '@/lib/short-links'
 import { enqueueNote } from '@/lib/sf-notes/queue'
 import { renderEsignCustomerEmail, renderEsignCustomerSms } from '@/lib/notifications/templates/esign-request'
 import { templateByKey, type TemplateService } from './templates'
-import { customerStageDue, ptDay, ptHour, type CustomerStage } from './eligibility'
+import { decideCustomerStage, ptDay, ptHour, type CustomerStage } from './eligibility'
 import { getEsignSettings } from './settings'
 import { prepareEsignDoc } from './prepare'
 import { linkMissingEsignJobs } from './job-link'
@@ -98,6 +98,14 @@ export async function deliverToCustomer(supabase: SupabaseClient, doc: DocRow, o
 
 export interface EsignSweepResult { enabled: boolean; looked: number; sent: number; failed: number; held: number; errors: string[] }
 
+/** Leave the sweep's answer on the document. Diagnostic only — it gates nothing — but it
+ *  turns "why did this customer not get their form?" into one column instead of a code read. */
+async function noteHold(supabase: SupabaseClient, docId: string, reason: string): Promise<void> {
+  await supabase.from('esign_documents')
+    .update({ last_hold_reason: reason.slice(0, 500), last_evaluated_at: new Date().toISOString() })
+    .eq('id', docId)
+}
+
 /** Send whichever customer message is due.
  *
  *  `quick` is the every-15-minutes pass. The office sets "HD SOF Needed" whenever it gets to
@@ -135,7 +143,9 @@ export async function runEsignCustomerSweep(now = new Date(), opts: { quick?: bo
     if (out.sent + out.failed >= SEND_CAP) break
     out.looked++
     const order = orderById.get(doc.order_id)
-    if (!order || !isActive(order.status) || (!order.email && !order.phone)) { out.held++; continue }
+    if (!order) { out.held++; await noteHold(supabase, doc.id, 'the Clopay order for this document is missing'); continue }
+    if (!isActive(order.status)) { out.held++; await noteHold(supabase, doc.id, `the Clopay order is "${order.status ?? 'unknown'}" — not an active order`); continue }
+    if (!order.email && !order.phone) { out.held++; await noteHold(supabase, doc.id, 'the customer has no email and no phone'); continue }
     const jobId = doc.sf_job_id ?? order.sf_job_id ?? null
     let start = jobId ? startByJob.get(String(jobId)) ?? null : null
     let status = doc.status
@@ -150,16 +160,23 @@ export async function runEsignCustomerSweep(now = new Date(), opts: { quick?: bo
         completed = w.completed; start = w.workDate ?? start
         // The office's marking, not the job's status, decides whether the form goes out.
         sof = sofStageOf(live.facts.subStatus)
-      } else { out.held++; out.errors.push(`order ${order.external_id}: live read failed (${live.error})`); continue }
+      } else {
+        out.held++
+        out.errors.push(`order ${order.external_id}: live read failed (${live.error})`)
+        await noteHold(supabase, doc.id, `Service Fusion could not be read live (${live.error}) — nothing is sent on stale data`)
+        continue
+      }
     }
     // A blank that has not been inspected yet is prepared inline, so a same-day install is not missed.
     if (status === 'found') {
       const r = await prepareEsignDoc(doc.id, supabase)
-      if (!r.ok || r.status !== 'prepared') { out.held++; continue }
+      if (!r.ok || r.status !== 'prepared') { out.held++; await noteHold(supabase, doc.id, r.error ?? `the blank could not be prepared (status "${r.status}")`); continue }
       status = 'prepared'; doc.template_key = r.template ?? doc.template_key
     }
-    const stage = customerStageDue({ ...doc, status, start_date: start, sof, completed, sub_status_set_at: doc.sf_sub_status_set_at ?? null, enabled_at: s.enabledAt, today, hour })
-    if (!stage) { out.held++; continue }
+    const decision = decideCustomerStage({ ...doc, status, start_date: start, sof, completed, sub_status_set_at: doc.sf_sub_status_set_at ?? null, enabled_at: s.enabledAt, today, hour })
+    const stage = decision.stage
+    if (!stage) { out.held++; await noteHold(supabase, doc.id, decision.reason); continue }
+    await noteHold(supabase, doc.id, `sending the ${stage.replace('_', ' ')}: ${decision.reason}`)
     try {
       const { channels, error } = await deliverToCustomer(supabase, { ...doc, sf_job_id: jobId }, order, stage)
       if (channels.length) out.sent++; else out.failed++

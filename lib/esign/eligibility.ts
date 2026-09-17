@@ -65,10 +65,19 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10)) - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86_400_000)
 }
 
+/** Why nothing is due — or which stage is. The sweep stores the reason on the document, so
+ *  "why did this customer not get their form?" is answered by looking rather than by reading
+ *  this file and guessing which gate fired. */
+export interface StageDecision { stage: CustomerStage | null; reason: string }
+
 export function customerStageDue(d: DueInput): CustomerStage | null {
-  if (!['prepared', 'sent_customer'].includes(d.status)) return null
-  if (d.customer_signed_at) return null
-  if (!d.enabled_at) return null
+  return decideCustomerStage(d).stage
+}
+
+export function decideCustomerStage(d: DueInput): StageDecision {
+  if (!['prepared', 'sent_customer'].includes(d.status)) return no(`document status is "${d.status}" — only a prepared form can be sent`)
+  if (d.customer_signed_at) return no('the customer has already signed')
+  if (!d.enabled_at) return no('auto-send is off')
   // The cutoff exists so that switching auto-send on does not mail the ~200 blanks already
   // sitting on file. A job the office has marked HD SOF is not one of those: someone chose
   // it deliberately, and that choice is a far better gate than when the blank happened to be
@@ -76,28 +85,36 @@ export function customerStageDue(d: DueInput): CustomerStage | null {
   // the marking at 7:53 the next morning could never release it.
   // The same applies once we have written to this customer at all: the ask and the reminder
   // have to be able to follow their own heads-up.
-  if (d.created_at < d.enabled_at && !d.sof && !d.customer_sent_at) return null
+  if (d.created_at < d.enabled_at && !d.sof && !d.customer_sent_at) return no('the blank was captured before auto-send was switched on, and the job is not marked HD SOF')
   // The work is done: ask now, whether or not a heads-up ever went out (the link goes with it).
   if (!d.customer_asked_at && d.completed === true) {
-    if (d.customer_sent_at && ptDay(d.customer_sent_at) >= d.today && d.hour < 17) return null   // heads-up went this morning; give the day
-    return 'ask'
+    if (d.customer_sent_at && ptDay(d.customer_sent_at) >= d.today && d.hour < 17) return no('the heads-up went out this morning — the ask waits until 5pm')
+    return yes('ask', 'the work is done and nothing has been asked yet')
   }
   if (!d.customer_sent_at) {
     // Nothing reaches a customer on a job the office has not marked "HD SOF Needed".
-    if (d.sof !== 'needed' || !d.start_date) return null
-    return daysBetween(d.start_date, d.today) === 0 && d.hour >= 8 ? 'heads_up' : null
+    if (d.sof !== 'needed') return no(`the job's HD SOF sub-status is ${d.sof ? `"${d.sof}"` : 'not set'} — the office has not asked for the form`)
+    if (!d.start_date) return no('the job has no work date')
+    const away = daysBetween(d.start_date, d.today)
+    if (away !== 0) return no(`the work date is ${d.start_date}, ${away > 0 ? `${away} day(s) ago` : `in ${-away} day(s)`} — the heads-up goes out on the day itself`)
+    if (d.hour < 8) return no(`it is ${d.hour}:00 PT — the heads-up waits for 8am`)
+    return yes('heads_up', 'work date is today and the office has marked HD SOF Needed')
   }
   // Back on "HD SOF Needed" after we set "HD SOF Sent": the office is asking for it again.
   // Gated on our write having been CONFIRMED, so an in-flight write is not a second send.
-  if (d.sof === 'needed' && d.sub_status_set_at) return 'heads_up'
+  if (d.sof === 'needed' && d.sub_status_set_at) return yes('heads_up', 'the office put the job back on HD SOF Needed')
   const rel = d.start_date ? daysBetween(d.start_date, d.today) : 0   // 0 = the day itself, >0 = days after
   if (!d.customer_asked_at) {
     // No completion signal available (no live read): fall back to the day after the date.
-    if (d.completed === undefined && d.start_date && rel >= 1 && ptDay(d.customer_sent_at) < d.today) return 'ask'
-    return null
+    if (d.completed === undefined && d.start_date && rel >= 1 && ptDay(d.customer_sent_at) < d.today) return yes('ask', 'no live read, so the ask falls back to the day after the work date')
+    return no(d.completed === false ? 'the work is not finished yet' : 'nothing is due yet')
   }
   if (!d.customer_reminded_at) {
-    return daysBetween(ptDay(d.customer_asked_at), d.today) >= 3 ? 'reminder' : null
+    const since = daysBetween(ptDay(d.customer_asked_at), d.today)
+    return since >= 3 ? yes('reminder', 'three days since the ask and still unsigned') : no(`asked ${since} day(s) ago — the reminder waits for three`)
   }
-  return null
+  return no('the heads-up, the ask and the reminder have all gone out')
 }
+
+const no = (reason: string): StageDecision => ({ stage: null, reason })
+const yes = (stage: CustomerStage, reason: string): StageDecision => ({ stage, reason })

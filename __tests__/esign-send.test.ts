@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { customerStageDue, daysBetween, ptDay, type DueInput } from '@/lib/esign/eligibility'
+import { customerStageDue, decideCustomerStage, daysBetween, ptDay, type DueInput } from '@/lib/esign/eligibility'
 import { renderEsignCustomerSms, renderEsignCustomerEmail, renderEsignTechSms } from '@/lib/notifications/templates/esign-request'
 
 const base: DueInput = {
@@ -190,5 +190,35 @@ describe('sofStageOf', () => {
     expect(sofStageOf('HD SOF')).toBeNull()
     expect(sofStageOf(null)).toBeNull()
     expect(sofStageOf('')).toBeNull()
+  })
+})
+
+
+// Every hold now carries its own explanation, stored on the document and shown on the
+// Signatures page — this wording is what the office reads when a form did not go out.
+describe('decideCustomerStage explains itself', () => {
+  const base: DueInput = {
+    status: 'prepared', created_at: '2026-09-16T03:00:00Z', enabled_at: '2026-09-15T05:46:00Z',
+    customer_sent_at: null, customer_asked_at: null, customer_reminded_at: null, customer_signed_at: null,
+    start_date: '2026-09-17', today: '2026-09-17', hour: 9, sof: 'needed',
+  }
+  it('names the sub-status when the office has not asked for the form', () => {
+    const d = decideCustomerStage({ ...base, sof: null })
+    expect(d.stage).toBeNull()
+    expect(d.reason).toMatch(/sub-status is not set/)
+  })
+  it('names the work date when it is not today', () => {
+    const d = decideCustomerStage({ ...base, start_date: '2026-06-29' })
+    expect(d.stage).toBeNull()
+    expect(d.reason).toContain('2026-06-29')
+  })
+  it('names the cutoff when the blank predates auto-send', () => {
+    expect(decideCustomerStage({ ...base, created_at: '2026-09-10T03:16:00Z', sof: null }).reason)
+      .toMatch(/before auto-send was switched on/)
+  })
+  it('explains a send, not just a hold', () => {
+    const d = decideCustomerStage(base)
+    expect(d.stage).toBe('heads_up')
+    expect(d.reason).toMatch(/HD SOF Needed/)
   })
 })
