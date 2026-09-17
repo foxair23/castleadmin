@@ -14,6 +14,7 @@ interface OrderLike {
   sf_job_id: string | null
   sf_match_excluded_job_ids?: string[] | null
   parent_order_id?: string | null
+  additional_pos?: string[] | null
 }
 
 /** order id → SF job match (number + method + ambiguity). */
@@ -34,22 +35,25 @@ export async function resolveSfJobMatches(db: SupabaseClient, orders: OrderLike[
   // door; the office may have put any door's PO on the job, and the main table only shows
   // the root's. Genie's PO is customer_po; Clopay has none, and its PO is the external_id
   // (which we also write to the SF job's po_number on create), so fall back.
-  const rowPos = (r: { customer_po: string | null; external_id?: string | null }) => [r.customer_po, r.external_id].filter((v): v is string => !!v)
+  // additional_pos carries POs Clopay reissued on a change order: the portal row still shows
+  // the dead one while the SF job carries the new one, so both have to be tried.
+  const rowPos = (r: { customer_po: string | null; external_id?: string | null; additional_pos?: string[] | null }) =>
+    [r.customer_po, r.external_id, ...(r.additional_pos ?? [])].filter((v): v is string => !!v)
   const housePos = new Map<string, string[]>()
   {
     const ids = orders.map(o => o.id)
-    type Row = { id: string; parent_order_id: string | null; customer_po: string | null; external_id: string | null }
+    type Row = { id: string; parent_order_id: string | null; customer_po: string | null; external_id: string | null; additional_pos: string[] | null }
     const rows: Row[] = []
     for (let i = 0; i < ids.length; i += 100) {
       const chunk = ids.slice(i, i + 100).join(',')
-      const { data } = await db.from('vendor_orders').select('id, parent_order_id, customer_po, external_id').or(`id.in.(${chunk}),parent_order_id.in.(${chunk})`)
+      const { data } = await db.from('vendor_orders').select('id, parent_order_id, customer_po, external_id, additional_pos').or(`id.in.(${chunk}),parent_order_id.in.(${chunk})`)
       rows.push(...((data ?? []) as Row[]))
     }
     // A door passed on its own: pull in its root and siblings too.
     const missingRoots = [...new Set(rows.filter(r => r.parent_order_id && !rows.some(x => x.id === r.parent_order_id)).map(r => r.parent_order_id as string))]
     for (let i = 0; i < missingRoots.length; i += 100) {
       const chunk = missingRoots.slice(i, i + 100).join(',')
-      const { data } = await db.from('vendor_orders').select('id, parent_order_id, customer_po, external_id').or(`id.in.(${chunk}),parent_order_id.in.(${chunk})`)
+      const { data } = await db.from('vendor_orders').select('id, parent_order_id, customer_po, external_id, additional_pos').or(`id.in.(${chunk}),parent_order_id.in.(${chunk})`)
       for (const r of (data ?? []) as Row[]) if (!rows.some(x => x.id === r.id)) rows.push(r)
     }
     const byHouse = new Map<string, string[]>()

@@ -174,6 +174,11 @@ export async function parseAndStoreIpoAttachment(attachmentId: string): Promise<
     }
     if (!orderId) continue
     groupMembers.add(orderId)
+    // Clopay reissues POs. A change order kills the PO on the portal row and the replacement
+    // arrives as a new IPO carrying a new PO number — the portal row keeps showing the dead
+    // one, because Clopay never removes it, and the SF job the office made carries the NEW
+    // one. Keep every PO an IPO names for this order so the matcher can try all of them.
+    await recordAdditionalPo(supabase, orderId, sec.poNumber)
 
     const rows = sec.items.map((i, n) => ({
       order_id: orderId,
@@ -420,4 +425,32 @@ async function rescueByDocType(
     if (isIpoDoc(m.filename, docTypeFor(rawById.get(m.order_id), m.external_ref))) hits.add(m.id)
   }
   return hits
+}
+
+export interface PoRow { external_id?: string | null; customer_po?: string | null; additional_pos?: string[] | null }
+
+/** The new additional_pos for an order, or null when there is nothing to add. A PO is worth
+ *  keeping when it is not the order's own number and not one already known. Appends rather
+ *  than replaces: a house can accumulate several reissues, and the OLD PO stays matchable
+ *  because the SF job the office made may still carry it. */
+export function nextAdditionalPos(row: PoRow, po: string | null | undefined): string[] | null {
+  const value = (po ?? '').trim()
+  if (!value) return null
+  const have = (row.additional_pos ?? []).map(p => String(p).trim()).filter(Boolean)
+  const known = new Set([String(row.external_id ?? '').trim(), String(row.customer_po ?? '').trim(), ...have].filter(Boolean))
+  if (known.has(value)) return null
+  return [...have, value]
+}
+
+/** Persist what nextAdditionalPos decides. */
+export async function recordAdditionalPo(supabase: SupabaseClient, orderId: string, po: string | null): Promise<void> {
+  if (!(po ?? '').trim()) return
+  const { data: row } = await supabase.from('vendor_orders')
+    .select('external_id, customer_po, additional_pos').eq('id', orderId).maybeSingle()
+  if (!row) return
+  const next = nextAdditionalPos(row as PoRow, po)
+  if (!next) return
+  await supabase.from('vendor_orders')
+    .update({ additional_pos: next, updated_at: new Date().toISOString() })
+    .eq('id', orderId)
 }

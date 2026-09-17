@@ -23,6 +23,7 @@ export interface VendorOrder {
   order_type: string | null
   customer_name: string | null
   customer_po: string | null
+  additional_pos?: string[] | null
   store_number: string | null
   order_date: string | null
   schedule_date: string | null
@@ -830,7 +831,7 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
       if (orderType && o.order_type !== orderType) return false
       if (q) {
         const paidTag = o.payment_received && o.total_fee && o.total_fee > 0 ? (o.payment_received + 0.005 >= o.total_fee ? 'paid in full' : 'partial') : null
-        const hay = [o.external_id, o.customer_name, o.street_address, o.city, o.customer_po, o.store_number, o.email, o.phone, o.scope, o.next_step, o.status, o.sf_job_number, paidTag]
+        const hay = [o.external_id, o.customer_name, o.street_address, o.city, o.customer_po, ...(o.additional_pos ?? []), o.store_number, o.email, o.phone, o.scope, o.next_step, o.status, o.sf_job_number, paidTag]
           .filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
@@ -956,6 +957,14 @@ export default function VendorOrdersTable({ orders, enableSf = true, enableNudge
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{o.last_status_change_at ? fmtSeen(o.last_status_change_at) : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">
                 {o.customer_po || '—'}
+                {(o.additional_pos ?? []).length > 0 && (
+                  <span
+                    className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800"
+                    title={`Clopay reissued the PO on a change order. This job is also matched on: ${(o.additional_pos ?? []).join(', ')}`}
+                  >
+                    also {(o.additional_pos ?? []).join(', ')}
+                  </span>
+                )}
                 {(o.door_count ?? 1) > 1 && (
                   <span
                     className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700"
