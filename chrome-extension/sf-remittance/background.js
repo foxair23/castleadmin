@@ -974,7 +974,14 @@ export async function run(source) {
   const runStartedAt = Date.now()
   const cfg = await getConfig()
   // The "Enabled" toggle only gates the background poll; "Run now" always runs.
-  if (source === 'alarm' && !cfg.enabled) { await setStatus({ source, skipped: 'background poll disabled' }); return { ok: false, error: 'disabled' } }
+  if (source === 'alarm' && !cfg.enabled) {
+    await setStatus({ source, skipped: 'background poll disabled' })
+    // Say so out loud. A switched-off poll used to leave NO trace at all, so the run history
+    // looked the same as a dead machine — five hours of a working day with crawls reporting
+    // happily and not one SF run, and nothing anywhere saying why.
+    await report({ kind: 'run', site: 'service_fusion', status: 'skipped', reason: 'background poll disabled', source, started_at: runStartedAt, finished_at: Date.now() })
+    return { ok: false, error: 'disabled' }
+  }
   if (!cfg.baseUrl || !cfg.token) { await setStatus({ source, error: 'not configured (set base URL + token in Options)' }); return { ok: false, error: 'not configured' } }
 
   running = true
