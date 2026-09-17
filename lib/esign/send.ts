@@ -78,11 +78,21 @@ export async function deliverToCustomer(supabase: SupabaseClient, doc: DocRow, o
     if (stage === 'heads_up') { patch.customer_sent_at = now; patch.customer_sent_channels = channels.join(','); patch.status = 'sent_customer' }
     else if (stage === 'ask') { patch.customer_asked_at = now; if (!doc.customer_sent_at) { patch.customer_sent_at = now; patch.customer_sent_channels = channels.join(',') }; patch.status = 'sent_customer' }
     else patch.customer_reminded_at = now
+    // Whatever the stage, a customer who has now been written to is "in process" — the
+    // Signatures page keys that section on status. A reminder sent by hand to a document
+    // nothing had been sent for (an old job, where the cutoff held the automatic series
+    // back) used to deliver the message and leave the row looking untouched, which reads
+    // as a failed send.
+    if (!doc.customer_sent_at) {
+      patch.customer_sent_at = now
+      patch.customer_sent_channels = channels.join(',')
+      patch.status = 'sent_customer'
+    }
     await supabase.from('esign_documents').update(patch).eq('id', doc.id)
     // The customer now has the form, so the job says so: queue "HD SOF Sent" for the
     // extension. Queued, never blocking — the message has already gone, and a sub-status
     // that lags is a cosmetic problem where a failed send is not.
-    if (stage === 'heads_up' || (stage === 'ask' && !doc.customer_sent_at)) {
+    if (stage === 'heads_up' || !doc.customer_sent_at) {
       const { enqueueSubStatus, nudgeExtensionRun, SOF_SENT } = await import('./sub-status')
       await enqueueSubStatus(supabase, doc.id, SOF_SENT)
       await nudgeExtensionRun(supabase)
