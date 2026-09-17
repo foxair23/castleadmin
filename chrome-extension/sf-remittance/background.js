@@ -1026,10 +1026,14 @@ export async function run(source) {
     // etc.). Independent of the payment pass — a failure here never affects it.
     const notes = await runNotes(cfg, log)
 
+    // Signed e-sign forms onto their SF jobs. This runs BEFORE the sub-status pass on
+    // purpose: filing the document is what makes the app queue "HD SOF Complete", so with
+    // the old order that item was always created two seconds too late and waited for the
+    // next run — and the run_now nudge sent with it collided with this very run
+    // ("already running") and was thrown away. Upload first, then read the queue.
+    const docs = await runDocumentUploads(cfg, log)
     // HD SOF sub-statuses on their SF jobs (the office's handshake for the sign-off form).
     const subStatus = await runSubStatusUpdates(cfg, log)
-    // Signed e-sign forms onto their SF jobs — discovery only until the upload request is captured.
-    const docs = await runDocumentUploads(cfg, log)
 
     // SF session trouble: a login-looking failure → warm the session and retry once,
     // silently; only if the retry also fails is it a real logged-out alert. Per-item

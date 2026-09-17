@@ -90,7 +90,16 @@ export async function recordExtensionReport(raw: unknown, supabase: SupabaseClie
   return { ok: true, id, commands }
 }
 
+/** A command the extension took but never acknowledged — the worker was evicted, the browser
+ *  closed, the machine slept — sits in `claimed` forever with nothing to clear it. After this
+ *  long it goes back in the queue. */
+const CLAIM_STALE_MS = 15 * 60 * 1000
+
 export async function claimPendingCommands(supabase: SupabaseClient = db(), limit = 10): Promise<PendingCommand[]> {
+  await supabase.from('extension_commands')
+    .update({ status: 'pending', claimed_at: null })
+    .eq('status', 'claimed')
+    .lt('claimed_at', new Date(Date.now() - CLAIM_STALE_MS).toISOString())
   const { data } = await supabase.from('extension_commands').select('id, kind, args').eq('status', 'pending').order('created_at', { ascending: true }).limit(limit)
   const rows = (data ?? []) as PendingCommand[]
   if (!rows.length) return []
@@ -98,7 +107,20 @@ export async function claimPendingCommands(supabase: SupabaseClient = db(), limi
   return rows
 }
 
+/** "A run is already going" is not a failure — it is the command arriving a moment too early.
+ *  It happens every time, because the app queues a run_now from a callback the extension
+ *  makes DURING a run: the ack landed 2.4 seconds after the run it collided with had already
+ *  finished, and the command was burned. Put it back in the queue instead. */
+export function isBusy(result: unknown): boolean {
+  const err = (result as { error?: unknown } | null)?.error
+  return typeof err === 'string' && /already running|already in progress|a run is already/i.test(err)
+}
+
 export async function ackCommand(id: string, ok: boolean, result: unknown, supabase: SupabaseClient = db()): Promise<{ ok: boolean }> {
+  if (!ok && isBusy(result)) {
+    await supabase.from('extension_commands').update({ status: 'pending', claimed_at: null, result: result ?? null }).eq('id', id)
+    return { ok: true }
+  }
   await supabase.from('extension_commands').update({ status: ok ? 'done' : 'failed', finished_at: new Date().toISOString(), result: result ?? null }).eq('id', id)
   return { ok: true }
 }
