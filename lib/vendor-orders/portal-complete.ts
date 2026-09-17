@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { resolveSfJobMatches } from './sf-match'
 
 // "Has Clopay's portal recorded every step, so they can actually pay us?"
 //
@@ -8,8 +7,10 @@ import { resolveSfJobMatches } from './sf-match'
 // the portal is still mid-flow is a different problem from one where Clopay simply has not
 // paid, and the office was having to check the two screens by hand.
 //
-// The link between an SF job and a Clopay order is the SAME matcher HD Orders uses, so the
-// two screens can never disagree about which order belongs to which job.
+// The link is read, never recomputed: a stored decision (a hand link, or a job we created)
+// first, then the cached match HD Orders writes down (migration 150). Recomputing here would
+// mean scanning every Clopay order and rebuilding the SF job index on a page that already
+// does plenty.
 
 export type PortalComplete = 'yes' | 'no' | 'na'
 
@@ -24,24 +25,7 @@ export function portalCompleteFromStatus(status: string | null | undefined): Por
 
 interface OrderRow {
   id: string; parent_order_id: string | null; status: string | null
-  sf_job_id: string | null; sf_created_job_number: string | null
-  external_id: string | null; customer_po: string | null; additional_pos: string[] | null
-  customer_name: string | null; email: string | null; phone: string | null
-  sf_match_excluded_job_ids: string[] | null
-}
-
-const COLS = 'id, parent_order_id, status, sf_job_id, sf_created_job_number, external_id, customer_po, additional_pos, customer_name, email, phone, sf_match_excluded_job_ids'
-
-/** Every Clopay order, paged past PostgREST's 1000-row cap. */
-async function allClopayOrders(db: SupabaseClient): Promise<OrderRow[]> {
-  const out: OrderRow[] = []
-  for (let from = 0; ; from += 1000) {
-    const { data } = await db.from('vendor_orders').select(COLS).eq('vendor', 'clopay_hd')
-      .order('id', { ascending: true }).range(from, from + 999)
-    const rows = (data ?? []) as OrderRow[]
-    out.push(...rows)
-    if (rows.length < 1000) return out
-  }
+  sf_job_id: string | null; sf_created_job_number: string | null; sf_match_job_number: string | null
 }
 
 /** job id → yes / no / n-a, for the jobs given. 'na' means no Clopay order answers to this
@@ -54,41 +38,39 @@ export async function portalCompleteByJob(
   for (const j of jobs) out.set(j.id, 'na')
   if (!jobs.length) return out
 
-  const orders = await allClopayOrders(db)
-  if (!orders.length) return out
-  const byId = new Map(orders.map(o => [o.id, o]))
-  const roots = orders.filter(o => !o.parent_order_id)
-  /** The status shown on the Clopay tab is the HOUSE's — a door recovered from an IPO has
-   *  no status of its own. */
-  const houseStatus = (o: OrderRow): string | null => (o.parent_order_id ? byId.get(o.parent_order_id)?.status ?? o.status : o.status)
+  const ids = jobs.map(j => j.id)
+  const numbers = jobs.map(j => j.number).filter((n): n is string => !!n)
+  const quoted = (xs: string[]) => `(${xs.map(x => `"${String(x).replace(/"/g, '')}"`).join(',')})`
+  // Only the orders that answer to these jobs, by any of the three links.
+  const filters = [`sf_job_id.in.${quoted(ids)}`]
+  if (numbers.length) filters.push(`sf_created_job_number.in.${quoted(numbers)}`, `sf_match_job_number.in.${quoted(numbers)}`)
+  const { data } = await db.from('vendor_orders')
+    .select('id, parent_order_id, status, sf_job_id, sf_created_job_number, sf_match_job_number')
+    .eq('vendor', 'clopay_hd')
+    .or(filters.join(','))
+    .limit(1000)
+  const rows = (data ?? []) as OrderRow[]
+  if (!rows.length) return out
 
-  // Job id and job number both, because each link records a different one.
-  const idToNumber = new Map(jobs.map(j => [j.id, j.number]))
+  // A door can carry the link while the house carries the status, so read the parent's.
+  const parentIds = [...new Set(rows.map(r => r.parent_order_id).filter((v): v is string => !!v))]
+  const parentStatus = new Map<string, string | null>()
+  if (parentIds.length) {
+    const { data: parents } = await db.from('vendor_orders').select('id, status').in('id', parentIds)
+    for (const p of (parents ?? []) as Array<{ id: string; status: string | null }>) parentStatus.set(p.id, p.status)
+  }
+
+  const idSet = new Set(ids)
   const numberToId = new Map(jobs.filter(j => j.number).map(j => [String(j.number), j.id]))
-  const statusForJob = new Map<string, string | null>()
-
-  // 1. A stored link — set when the office linked by hand, or when we created the job.
-  for (const o of orders) {
-    if (o.sf_job_id && idToNumber.has(o.sf_job_id)) statusForJob.set(o.sf_job_id, houseStatus(o))
-    if (o.sf_created_job_number) {
-      const id = numberToId.get(o.sf_created_job_number)
-      if (id && !statusForJob.has(id)) statusForJob.set(id, houseStatus(o))
-    }
+  for (const r of rows) {
+    const jobId = (r.sf_job_id && idSet.has(r.sf_job_id) ? r.sf_job_id : null)
+      ?? numberToId.get(String(r.sf_created_job_number ?? '')) 
+      ?? numberToId.get(String(r.sf_match_job_number ?? ''))
+    if (!jobId) continue
+    const status = r.parent_order_id ? parentStatus.get(r.parent_order_id) ?? r.status : r.status
+    // A house already answered "yes" is not undone by a door that says otherwise.
+    if (out.get(jobId) === 'yes') continue
+    out.set(jobId, portalCompleteFromStatus(status))
   }
-
-  // 2. What the matcher computes, for everything else. Roots only: that is one row per house,
-  //    which is exactly what HD Orders lists.
-  const unresolved = roots.filter(o => !o.sf_job_id)
-  if (unresolved.length) {
-    const matches = await resolveSfJobMatches(db, unresolved)
-    for (const o of unresolved) {
-      const number = matches.get(o.id)?.sfJobNumber
-      if (!number) continue
-      const id = numberToId.get(String(number))
-      if (id && !statusForJob.has(id)) statusForJob.set(id, o.status)
-    }
-  }
-
-  for (const [jobId, status] of statusForJob) out.set(jobId, portalCompleteFromStatus(status))
   return out
 }

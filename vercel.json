@@ -148,6 +148,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/vendor-match-cache",
+      "schedule": "*/30 13-23,0-4 * * *"
+    },
+    {
       "path": "/api/cron/esign-sweep",
       "schedule": "*/15 15-23,0-2 * * *"
     },
