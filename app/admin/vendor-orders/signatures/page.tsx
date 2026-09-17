@@ -24,7 +24,7 @@ export default async function SignaturesPage() {
   const db = createAdminClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
   const settings = await getEsignSettings('clopay_hd', 'lien_waiver')
   const { data: docs } = await db.from('esign_documents')
-    .select('id, order_id, vendor, doc_type, status, template_key, template_fingerprint, source_attachment_id, sf_job_id, customer_sent_at, customer_asked_at, customer_signed_at, tech_name, tech_sent_at, tech_signed_at, completed_at, sf_uploaded_at, portal_uploaded_at, portal_uploaded_by, signed_offline_at, prepared_pdf_path, completed_pdf_path, error, created_at, customer_token, tech_token')
+    .select('id, order_id, vendor, doc_type, status, template_key, template_fingerprint, source_attachment_id, sf_job_id, customer_sent_at, customer_asked_at, customer_signed_at, tech_name, tech_sent_at, tech_signed_at, completed_at, sf_uploaded_at, portal_uploaded_at, portal_uploaded_by, signed_offline_at, prepared_pdf_path, completed_pdf_path, error, last_hold_reason, last_evaluated_at, created_at, customer_token, tech_token')
     .order('created_at', { ascending: false }).limit(500)
   const orderIds = [...new Set((docs ?? []).map(d => d.order_id as string))]
   const { data: orders } = orderIds.length ? await db.from('vendor_orders').select('id, external_id, customer_name, sf_created_job_number, status').in('id', orderIds) : { data: [] }
@@ -52,6 +52,8 @@ export default async function SignaturesPage() {
       completed_at: d.completed_at as string | null, sf_uploaded_at: d.sf_uploaded_at as string | null, portal_uploaded_at: d.portal_uploaded_at as string | null,
       portal_uploaded_by: d.portal_uploaded_by as string | null, has_prepared: !!d.prepared_pdf_path, has_completed: !!d.completed_pdf_path,
       error: d.error as string | null, created_at: d.created_at as string,
+      last_hold_reason: (d.last_hold_reason as string | null) ?? null,
+      last_evaluated_at: (d.last_evaluated_at as string | null) ?? null,
       customer_link: `${appUrl()}/sign/${d.customer_token as string}`, tech_link: `${appUrl()}/sign/${d.tech_token as string}`,
       signed_offline_at: (d.signed_offline_at as string | null) ?? null,
       days_waiting: daysSinceIso(lastSent),

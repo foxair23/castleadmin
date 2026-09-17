@@ -7,7 +7,7 @@ import { ensureShortLink } from '@/lib/short-links'
 import { enqueueNote } from '@/lib/sf-notes/queue'
 import { renderEsignCustomerEmail, renderEsignCustomerSms } from '@/lib/notifications/templates/esign-request'
 import { templateByKey, type TemplateService } from './templates'
-import { customerStageDue, ptDay, ptHour, type CustomerStage } from './eligibility'
+import { decideCustomerStage, ptDay, ptHour, type CustomerStage } from './eligibility'
 import { getEsignSettings } from './settings'
 import { prepareEsignDoc } from './prepare'
 import { linkMissingEsignJobs } from './job-link'
@@ -98,17 +98,38 @@ export async function deliverToCustomer(supabase: SupabaseClient, doc: DocRow, o
 
 export interface EsignSweepResult { enabled: boolean; looked: number; sent: number; failed: number; held: number; errors: string[] }
 
-/** Hourly: send whichever customer message is due. */
-export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSweepResult> {
+/** Leave the sweep's answer on the document. Diagnostic only — it gates nothing — but it
+ *  turns "why did this customer not get their form?" into one column instead of a code read. */
+async function noteHold(supabase: SupabaseClient, docId: string, reason: string): Promise<void> {
+  await supabase.from('esign_documents')
+    .update({ last_hold_reason: reason.slice(0, 500), last_evaluated_at: new Date().toISOString() })
+    .eq('id', docId)
+}
+
+/** Send whichever customer message is due.
+ *
+ *  `quick` is the every-15-minutes pass. The office sets "HD SOF Needed" whenever it gets to
+ *  the job, and until that is noticed the customer has no form — so the FIRST send is worth
+ *  checking often. Everything after it (the ask once the work is done, the reminder three
+ *  days on) is decided by day, not by minute, and the hourly pass is what carries those.
+ *
+ *  It matters because the cost of this sweep is one LIVE Service Fusion read per candidate
+ *  document — the mirror's sub-status lags, which is the whole reason for reading live — so
+ *  the quick pass looks only at documents nothing has been sent for yet. */
+export async function runEsignCustomerSweep(now = new Date(), opts: { quick?: boolean } = {}): Promise<EsignSweepResult> {
   const s = await getEsignSettings(VENDOR, DOC_TYPE)
   const out: EsignSweepResult = { enabled: s.enabled, looked: 0, sent: 0, failed: 0, held: 0, errors: [] }
   if (!s.enabled || !s.enabledAt) return out
   const supabase = db()
   // Jobs get booked after the blank shows up; find them first so today's installs are seen.
   await linkMissingEsignJobs(supabase)
-  const { data: docs } = await supabase.from('esign_documents').select(DOC_COLS)
-    .eq('vendor', VENDOR).eq('doc_type', DOC_TYPE).in('status', ['found', 'prepared', 'sent_customer']).is('customer_signed_at', null)
-    .gte('created_at', s.enabledAt).order('created_at', { ascending: true }).limit(200)
+  let q = supabase.from('esign_documents').select(DOC_COLS)
+    .eq('vendor', VENDOR).eq('doc_type', DOC_TYPE).is('customer_signed_at', null)
+    .gte('created_at', s.enabledAt)
+  q = opts.quick
+    ? q.in('status', ['found', 'prepared']).is('customer_sent_at', null)
+    : q.in('status', ['found', 'prepared', 'sent_customer'])
+  const { data: docs } = await q.order('created_at', { ascending: true }).limit(200)
   const rows = (docs ?? []) as DocRow[]
   if (!rows.length) return out
   const { data: orders } = await supabase.from('vendor_orders').select('id, external_id, customer_name, phone, email, status, sf_job_id').in('id', rows.map(r => r.order_id))
@@ -122,7 +143,9 @@ export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSwee
     if (out.sent + out.failed >= SEND_CAP) break
     out.looked++
     const order = orderById.get(doc.order_id)
-    if (!order || !isActive(order.status) || (!order.email && !order.phone)) { out.held++; continue }
+    if (!order) { out.held++; await noteHold(supabase, doc.id, 'the Clopay order for this document is missing'); continue }
+    if (!isActive(order.status)) { out.held++; await noteHold(supabase, doc.id, `the Clopay order is "${order.status ?? 'unknown'}" — not an active order`); continue }
+    if (!order.email && !order.phone) { out.held++; await noteHold(supabase, doc.id, 'the customer has no email and no phone'); continue }
     const jobId = doc.sf_job_id ?? order.sf_job_id ?? null
     let start = jobId ? startByJob.get(String(jobId)) ?? null : null
     let status = doc.status
@@ -137,16 +160,23 @@ export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSwee
         completed = w.completed; start = w.workDate ?? start
         // The office's marking, not the job's status, decides whether the form goes out.
         sof = sofStageOf(live.facts.subStatus)
-      } else { out.held++; out.errors.push(`order ${order.external_id}: live read failed (${live.error})`); continue }
+      } else {
+        out.held++
+        out.errors.push(`order ${order.external_id}: live read failed (${live.error})`)
+        await noteHold(supabase, doc.id, `Service Fusion could not be read live (${live.error}) — nothing is sent on stale data`)
+        continue
+      }
     }
     // A blank that has not been inspected yet is prepared inline, so a same-day install is not missed.
     if (status === 'found') {
       const r = await prepareEsignDoc(doc.id, supabase)
-      if (!r.ok || r.status !== 'prepared') { out.held++; continue }
+      if (!r.ok || r.status !== 'prepared') { out.held++; await noteHold(supabase, doc.id, r.error ?? `the blank could not be prepared (status "${r.status}")`); continue }
       status = 'prepared'; doc.template_key = r.template ?? doc.template_key
     }
-    const stage = customerStageDue({ ...doc, status, start_date: start, sof, completed, sub_status_set_at: doc.sf_sub_status_set_at ?? null, enabled_at: s.enabledAt, today, hour })
-    if (!stage) { out.held++; continue }
+    const decision = decideCustomerStage({ ...doc, status, start_date: start, sof, completed, sub_status_set_at: doc.sf_sub_status_set_at ?? null, enabled_at: s.enabledAt, today, hour })
+    const stage = decision.stage
+    if (!stage) { out.held++; await noteHold(supabase, doc.id, decision.reason); continue }
+    await noteHold(supabase, doc.id, `sending the ${stage.replace('_', ' ')}: ${decision.reason}`)
     try {
       const { channels, error } = await deliverToCustomer(supabase, { ...doc, sf_job_id: jobId }, order, stage)
       if (channels.length) out.sent++; else out.failed++

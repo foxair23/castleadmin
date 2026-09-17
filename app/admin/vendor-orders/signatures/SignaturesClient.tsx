@@ -10,6 +10,7 @@ export interface EsignRow {
   tech_name: string | null; tech_sent_at: string | null; tech_signed_at: string | null
   completed_at: string | null; sf_uploaded_at: string | null; portal_uploaded_at: string | null; portal_uploaded_by: string | null
   has_prepared: boolean; has_completed: boolean; error: string | null; created_at: string
+  last_hold_reason?: string | null; last_evaluated_at?: string | null
   customer_link: string; tech_link: string
   signed_offline_at?: string | null
   /** Whole days since the last message we sent on this one, computed server-side —
@@ -185,6 +186,13 @@ export default function SignaturesClient({ rows, fingerprints, uninspected, sign
                 <td className="py-1.5 pr-3">
                   <span className={`rounded px-1.5 py-0.5 ${r.status === 'unrecognised_template' ? 'bg-amber-100 text-amber-700' : r.status === 'portal_uploaded' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>{STATUS_LABEL[r.status] ?? r.status}</span>
                   {r.error && <div className="text-[10px] text-red-600 max-w-[220px] whitespace-normal">{r.error}</div>}
+                  {/* Why the last sweep sent nothing. Saves reading eligibility.ts to find
+                      out which gate stopped a form the office was waiting on. */}
+                  {!r.customer_signed_at && r.last_hold_reason && (
+                    <div className="text-[10px] text-gray-500 max-w-[260px] whitespace-normal" title={r.last_evaluated_at ? `Last checked ${new Date(r.last_evaluated_at).toLocaleString()}` : undefined}>
+                      {r.last_hold_reason}
+                    </div>
+                  )}
                 </td>
                 <td className="py-1.5 pr-3 text-gray-700">{r.customer_signed_at ? `signed ${fmt(r.customer_signed_at)}` : r.customer_asked_at ? `asked ${fmt(r.customer_asked_at)}` : r.customer_sent_at ? `sent ${fmt(r.customer_sent_at)}` : '—'}</td>
                 <td className="py-1.5 pr-3 text-gray-700">{r.tech_signed_at ? `signed ${fmt(r.tech_signed_at)}` : r.tech_sent_at ? `sent ${fmt(r.tech_sent_at)}${r.tech_name ? ` · ${r.tech_name}` : ''}` : '—'}</td>

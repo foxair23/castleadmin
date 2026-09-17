@@ -15,10 +15,21 @@ const cron = (): string => {
   return row.schedule
 }
 
+/** The minutes past the hour a cron minute-field fires on. */
+export function cronMinutes(field: string): number[] {
+  if (field === '*') return Array.from({ length: 60 }, (_, i) => i)
+  const step = /^\*\/(\d+)$/.exec(field)
+  if (step) { const n = Number(step[1]); return Array.from({ length: Math.ceil(60 / n) }, (_, i) => i * n) }
+  return field.split(',').map(Number)
+}
+
 /** The UTC hours a 5-field cron fires on, for schedules of the form "M h1-h2,h3-h4 * * *". */
 function utcHours(schedule: string): number[] {
   const [minute, hours] = schedule.split(' ')
-  expect(minute, 'the sweep must fire on the hour, or "8am" is really "8-something"').toBe('0')
+  // The sweep may run more often than hourly, but it MUST run at :00 — the heads-up is
+  // promised for 8:00 AM, and a first firing at :15 would quietly make that 8:15. The
+  // route also treats the :00 run as the complete pass and the rest as the quick one.
+  expect(cronMinutes(minute), 'the sweep must fire at :00, or "8am" is really "8-something"').toContain(0)
   const out = new Set<number>()
   for (const part of hours.split(',')) {
     const [a, b] = part.split('-').map(Number)
@@ -44,6 +55,11 @@ describe('the morning send really lands at 8am PT', () => {
     }
     expect(customerStageDue(base)).toBeNull()                      // 7am PT: too early, by design
     expect(customerStageDue({ ...base, hour: 8 })).toBe('heads_up') // 8am PT: away it goes
+  })
+  it('runs several times an hour, so "HD SOF Needed" set mid-morning is picked up the same morning', () => {
+    const minutes = cronMinutes(cron().split(' ')[0])
+    expect(minutes.length, 'hourly is too slow for a sub-status the office sets by hand').toBeGreaterThan(1)
+    expect(Math.max(...minutes.map((m, i, a) => (i ? m - a[i - 1] : m))), 'no gap longer than 15 minutes').toBeLessThanOrEqual(15)
   })
   it('covers the working day, not just the morning', () => {
     const hours = utcHours(cron())
