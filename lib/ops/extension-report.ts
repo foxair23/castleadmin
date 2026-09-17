@@ -86,7 +86,9 @@ export async function recordExtensionReport(raw: unknown, supabase: SupabaseClie
   if (r.state) hb.state = r.state
   if (r.kind === 'run') { hb.last_run_at = r.finished_at ?? now; hb.last_run_status = r.status }
   await supabase.from('extension_heartbeat').upsert(hb, { onConflict: 'device' })
-  const commands = await claimPendingCommands(supabase)
+  // Never hand commands back on the report OF a command. That response is what closed the
+  // loop: run the command, report it, get the same command again, run it again.
+  const commands = r.kind === 'command' ? [] : await claimPendingCommands(supabase)
   return { ok: true, id, commands }
 }
 
@@ -95,12 +97,24 @@ export async function recordExtensionReport(raw: unknown, supabase: SupabaseClie
  *  long it goes back in the queue. */
 const CLAIM_STALE_MS = 15 * 60 * 1000
 
+/** A requeued command waits this long before it is handed out again. Without it the retry is
+ *  a hot loop: the extension reports the result, that very report claims the command again,
+ *  it collides again, and so on — 2,520 command rows in one hour before it was caught. */
+const REQUEUE_COOLDOWN_MS = 2 * 60 * 1000
+
+/** How long a command may keep colliding before it is given up on. */
+const REQUEUE_MAX_AGE_MS = 30 * 60 * 1000
+
 export async function claimPendingCommands(supabase: SupabaseClient = db(), limit = 10): Promise<PendingCommand[]> {
   await supabase.from('extension_commands')
     .update({ status: 'pending', claimed_at: null })
     .eq('status', 'claimed')
     .lt('claimed_at', new Date(Date.now() - CLAIM_STALE_MS).toISOString())
-  const { data } = await supabase.from('extension_commands').select('id, kind, args').eq('status', 'pending').order('created_at', { ascending: true }).limit(limit)
+  // claimed_at on a PENDING row is the requeue stamp — the cooldown above.
+  const ready = new Date(Date.now() - REQUEUE_COOLDOWN_MS).toISOString()
+  const { data } = await supabase.from('extension_commands').select('id, kind, args').eq('status', 'pending')
+    .or(`claimed_at.is.null,claimed_at.lt.${ready}`)
+    .order('created_at', { ascending: true }).limit(limit)
   const rows = (data ?? []) as PendingCommand[]
   if (!rows.length) return []
   await supabase.from('extension_commands').update({ status: 'claimed', claimed_at: new Date().toISOString() }).in('id', rows.map(r => r.id)).eq('status', 'pending')
@@ -118,8 +132,13 @@ export function isBusy(result: unknown): boolean {
 
 export async function ackCommand(id: string, ok: boolean, result: unknown, supabase: SupabaseClient = db()): Promise<{ ok: boolean }> {
   if (!ok && isBusy(result)) {
-    await supabase.from('extension_commands').update({ status: 'pending', claimed_at: null, result: result ?? null }).eq('id', id)
-    return { ok: true }
+    const { data: row } = await supabase.from('extension_commands').select('created_at').eq('id', id).maybeSingle()
+    const age = row?.created_at ? Date.now() - new Date(row.created_at as string).getTime() : 0
+    if (age < REQUEUE_MAX_AGE_MS) {
+      // claimed_at doubles as the cooldown stamp, so the next report does not pick it straight back up.
+      await supabase.from('extension_commands').update({ status: 'pending', claimed_at: new Date().toISOString(), result: result ?? null }).eq('id', id)
+      return { ok: true }
+    }
   }
   await supabase.from('extension_commands').update({ status: ok ? 'done' : 'failed', finished_at: new Date().toISOString(), result: result ?? null }).eq('id', id)
   return { ok: true }
