@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getPhotoUrlsForLeads } from '@/lib/scheduler/photos'
+import { portalCompleteByJob } from '@/lib/vendor-orders/portal-complete'
 
 function getAdminClient(): SupabaseClient {
   return createAdminClient(
@@ -73,6 +74,9 @@ export interface UnpaidJob {
   days_outstanding: number
   /** Invoice reminders sent for this job (stage day + channel), oldest first. */
   reminders: { day: number; channel: string; manual: boolean }[]
+  /** Has the Clopay portal recorded every step ("Install/Delivery Completed")? Clopay does
+   *  not pay until it has. 'na' for a job no Clopay order answers to — most of them. */
+  portal_complete: import('@/lib/vendor-orders/portal-complete').PortalComplete
 }
 
 export interface UnpaidJobsResult {
@@ -136,6 +140,8 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
 
   const jobs = rawJobs.filter((j: { id: string }) => !paidJobIds.has(j.id))
   const jobIds = jobs.map((j: { id: string }) => j.id)
+  // Clopay pays on its own portal's say-so, so the tab shows whether the portal is finished.
+  const portalComplete = await portalCompleteByJob(db, jobs.map((j: { id: string; number: string | null }) => ({ id: j.id, number: j.number })))
   const techMap = await fetchTechNamesByJobIds(db, jobIds)
 
   // Invoice reminders already sent for these jobs, so the Unpaid tab can show
@@ -181,6 +187,7 @@ export async function getUnpaidJobs(opts?: { limit?: number | null }): Promise<U
     tech_names: techMap.get(j.id) ?? [],
     days_outstanding: daysBetween(j.closed_at),
     reminders: remindersByJob.get(j.id) ?? [],
+    portal_complete: portalComplete.get(j.id) ?? 'na',
   }))
 
   const totalDue = items.reduce((s, i) => s + i.due_total, 0)
