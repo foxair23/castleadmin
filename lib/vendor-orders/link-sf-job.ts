@@ -38,7 +38,24 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string, op
   if (!number) return { ok: false, error: 'Enter the SF job number (digits only).' }
   const supabase = db()
 
-  const { data: job } = await supabase.from('sf_jobs').select('id, number, customer_name').eq('number', number).eq('is_deleted', false).maybeSingle()
+  let { data: job } = await supabase.from('sf_jobs').select('id, number, customer_name').eq('number', number).eq('is_deleted', false).maybeSingle()
+  if (!job) {
+    // The mirror may be holding the job as deleted. SF's paginated list drops records at page
+    // boundaries and the reconcile used to believe it, so an alive job can sit buried — and a
+    // buried job is exactly the one someone is typing in here, because HD Orders stopped
+    // showing it. Ask Service Fusion itself before refusing: the live refresh upserts the job
+    // and brings the row back (job 1020258083, invoiced and being worked, sat dead for a week).
+    const { data: buried } = await supabase.from('sf_jobs').select('id').eq('number', number).maybeSingle()
+    if (buried) {
+      const { syncSingleJob } = await import('@/lib/sf-mirror/sync-engine')
+      const r = await syncSingleJob(buried.id as string)
+      if (r.ok) {
+        const { data: back } = await supabase.from('sf_jobs').select('id, number, customer_name').eq('number', number).eq('is_deleted', false).maybeSingle()
+        job = back
+      }
+      if (!job) return { ok: false, error: `Job #${number} is marked deleted in the mirror and Service Fusion did not return it${r.error ? ` (${r.error})` : ''}.` }
+    }
+  }
   if (!job) return { ok: false, error: `No job #${number} in Service Fusion (the mirror syncs every few minutes — a brand-new job may not be there yet).` }
 
   const { data: self } = await supabase.from('vendor_orders').select('id, parent_order_id, vendor, external_id').eq('id', orderId).maybeSingle()

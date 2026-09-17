@@ -1168,16 +1168,26 @@ async function verifyWithSf(cfg: IncrementalEntityConfig, id: string): Promise<V
   }
 }
 
+/** How long a "confirmed gone" answer is trusted before SF is asked again. Asking ONCE was
+ *  wrong: SF answered 404 for job 1020258083 on 10 Sep and was still updating that same job
+ *  on 16 Sep — one bad answer buried an invoiced job forever, because a stamped row was never
+ *  looked at again. Deleted rows are few (tens), so re-asking monthly costs almost nothing. */
+const DELETED_RECHECK_MS = 30 * 24 * 60 * 60 * 1000
+
 /** Ask SF about soft-deleted records a batch at a time, newest first, and revive the ones it
- *  still has. Each record is asked about once (sf_deleted_verified_at), so the truly deleted
- *  are not re-checked every day. Runs from the daily sync; heals a backlog in a few days. */
+ *  still has. Unverified rows go first; rows whose last answer is older than
+ *  DELETED_RECHECK_MS are asked again. Runs from the daily sync; heals a backlog in days. */
 export async function reviveFalselyDeleted(entity = 'jobs', limit = 150): Promise<{ checked: number; revived: number; gone: number; unknown: number }> {
   const cfg = INCREMENTAL_ENTITIES.find(c => c.entity === entity)
   if (!cfg) throw new Error(`Unknown entity: ${entity}`)
   const supabase = db()
   const out = { checked: 0, revived: 0, gone: 0, unknown: 0 }
-  const { data } = await supabase.from(cfg.table).select('id').eq('is_deleted', true).is('sf_deleted_verified_at', null)
-    .order('closed_at', { ascending: false, nullsFirst: false }).limit(limit)
+  const staleCutoff = new Date(Date.now() - DELETED_RECHECK_MS).toISOString()
+  const { data } = await supabase.from(cfg.table).select('id').eq('is_deleted', true)
+    .or(`sf_deleted_verified_at.is.null,sf_deleted_verified_at.lt.${staleCutoff}`)
+    // Never-asked rows first (nulls sort first ascending), then the longest since asked.
+    .order('sf_deleted_verified_at', { ascending: true, nullsFirst: true })
+    .limit(limit)
   for (const row of (data ?? []) as Array<{ id: string }>) {
     const v = await verifyWithSf(cfg, row.id)
     out.checked++
@@ -1432,9 +1442,32 @@ export async function runScopedReconcile(days: number, entities: string[]): Prom
           .filter((r: { id: string }) => !seenIds.has(r.id))
           .map((r: { id: string }) => r.id)
 
-        if (deletedIds.length > 0) {
-          await supabase.from(cfg.table).update({ is_deleted: true, sf_synced_at: nowIso() }).in('id', deletedIds)
-          console.log(`[sf-scoped-reconcile] ${entityName}: marked ${deletedIds.length} as deleted`)
+        // Missing from the scan is NOT proof of deletion. SF's paginated list drops records at
+        // page boundaries, and this pass used to soft-delete on the list's word alone — that is
+        // how job 1020258083 (invoiced, alive, still being updated in SF that same week) fell
+        // out of every tab. Ask SF about each one directly, exactly as the weekly reconcile
+        // does: a 404 is deleted, a record SF still returns is upserted instead, anything else
+        // is left alone for next time.
+        const cap = Math.max(100, Math.floor(scopedOurs.length * 0.05))
+        if (deletedIds.length > cap) {
+          console.warn(`[sf-scoped-reconcile] ${entityName}: ${deletedIds.length} candidates exceed cap ${cap} — likely an incomplete scan; skipping soft-delete`)
+        } else if (deletedIds.length > 0) {
+          const now = nowIso()
+          let gone = 0, kept = 0, unknown = 0
+          for (const id of deletedIds) {
+            const v = await verifyWithSf(cfg, id)
+            if (v.state === 'gone') {
+              await supabase.from(cfg.table).update(cfg.table === 'sf_jobs'
+                ? { is_deleted: true, sf_synced_at: now, sf_deleted_verified_at: now }
+                : { is_deleted: true, sf_synced_at: now }).in('id', [id])
+              gone++
+            } else if (v.state === 'exists') {
+              await batchUpsert(cfg.table, [cfg.mapper(v.raw)])   // mapper sets is_deleted: false
+              if (cfg.afterUpsert) await cfg.afterUpsert([v.raw])
+              kept++
+            } else unknown++
+          }
+          console.log(`[sf-scoped-reconcile] ${entityName}: ${gone} deleted, ${kept} still in SF → kept, ${unknown} unknown`)
         }
       }
 
