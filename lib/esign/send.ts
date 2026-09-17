@@ -98,17 +98,30 @@ export async function deliverToCustomer(supabase: SupabaseClient, doc: DocRow, o
 
 export interface EsignSweepResult { enabled: boolean; looked: number; sent: number; failed: number; held: number; errors: string[] }
 
-/** Hourly: send whichever customer message is due. */
-export async function runEsignCustomerSweep(now = new Date()): Promise<EsignSweepResult> {
+/** Send whichever customer message is due.
+ *
+ *  `quick` is the every-15-minutes pass. The office sets "HD SOF Needed" whenever it gets to
+ *  the job, and until that is noticed the customer has no form — so the FIRST send is worth
+ *  checking often. Everything after it (the ask once the work is done, the reminder three
+ *  days on) is decided by day, not by minute, and the hourly pass is what carries those.
+ *
+ *  It matters because the cost of this sweep is one LIVE Service Fusion read per candidate
+ *  document — the mirror's sub-status lags, which is the whole reason for reading live — so
+ *  the quick pass looks only at documents nothing has been sent for yet. */
+export async function runEsignCustomerSweep(now = new Date(), opts: { quick?: boolean } = {}): Promise<EsignSweepResult> {
   const s = await getEsignSettings(VENDOR, DOC_TYPE)
   const out: EsignSweepResult = { enabled: s.enabled, looked: 0, sent: 0, failed: 0, held: 0, errors: [] }
   if (!s.enabled || !s.enabledAt) return out
   const supabase = db()
   // Jobs get booked after the blank shows up; find them first so today's installs are seen.
   await linkMissingEsignJobs(supabase)
-  const { data: docs } = await supabase.from('esign_documents').select(DOC_COLS)
-    .eq('vendor', VENDOR).eq('doc_type', DOC_TYPE).in('status', ['found', 'prepared', 'sent_customer']).is('customer_signed_at', null)
-    .gte('created_at', s.enabledAt).order('created_at', { ascending: true }).limit(200)
+  let q = supabase.from('esign_documents').select(DOC_COLS)
+    .eq('vendor', VENDOR).eq('doc_type', DOC_TYPE).is('customer_signed_at', null)
+    .gte('created_at', s.enabledAt)
+  q = opts.quick
+    ? q.in('status', ['found', 'prepared']).is('customer_sent_at', null)
+    : q.in('status', ['found', 'prepared', 'sent_customer'])
+  const { data: docs } = await q.order('created_at', { ascending: true }).limit(200)
   const rows = (docs ?? []) as DocRow[]
   if (!rows.length) return out
   const { data: orders } = await supabase.from('vendor_orders').select('id, external_id, customer_name, phone, email, status, sf_job_id').in('id', rows.map(r => r.order_id))
