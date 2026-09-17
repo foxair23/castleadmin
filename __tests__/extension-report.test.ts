@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeReport, trimLog } from '@/lib/ops/extension-report'
+import { normalizeReport, trimLog, isBusy } from '@/lib/ops/extension-report'
 
 describe('normalizeReport', () => {
   it('accepts a crawl report and strips anything credential-shaped from state', () => {
@@ -25,5 +25,23 @@ describe('trimLog', () => {
     expect(JSON.stringify(long).length).toBeLessThan(20_000)
     expect(String(long[0]).length).toBeLessThanOrEqual(402)
     expect(trimLog([])).toBeNull(); expect(trimLog('nope')).toBeNull()
+  })
+})
+
+// The app queues a run_now from a callback the extension makes DURING a run, so the command
+// always lands on a run in progress. That is "come back in a moment", not a failure: burning
+// it is what left an HD SOF Complete sub-status unwritten overnight.
+describe('isBusy', () => {
+  it('treats a run collision as retryable', () => {
+    expect(isBusy({ ok: false, error: 'already running' })).toBe(true)
+    expect(isBusy({ error: 'a run is already in progress' })).toBe(true)
+    expect(isBusy({ error: 'Already Running' })).toBe(true)
+  })
+  it('leaves real failures alone', () => {
+    expect(isBusy({ ok: false, error: 'not configured' })).toBe(false)
+    expect(isBusy({ ok: false, error: 'SF session logged out' })).toBe(false)
+    expect(isBusy({ ok: true })).toBe(false)
+    expect(isBusy(null)).toBe(false)
+    expect(isBusy('already running')).toBe(false)
   })
 })
