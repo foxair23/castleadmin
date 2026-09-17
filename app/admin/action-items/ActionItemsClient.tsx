@@ -385,6 +385,23 @@ function ZeroRevenueTable({ items, notes, actions }: { items: ZeroRevenueJob[]; 
   )
 }
 
+/** Clopay does not pay until its own portal reads "Install/Delivery Completed", so an unpaid
+ *  Clopay job with a No here is ours to finish — not money to chase. N/A is everything that
+ *  is not Clopay work at all. */
+function PortalCompleteCell({ value }: { value: 'yes' | 'no' | 'na' }) {
+  if (value === 'na') return <span className="text-gray-300" title="No Clopay order answers to this job">N/A</span>
+  return (
+    <span
+      title={value === 'yes'
+        ? 'The Clopay portal reads "Install/Delivery Completed" — every step is done their side'
+        : 'The Clopay portal has not recorded "Install/Delivery Completed" yet, so Clopay will not pay'}
+      className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${value === 'yes' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}
+    >
+      {value === 'yes' ? 'Yes' : 'No'}
+    </span>
+  )
+}
+
 // ── Alert 1 — Completed but Unpaid Jobs ──────────────────────────────────────
 
 function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes: Record<string, string>; actions: Record<string, ActionRecord> }) {
@@ -404,6 +421,7 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
             <SortTh col="po_number" label="PO #" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-20" />
             <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Notes</th>
             <SortTh col="source" label="Source" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="portal_complete" label="Portal Complete?" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="closed_at" label="Closed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="days_outstanding" label="Days Late" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-16" />
             <SortTh col="due_total" label="Amount Due" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -448,6 +466,7 @@ function UnpaidJobsTable({ items, notes, actions }: { items: UnpaidJob[]; notes:
               </td>
               <NotesCell entityType="sf_job" entityId={job.id} initialNote={notes[`sf_job:${job.id}`] ?? ''} />
               <td className="px-4 py-2"><SourceBadge source={job.source} /></td>
+              <td className="px-4 py-2"><PortalCompleteCell value={job.portal_complete} /></td>
               <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{fmtDate(job.closed_at)}</td>
               <td className="px-4 py-2"><AgingPill days={job.days_outstanding} /></td>
               <td className="px-4 py-2 font-medium text-red-700">{fmtMoney(job.due_total)}</td>

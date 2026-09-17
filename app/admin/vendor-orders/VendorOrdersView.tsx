@@ -1,6 +1,8 @@
+import { after } from 'next/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { VENDORS } from '@/lib/vendor-orders/config'
 import { resolveSfJobMatches } from '@/lib/vendor-orders/sf-match'
+import { cacheComputedMatches } from '@/lib/vendor-orders/match-cache'
 import { getAutopilot } from '@/lib/vendor-orders/autopilot'
 import { getNudgeSettings } from '@/lib/vendor-orders/schedule-nudge'
 import VendorOrdersTable, { type VendorOrder } from './VendorOrdersTable'
@@ -85,6 +87,21 @@ export default async function VendorOrdersView({
   for (const evs of chunkResults) {
     for (const e of evs) if (!lastStatusChange.has(e.order_id)) lastStatusChange.set(e.order_id, e.created_at)
   }
+  // This render has already worked out every match. Write them down after the response goes
+  // out, so screens that start from an SF job (Action Items' "Portal Complete?") can join
+  // rather than re-derive — and so the rows anyone is actually looking at stay fresh between
+  // the half-hourly cron runs. Never blocks the page, never fails it.
+  if (sfEnabled && matches.size) {
+    after(async () => {
+      try {
+        await cacheComputedMatches(db, base.map(o => {
+          const m = matches.get(o.id)
+          return { id: o.id, sfJobId: m?.sfJobId ?? null, sfJobNumber: m?.sfJobNumber ?? null, method: m?.method ?? null }
+        }))
+      } catch { /* a cold cache is only slower, never wrong */ }
+    })
+  }
+
   const orders: VendorOrder[] = base.map(o => {
     const withLsc = { ...o, last_status_change_at: lastStatusChange.get(o.id) ?? null }
     // Clopay: Order Date ← the "Order Received" milestone; Last Status Change ← the
