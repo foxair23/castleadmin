@@ -22,10 +22,33 @@ function stripTags(html: string): string {
     .replace(/&amp;/gi, '&')
 }
 
-// An order line: order number (6–9 digits, optionally "Order #…"), then "PO",
-// then the description. Matches both "Order #NNN - PO TEXT" and "NNN PO TEXT".
-const LINE_RE = /(?:order\s*#?\s*)?(\d{6,9})\b[\s\-–:]*po\b[:\s/]*(.+)/i
+// An order's marker: the order number (6–9 digits, optionally "Order #…") followed by "PO".
+// Used with matchAll so SEVERAL orders on ONE line are split apart — Clopay's ROLLUP emails
+// arrive that way when the forward collapses the list, and treating the run as one order
+// swallowed two of them into the first one's PO text (18 Sep: 181195300 carried 181195102
+// and 181195383 in its description, so the STS tab showed one row where the DC had three).
+const ORDER_RE = /(?:order\s*#?\s*)?(\d{6,9})\b[\s\-–:]*po\b[:\s/]*/gi
 const STS_RE = /\bsts\b/i
+
+// Clopay's sign-off runs on after the last order when the list is collapsed onto one line.
+// Cut it, or the final order's PO ends "...STS 1848 Thank you for your order, we appreciate
+// your business. San Diego Team.?".
+const TRAILING_RE = /\s*\b(?:thank you|thanks|please (?:email|call|note)|door\(s\) will be held|we appreciate your business|san diego team|regards|sincerely|hello)\b[\s\S]*$/i
+
+/** Every order named on one line of text, in order. */
+function ordersOnLine(line: string): Array<{ external_id: string; customer_po: string }> {
+  const marks = [...line.matchAll(ORDER_RE)]
+  const out: Array<{ external_id: string; customer_po: string }> = []
+  for (let i = 0; i < marks.length; i++) {
+    const m = marks[i]
+    const from = (m.index ?? 0) + m[0].length
+    // The description runs to the next order's marker, or to the end of the line.
+    const to = i + 1 < marks.length ? marks[i + 1].index ?? line.length : line.length
+    const customer_po = line.slice(from, to).replace(TRAILING_RE, '').replace(/[\s,;:.-]+$/, '').trim()
+    if (customer_po) out.push({ external_id: m[1], customer_po })
+  }
+  return out
+}
 
 /** Extract the STS order lines from a (possibly forwarded) Clopay email. */
 export function parseStsOrders(text: string | null, html: string | null): StsOrderLine[] {
@@ -36,15 +59,14 @@ export function parseStsOrders(text: string | null, html: string | null): StsOrd
     // Drop forward-quote markers ("> ") and collapse whitespace.
     const line = rawLine.replace(/^\s*>+\s?/, '').replace(/\s+/g, ' ').trim()
     if (!line || !STS_RE.test(line)) continue
-    const m = line.match(LINE_RE)
-    if (!m) continue
-    const external_id = m[1]
-    const customer_po = m[2].trim()
-    // The STS marker must be in the order text itself (not merely elsewhere on the line).
-    if (!STS_RE.test(customer_po)) continue
-    if (seen.has(external_id)) continue
-    seen.add(external_id)
-    out.push({ external_id, customer_po, raw_line: line })
+    for (const o of ordersOnLine(line)) {
+      // The STS marker must be in the order's OWN text, not merely elsewhere on the line —
+      // which matters more now that one line can carry several orders.
+      if (!STS_RE.test(o.customer_po)) continue
+      if (seen.has(o.external_id)) continue
+      seen.add(o.external_id)
+      out.push({ ...o, raw_line: line })
+    }
   }
   return out
 }
