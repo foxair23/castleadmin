@@ -222,3 +222,36 @@ describe('decideCustomerStage explains itself', () => {
     expect(d.reason).toMatch(/HD SOF Needed/)
   })
 })
+
+
+// A Clopay job carries several visits at once — a site check, the install, a return trip —
+// and the office marks "HD SOF Needed" for the one being worked. Keying on the LATEST visit
+// held the form back on the day a customer was actually being visited.
+describe('any visit scheduled today releases the heads-up', () => {
+  const base: DueInput = {
+    status: 'prepared', created_at: '2026-09-16T03:00:00Z', enabled_at: '2026-09-15T00:00:00Z',
+    customer_sent_at: null, customer_asked_at: null, customer_reminded_at: null, customer_signed_at: null,
+    start_date: '2026-10-02', today: '2026-09-18', hour: 9, sof: 'needed',
+  }
+  it('sends when one of several visits is today, even though the latest is not', () => {
+    const d = decideCustomerStage({ ...base, start_dates: ['2026-08-20', '2026-09-18', '2026-10-02'] })
+    expect(d.stage).toBe('heads_up')
+    expect(d.reason).toContain('2026-09-18')
+  })
+  it('holds when no visit is today, and names the dates', () => {
+    const d = decideCustomerStage({ ...base, start_dates: ['2026-08-20', '2026-10-02'] })
+    expect(d.stage).toBeNull()
+    expect(d.reason).toContain('2026-08-20')
+    expect(d.reason).toContain('2026-10-02')
+  })
+  it('still waits for 8am on the day itself', () => {
+    expect(decideCustomerStage({ ...base, start_dates: ['2026-09-18'], hour: 7 }).stage).toBeNull()
+  })
+  it('falls back to the single date when no live read gave us the visits', () => {
+    expect(decideCustomerStage({ ...base, start_date: '2026-09-18', start_dates: null }).stage).toBe('heads_up')
+    expect(decideCustomerStage({ ...base, start_date: '2026-10-02', start_dates: null }).stage).toBeNull()
+  })
+  it('still needs the office marking, whatever the dates say', () => {
+    expect(decideCustomerStage({ ...base, start_dates: ['2026-09-18'], sof: 'sent' }).stage).toBeNull()
+  })
+})

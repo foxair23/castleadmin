@@ -18,6 +18,11 @@ export interface WorkState {
   phase: WorkPhase
   /** The date of the visit that matters (the latest one), YYYY-MM-DD. */
   workDate: string | null
+  /** EVERY date this job is on the books for — each visit's, plus the job's own — oldest
+   *  first. A job can carry several visits at once (a site check, an install, a return trip),
+   *  and the office marks "HD SOF Needed" for whichever one is happening: keying only on the
+   *  latest would hold the form back on the day a customer is actually being visited. */
+  workDates: string[]
   /** The work is done: a visit's tech status says Completed, or the job is completed / invoiced / closed. */
   completed: boolean
   detail: string
@@ -33,6 +38,9 @@ export const WAITING = /waiting|pending|on\s*hold|hold\b|unscheduled|need|awaiti
 export function deriveWork(f: LiveJobFacts, service: TemplateService): WorkState {
   const latest = [...f.visits].sort((a, b) => (b.startDate ?? '').localeCompare(a.startDate ?? ''))[0] ?? null
   const workDate = (latest?.startDate ?? f.startDate ?? null)?.slice(0, 10) ?? null
+  const workDates = [...new Set([...f.visits.map(v => v.startDate), f.startDate]
+    .map(d => d?.slice(0, 10) ?? null)
+    .filter((d): d is string => !!d))].sort()
   const completed = !!f.completedAt || isCompletedish(f.status) || f.visits.some(v => isCompletedish(v.techStatus))
   const cat = f.category ?? ''
   let phase: WorkPhase = 'unknown'
@@ -46,5 +54,5 @@ export function deriveWork(f: LiveJobFacts, service: TemplateService): WorkState
     latest ? `visit ${latest.startDate ?? '?'}${latest.notes ? ` "${latest.notes.split(/\r?\n/)[0].slice(0, 40)}"` : ''}${latest.techStatus ? ` (${latest.techStatus})` : ''}` : 'no visit',
     `job status "${f.status ?? '?'}"`,
   ].join(' · ')
-  return { phase, workDate, completed, detail }
+  return { phase, workDate, workDates, completed, detail }
 }

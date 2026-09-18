@@ -163,11 +163,12 @@ export async function runEsignCustomerSweep(now = new Date(), opts: { quick?: bo
     // the mirror's single date: a Clopay install's site check must never trigger the form.
     let sof: SofStage | null | undefined
     let completed: boolean | undefined
+    let starts: string[] | null = null
     if (jobId) {
       const live = await refreshJob(String(jobId))
       if (live.status === 'fresh') {
         const w = deriveWork(live.facts, templateByKey(doc.template_key)?.service ?? 'install')
-        completed = w.completed; start = w.workDate ?? start
+        completed = w.completed; start = w.workDate ?? start; starts = w.workDates
         // The office's marking, not the job's status, decides whether the form goes out.
         sof = sofStageOf(live.facts.subStatus)
       } else {
@@ -183,7 +184,7 @@ export async function runEsignCustomerSweep(now = new Date(), opts: { quick?: bo
       if (!r.ok || r.status !== 'prepared') { out.held++; await noteHold(supabase, doc.id, r.error ?? `the blank could not be prepared (status "${r.status}")`); continue }
       status = 'prepared'; doc.template_key = r.template ?? doc.template_key
     }
-    const decision = decideCustomerStage({ ...doc, status, start_date: start, sof, completed, sub_status_set_at: doc.sf_sub_status_set_at ?? null, enabled_at: s.enabledAt, today, hour })
+    const decision = decideCustomerStage({ ...doc, status, start_date: start, start_dates: starts, sof, completed, sub_status_set_at: doc.sf_sub_status_set_at ?? null, enabled_at: s.enabledAt, today, hour })
     const stage = decision.stage
     if (!stage) { out.held++; await noteHold(supabase, doc.id, decision.reason); continue }
     await noteHold(supabase, doc.id, `sending the ${stage.replace('_', ' ')}: ${decision.reason}`)
