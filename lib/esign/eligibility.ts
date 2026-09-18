@@ -26,6 +26,11 @@ export interface DueInput {
   customer_signed_at: string | null
   /** The date of the work that matters (the install / delivery visit), YYYY-MM-DD, or null. */
   start_date: string | null
+  /** Every date the job is on the books for — each visit's, plus the job's own. The heads-up
+   *  goes out if ANY of them is today: a job can carry a site check, an install and a return
+   *  trip at once, and the office marks "HD SOF Needed" for the one being worked. Falls back
+   *  to start_date alone when no live read gave us the visits. */
+  start_dates?: string[] | null
   /** Where the job's HD SOF sub-status stands, read live from SF. 'needed' is the office
    *  saying "send it"; anything else (including none) means no heads-up goes out. */
   sof?: SofStage | null
@@ -94,11 +99,16 @@ export function decideCustomerStage(d: DueInput): StageDecision {
   if (!d.customer_sent_at) {
     // Nothing reaches a customer on a job the office has not marked "HD SOF Needed".
     if (d.sof !== 'needed') return no(`the job's HD SOF sub-status is ${d.sof ? `"${d.sof}"` : 'not set'} — the office has not asked for the form`)
-    if (!d.start_date) return no('the job has no work date')
-    const away = daysBetween(d.start_date, d.today)
-    if (away !== 0) return no(`the work date is ${d.start_date}, ${away > 0 ? `${away} day(s) ago` : `in ${-away} day(s)`} — the heads-up goes out on the day itself`)
+    const dates = (d.start_dates?.length ? d.start_dates : d.start_date ? [d.start_date] : [])
+    if (!dates.length) return no('the job has no work date')
+    const onToday = dates.find(x => daysBetween(x, d.today) === 0)
+    if (!onToday) {
+      const near = [...dates].sort((a, b) => Math.abs(daysBetween(a, d.today)) - Math.abs(daysBetween(b, d.today)))[0]
+      const away = daysBetween(near, d.today)
+      return no(`nothing is scheduled today — ${dates.length > 1 ? `this job's dates are ${dates.join(', ')}; the nearest` : 'the work date'} is ${near}, ${away > 0 ? `${away} day(s) ago` : `in ${-away} day(s)`}`)
+    }
     if (d.hour < 8) return no(`it is ${d.hour}:00 PT — the heads-up waits for 8am`)
-    return yes('heads_up', 'work date is today and the office has marked HD SOF Needed')
+    return yes('heads_up', `a visit is scheduled today (${onToday}) and the office has marked HD SOF Needed`)
   }
   // Back on "HD SOF Needed" after we set "HD SOF Sent": the office is asking for it again.
   // Gated on our write having been CONFIRMED, so an in-flight write is not a second send.
