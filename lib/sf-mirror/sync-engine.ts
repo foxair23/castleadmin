@@ -892,7 +892,14 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
     // `items` gives us the job's line items (products & services), mirrored into
     // sf_job_items by syncJobChildren. Same expand the tech sync uses; the mirror
     // client retries 5xx, so a transient bad-items page recovers on the next run.
-    expand: 'techs_assigned,agents,payments,invoices,notes,items',
+    //
+    // `visits` because the job's own start_date is not the work: a Clopay job carries a site
+    // check, an install and sometimes a return trip as separate visits, and SF leaves the
+    // job-level date null or stale (1020258541 read 2026-06-29 one morning and null the
+    // next, while its visits were real). Without them nothing outside a live per-job read
+    // can answer "what is on the books today" — which is what the e-sign sweep asks four
+    // times an hour, one SF call per candidate.
+    expand: 'techs_assigned,agents,payments,invoices,notes,items,visits',
     mapper: mapJob,
     afterUpsert: async (items) => {
       await detectAndRecordReschedules(items)
@@ -1001,8 +1008,8 @@ export async function syncSingleJob(jobId: string): Promise<{ ok: boolean; error
   // Priced line items live under products + services. Expand them here; if the
   // single-resource expand comes back empty we fall back to the dedicated
   // /jobs/{id}/products and /jobs/{id}/services sub-resources below.
-  const FULL_EXPAND = 'techs_assigned,agents,payments,invoices,notes,items,products,services'
-  const BASE_EXPAND = 'techs_assigned,agents,payments,invoices,notes'
+  const FULL_EXPAND = 'techs_assigned,agents,payments,invoices,notes,items,products,services,visits'
+  const BASE_EXPAND = 'techs_assigned,agents,payments,invoices,notes,visits'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const unwrap = (json: any): Raw | null =>
     json?.items ? (json.items[0] ?? null) : (json?.id ? json : (json?.data ?? null))
