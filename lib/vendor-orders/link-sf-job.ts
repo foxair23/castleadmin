@@ -85,9 +85,22 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string, op
   for (const r of (excl ?? []) as Array<{ id: string; sf_match_excluded_job_ids: string[] }>) {
     await supabase.from('vendor_orders').update({ sf_match_excluded_job_ids: r.sf_match_excluded_job_ids.filter(x => x !== job.id) }).eq('id', r.id)
   }
+  // The house's e-sign forms follow the job. Unmatch clears them; linking has to re-point
+  // them, or the Signatures page goes on naming the job the office just corrected — the
+  // document's own sf_job_id is preferred over the order's once set, so nothing else would
+  // ever revisit it. A form already filed against a job is left alone: that is history.
+  const FILED = ['completed', 'sf_uploaded', 'portal_uploaded', 'cancelled']
+  const { data: esignDocs } = await supabase.from('esign_documents').select('id, sf_job_id, status').eq('order_id', rootId)
+  let repointed = 0
+  for (const d of (esignDocs ?? []) as Array<{ id: string; sf_job_id: string | null; status: string }>) {
+    if (FILED.includes(d.status) || d.sf_job_id === job.id) continue
+    await supabase.from('esign_documents').update({ sf_job_id: job.id, updated_at: now }).eq('id', d.id)
+    repointed++
+  }
+
   await supabase.from('vendor_order_events').insert({
     order_id: rootId, event_type: 'sf_job_linked', to_value: job.number,
-    detail: { sf_job_id: job.id, method: 'manual', typed: rawJobNumber, shared_with_order_id: other?.id ?? null },
+    detail: { sf_job_id: job.id, method: 'manual', typed: rawJobNumber, shared_with_order_id: other?.id ?? null, esign_docs_repointed: repointed },
   })
 
   // The reason anyone links a job by hand is to get the IPO lines onto it. Queue them now —
@@ -100,6 +113,7 @@ export async function linkSfJobToOrder(orderId: string, rawJobNumber: string, op
   } catch { /* the link itself succeeded; the button remains */ }
 
   const warnings: string[] = []
+  if (repointed) warnings.push(`${repointed} e-sign form(s) for this house now point at job #${job.number}.`)
   if (other) {
     // Everything that writes into SF is per-order, so a shared job can be written to twice.
     // The line queue's live check stops a second post of the items; nothing stops a second
