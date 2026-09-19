@@ -255,3 +255,50 @@ describe('any visit scheduled today releases the heads-up', () => {
     expect(decideCustomerStage({ ...base, start_dates: ['2026-09-18'], sof: 'sent' }).stage).toBeNull()
   })
 })
+
+
+// Real visit data, first seen once the mirror kept visits (19 Sep). Two lessons in it:
+// Castle's techs use "DONE" for "my visit is over, whatever the outcome", and a completed
+// visit is not a completed job when another one is still on the books.
+describe('completion comes from the last visit, not from any of them', () => {
+  it('1020259275: an earlier visit Completed with a later one Scheduled is NOT done', () => {
+    const w = deriveWork(job({ status: 'To be invoiced', visits: [
+      visit('2026-09-17', null, 'Completed'),
+      visit('2026-09-18', null, 'Scheduled'),
+    ] }), 'install')
+    // The job status still says invoiced-ish, which is its own authority — but the VISITS
+    // alone must not call this done.
+    const fromVisitsOnly = deriveWork(job({ status: 'Unscheduled', visits: [
+      visit('2026-09-17', null, 'Completed'),
+      visit('2026-09-18', null, 'Scheduled'),
+    ] }), 'install')
+    expect(fromVisitsOnly.completed).toBe(false)
+    expect(w.workDates).toEqual(['2026-09-17', '2026-09-18'])
+  })
+  it('the last visit Completed does finish it', () => {
+    const w = deriveWork(job({ status: 'Unscheduled', visits: [
+      visit('2026-09-17', null, 'Scheduled'),
+      visit('2026-09-18', null, 'Completed'),
+    ] }), 'install')
+    expect(w.completed).toBe(true)
+  })
+  it('1020258541: techs marked DONE on a failed install — not complete', () => {
+    const w = deriveWork(job({ status: 'Unscheduled', visits: [
+      visit('2026-06-29', 'Site Check', 'DONE'),
+      visit('2026-09-17', 'Installation Attempt Failed: HD customer', 'DONE'),
+    ] }), 'install')
+    expect(w.completed).toBe(false)
+    expect(w.workDates).toEqual(['2026-06-29', '2026-09-17'])
+  })
+  it('1020259076: a site inspection marked DONE is not a finished install', () => {
+    const w = deriveWork(job({ status: 'Unscheduled', visits: [
+      visit('2026-09-02', 'SIte Check: No call, no show.', 'DONE'),
+      visit('2026-09-17', 'site inspection', 'DONE'),
+    ] }), 'install')
+    expect(w.completed).toBe(false)
+  })
+  it('the job being invoiced or closed still finishes it, whatever the visits say', () => {
+    expect(deriveWork(job({ status: 'Invoiced', visits: [visit('2026-09-18', null, 'Scheduled')] }), 'install').completed).toBe(true)
+    expect(deriveWork(job({ status: 'Unscheduled', completedAt: '2026-09-18T10:00:00Z', visits: [] }), 'install').completed).toBe(true)
+  })
+})

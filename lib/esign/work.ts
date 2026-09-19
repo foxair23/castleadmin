@@ -41,7 +41,15 @@ export function deriveWork(f: LiveJobFacts, service: TemplateService): WorkState
   const workDates = [...new Set([...f.visits.map(v => v.startDate), f.startDate]
     .map(d => d?.slice(0, 10) ?? null)
     .filter((d): d is string => !!d))].sort()
-  const completed = !!f.completedAt || isCompletedish(f.status) || f.visits.some(v => isCompletedish(v.techStatus))
+  // Completion comes from the job, or from the LAST visit — never from "any visit". A tech
+  // marking one trip complete says that trip is over, not that the job is: 1020259275 had
+  // 09-17 "Completed" with 09-18 still "Scheduled", which under `some()` read as finished
+  // work and would have asked the customer to sign off an install that had not happened.
+  // (Castle's techs also use "DONE" for "my visit is over, whatever the outcome" —
+  // 1020258541's techs marked DONE on a visit whose note reads "Installation Attempt
+  // Failed" — so DONE deliberately does NOT count as completion.)
+  const lastVisit = f.visits.length ? f.visits[f.visits.length - 1] : null
+  const completed = !!f.completedAt || isCompletedish(f.status) || isCompletedish(lastVisit?.techStatus)
   const cat = f.category ?? ''
   let phase: WorkPhase = 'unknown'
   if (completed) phase = service === 'delivery' ? 'delivery' : 'install'
