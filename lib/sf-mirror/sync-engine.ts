@@ -899,7 +899,10 @@ const INCREMENTAL_ENTITIES: IncrementalEntityConfig[] = [
     // next, while its visits were real). Without them nothing outside a live per-job read
     // can answer "what is on the books today" — which is what the e-sign sweep asks four
     // times an hour, one SF call per candidate.
-    expand: 'techs_assigned,agents,payments,invoices,notes,items,visits',
+    // `visits.techs_assigned` nests each visit's technician AND their status on it, which is
+    // what "the work is done" keys on — a visit whose tech reads Completed. Without it the
+    // mirror can say when a job is on the books but never whether it happened.
+    expand: 'techs_assigned,agents,payments,invoices,notes,items,visits,visits.techs_assigned',
     mapper: mapJob,
     afterUpsert: async (items) => {
       await detectAndRecordReschedules(items)
@@ -1008,8 +1011,8 @@ export async function syncSingleJob(jobId: string): Promise<{ ok: boolean; error
   // Priced line items live under products + services. Expand them here; if the
   // single-resource expand comes back empty we fall back to the dedicated
   // /jobs/{id}/products and /jobs/{id}/services sub-resources below.
-  const FULL_EXPAND = 'techs_assigned,agents,payments,invoices,notes,items,products,services,visits'
-  const BASE_EXPAND = 'techs_assigned,agents,payments,invoices,notes,visits'
+  const FULL_EXPAND = 'techs_assigned,agents,payments,invoices,notes,items,products,services,visits,visits.techs_assigned'
+  const BASE_EXPAND = 'techs_assigned,agents,payments,invoices,notes,visits,visits.techs_assigned'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const unwrap = (json: any): Raw | null =>
     json?.items ? (json.items[0] ?? null) : (json?.id ? json : (json?.data ?? null))
